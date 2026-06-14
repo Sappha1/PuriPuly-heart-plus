@@ -1,0 +1,593 @@
+import { existsSync, readFileSync } from 'node:fs';
+
+import { describe, expect, it } from 'vitest';
+
+import app from '../src/index';
+import {
+  TEST_DEFAULT_ABUSE_CONTROLS,
+  TEST_DEFAULT_ABUSE_RUNTIME_STATE,
+} from './test-support/abuse-controls';
+import {
+  BROKER_MIGRATION_FILENAMES,
+  FIRST_BROKER_MIGRATION,
+  LATEST_BROKER_MIGRATION,
+  readBrokerMigrationSql,
+} from './test-support/migrations';
+
+describe('broker persistent state model', () => {
+  it('defines the D1 table contract, runtime config keys, and minimal release-session state', async () => {
+    const contract = await import('../src/contract');
+
+    expect(contract).toHaveProperty('BROKER_RUNTIME_CONFIG_KEYS', {
+      fingerprintSalt: 'fingerprint_salt',
+      abuseControls: 'abuse_controls',
+      abuseRuntimeState: 'abuse_runtime_state',
+    });
+    expect(contract).toHaveProperty('BROKER_RUNTIME_CONFIG_SCHEMA', {
+      fingerprint_salt: ['current', 'previous', 'rotated_at'],
+      abuse_controls: TEST_DEFAULT_ABUSE_CONTROLS,
+      abuse_runtime_state: TEST_DEFAULT_ABUSE_RUNTIME_STATE,
+    });
+    expect(contract).toHaveProperty('BROKER_PUBLIC_INPUT_BOUNDS', {
+      installation_id: {
+        minLength: 1,
+        maxLength: 128,
+        rejectWhitespaceOnly: true,
+        rejectControlCharacters: true,
+        rejectNewlines: true,
+      },
+      app_version: {
+        minLength: 1,
+        maxLength: 64,
+        rejectWhitespaceOnly: true,
+        rejectControlCharacters: true,
+        rejectNewlines: true,
+      },
+      hardware_hash: {
+        minLength: 1,
+        maxLength: 128,
+        nullable: true,
+        rejectWhitespaceOnly: true,
+        rejectControlCharacters: true,
+        rejectNewlines: true,
+      },
+    });
+    expect(contract).toHaveProperty('BROKER_PERSISTENCE_MODEL', {
+      database: 'Cloudflare D1',
+      tables: {
+        brokerConfig: {
+          name: 'broker_config',
+          primaryKey: 'key',
+          columns: ['key', 'value', 'updated_at'],
+          valueEncoding: 'JSON',
+          supportedKeys: [
+            'fingerprint_salt',
+            'abuse_controls',
+            'abuse_runtime_state',
+          ],
+          constraints: {
+            key: 'supported-keys-only',
+            value: 'valid-json',
+          },
+          seedRows: ['fingerprint_salt', 'abuse_controls', 'abuse_runtime_state'],
+        },
+        installations: {
+          name: 'installations',
+          primaryKey: 'installation_id',
+          columns: [
+            'installation_id',
+            'device_public_key',
+            'hardware_hash',
+            'hardware_hash_salt_version',
+            'app_version',
+            'challenge',
+            'challenge_expires_at',
+            'challenge_salt_version',
+            'created_at',
+            'last_seen_at',
+          ],
+          unique: ['device_public_key'],
+          indexed: [
+            'hardware_hash',
+            'hardware_hash_salt_version',
+            'challenge_expires_at',
+            'last_seen_at',
+          ],
+          textBounds: {
+            installation_id: {
+              minLength: 1,
+              maxLength: 128,
+              rejectWhitespaceOnly: true,
+              rejectControlCharacters: true,
+              rejectNewlines: true,
+            },
+            app_version: {
+              minLength: 1,
+              maxLength: 64,
+              rejectWhitespaceOnly: true,
+              rejectControlCharacters: true,
+              rejectNewlines: true,
+            },
+            hardware_hash: {
+              minLength: 1,
+              maxLength: 128,
+              nullable: true,
+              rejectWhitespaceOnly: true,
+              rejectControlCharacters: true,
+              rejectNewlines: true,
+            },
+          },
+          updateRules: {
+            onChallenge: [
+              'overwrite challenge',
+              'overwrite challenge_expires_at',
+              'overwrite challenge_salt_version',
+              'overwrite app_version',
+              'clear hardware_hash and hardware_hash_salt_version only when lifecycle is none or pending_release',
+              'preserve hardware_hash state for active, expired, and revoked lifecycles',
+              'touch last_seen_at',
+            ],
+            onVerify: [
+              'clear challenge',
+              'clear challenge_expires_at',
+              'clear challenge_salt_version',
+              'persist hardware_hash only after successful verify',
+              'persist hardware_hash_salt_version with hardware_hash',
+            ],
+            beforeVerify: ['hardware_hash stays null until verify'],
+          },
+        },
+        openrouterEntitlements: {
+          name: 'openrouter_entitlements',
+          provider: 'OpenRouter',
+          rowCardinality: 'zero-or-one-row-per-installation',
+          primaryKey: 'installation_id',
+          absenceRepresents: 'none',
+          storedStatuses: ['pending_release', 'active', 'expired', 'revoked'],
+          columns: [
+            'installation_id',
+            'status',
+            'budget_usd',
+            'managed_credential_ref',
+            'issued_at',
+            'expires_at',
+            'release_session_ref',
+            'release_token_hash',
+            'release_token_expires_at',
+            'verified_hardware_hash',
+            'verified_hardware_hash_salt_version',
+            'discord_user_ref',
+            'discord_issue_status',
+            'discord_issue_reserved_at',
+            'discord_issue_delivered_at',
+          ],
+          unique: ['managed_credential_ref', 'discord_user_ref'],
+          indexed: ['status', 'expires_at', 'discord_issue_reserved_at'],
+          partialUniqueIndexes: [
+            {
+              name: 'idx_openrouter_entitlements_release_token_hash',
+              columns: ['release_token_hash'],
+              predicate: 'release_token_hash IS NOT NULL',
+            },
+            {
+              name: 'idx_openrouter_entitlements_discord_user_ref',
+              columns: ['discord_user_ref'],
+              predicate: 'discord_user_ref IS NOT NULL',
+            },
+          ],
+          updateStrategy: 'in-place',
+          liveRemainingBudgetSource: 'OpenRouter metadata',
+          releaseSessionState: {
+            storage: 'ephemeral-columns-on-openrouter_entitlements',
+            fields: [
+              'release_session_ref',
+              'release_token_hash',
+              'release_token_expires_at',
+            ],
+            releaseToken: {
+              binding: 'installation-bound',
+              oneTimeUse: true,
+              ttlMinutes: 15,
+              issuanceIdempotencyKey: 'installation_identity + release_session_ref',
+              verifyBehavior: 'rotate for existing pending_release row',
+            },
+          },
+        },
+        discordOAuthSessions: {
+          name: 'discord_oauth_sessions',
+          purpose:
+            'bounded OAuth PKCE/session state for Discord-gated managed OpenRouter issuance',
+          primaryKey: 'state_hash',
+          columns: [
+            'state_hash',
+            'installation_id',
+            'device_public_key',
+            'redirect_uri',
+            'pkce_code_verifier',
+            'issue_nonce_hash',
+            'fingerprint_salt_version',
+            'discord_user_ref',
+            'discord_email_verified',
+            'discord_account_created_at',
+            'eligibility_checked_at',
+            'status',
+            'created_at',
+            'expires_at',
+            'processing_started_at',
+            'consumed_at',
+            'referral_id',
+          ],
+          storedStatuses: [
+            'pending',
+            'processing',
+            'consumed',
+            'canceled',
+            'failed',
+            'expired',
+          ],
+          retention:
+            'expires_at cleanup only; durable entitlement and identity evidence is separate',
+          indexed: ['installation_id + status + created_at', 'expires_at', 'referral_id'],
+        },
+        referralCodes: {
+          name: 'referral_codes',
+          purpose: 'stable owned Referral ID per Discord identity',
+          primaryKey: 'referral_id',
+          columns: [
+            'referral_id',
+            'owner_discord_user_ref',
+            'owner_installation_id',
+            'status',
+            'created_at',
+            'updated_at',
+            'disabled_reason',
+            'disabled_by',
+            'disabled_at',
+          ],
+          referralIdFormat:
+            'six uppercase approved-alphabet characters excluding 0/O/1/I/L',
+          storedStatuses: ['active', 'disabled'],
+          unique: ['owner_discord_user_ref'],
+          indexed: [
+            'owner_discord_user_ref',
+            'owner_installation_id',
+            'status + referral_id',
+          ],
+          deletionBehavior:
+            'installation aging must not cascade-delete referral code history',
+        },
+        referralRewards: {
+          name: 'referral_rewards',
+          purpose: 'append-only referral attempt and reward ledger',
+          primaryKey: 'id',
+          columns: [
+            'id',
+            'referral_id',
+            'referrer_discord_user_ref',
+            'referrer_installation_id',
+            'referred_discord_user_ref',
+            'referred_installation_id',
+            'referred_hardware_hash',
+            'referred_hardware_hash_salt_version',
+            'referred_bonus_status',
+            'referrer_bonus_status',
+            'skip_reason',
+            'failure_reason',
+            'referred_managed_credential_ref',
+            'referrer_managed_credential_ref',
+            'created_at',
+            'updated_at',
+            'credited_at',
+            'attempt_ip_hash',
+          ],
+          referralIdFormat:
+            'six uppercase approved-alphabet characters excluding 0/O/1/I/L',
+          referredBonusStatuses: ['reserved', 'credited', 'skipped', 'failed'],
+          referrerBonusStatuses: ['pending', 'applying', 'credited', 'skipped', 'failed'],
+          reasonBounds: {
+            skip_reason: '1-64 chars when present',
+            failure_reason: '1-64 chars when present',
+          },
+          indexed: [
+            'referral_id',
+            'referrer_discord_user_ref + referred_bonus_status',
+            'referred_installation_id + created_at',
+            'attempt_ip_hash + created_at',
+            'referral_id + created_at',
+            'referrer_discord_user_ref + created_at',
+          ],
+          partialUniqueIndexes: [
+            {
+              name: 'idx_referral_rewards_counted_referred_discord_user',
+              columns: ['referred_discord_user_ref'],
+              predicate: "referred_bonus_status IN ('reserved', 'credited')",
+            },
+            {
+              name: 'idx_referral_rewards_counted_referred_installation',
+              columns: ['referred_installation_id'],
+              predicate: "referred_bonus_status IN ('reserved', 'credited')",
+            },
+          ],
+          deletionBehavior:
+            'installation aging must not cascade-delete referral reward ledger history',
+        },
+        discordIdentities: {
+          name: 'discord_identities',
+          purpose: 'durable HMAC Discord user reference uniqueness for managed issuance',
+          primaryKey: 'discord_user_ref',
+          columns: [
+            'discord_user_ref',
+            'entitlement_installation_id',
+            'status',
+            'ref_secret_version',
+            'created_at',
+            'updated_at',
+          ],
+          storedStatuses: ['issuing', 'active', 'failed', 'cleanup_required'],
+          foreignKeys: ['entitlement_installation_id -> installations.installation_id'],
+        },
+        brokerRequestEvents: {
+          name: 'broker_request_events',
+          purpose: ['per-endpoint rate limits', 'cross-endpoint velocity hooks'],
+          columns: ['id', 'endpoint', 'ip', 'installation_id', 'observed_at'],
+          appendOnly: true,
+          indexed: [
+            'endpoint + ip + observed_at',
+            'endpoint + installation_id + observed_at',
+            'ip + observed_at',
+            'installation_id + observed_at',
+          ],
+        },
+        brokerIssueSuccessEvents: {
+          name: 'broker_issue_success_events',
+          purpose: ['issue success alerting', 'daily reporting', 'asn-based heuristics'],
+          columns: [
+            'id',
+            'installation_id',
+            'managed_credential_ref',
+            'ip_hash',
+            'ip_prefix_hash',
+            'asn',
+            'country',
+            'http_protocol',
+            'tls_version',
+            'tls_cipher',
+            'risk_label',
+            'observed_at',
+          ],
+          appendOnly: true,
+          indexed: [
+            'installation_id + observed_at',
+            'managed_credential_ref + observed_at',
+            'ip_hash + observed_at',
+            'ip_prefix_hash + observed_at',
+            'asn + observed_at',
+            'observed_at',
+          ],
+        },
+        brokerAbuseRuntimeAudit: {
+          name: 'broker_abuse_runtime_audit',
+          purpose:
+            'append-only audit trail for runtime-state changes and abuse-monitoring decisions',
+          columns: ['id', 'event_kind', 'reason', 'payload_json', 'created_at'],
+          appendOnly: true,
+          indexed: ['event_kind + created_at', 'created_at'],
+        },
+        brokerVelocityCapHooks: {
+          name: 'broker_velocity_cap_hooks',
+          purpose: 'manual cross-endpoint velocity controls with observable outcomes',
+          columns: [
+            'id',
+            'subject_type',
+            'subject_value',
+            'max_requests',
+            'window_minutes',
+            'outcome_code',
+            'outcome_class',
+            'outcome_subcode',
+            'reason',
+            'active',
+            'created_at',
+            'expires_at',
+          ],
+          supportedSubjects: ['ip', 'installation_id'],
+          indexed: ['subject_type + subject_value + active + expires_at'],
+        },
+        brokerAbuseSubjectHooks: {
+          name: 'broker_abuse_subject_hooks',
+          purpose:
+            'denylist, reputation, and fast-revocation controls with observable outcomes',
+          columns: [
+            'id',
+            'hook_kind',
+            'subject_type',
+            'subject_value',
+            'outcome_code',
+            'outcome_class',
+            'outcome_subcode',
+            'reason',
+            'active',
+            'created_at',
+            'expires_at',
+          ],
+          hookKinds: ['denylist', 'reputation', 'revocation'],
+          supportedSubjects: ['ip', 'installation_id', 'hardware_hash'],
+          indexed: ['subject_type + subject_value + hook_kind + active + expires_at'],
+        },
+      },
+    });
+  });
+
+  it('keeps persistence details out of the public foundation response', async () => {
+    const response = await app.request('http://broker.test/v1/foundation');
+    expect(response.status).toBe(200);
+
+    const payload = (await response.json()) as Record<string, unknown>;
+
+    expect(payload).not.toHaveProperty('persistence');
+    expect(payload).not.toHaveProperty('brokerPersistenceModel');
+    expect(payload).not.toHaveProperty('runtimeConfig');
+  });
+
+  it('ships a first D1 migration that creates the documented tables and indexes', () => {
+    expect(BROKER_MIGRATION_FILENAMES).toEqual([
+      '0000_define_broker_persistent_state.sql',
+      '0001_add_abuse_hook_state.sql',
+      '0001_harden_installation_public_inputs.sql',
+      '0002_add_entitlement_verified_hardware_snapshot.sql',
+      '0003_add_abuse_runtime_state_and_issue_success_events.sql',
+      '0004_add_discord_oauth_managed_issue.sql',
+      '0005_add_referral_persistence_foundation.sql',
+      '0006_harden_referral_reward_operations.sql',
+      '0007_simplify_referral_id_checks.sql',
+    ]);
+    expect(existsSync(FIRST_BROKER_MIGRATION)).toBe(true);
+    expect(existsSync(LATEST_BROKER_MIGRATION)).toBe(true);
+    if (!existsSync(FIRST_BROKER_MIGRATION) || !existsSync(LATEST_BROKER_MIGRATION)) {
+      return;
+    }
+
+    const migration = readFileSync(FIRST_BROKER_MIGRATION, 'utf8');
+    const abuseHooksMigration = readBrokerMigrationSql(
+      '0001_add_abuse_hook_state.sql',
+    );
+    const hardeningMigration = readBrokerMigrationSql(
+      '0001_harden_installation_public_inputs.sql',
+    );
+    const verifiedSnapshotMigration = readBrokerMigrationSql(
+      '0002_add_entitlement_verified_hardware_snapshot.sql',
+    );
+    const abuseRuntimeMigration = readBrokerMigrationSql(
+      '0003_add_abuse_runtime_state_and_issue_success_events.sql',
+    );
+    const discordManagedIssueMigration = readBrokerMigrationSql(
+      '0004_add_discord_oauth_managed_issue.sql',
+    );
+    const referralPersistenceMigration = readBrokerMigrationSql(
+      '0005_add_referral_persistence_foundation.sql',
+    );
+    const referralOperationsMigration = readBrokerMigrationSql(
+      '0006_harden_referral_reward_operations.sql',
+    );
+    const referralCheckRepairMigration = readBrokerMigrationSql(
+      '0007_simplify_referral_id_checks.sql',
+    );
+
+    expect(migration).toContain('CREATE TABLE broker_config');
+    expect(migration).toContain('CREATE TABLE installations');
+    expect(migration).toContain('CREATE TABLE openrouter_entitlements');
+    expect(migration).toContain('device_public_key TEXT NOT NULL UNIQUE');
+    expect(migration).toContain('hardware_hash TEXT');
+    expect(migration).toContain('hardware_hash_salt_version INTEGER');
+    expect(migration).toContain('challenge TEXT');
+    expect(migration).toContain('challenge_expires_at TEXT');
+    expect(migration).toContain('challenge_salt_version INTEGER');
+    expect(migration).toContain('CHECK (length(installation_id) BETWEEN 1 AND 128)');
+    expect(migration).toContain('CHECK (length(app_version) BETWEEN 1 AND 64)');
+    expect(migration).toContain(
+      'CHECK (hardware_hash IS NULL OR length(hardware_hash) BETWEEN 1 AND 128)',
+    );
+    expect(migration).toContain("INSERT INTO broker_config (key, value)");
+    expect(migration).toContain("'abuse_controls'");
+    expect(migration).toContain("CHECK(status IN ('pending_release', 'active', 'expired', 'revoked'))");
+    expect(migration).toContain('managed_credential_ref TEXT UNIQUE');
+    expect(migration).toContain('release_session_ref TEXT');
+    expect(migration).toContain('release_token_hash TEXT');
+    expect(migration).toContain('release_token_expires_at TEXT');
+    expect(migration).not.toContain('verified_hardware_hash TEXT');
+    expect(migration).not.toContain('verified_hardware_hash_salt_version INTEGER');
+    expect(migration).toContain('CREATE INDEX idx_installations_hardware_hash');
+    expect(migration).toContain('CREATE INDEX idx_installations_hardware_hash_salt_version');
+    expect(migration).toContain('CREATE INDEX idx_installations_challenge_expires_at');
+    expect(migration).toContain('CREATE INDEX idx_installations_last_seen_at');
+    expect(migration).toContain('CREATE INDEX idx_openrouter_entitlements_status');
+    expect(migration).toContain('CREATE INDEX idx_openrouter_entitlements_expires_at');
+    expect(abuseHooksMigration).toContain('CREATE TABLE broker_request_events');
+    expect(abuseHooksMigration).toContain('CREATE TABLE broker_velocity_cap_hooks');
+    expect(abuseHooksMigration).toContain('CREATE TABLE broker_abuse_subject_hooks');
+    expect(hardeningMigration).toContain('PRAGMA defer_foreign_keys = on');
+    expect(hardeningMigration).toContain('CREATE TABLE installations_hardened');
+    expect(hardeningMigration).toContain('CREATE TABLE openrouter_entitlements_hardened');
+    expect(hardeningMigration).toContain('INSERT INTO installations_hardened');
+    expect(hardeningMigration).toContain('INSERT INTO openrouter_entitlements_hardened');
+    expect(hardeningMigration).toContain('DROP TABLE openrouter_entitlements;');
+    expect(hardeningMigration).toContain('ALTER TABLE installations_hardened RENAME TO installations');
+    expect(hardeningMigration).toContain('PRAGMA foreign_key_check');
+    expect(verifiedSnapshotMigration).toContain('ALTER TABLE openrouter_entitlements');
+    expect(verifiedSnapshotMigration).toContain('verified_hardware_hash TEXT');
+    expect(verifiedSnapshotMigration).toContain(
+      'verified_hardware_hash_salt_version INTEGER',
+    );
+    expect(abuseRuntimeMigration).toContain('CREATE TABLE broker_config_v2');
+    expect(abuseRuntimeMigration).toContain('abuse_runtime_state');
+    expect(abuseRuntimeMigration).toContain('CREATE TABLE broker_issue_success_events');
+    expect(abuseRuntimeMigration).toContain('managed_credential_ref TEXT');
+    expect(abuseRuntimeMigration).toContain('ip_hash TEXT');
+    expect(abuseRuntimeMigration).toContain('ip_prefix_hash TEXT');
+    expect(abuseRuntimeMigration).toContain('country TEXT');
+    expect(abuseRuntimeMigration).toContain('http_protocol TEXT');
+    expect(abuseRuntimeMigration).toContain('tls_version TEXT');
+    expect(abuseRuntimeMigration).toContain('tls_cipher TEXT');
+    expect(abuseRuntimeMigration).toContain('risk_label TEXT');
+    expect(abuseRuntimeMigration).toContain('CREATE TABLE broker_abuse_runtime_audit');
+    expect(abuseRuntimeMigration).toContain('payload_json TEXT NOT NULL CHECK (json_valid(payload_json))');
+    expect(abuseRuntimeMigration).toContain('created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP');
+    expect(discordManagedIssueMigration).toContain('CREATE TABLE discord_oauth_sessions');
+    expect(discordManagedIssueMigration).toContain('CREATE TABLE discord_identities');
+    expect(discordManagedIssueMigration).toContain('discord_user_ref TEXT');
+    expect(discordManagedIssueMigration).toContain('discord_issue_status TEXT');
+    expect(discordManagedIssueMigration).toContain(
+      'CREATE UNIQUE INDEX idx_openrouter_entitlements_discord_user_ref',
+    );
+    expect(discordManagedIssueMigration).toContain(
+      'POST /v1/providers/openrouter/discord/issue',
+    );
+    expect(discordManagedIssueMigration).not.toContain('legacy_installation_id_mapping');
+    expect(discordManagedIssueMigration).not.toContain('legacy-invalid-app-version');
+    expect(referralPersistenceMigration).toContain('CREATE TABLE referral_codes');
+    expect(referralPersistenceMigration).toContain('CREATE TABLE referral_rewards');
+    expect(referralPersistenceMigration).toContain('ADD COLUMN referral_id TEXT');
+    expect(referralPersistenceMigration).toContain(
+      'CREATE UNIQUE INDEX idx_referral_rewards_counted_referred_discord_user',
+    );
+    expect(referralPersistenceMigration).toContain(
+      'CREATE UNIQUE INDEX idx_referral_rewards_counted_referred_installation',
+    );
+    expect(referralPersistenceMigration).not.toContain('ON DELETE CASCADE');
+    expect(referralOperationsMigration).toContain('ADD COLUMN disabled_reason TEXT');
+    expect(referralOperationsMigration).toContain('ADD COLUMN disabled_by TEXT');
+    expect(referralOperationsMigration).toContain('ADD COLUMN disabled_at TEXT');
+    expect(referralOperationsMigration).toContain('ADD COLUMN attempt_ip_hash TEXT');
+    expect(referralOperationsMigration).toContain(
+      'CREATE INDEX idx_referral_rewards_attempt_installation_time',
+    );
+    expect(referralOperationsMigration).toContain(
+      'CREATE INDEX idx_referral_rewards_attempt_ip_hash_time',
+    );
+    expect(referralOperationsMigration).toContain(
+      'CREATE INDEX idx_referral_rewards_referral_velocity',
+    );
+    expect(referralOperationsMigration).toContain(
+      'CREATE INDEX idx_referral_rewards_referrer_velocity',
+    );
+    expect(referralOperationsMigration).toContain('$.retention.referralSkippedDays');
+    expect(referralOperationsMigration).toContain('$.retention.referralFailedDays');
+    expect(referralOperationsMigration).toContain('$.referralAttempts');
+    expect(referralCheckRepairMigration).toContain('PRAGMA defer_foreign_keys = on');
+    expect(referralCheckRepairMigration).toContain(
+      'CREATE TABLE discord_oauth_sessions_referral_id_checks_v2',
+    );
+    expect(referralCheckRepairMigration).toContain(
+      'CREATE TABLE referral_codes_referral_id_checks_v2',
+    );
+    expect(referralCheckRepairMigration).toContain(
+      'CREATE TABLE referral_rewards_referral_id_checks_v2',
+    );
+    expect(referralCheckRepairMigration).toContain(
+      "AND referral_id NOT GLOB '*[^23456789ABCDEFGHJKMNPQRSTUVWXYZ]*'",
+    );
+    expect(referralCheckRepairMigration).toContain('PRAGMA foreign_key_check');
+    expect(referralCheckRepairMigration).not.toContain('PRAGMA foreign_keys = OFF');
+    expect(referralCheckRepairMigration).not.toContain('PRAGMA foreign_keys = ON');
+  });
+});

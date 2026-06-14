@@ -1,0 +1,305 @@
+name: Maintenance Broker D1 Cleanup
+
+on:
+  workflow_dispatch:
+    inputs:
+      mode:
+        description: inspect or delete matching broker trial state
+        required: true
+        type: choice
+        options:
+          - inspect
+          - delete
+      installation_id:
+        description: Target installation id
+        required: false
+        type: string
+      hardware_hash:
+        description: Target verified hardware hash
+        required: false
+        type: string
+      hardware_hash_salt_version:
+        description: Target hardware hash salt version
+        required: false
+        type: string
+      confirm_delete:
+        description: Type `delete matching broker trial state` to confirm destructive cleanup
+        required: false
+        type: string
+
+permissions:
+  contents: read
+
+jobs:
+  cleanup:
+    runs-on: ubuntu-latest
+    environment: production
+    env:
+      NODE_VERSION: '22'
+      CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
+      CLOUDFLARE_ACCOUNT_ID: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
+      BROKER_D1_DATABASE_ID_PRODUCTION: ${{ secrets.BROKER_D1_DATABASE_ID_PRODUCTION }}
+    steps:
+      - name: Guard inputs
+        shell: bash
+        env:
+          TARGET_MODE: ${{ github.event.inputs.mode }}
+          TARGET_INSTALLATION_ID: ${{ github.event.inputs.installation_id }}
+          TARGET_HARDWARE_HASH: ${{ github.event.inputs.hardware_hash }}
+          TARGET_HARDWARE_HASH_SALT_VERSION: ${{ github.event.inputs.hardware_hash_salt_version }}
+          CONFIRM_DELETE: ${{ github.event.inputs.confirm_delete }}
+        run: |
+          installation_id="$TARGET_INSTALLATION_ID"
+          hardware_hash="$TARGET_HARDWARE_HASH"
+          hardware_hash_salt_version="$TARGET_HARDWARE_HASH_SALT_VERSION"
+
+          if [[ "$TARGET_MODE" != 'inspect' && "$TARGET_MODE" != 'delete' ]]; then
+            echo 'mode must be inspect or delete' >&2
+            exit 1
+          fi
+
+          has_installation_id=0
+          has_hardware_hash=0
+          has_hardware_hash_salt_version=0
+
+          if [[ -n "${installation_id//[[:space:]]/}" ]]; then
+            has_installation_id=1
+          fi
+          if [[ -n "${hardware_hash//[[:space:]]/}" ]]; then
+            has_hardware_hash=1
+          fi
+          if [[ -n "${hardware_hash_salt_version//[[:space:]]/}" ]]; then
+            has_hardware_hash_salt_version=1
+          fi
+
+          if [[ "$has_installation_id" == '1' && ( "$has_hardware_hash" == '1' || "$has_hardware_hash_salt_version" == '1' ) ]]; then
+            echo 'installation_id and hardware hash inputs are mutually exclusive' >&2
+            exit 1
+          fi
+
+          if [[ "$has_installation_id" == '0' && ( "$has_hardware_hash" == '0' || "$has_hardware_hash_salt_version" == '0' ) ]]; then
+            echo 'either installation_id or both hardware_hash and hardware_hash_salt_version are required' >&2
+            exit 1
+          fi
+
+          if [[ "$has_hardware_hash_salt_version" == '1' && ! "$hardware_hash_salt_version" =~ ^[0-9]+$ ]]; then
+            echo 'hardware_hash_salt_version must be an integer' >&2
+            exit 1
+          fi
+
+          if [[ "$TARGET_MODE" == 'delete' && "$CONFIRM_DELETE" != 'delete matching broker trial state' ]]; then
+            echo 'confirm_delete must exactly match: delete matching broker trial state' >&2
+            exit 1
+          fi
+
+      - name: Checkout
+        uses: actions/checkout@v4
+        with:
+          ref: refs/heads/main
+
+      - name: Setup pnpm
+        uses: pnpm/action-setup@v4
+        with:
+          run_install: false
+
+      - name: Setup Node
+        uses: actions/setup-node@v4
+        with:
+          node-version: ${{ env.NODE_VERSION }}
+          cache: pnpm
+
+      - name: Install workspace dependencies
+        run: pnpm install --frozen-lockfile
+
+      - name: Render production Wrangler config
+        working-directory: broker
+        run: >-
+          node scripts/render-production-wrangler-config.mjs
+          --database-id "$BROKER_D1_DATABASE_ID_PRODUCTION"
+          --out wrangler.production.jsonc
+
+      - name: Inspect matching broker rows
+        id: inspect
+        shell: bash
+        working-directory: broker
+        env:
+          TARGET_INSTALLATION_ID: ${{ github.event.inputs.installation_id }}
+          TARGET_HARDWARE_HASH: ${{ github.event.inputs.hardware_hash }}
+          TARGET_HARDWARE_HASH_SALT_VERSION: ${{ github.event.inputs.hardware_hash_salt_version }}
+        run: |
+          python3 - <<'PY'
+          import os
+          from pathlib import Path
+
+          def normalized_env(name: str) -> str:
+              return (os.environ.get(name) or '').strip()
+
+          def sql_literal(value: str) -> str:
+              return "'" + value.replace("'", "''") + "'"
+
+          installation_id = normalized_env('TARGET_INSTALLATION_ID')
+          hardware_hash = normalized_env('TARGET_HARDWARE_HASH')
+          salt_version_raw = normalized_env('TARGET_HARDWARE_HASH_SALT_VERSION')
+
+          if installation_id:
+              target_installations = f"""
+            SELECT {sql_literal(installation_id)} AS installation_id
+             WHERE EXISTS (
+                   SELECT 1
+                     FROM installations i
+                    WHERE i.installation_id = {sql_literal(installation_id)}
+                 )"""
+          else:
+              salt_version = int(salt_version_raw)
+              hardware_hash_literal = sql_literal(hardware_hash)
+              target_installations = f"""
+            SELECT DISTINCT e.installation_id
+              FROM openrouter_entitlements e
+              JOIN installations i ON i.installation_id = e.installation_id
+             WHERE e.status IN ('pending_release', 'active')
+               AND (
+                 (e.verified_hardware_hash = {hardware_hash_literal} AND e.verified_hardware_hash_salt_version = {salt_version})
+                 OR (
+                   e.verified_hardware_hash IS NULL
+                   AND e.verified_hardware_hash_salt_version IS NULL
+                   AND i.hardware_hash = {hardware_hash_literal}
+                   AND i.hardware_hash_salt_version = {salt_version}
+                 )
+               )"""
+
+          sql = f"""
+          WITH target_installations AS (
+          {target_installations}
+          )
+          SELECT i.installation_id,
+                 e.status,
+                 e.managed_credential_ref,
+                 COALESCE(e.discord_user_ref, di.discord_user_ref) AS discord_user_ref,
+                 e.discord_issue_status,
+                 e.issued_at,
+                 e.expires_at,
+                 e.verified_hardware_hash,
+                 e.verified_hardware_hash_salt_version,
+                 i.hardware_hash,
+                 i.hardware_hash_salt_version,
+                 i.created_at,
+                 i.last_seen_at
+            FROM target_installations t
+            JOIN installations i ON i.installation_id = t.installation_id
+            LEFT JOIN openrouter_entitlements e ON e.installation_id = t.installation_id
+            LEFT JOIN discord_identities di ON di.entitlement_installation_id = i.installation_id
+           ORDER BY i.created_at ASC;
+          """
+          Path(".maintenance-inspect.sql").write_text(sql.strip() + "\n", encoding="utf-8")
+          PY
+
+          inspect_sql="$(tr '\n' ' ' < .maintenance-inspect.sql)"
+          pnpm exec wrangler d1 execute puripuly-heart-broker --remote --config wrangler.production.jsonc --command "$inspect_sql" --json > .maintenance-inspect.json
+          cat .maintenance-inspect.json
+
+      - name: Delete matching broker rows
+        if: ${{ github.event.inputs.mode == 'delete' }}
+        shell: bash
+        working-directory: broker
+        run: |
+          python3 - <<'PY'
+          import json
+          from pathlib import Path
+
+          def sql_literal(value: str) -> str:
+              return "'" + value.replace("'", "''") + "'"
+
+          def unique_non_empty(values: list[object]) -> list[str]:
+              seen: set[str] = set()
+              result: list[str] = []
+              for value in values:
+                  if not isinstance(value, str) or not value:
+                      continue
+                  if value in seen:
+                      continue
+                  seen.add(value)
+                  result.append(value)
+              return result
+
+          def d1_rows(path: Path) -> list[dict[str, object]]:
+              payload = json.loads(path.read_text(encoding="utf-8"))
+              rows: list[dict[str, object]] = []
+              if not isinstance(payload, list):
+                  return rows
+              for item in payload:
+                  if not isinstance(item, dict):
+                      continue
+                  for row in item.get('results', []):
+                      if isinstance(row, dict) and isinstance(row.get('installation_id'), str):
+                          rows.append(row)
+              return rows
+
+          rows = d1_rows(Path(".maintenance-inspect.json"))
+          installation_ids = unique_non_empty([row.get('installation_id') for row in rows])
+          discord_user_refs = unique_non_empty([row.get('discord_user_ref') for row in rows])
+
+          def in_list(values: list[str]) -> str:
+              return ', '.join(sql_literal(value) for value in values)
+
+          if installation_ids:
+              installation_in = in_list(installation_ids)
+              delete_request_events = (
+                  f"DELETE FROM broker_request_events WHERE installation_id IN ({installation_in});"
+              )
+              delete_oauth_sessions = (
+                  f"DELETE FROM discord_oauth_sessions WHERE installation_id IN ({installation_in});"
+              )
+              delete_installations = (
+                  f"DELETE FROM installations WHERE installation_id IN ({installation_in});"
+              )
+          else:
+              delete_request_events = "SELECT 'no matching broker_request_events' AS skipped;"
+              delete_oauth_sessions = "SELECT 'no matching discord_oauth_sessions' AS skipped;"
+              delete_installations = "SELECT 'no matching installations' AS skipped;"
+
+          if discord_user_refs:
+              delete_discord_identities = (
+                  "DELETE FROM discord_identities "
+                  f"WHERE discord_user_ref IN ({in_list(discord_user_refs)});"
+              )
+          else:
+              delete_discord_identities = "SELECT 'no matching discord_identities' AS skipped;"
+
+          Path(".maintenance-delete-request-events.sql").write_text(
+              delete_request_events + "\n", encoding="utf-8"
+          )
+          Path(".maintenance-delete-oauth-sessions.sql").write_text(
+              delete_oauth_sessions + "\n", encoding="utf-8"
+          )
+          Path(".maintenance-delete-installations.sql").write_text(
+              delete_installations + "\n", encoding="utf-8"
+          )
+          Path(".maintenance-delete-discord-identities.sql").write_text(
+              delete_discord_identities + "\n", encoding="utf-8"
+          )
+          PY
+
+          delete_request_events_sql="$(tr '\n' ' ' < .maintenance-delete-request-events.sql)"
+          pnpm exec wrangler d1 execute puripuly-heart-broker --remote --config wrangler.production.jsonc --command "$delete_request_events_sql" --json > .maintenance-delete-request-events.json
+          cat .maintenance-delete-request-events.json
+
+          delete_oauth_sessions_sql="$(tr '\n' ' ' < .maintenance-delete-oauth-sessions.sql)"
+          pnpm exec wrangler d1 execute puripuly-heart-broker --remote --config wrangler.production.jsonc --command "$delete_oauth_sessions_sql" --json > .maintenance-delete-oauth-sessions.json
+          cat .maintenance-delete-oauth-sessions.json
+
+          delete_installations_sql="$(tr '\n' ' ' < .maintenance-delete-installations.sql)"
+          pnpm exec wrangler d1 execute puripuly-heart-broker --remote --config wrangler.production.jsonc --command "$delete_installations_sql" --json > .maintenance-delete-installations.json
+          cat .maintenance-delete-installations.json
+
+          delete_discord_identities_sql="$(tr '\n' ' ' < .maintenance-delete-discord-identities.sql)"
+          pnpm exec wrangler d1 execute puripuly-heart-broker --remote --config wrangler.production.jsonc --command "$delete_discord_identities_sql" --json > .maintenance-delete-discord-identities.json
+          cat .maintenance-delete-discord-identities.json
+
+      - name: Re-inspect after delete
+        if: ${{ github.event.inputs.mode == 'delete' }}
+        shell: bash
+        working-directory: broker
+        run: |
+          inspect_sql="$(tr '\n' ' ' < .maintenance-inspect.sql)"
+          pnpm exec wrangler d1 execute puripuly-heart-broker --remote --config wrangler.production.jsonc --command "$inspect_sql" --json > .maintenance-post-delete.json
+          cat .maintenance-post-delete.json

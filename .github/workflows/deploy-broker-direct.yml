@@ -1,0 +1,460 @@
+name: Deploy Broker Direct
+
+on:
+  workflow_dispatch:
+    inputs:
+      confirm_production_deploy:
+        description: Type `deploy puripuly-heart-broker from dev` to confirm the canonical production deploy.
+        required: true
+        type: string
+
+permissions:
+  contents: read
+
+concurrency:
+  group: deploy-broker-direct-production
+  cancel-in-progress: false
+
+jobs:
+  deploy-direct:
+    name: Direct deploy canonical broker worker
+    runs-on: ubuntu-latest
+    environment: production
+    env:
+      NODE_VERSION: '22'
+      CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
+      CLOUDFLARE_ACCOUNT_ID: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
+      BROKER_D1_DATABASE_ID_PRODUCTION: ${{ secrets.BROKER_D1_DATABASE_ID_PRODUCTION }}
+      OPENROUTER_MANAGED_API_KEY_PRODUCTION: ${{ secrets.OPENROUTER_MANAGED_API_KEY_PRODUCTION }}
+      OPENROUTER_MANAGEMENT_API_KEY_PRODUCTION: ${{ secrets.OPENROUTER_MANAGEMENT_API_KEY_PRODUCTION }}
+      OPENROUTER_MANAGED_GUARDRAIL_ID_PRODUCTION: ${{ secrets.OPENROUTER_MANAGED_GUARDRAIL_ID_PRODUCTION }}
+      OPENROUTER_MANAGED_USER_HMAC_SECRET_PRODUCTION: ${{ secrets.OPENROUTER_MANAGED_USER_HMAC_SECRET_PRODUCTION }}
+      DISCORD_CLIENT_ID_PRODUCTION: ${{ secrets.DISCORD_CLIENT_ID_PRODUCTION }}
+      DISCORD_CLIENT_SECRET_PRODUCTION: ${{ secrets.DISCORD_CLIENT_SECRET_PRODUCTION }}
+      DISCORD_REDIRECT_URI_ALLOWLIST_PRODUCTION: ${{ secrets.DISCORD_REDIRECT_URI_ALLOWLIST_PRODUCTION }}
+      DISCORD_USER_REF_SECRET_PRODUCTION: ${{ secrets.DISCORD_USER_REF_SECRET_PRODUCTION }}
+      DISCORD_OPERATIONS_WEBHOOK_URL_PRODUCTION: ${{ secrets.DISCORD_OPERATIONS_WEBHOOK_URL_PRODUCTION }}
+      BROKER_CANONICAL_WORKERS_DEV_URL: ${{ vars.BROKER_CANONICAL_WORKERS_DEV_URL }}
+      BROKER_DEPLOY_SMOKE_DISALLOWED_MODEL_PRODUCTION: ${{ vars.BROKER_DEPLOY_SMOKE_DISALLOWED_MODEL_PRODUCTION }}
+      BROKER_CANONICAL_WORKER_NAME: puripuly-heart-broker
+    steps:
+      - name: Guard production deploy ref and confirmation
+        shell: bash
+        env:
+          CONFIRM_PRODUCTION_DEPLOY: ${{ github.event.inputs.confirm_production_deploy }}
+        run: |
+          if [[ "$GITHUB_REF" != 'refs/heads/dev' ]]; then
+            echo 'Direct production broker deploys must be launched from refs/heads/dev.' >&2
+            exit 1
+          fi
+
+          if [[ "$CONFIRM_PRODUCTION_DEPLOY" != 'deploy puripuly-heart-broker from dev' ]]; then
+            echo 'confirm_production_deploy must exactly match: deploy puripuly-heart-broker from dev' >&2
+            exit 1
+          fi
+
+          if [[ -z "${BROKER_CANONICAL_WORKERS_DEV_URL//[[:space:]]/}" ]]; then
+            echo 'BROKER_CANONICAL_WORKERS_DEV_URL is required and must not be blank.' >&2
+            exit 1
+          fi
+
+          if [[ -z "${BROKER_DEPLOY_SMOKE_DISALLOWED_MODEL_PRODUCTION//[[:space:]]/}" ]]; then
+            echo 'BROKER_DEPLOY_SMOKE_DISALLOWED_MODEL_PRODUCTION is required and must not be blank.' >&2
+            exit 1
+          fi
+
+          if [[ -z "${OPENROUTER_MANAGED_USER_HMAC_SECRET_PRODUCTION//[[:space:]]/}" ]]; then
+            echo 'OPENROUTER_MANAGED_USER_HMAC_SECRET_PRODUCTION is required and must not be blank.' >&2
+            exit 1
+          fi
+
+          if [[ -z "${DISCORD_CLIENT_ID_PRODUCTION//[[:space:]]/}" ]]; then
+            echo 'DISCORD_CLIENT_ID_PRODUCTION is required and must not be blank.' >&2
+            exit 1
+          fi
+
+          if [[ -z "${DISCORD_CLIENT_SECRET_PRODUCTION//[[:space:]]/}" ]]; then
+            echo 'DISCORD_CLIENT_SECRET_PRODUCTION is required and must not be blank.' >&2
+            exit 1
+          fi
+
+          if [[ -z "${DISCORD_REDIRECT_URI_ALLOWLIST_PRODUCTION//[[:space:]]/}" ]]; then
+            echo 'DISCORD_REDIRECT_URI_ALLOWLIST_PRODUCTION is required and must not be blank.' >&2
+            exit 1
+          fi
+
+          IFS=',' read -ra configured_discord_redirects <<< "$DISCORD_REDIRECT_URI_ALLOWLIST_PRODUCTION"
+          for required_discord_redirect in \
+            'http://127.0.0.1:62187/discord/callback' \
+            'http://127.0.0.1:62188/discord/callback' \
+            'http://127.0.0.1:62189/discord/callback'; do
+            found_discord_redirect=0
+            for configured_discord_redirect in "${configured_discord_redirects[@]}"; do
+              configured_discord_redirect="${configured_discord_redirect#"${configured_discord_redirect%%[![:space:]]*}"}"
+              configured_discord_redirect="${configured_discord_redirect%"${configured_discord_redirect##*[![:space:]]}"}"
+              if [[ "$configured_discord_redirect" == "$required_discord_redirect" ]]; then
+                found_discord_redirect=1
+                break
+              fi
+            done
+            if [[ "$found_discord_redirect" != '1' ]]; then
+              echo "DISCORD_REDIRECT_URI_ALLOWLIST_PRODUCTION must include $required_discord_redirect." >&2
+              exit 1
+            fi
+          done
+
+          if [[ -z "${DISCORD_USER_REF_SECRET_PRODUCTION//[[:space:]]/}" ]]; then
+            echo 'DISCORD_USER_REF_SECRET_PRODUCTION is required and must not be blank.' >&2
+            exit 1
+          fi
+
+          if [[ -z "${DISCORD_OPERATIONS_WEBHOOK_URL_PRODUCTION//[[:space:]]/}" ]]; then
+            echo 'DISCORD_OPERATIONS_WEBHOOK_URL_PRODUCTION is required and must not be blank.' >&2
+            exit 1
+          fi
+
+      - name: Validate canonical workers.dev smoke target
+        shell: bash
+        run: |
+          if [[ ! "$BROKER_CANONICAL_WORKERS_DEV_URL" =~ ^https://puripuly-heart-broker\..+\.workers\.dev/?$ ]]; then
+            echo 'BROKER_CANONICAL_WORKERS_DEV_URL must target the canonical puripuly-heart-broker workers.dev hostname.' >&2
+            exit 1
+          fi
+
+      - name: Checkout
+        uses: actions/checkout@v4
+        with:
+          ref: refs/heads/dev
+
+      - name: Validate disallowed smoke probe against managed allowlist
+        shell: bash
+        run: |
+          managed_models_json="$(python3 - <<'PY'
+          import ast
+          import json
+          import re
+          from pathlib import Path
+
+          source = Path('broker/src/trial-policy.ts').read_text(encoding='utf-8')
+          match = re.search(
+              r"export const MANAGED_TRIAL_ALLOWED_MODELS = \[(?P<body>.*?)\] as const;",
+              source,
+              re.S,
+          )
+          if match is None:
+              raise SystemExit('MANAGED_TRIAL_ALLOWED_MODELS was not found in broker/src/trial-policy.ts')
+          body = '[' + match.group('body') + ']'
+          print(json.dumps(ast.literal_eval(body)))
+          PY
+          )"
+
+          python3 - <<'PY' "$managed_models_json" "$BROKER_DEPLOY_SMOKE_DISALLOWED_MODEL_PRODUCTION"
+          import json
+          import sys
+
+          managed_models = json.loads(sys.argv[1])
+          disallowed_model = sys.argv[2]
+          if disallowed_model in managed_models:
+              raise SystemExit(
+                  'BROKER_DEPLOY_SMOKE_DISALLOWED_MODEL_PRODUCTION must differ from the managed allowlisted models.'
+              )
+          PY
+
+      - name: Setup pnpm
+        uses: pnpm/action-setup@v4
+        with:
+          run_install: false
+
+      - name: Setup Node
+        uses: actions/setup-node@v4
+        with:
+          node-version: ${{ env.NODE_VERSION }}
+          cache: pnpm
+
+      - name: Install workspace dependencies
+        run: pnpm install --frozen-lockfile
+
+      - name: Render deploy-time broker assets
+        id: render
+        shell: bash
+        working-directory: broker
+        run: |
+          deploy_dir='.deploy-direct'
+          config_path='wrangler.production.jsonc'
+          bootstrap_sql_path="$deploy_dir/fingerprint-bootstrap.sql"
+          mkdir -p "$deploy_dir"
+          fingerprint_salt="$(python3 - <<'PY'
+          import secrets
+          print(secrets.token_urlsafe(32))
+          PY
+          )"
+          echo "::add-mask::$fingerprint_salt"
+
+          node scripts/render-production-wrangler-config.mjs \
+            --database-id "$BROKER_D1_DATABASE_ID_PRODUCTION" \
+            --out "$config_path"
+
+          node scripts/render-fingerprint-bootstrap-sql.mjs \
+            --salt "$fingerprint_salt" \
+            --out "$bootstrap_sql_path"
+
+          {
+            echo "config_path=$config_path"
+            echo "bootstrap_sql_path=$bootstrap_sql_path"
+          } >> "$GITHUB_OUTPUT"
+
+      - name: Validate rendered Wrangler config
+        working-directory: broker
+        run: >-
+          pnpm exec wrangler types --config
+          "${{ steps.render.outputs.config_path }}"
+
+      - name: Apply remote D1 migrations
+        working-directory: broker
+        run: >-
+          pnpm exec wrangler d1 migrations apply
+          puripuly-heart-broker --remote --config
+          "${{ steps.render.outputs.config_path }}"
+
+      - name: Bootstrap fingerprint salt while the migration placeholder is still present
+        working-directory: broker
+        run: >-
+          pnpm exec wrangler d1 execute
+          puripuly-heart-broker --remote --config
+          "${{ steps.render.outputs.config_path }}" --file
+          "${{ steps.render.outputs.bootstrap_sql_path }}" --yes
+
+      - name: Verify fingerprint salt bootstrap completed
+        shell: bash
+        working-directory: broker
+        run: |
+          bootstrap_state_json="$(pnpm exec wrangler d1 execute \
+            puripuly-heart-broker --remote --config "${{ steps.render.outputs.config_path }}" \
+            --command "SELECT json_extract(value, '$.current.salt') AS salt FROM broker_config WHERE key = 'fingerprint_salt';" \
+            --json)"
+
+          python3 - <<'PY' "$bootstrap_state_json"
+          import json
+          import sys
+
+          payload = json.loads(sys.argv[1])
+          results = payload[0].get('results', [])
+
+          if len(results) != 1:
+              raise SystemExit('fingerprint_salt bootstrap validation returned an unexpected row count')
+
+          salt = results[0].get('salt')
+
+          if not salt or salt == '__BOOTSTRAP_REQUIRED__':
+              raise SystemExit('fingerprint_salt bootstrap validation failed; placeholder still present')
+          PY
+
+      - name: Reconcile production OpenRouter guardrail
+        shell: bash
+        run: |
+          guardrail_url="https://openrouter.ai/api/v1/guardrails/$OPENROUTER_MANAGED_GUARDRAIL_ID_PRODUCTION"
+          expected_models_json="$(python3 - <<'PY'
+          import ast
+          import json
+          import re
+          from pathlib import Path
+
+          source = Path('broker/src/trial-policy.ts').read_text(encoding='utf-8')
+          match = re.search(
+              r"export const MANAGED_TRIAL_ALLOWED_MODELS = \[(?P<body>.*?)\] as const;",
+              source,
+              re.S,
+          )
+          if match is None:
+              raise SystemExit('MANAGED_TRIAL_ALLOWED_MODELS was not found in broker/src/trial-policy.ts')
+          body = '[' + match.group('body') + ']'
+          print(json.dumps(ast.literal_eval(body)))
+          PY
+          )"
+          guardrail_patch_json="$(python3 - <<'PY'
+          import json
+          import ast
+          import re
+          from pathlib import Path
+
+          source = Path('broker/src/trial-policy.ts').read_text(encoding='utf-8')
+          match = re.search(
+              r"export const MANAGED_TRIAL_ALLOWED_MODELS = \[(?P<body>.*?)\] as const;",
+              source,
+              re.S,
+          )
+          if match is None:
+              raise SystemExit('MANAGED_TRIAL_ALLOWED_MODELS was not found in broker/src/trial-policy.ts')
+          body = '[' + match.group('body') + ']'
+          managed_models = ast.literal_eval(body)
+
+          print(json.dumps({
+              'allowed_models': managed_models,
+              'allowed_providers': None,
+              'ignored_providers': None,
+              'enforce_zdr': False,
+          }))
+          PY
+          )"
+
+          patch_response="$(curl --fail-with-body --silent --show-error --max-time 30 \
+            -H "Authorization: Bearer $OPENROUTER_MANAGEMENT_API_KEY_PRODUCTION" \
+            -H 'Content-Type: application/json' \
+            -X PATCH "$guardrail_url" \
+            --data "$guardrail_patch_json")"
+          current_response="$(curl --fail-with-body --silent --show-error --max-time 30 \
+            -H "Authorization: Bearer $OPENROUTER_MANAGEMENT_API_KEY_PRODUCTION" \
+            "$guardrail_url")"
+
+          python3 - <<'PY' "$patch_response" "$current_response" "$expected_models_json" "$OPENROUTER_MANAGED_GUARDRAIL_ID_PRODUCTION"
+          import json
+          import sys
+
+          patch_raw, current_raw, expected_models_raw, guardrail_id = sys.argv[1:5]
+          expected_models = sorted(json.loads(expected_models_raw))
+
+          def read_guardrail(raw: str, label: str) -> dict:
+              payload = json.loads(raw)
+              data = payload.get('data')
+              if not isinstance(data, dict):
+                  raise SystemExit(f'{label} response missing data object')
+              if data.get('id') != guardrail_id:
+                  raise SystemExit(f'{label} id mismatch for {guardrail_id}')
+              return data
+
+          def normalize_optional_string_list(value, field_name: str, label: str):
+              if value is None:
+                  return None
+              if not isinstance(value, list) or not all(isinstance(item, str) for item in value):
+                  raise SystemExit(f'{label} {field_name} must be null or a string list')
+              return sorted(value)
+
+          def assert_cleared(data: dict, field_name: str, label: str) -> None:
+              normalized = normalize_optional_string_list(data.get(field_name), field_name, label)
+              if normalized not in (None, []):
+                  raise SystemExit(f'{label} {field_name} must be cleared (null or [])')
+
+          def model_matches(expected: str, actual: str) -> bool:
+              if actual == expected or actual.startswith(expected + '-'):
+                  return True
+              date_suffix_match = __import__('re').search(r'-\d{2}-\d{2}$', expected)
+              if date_suffix_match:
+                  family_prefix = expected[: date_suffix_match.start()]
+                  return actual == family_prefix or actual.startswith(family_prefix + '-')
+              return False
+
+          def assert_models_match(actual_models, label: str) -> None:
+              if actual_models is None:
+                  raise SystemExit(f'{label} allowed_models must not be null')
+              if len(actual_models) != len(expected_models):
+                  raise SystemExit(f'{label} allowed_models count mismatch: {actual_models!r}')
+              unmatched = []
+              remaining_actual = list(actual_models)
+              for expected in expected_models:
+                  match_index = next(
+                      (idx for idx, actual in enumerate(remaining_actual) if model_matches(expected, actual)),
+                      None,
+                  )
+                  if match_index is None:
+                      unmatched.append(expected)
+                      continue
+                  remaining_actual.pop(match_index)
+              if unmatched or remaining_actual:
+                  raise SystemExit(
+                      f'{label} allowed_models mismatch: unmatched_expected={unmatched!r} remaining_actual={remaining_actual!r}'
+                  )
+
+          for label, data in (
+              ('PATCH guardrail', read_guardrail(patch_raw, 'PATCH guardrail')),
+              ('GET guardrail', read_guardrail(current_raw, 'GET guardrail')),
+          ):
+              allowed_models = normalize_optional_string_list(
+                  data.get('allowed_models'),
+                  'allowed_models',
+                  label,
+              )
+              assert_models_match(allowed_models, label)
+              assert_cleared(data, 'allowed_providers', label)
+              assert_cleared(data, 'ignored_providers', label)
+              if data.get('enforce_zdr') is not False:
+                  raise SystemExit(f'{label} enforce_zdr must be false')
+          PY
+
+      - name: Sync worker secrets for managed issuance and Discord OAuth operations
+        shell: bash
+        working-directory: broker
+        run: |
+          # OPENROUTER_MANAGED_API_KEY_PRODUCTION remains for transitional runtime compatibility
+          # until the legacy binding is removed from the worker contract.
+          printf '%s' "$OPENROUTER_MANAGED_API_KEY_PRODUCTION" \
+            | pnpm exec wrangler secret put OPENROUTER_MANAGED_API_KEY --config "${{ steps.render.outputs.config_path }}"
+          # OPENROUTER_MANAGEMENT_API_KEY_PRODUCTION is required for managed child-key creation and cleanup.
+          printf '%s' "$OPENROUTER_MANAGEMENT_API_KEY_PRODUCTION" \
+            | pnpm exec wrangler secret put OPENROUTER_MANAGEMENT_API_KEY --config "${{ steps.render.outputs.config_path }}"
+          # OPENROUTER_MANAGED_GUARDRAIL_ID_PRODUCTION must assign the canonical production guardrail to every issued child key.
+          printf '%s' "$OPENROUTER_MANAGED_GUARDRAIL_ID_PRODUCTION" \
+            | pnpm exec wrangler secret put OPENROUTER_MANAGED_GUARDRAIL_ID --config "${{ steps.render.outputs.config_path }}"
+          # OPENROUTER_MANAGED_USER_HMAC_SECRET_PRODUCTION derives the deterministic managed OpenRouter user id
+          # for each installation at runtime via OPENROUTER_MANAGED_USER_HMAC_SECRET.
+          printf '%s' "$OPENROUTER_MANAGED_USER_HMAC_SECRET_PRODUCTION" \
+            | pnpm exec wrangler secret put OPENROUTER_MANAGED_USER_HMAC_SECRET --config "${{ steps.render.outputs.config_path }}"
+          # Discord OAuth runtime secrets are required for the GUI-managed onboarding flow.
+          printf '%s' "$DISCORD_CLIENT_ID_PRODUCTION" \
+            | pnpm exec wrangler secret put DISCORD_CLIENT_ID --config "${{ steps.render.outputs.config_path }}"
+          printf '%s' "$DISCORD_CLIENT_SECRET_PRODUCTION" \
+            | pnpm exec wrangler secret put DISCORD_CLIENT_SECRET --config "${{ steps.render.outputs.config_path }}"
+          printf '%s' "$DISCORD_REDIRECT_URI_ALLOWLIST_PRODUCTION" \
+            | pnpm exec wrangler secret put DISCORD_REDIRECT_URI_ALLOWLIST --config "${{ steps.render.outputs.config_path }}"
+          printf '%s' "$DISCORD_USER_REF_SECRET_PRODUCTION" \
+            | pnpm exec wrangler secret put DISCORD_USER_REF_SECRET --config "${{ steps.render.outputs.config_path }}"
+          # DISCORD_OPERATIONS_WEBHOOK_URL_PRODUCTION fans out to both runtime webhook bindings so
+          # immediate alerts and the daily heartbeat reach the operator-facing Discord destination.
+          printf '%s' "$DISCORD_OPERATIONS_WEBHOOK_URL_PRODUCTION" \
+            | pnpm exec wrangler secret put DISCORD_IMMEDIATE_ALERT_WEBHOOK_URL --config "${{ steps.render.outputs.config_path }}"
+          printf '%s' "$DISCORD_OPERATIONS_WEBHOOK_URL_PRODUCTION" \
+            | pnpm exec wrangler secret put DISCORD_DAILY_REPORT_WEBHOOK_URL --config "${{ steps.render.outputs.config_path }}"
+
+      - name: Deploy canonical broker worker
+        working-directory: broker
+        run: >-
+          pnpm exec wrangler deploy --config
+          "${{ steps.render.outputs.config_path }}"
+
+      - name: Wait for deployed workers.dev healthz
+        shell: bash
+        timeout-minutes: 5
+        run: |
+          healthz_url="${BROKER_CANONICAL_WORKERS_DEV_URL%/}/healthz"
+
+          for attempt in {1..12}; do
+            if curl --fail --silent --show-error --max-time 10 "$healthz_url" >/dev/null; then
+              exit 0
+            fi
+
+            sleep 10
+          done
+
+          echo "Timed out waiting for deployed broker healthz at $healthz_url" >&2
+          exit 1
+
+      - name: Run deployed broker smoke test
+        timeout-minutes: 10
+        env:
+          BROKER_DEPLOY_SMOKE_BASE_URL: ${{ env.BROKER_CANONICAL_WORKERS_DEV_URL }}
+          BROKER_DEPLOY_CANONICAL_WORKER_NAME: ${{ env.BROKER_CANONICAL_WORKER_NAME }}
+          BROKER_DEPLOY_SMOKE_DISALLOWED_MODEL: ${{ env.BROKER_DEPLOY_SMOKE_DISALLOWED_MODEL_PRODUCTION }}
+        run: >-
+          pnpm exec vitest run broker/tests/deploy-smoke/canonical-production.spec.ts
+          --reporter=verbose
+
+      - name: Post-smoke boundary reminder
+        if: ${{ success() }}
+        shell: bash
+        run: |
+          cat <<'EOF' >> "$GITHUB_STEP_SUMMARY"
+          Direct broker smoke passed.
+
+          Verified issued child-key metadata, positive Qwen/DeepSeek/Gemini routing, and disallowed-model guardrail enforcement.
+
+          Do not connect app / public traffic to the broker until this run has been reviewed and an explicit cutover is approved.
+          EOF

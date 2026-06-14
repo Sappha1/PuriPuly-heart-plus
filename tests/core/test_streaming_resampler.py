@@ -1,0 +1,707 @@
+from __future__ import annotations
+
+import builtins
+import importlib.util
+import sys
+
+import numpy as np
+import pytest
+
+import puripuly_heart.app.headless_mic as headless_mic
+import puripuly_heart.core.audio.streaming_resampler as streaming_resampler
+from puripuly_heart.core.audio.desktop_pipeline import DesktopPeerPipeline
+from puripuly_heart.core.audio.format import AudioFrameF32, float32_to_pcm16le_bytes
+from puripuly_heart.core.audio.streaming_resampler import MonoFirstStreamingResampler
+
+
+def test_streaming_resampler_module_import_does_not_import_soxr(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    real_import = builtins.__import__
+
+    def guarded_import(name, globals=None, locals=None, fromlist=(), level=0):
+        if name == "soxr":
+            raise AssertionError("module import should not import soxr")
+        return real_import(name, globals, locals, fromlist, level)
+
+    shadow_name = "puripuly_heart._test_shadow_streaming_resampler"
+    shadow_spec = importlib.util.spec_from_file_location(shadow_name, streaming_resampler.__file__)
+    assert shadow_spec is not None and shadow_spec.loader is not None
+
+    monkeypatch.setattr(builtins, "__import__", guarded_import)
+    shadow_module = importlib.util.module_from_spec(shadow_spec)
+    monkeypatch.setitem(sys.modules, shadow_name, shadow_module)
+    shadow_spec.loader.exec_module(shadow_module)
+
+    resampler = shadow_module.MonoFirstStreamingResampler(16000, 16000, 2)
+    out = resampler.resample_chunk(np.array([[0.0, 1.0], [1.0, 0.0]], dtype=np.float32))
+    np.testing.assert_allclose(out, np.array([0.5, 0.5], dtype=np.float32))
+
+
+def test_resample_chunk_mixes_down_before_streaming_soxr_with_mq_quality(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    stream_calls: list[tuple[object, ...]] = []
+
+    class FakeResampleStream:
+        def __init__(
+            self,
+            in_rate: int,
+            out_rate: int,
+            channels: int,
+            *,
+            dtype: str,
+            quality: str,
+        ) -> None:
+            stream_calls.append(("init", in_rate, out_rate, channels, dtype, quality))
+
+        def resample_chunk(self, samples: np.ndarray, *, last: bool = False) -> np.ndarray:
+            stream_calls.append(("chunk", samples.copy(), last, None, None))
+            return np.asarray(samples * 2.0, dtype=np.float32)
+
+    class FakeSoxrModule:
+        ResampleStream = FakeResampleStream
+
+    monkeypatch.setattr(
+        streaming_resampler,
+        "_import_soxr",
+        lambda: FakeSoxrModule,
+        raising=False,
+    )
+
+    resampler = MonoFirstStreamingResampler(
+        input_sample_rate_hz=48000,
+        output_sample_rate_hz=16000,
+        input_channels=2,
+    )
+
+    output = resampler.resample_chunk(np.array([0.0, 1.0, 1.0, 0.0], dtype=np.float32))
+
+    assert stream_calls[0] == ("init", 48000, 16000, 1, "float32", "MQ")
+    np.testing.assert_allclose(stream_calls[1][1], np.array([0.5, 0.5], dtype=np.float32))
+    assert stream_calls[1][2] is False
+    np.testing.assert_allclose(output, np.array([1.0, 1.0], dtype=np.float32))
+    assert output.dtype == np.float32
+
+
+def test_16khz_noop_path_mixdowns_without_building_soxr_stream(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.setattr(
+        streaming_resampler,
+        "_import_soxr",
+        lambda: pytest.fail("16k no-op path should not import soxr"),
+        raising=False,
+    )
+
+    resampler = MonoFirstStreamingResampler(
+        input_sample_rate_hz=16000,
+        output_sample_rate_hz=16000,
+        input_channels=2,
+    )
+
+    output = resampler.resample_chunk(np.array([[0.0, 1.0], [1.0, 0.0]], dtype=np.float32))
+
+    np.testing.assert_allclose(output, np.array([0.5, 0.5], dtype=np.float32))
+    assert output.dtype == np.float32
+
+
+def test_flush_uses_last_true_and_rejects_future_chunks(monkeypatch: pytest.MonkeyPatch) -> None:
+    calls: list[tuple[np.ndarray, bool]] = []
+
+    class FakeResampleStream:
+        def __init__(
+            self,
+            in_rate: int,
+            out_rate: int,
+            channels: int,
+            *,
+            dtype: str,
+            quality: str,
+        ) -> None:
+            assert (in_rate, out_rate, channels, dtype, quality) == (
+                48000,
+                16000,
+                1,
+                "float32",
+                "MQ",
+            )
+
+        def resample_chunk(self, samples: np.ndarray, *, last: bool = False) -> np.ndarray:
+            calls.append((samples.copy(), last))
+            if last:
+                return np.array([0.25, -0.25], dtype=np.float32)
+            return np.empty((0,), dtype=np.float32)
+
+    class FakeSoxrModule:
+        ResampleStream = FakeResampleStream
+
+    monkeypatch.setattr(
+        streaming_resampler,
+        "_import_soxr",
+        lambda: FakeSoxrModule,
+        raising=False,
+    )
+
+    resampler = MonoFirstStreamingResampler(input_sample_rate_hz=48000, output_sample_rate_hz=16000)
+
+    first = resampler.resample_chunk(np.array([0.0, 1.0], dtype=np.float32))
+    tail = resampler.flush()
+
+    assert first.size == 0
+    assert calls[0][1] is False
+    assert calls[1][1] is True
+    assert calls[1][0].dtype == np.float32
+    assert calls[1][0].size == 0
+    np.testing.assert_allclose(tail, np.array([0.25, -0.25], dtype=np.float32))
+
+    with pytest.raises(RuntimeError, match="already been flushed"):
+        resampler.resample_chunk(np.array([0.0], dtype=np.float32))
+
+
+class _StubAudioSource:
+    def __init__(self, frames: list[AudioFrameF32]) -> None:
+        self._frames = frames
+        self.closed = False
+
+    async def frames(self):
+        for frame in self._frames:
+            yield frame
+
+    async def close(self) -> None:
+        self.closed = True
+
+
+class _StubVad:
+    def __init__(self, *, chunk_samples: int) -> None:
+        self.chunk_samples = chunk_samples
+        self.chunks: list[np.ndarray] = []
+
+    def process_chunk(self, chunk: np.ndarray) -> list[np.ndarray]:
+        copied = chunk.copy()
+        self.chunks.append(copied)
+        return [copied]
+
+
+class _StubSink:
+    def __init__(self) -> None:
+        self.events: list[np.ndarray] = []
+
+    async def handle_vad_event(self, event: np.ndarray) -> None:
+        self.events.append(event)
+
+
+@pytest.mark.asyncio
+async def test_run_audio_vad_loop_uses_one_streaming_resampler_and_flushes_tail(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    calls: list[tuple[object, ...]] = []
+
+    class FakeResampler:
+        def __init__(
+            self,
+            input_sample_rate_hz: int,
+            output_sample_rate_hz: int = 16000,
+            input_channels: int = 1,
+        ) -> None:
+            assert (input_sample_rate_hz, output_sample_rate_hz, input_channels) == (
+                48000,
+                16000,
+                2,
+            )
+            self._chunk_calls = 0
+            calls.append(("init", input_sample_rate_hz, output_sample_rate_hz, input_channels))
+
+        def resample_chunk(self, samples: np.ndarray) -> np.ndarray:
+            self._chunk_calls += 1
+            calls.append(("chunk", self._chunk_calls, samples.copy()))
+            if self._chunk_calls == 1:
+                return np.array([0.25], dtype=np.float32)
+            return np.empty((0,), dtype=np.float32)
+
+        def flush(self) -> np.ndarray:
+            calls.append(("flush",))
+            return np.array([0.75], dtype=np.float32)
+
+    monkeypatch.setattr(headless_mic, "MonoFirstStreamingResampler", FakeResampler, raising=False)
+
+    source = _StubAudioSource(
+        [
+            AudioFrameF32(
+                samples=np.array([0.0, 1.0, 1.0, 0.0], dtype=np.float32),
+                sample_rate_hz=48000,
+                channels=2,
+            ),
+            AudioFrameF32(
+                samples=np.array([1.0, 0.0, 0.0, 1.0], dtype=np.float32),
+                sample_rate_hz=48000,
+                channels=2,
+            ),
+        ]
+    )
+    vad = _StubVad(chunk_samples=2)
+    sink = _StubSink()
+
+    await headless_mic.run_audio_vad_loop(
+        source=source,
+        vad=vad,
+        sink=sink,
+        target_sample_rate_hz=16000,
+    )
+
+    assert [call[0] for call in calls] == ["init", "chunk", "chunk", "flush"]
+    assert len(vad.chunks) == 1
+    np.testing.assert_allclose(vad.chunks[0], np.array([0.25, 0.75], dtype=np.float32))
+    assert len(sink.events) == 1
+    np.testing.assert_allclose(sink.events[0], np.array([0.25, 0.75], dtype=np.float32))
+
+
+@pytest.mark.asyncio
+async def test_run_audio_vad_loop_logs_gate_summary_when_detailed() -> None:
+    class MutedState:
+        muted = True
+
+    log_lines: list[str] = []
+    source = _StubAudioSource(
+        [
+            AudioFrameF32(
+                samples=np.ones(16000, dtype=np.float32),
+                sample_rate_hz=16000,
+                channels=1,
+            )
+        ]
+    )
+    vad = _StubVad(chunk_samples=16000)
+    sink = _StubSink()
+    gate = headless_mic.VrcMicAudioGate(state=MutedState(), enabled=True, receiver_active=True)
+
+    await headless_mic.run_audio_vad_loop(
+        source=source,
+        vad=vad,
+        sink=sink,
+        target_sample_rate_hz=16000,
+        audio_gate=gate,
+        channel_label="self",
+        is_detailed_enabled=lambda: True,
+        log_detailed=log_lines.append,
+    )
+
+    assert any("[AudioDiag][Gate][self]" in line for line in log_lines)
+    assert any("gated_audio_ms=1000.0" in line for line in log_lines)
+    assert any("[AudioDiag][VADInput][self]" in line for line in log_lines)
+
+
+@pytest.mark.asyncio
+async def test_run_audio_vad_loop_diagnostic_log_failure_does_not_interrupt_delivery() -> None:
+    class MutedState:
+        muted = True
+
+    attempted_logs: list[str] = []
+
+    def failing_log(message: str) -> None:
+        attempted_logs.append(message)
+        raise RuntimeError("diagnostic log sink unavailable")
+
+    source = _StubAudioSource(
+        [
+            AudioFrameF32(
+                samples=np.ones(16000, dtype=np.float32),
+                sample_rate_hz=16000,
+                channels=1,
+            )
+        ]
+    )
+    vad = _StubVad(chunk_samples=16000)
+    sink = _StubSink()
+    gate = headless_mic.VrcMicAudioGate(state=MutedState(), enabled=True, receiver_active=True)
+
+    await headless_mic.run_audio_vad_loop(
+        source=source,
+        vad=vad,
+        sink=sink,
+        target_sample_rate_hz=16000,
+        audio_gate=gate,
+        channel_label="self",
+        is_detailed_enabled=lambda: True,
+        log_detailed=failing_log,
+    )
+
+    assert any("[AudioDiag][VADInput][self]" in line for line in attempted_logs)
+    assert any("[AudioDiag][Gate][self]" in line for line in attempted_logs)
+    assert len(vad.chunks) == 1
+    assert len(sink.events) == 1
+    np.testing.assert_allclose(sink.events[0], np.zeros(16000, dtype=np.float32))
+
+
+@pytest.mark.asyncio
+async def test_run_audio_vad_loop_diagnostic_metric_failure_does_not_interrupt_delivery(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    class MutedState:
+        muted = True
+
+    monkeypatch.setattr(
+        headless_mic,
+        "compute_audio_frame_metrics",
+        lambda _frame: (_ for _ in ()).throw(RuntimeError("diagnostic metric computation failed")),
+        raising=False,
+    )
+    source = _StubAudioSource(
+        [
+            AudioFrameF32(
+                samples=np.ones(16000, dtype=np.float32),
+                sample_rate_hz=16000,
+                channels=1,
+            )
+        ]
+    )
+    vad = _StubVad(chunk_samples=16000)
+    sink = _StubSink()
+    gate = headless_mic.VrcMicAudioGate(state=MutedState(), enabled=True, receiver_active=True)
+
+    await headless_mic.run_audio_vad_loop(
+        source=source,
+        vad=vad,
+        sink=sink,
+        target_sample_rate_hz=16000,
+        audio_gate=gate,
+        channel_label="self",
+        is_detailed_enabled=lambda: True,
+        log_detailed=lambda _message: None,
+    )
+
+    assert len(vad.chunks) == 1
+    assert len(sink.events) == 1
+    np.testing.assert_allclose(sink.events[0], np.zeros(16000, dtype=np.float32))
+
+
+@pytest.mark.asyncio
+async def test_run_audio_vad_loop_detailed_predicate_failure_does_not_interrupt_delivery() -> None:
+    class MutedState:
+        muted = True
+
+    def failing_detailed_enabled() -> bool:
+        raise RuntimeError("diagnostic predicate unavailable")
+
+    source = _StubAudioSource(
+        [
+            AudioFrameF32(
+                samples=np.ones(16000, dtype=np.float32),
+                sample_rate_hz=16000,
+                channels=1,
+            )
+        ]
+    )
+    vad = _StubVad(chunk_samples=16000)
+    sink = _StubSink()
+    gate = headless_mic.VrcMicAudioGate(state=MutedState(), enabled=True, receiver_active=True)
+
+    await headless_mic.run_audio_vad_loop(
+        source=source,
+        vad=vad,
+        sink=sink,
+        target_sample_rate_hz=16000,
+        audio_gate=gate,
+        channel_label="self",
+        is_detailed_enabled=failing_detailed_enabled,
+        log_detailed=lambda _message: (_ for _ in ()).throw(
+            AssertionError("failed Detailed predicate must not log AudioDiag")
+        ),
+    )
+
+    assert len(vad.chunks) == 1
+    assert len(sink.events) == 1
+    np.testing.assert_allclose(vad.chunks[0], np.zeros(16000, dtype=np.float32))
+    np.testing.assert_allclose(sink.events[0], np.zeros(16000, dtype=np.float32))
+
+
+@pytest.mark.asyncio
+async def test_run_audio_vad_loop_skips_vad_input_metrics_when_not_detailed(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    class MutedState:
+        muted = True
+
+    monkeypatch.setattr(
+        headless_mic,
+        "compute_audio_frame_metrics",
+        lambda _frame: (_ for _ in ()).throw(
+            AssertionError("Basic mode must not compute VAD-input metrics")
+        ),
+        raising=False,
+    )
+    source = _StubAudioSource(
+        [
+            AudioFrameF32(
+                samples=np.ones(16000, dtype=np.float32),
+                sample_rate_hz=16000,
+                channels=1,
+            )
+        ]
+    )
+    vad = _StubVad(chunk_samples=16000)
+    sink = _StubSink()
+    gate = headless_mic.VrcMicAudioGate(state=MutedState(), enabled=True, receiver_active=True)
+
+    await headless_mic.run_audio_vad_loop(
+        source=source,
+        vad=vad,
+        sink=sink,
+        target_sample_rate_hz=16000,
+        audio_gate=gate,
+        channel_label="self",
+        is_detailed_enabled=lambda: False,
+        log_detailed=lambda _message: (_ for _ in ()).throw(
+            AssertionError("Basic mode must not log AudioDiag")
+        ),
+    )
+
+
+@pytest.mark.asyncio
+async def test_desktop_pipeline_uses_one_streaming_resampler_and_yields_flush_tail(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    calls: list[tuple[object, ...]] = []
+
+    class FakeResampler:
+        def __init__(
+            self,
+            input_sample_rate_hz: int,
+            output_sample_rate_hz: int = 16000,
+            input_channels: int = 1,
+        ) -> None:
+            assert (input_sample_rate_hz, output_sample_rate_hz, input_channels) == (
+                48000,
+                16000,
+                2,
+            )
+            self._chunk_calls = 0
+            calls.append(("init", input_sample_rate_hz, output_sample_rate_hz, input_channels))
+
+        def resample_chunk(self, samples: np.ndarray) -> np.ndarray:
+            self._chunk_calls += 1
+            calls.append(("chunk", self._chunk_calls, samples.copy()))
+            if self._chunk_calls == 2:
+                return np.array([0.1, -0.1], dtype=np.float32)
+            return np.empty((0,), dtype=np.float32)
+
+        def flush(self) -> np.ndarray:
+            calls.append(("flush",))
+            return np.array([0.25], dtype=np.float32)
+
+    monkeypatch.setattr(
+        "puripuly_heart.core.audio.desktop_pipeline.MonoFirstStreamingResampler",
+        FakeResampler,
+    )
+
+    pipeline = DesktopPeerPipeline(
+        source=_StubAudioSource(
+            [
+                AudioFrameF32(
+                    samples=np.array([0.0, 1.0, 1.0, 0.0], dtype=np.float32),
+                    sample_rate_hz=48000,
+                    channels=2,
+                ),
+                AudioFrameF32(
+                    samples=np.array([1.0, 0.0, 0.0, 1.0], dtype=np.float32),
+                    sample_rate_hz=48000,
+                    channels=2,
+                ),
+            ]
+        ),
+        target_sample_rate_hz=16000,
+    )
+
+    frames = [frame async for frame in pipeline.frames()]
+
+    assert [call[0] for call in calls] == ["init", "chunk", "chunk", "flush"]
+    assert len(frames) == 2
+    np.testing.assert_allclose(frames[0].samples, np.array([0.1, -0.1], dtype=np.float32))
+    assert frames[0].sample_rate_hz == 16000
+    assert frames[0].deepgram_pcm16le == float32_to_pcm16le_bytes(frames[0].samples)
+    np.testing.assert_allclose(frames[1].samples, np.array([0.25], dtype=np.float32))
+    assert frames[1].sample_rate_hz == 16000
+    assert frames[1].deepgram_pcm16le == float32_to_pcm16le_bytes(frames[1].samples)
+
+
+@pytest.mark.asyncio
+async def test_desktop_pipeline_output_integrates_with_run_audio_vad_loop(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    class FakeDesktopResampler:
+        def __init__(
+            self,
+            input_sample_rate_hz: int,
+            output_sample_rate_hz: int = 16000,
+            input_channels: int = 1,
+        ) -> None:
+            assert (input_sample_rate_hz, output_sample_rate_hz, input_channels) == (
+                48000,
+                16000,
+                2,
+            )
+
+        def resample_chunk(self, samples: np.ndarray) -> np.ndarray:
+            return np.array([0.4, 0.6], dtype=np.float32)
+
+        def flush(self) -> np.ndarray:
+            return np.empty((0,), dtype=np.float32)
+
+    downstream_calls: list[tuple[object, ...]] = []
+
+    class FakeVadLoopResampler:
+        def __init__(
+            self,
+            input_sample_rate_hz: int,
+            output_sample_rate_hz: int = 16000,
+            input_channels: int = 1,
+        ) -> None:
+            downstream_calls.append(
+                ("init", input_sample_rate_hz, output_sample_rate_hz, input_channels)
+            )
+
+        def resample_chunk(self, samples: np.ndarray) -> np.ndarray:
+            downstream_calls.append(("chunk", samples.copy()))
+            return np.asarray(samples, dtype=np.float32)
+
+        def flush(self) -> np.ndarray:
+            downstream_calls.append(("flush",))
+            return np.empty((0,), dtype=np.float32)
+
+    monkeypatch.setattr(
+        "puripuly_heart.core.audio.desktop_pipeline.MonoFirstStreamingResampler",
+        FakeDesktopResampler,
+    )
+    monkeypatch.setattr(
+        headless_mic,
+        "MonoFirstStreamingResampler",
+        FakeVadLoopResampler,
+        raising=False,
+    )
+
+    pipeline = DesktopPeerPipeline(
+        source=_StubAudioSource(
+            [
+                AudioFrameF32(
+                    samples=np.array([0.0, 1.0, 1.0, 0.0], dtype=np.float32),
+                    sample_rate_hz=48000,
+                    channels=2,
+                )
+            ]
+        ),
+        target_sample_rate_hz=16000,
+    )
+    vad = _StubVad(chunk_samples=2)
+    sink = _StubSink()
+
+    await headless_mic.run_audio_vad_loop(
+        source=pipeline,
+        vad=vad,
+        sink=sink,
+        target_sample_rate_hz=16000,
+    )
+
+    assert downstream_calls[0] == ("init", 16000, 16000, 1)
+    np.testing.assert_allclose(downstream_calls[1][1], np.array([0.4, 0.6], dtype=np.float32))
+    assert downstream_calls[2] == ("flush",)
+    np.testing.assert_allclose(vad.chunks[0], np.array([0.4, 0.6], dtype=np.float32))
+    np.testing.assert_allclose(sink.events[0], np.array([0.4, 0.6], dtype=np.float32))
+
+
+@pytest.mark.asyncio
+async def test_run_audio_vad_loop_raises_on_source_sample_rate_change(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    class FakeResampler:
+        def __init__(
+            self,
+            input_sample_rate_hz: int,
+            output_sample_rate_hz: int = 16000,
+            input_channels: int = 1,
+        ) -> None:
+            assert (input_sample_rate_hz, output_sample_rate_hz, input_channels) == (
+                48000,
+                16000,
+                2,
+            )
+
+        def resample_chunk(self, samples: np.ndarray) -> np.ndarray:
+            return np.asarray(samples[:0], dtype=np.float32)
+
+        def flush(self) -> np.ndarray:
+            return np.empty((0,), dtype=np.float32)
+
+    monkeypatch.setattr(headless_mic, "MonoFirstStreamingResampler", FakeResampler, raising=False)
+
+    source = _StubAudioSource(
+        [
+            AudioFrameF32(
+                samples=np.array([0.0, 1.0, 1.0, 0.0], dtype=np.float32),
+                sample_rate_hz=48000,
+                channels=2,
+            ),
+            AudioFrameF32(
+                samples=np.array([1.0, 0.0, 0.0, 1.0], dtype=np.float32),
+                sample_rate_hz=44100,
+                channels=2,
+            ),
+        ]
+    )
+
+    with pytest.raises(ValueError, match="source audio format changed"):
+        await headless_mic.run_audio_vad_loop(
+            source=source,
+            vad=_StubVad(chunk_samples=2),
+            sink=_StubSink(),
+            target_sample_rate_hz=16000,
+        )
+
+
+@pytest.mark.asyncio
+async def test_desktop_pipeline_raises_on_source_channel_change(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    class FakeResampler:
+        def __init__(
+            self,
+            input_sample_rate_hz: int,
+            output_sample_rate_hz: int = 16000,
+            input_channels: int = 1,
+        ) -> None:
+            assert (input_sample_rate_hz, output_sample_rate_hz, input_channels) == (
+                48000,
+                16000,
+                2,
+            )
+
+        def resample_chunk(self, samples: np.ndarray) -> np.ndarray:
+            return np.asarray(samples[:0], dtype=np.float32)
+
+        def flush(self) -> np.ndarray:
+            return np.empty((0,), dtype=np.float32)
+
+    monkeypatch.setattr(
+        "puripuly_heart.core.audio.desktop_pipeline.MonoFirstStreamingResampler",
+        FakeResampler,
+    )
+
+    pipeline = DesktopPeerPipeline(
+        source=_StubAudioSource(
+            [
+                AudioFrameF32(
+                    samples=np.array([0.0, 1.0, 1.0, 0.0], dtype=np.float32),
+                    sample_rate_hz=48000,
+                    channels=2,
+                ),
+                AudioFrameF32(
+                    samples=np.array([0.0, 1.0], dtype=np.float32),
+                    sample_rate_hz=48000,
+                    channels=1,
+                ),
+            ]
+        ),
+        target_sample_rate_hz=16000,
+    )
+
+    with pytest.raises(ValueError, match="source audio format changed"):
+        _ = [frame async for frame in pipeline.frames()]

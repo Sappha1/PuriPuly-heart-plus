@@ -1,0 +1,4 @@
+# Local verification evidence
+# Keep this directory in the repo but do not commit generated log files.
+*
+!.gitignore

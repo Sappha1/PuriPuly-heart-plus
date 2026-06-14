@@ -1,0 +1,152 @@
+name: Maintenance Broker Abuse Controls
+
+on:
+  workflow_dispatch:
+    inputs:
+      max_count:
+        description: Daily Discord managed auth cap to write into abuse_controls
+        required: true
+        default: "1000"
+        type: string
+      confirm_update:
+        description: Type `update broker daily auth cap` to confirm the production D1 runtime-config update
+        required: true
+        type: string
+
+permissions:
+  contents: read
+
+jobs:
+  update-daily-auth-cap:
+    name: Update broker daily auth cap runtime config
+    runs-on: ubuntu-latest
+    environment: production
+    env:
+      NODE_VERSION: '22'
+      CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
+      CLOUDFLARE_ACCOUNT_ID: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
+      BROKER_D1_DATABASE_ID_PRODUCTION: ${{ secrets.BROKER_D1_DATABASE_ID_PRODUCTION }}
+      TARGET_MAX_COUNT: ${{ github.event.inputs.max_count }}
+      CONFIRM_UPDATE: ${{ github.event.inputs.confirm_update }}
+    steps:
+      - name: Guard production runtime-config update inputs
+        shell: bash
+        run: |
+          if [[ "$CONFIRM_UPDATE" != 'update broker daily auth cap' ]]; then
+            echo 'confirm_update must exactly match: update broker daily auth cap' >&2
+            exit 1
+          fi
+
+          if [[ ! "$TARGET_MAX_COUNT" =~ ^[1-9][0-9]*$ ]]; then
+            echo 'max_count must be a positive integer.' >&2
+            exit 1
+          fi
+
+          if (( TARGET_MAX_COUNT > 100000 )); then
+            echo 'max_count must be 100000 or lower for this manual maintenance workflow.' >&2
+            exit 1
+          fi
+
+          if [[ -z "${CLOUDFLARE_API_TOKEN//[[:space:]]/}" ]]; then
+            echo 'CLOUDFLARE_API_TOKEN is required and must not be blank.' >&2
+            exit 1
+          fi
+
+          if [[ -z "${CLOUDFLARE_ACCOUNT_ID//[[:space:]]/}" ]]; then
+            echo 'CLOUDFLARE_ACCOUNT_ID is required and must not be blank.' >&2
+            exit 1
+          fi
+
+          if [[ -z "${BROKER_D1_DATABASE_ID_PRODUCTION//[[:space:]]/}" ]]; then
+            echo 'BROKER_D1_DATABASE_ID_PRODUCTION is required and must not be blank.' >&2
+            exit 1
+          fi
+
+      - name: Checkout
+        uses: actions/checkout@v4
+        with:
+          ref: refs/heads/dev
+
+      - name: Setup pnpm
+        uses: pnpm/action-setup@v4
+        with:
+          run_install: false
+
+      - name: Setup Node
+        uses: actions/setup-node@v4
+        with:
+          node-version: ${{ env.NODE_VERSION }}
+          cache: pnpm
+
+      - name: Install workspace dependencies
+        run: pnpm install --frozen-lockfile
+
+      - name: Render production Wrangler config
+        working-directory: broker
+        run: >-
+          node scripts/render-production-wrangler-config.mjs
+          --database-id "$BROKER_D1_DATABASE_ID_PRODUCTION"
+          --out wrangler.production.jsonc
+
+      - name: Inspect current daily auth cap
+        working-directory: broker
+        run: >-
+          pnpm exec wrangler d1 execute
+          puripuly-heart-broker --remote --config wrangler.production.jsonc
+          --command "SELECT CAST(json_extract(value, '$.newActiveEntitlementsPerDay.maxCount') AS INTEGER) AS max_count, CAST(json_extract(value, '$.newActiveEntitlementsPerDay.windowDays') AS INTEGER) AS window_days, updated_at FROM broker_config WHERE key = 'abuse_controls';"
+          --json
+
+      - name: Update daily auth cap runtime config
+        shell: bash
+        working-directory: broker
+        run: |
+          cat > .abuse-controls-daily-cap-update.sql <<SQL
+          UPDATE broker_config
+             SET value = json_set(value, '$.newActiveEntitlementsPerDay.maxCount', $TARGET_MAX_COUNT),
+                 updated_at = CURRENT_TIMESTAMP
+           WHERE key = 'abuse_controls'
+             AND json_valid(value)
+             AND json_type(value, '$.newActiveEntitlementsPerDay') = 'object';
+          SQL
+
+          pnpm exec wrangler d1 execute \
+            puripuly-heart-broker --remote --config wrangler.production.jsonc \
+            --file .abuse-controls-daily-cap-update.sql --yes --json
+
+      - name: Verify daily auth cap runtime config
+        shell: bash
+        working-directory: broker
+        run: |
+          verify_json="$(pnpm exec wrangler d1 execute \
+            puripuly-heart-broker --remote --config wrangler.production.jsonc \
+            --command "SELECT CAST(json_extract(value, '$.newActiveEntitlementsPerDay.maxCount') AS INTEGER) AS max_count, CAST(json_extract(value, '$.newActiveEntitlementsPerDay.windowDays') AS INTEGER) AS window_days, updated_at FROM broker_config WHERE key = 'abuse_controls';" \
+            --json)"
+
+          echo "$verify_json"
+
+          python3 - <<'PY' "$verify_json" "$TARGET_MAX_COUNT"
+          import json
+          import sys
+
+          payload = json.loads(sys.argv[1])
+          expected_max_count = int(sys.argv[2])
+          results = payload[0].get('results', []) if payload else []
+
+          if len(results) != 1:
+              raise SystemExit('Daily auth cap verification failed: expected exactly one abuse_controls row')
+
+          max_count = results[0].get('max_count')
+          window_days = results[0].get('window_days')
+
+          if max_count != expected_max_count:
+              raise SystemExit(
+                  f'Daily auth cap verification failed: expected {expected_max_count}, got {max_count}'
+              )
+
+          if window_days != 1:
+              raise SystemExit(
+                  f'Daily auth cap verification failed: expected windowDays 1, got {window_days}'
+              )
+
+          print(f'Daily auth cap verified at {max_count} per {window_days} UTC day.')
+          PY

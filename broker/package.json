@@ -1,0 +1,17 @@
+{
+  "name": "@puripuly-heart/broker",
+  "private": true,
+  "license": "AGPL-3.0-or-later",
+  "type": "module",
+  "scripts": {
+    "dev": "wrangler dev --config wrangler.jsonc",
+    "deploy": "wrangler deploy --config wrangler.jsonc",
+    "verify:config": "wrangler types --config wrangler.jsonc"
+  },
+  "dependencies": {
+    "hono": "^4.12.12"
+  },
+  "devDependencies": {
+    "wrangler": "^4.80.0"
+  }
+}

@@ -1,0 +1,1 @@
+"""Clipboard integration helpers."""

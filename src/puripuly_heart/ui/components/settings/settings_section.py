@@ -1,0 +1,67 @@
+"""Settings section card component - About page style."""
+
+import flet as ft
+
+from puripuly_heart.ui.components.glow import GLOW_CARD, create_glow_stack
+from puripuly_heart.ui.i18n import t
+from puripuly_heart.ui.theme import (
+    COLOR_NEUTRAL,
+    COLOR_SURFACE,
+    get_card_shadow,
+)
+
+
+class SettingsSection(ft.Container):
+    """Card section with title and content, matching About page style."""
+
+    def __init__(
+        self,
+        title_key: str,
+        content: ft.Control,
+        *,
+        expand: bool = False,
+    ):
+        self._title_key = title_key
+        self._content = content
+
+        self._title = ft.Text(
+            t(title_key),
+            size=24,
+            weight=ft.FontWeight.BOLD,
+            color=COLOR_NEUTRAL,
+        )
+
+        inner_content = ft.Column(
+            controls=[
+                self._title,
+                ft.Container(height=16),
+                self._content,
+            ],
+            spacing=0,
+        )
+
+        # Wrap content in glow stack (About page pattern)
+        content_with_glow = create_glow_stack(
+            ft.Container(
+                content=inner_content,
+                expand=True,
+                padding=24,
+            ),
+            config=GLOW_CARD,
+        )
+
+        super().__init__(
+            content=content_with_glow,
+            bgcolor=COLOR_SURFACE,
+            border_radius=16,
+            border=ft.border.all(1, ft.Colors.with_opacity(0.4, ft.Colors.WHITE)),
+            expand=expand,
+            clip_behavior=ft.ClipBehavior.HARD_EDGE,
+            shadow=get_card_shadow(),
+        )
+
+    def apply_locale(self) -> None:
+        """Update title text when locale changes."""
+        self._title.value = t(self._title_key)
+        if self._title.page:
+            self._title.update()

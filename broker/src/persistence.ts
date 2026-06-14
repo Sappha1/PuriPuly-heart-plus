@@ -1,0 +1,893 @@
+export const BROKER_RUNTIME_CONFIG_KEYS = {
+  fingerprintSalt: 'fingerprint_salt',
+  abuseControls: 'abuse_controls',
+  abuseRuntimeState: 'abuse_runtime_state',
+} as const;
+
+export interface BrokerEndpointRateLimitConfig {
+  endpoint: string;
+  scope: 'ip' | 'installation_id';
+  maxRequests: number;
+  windowMinutes: number;
+}
+
+export type BrokerDailyIssuanceCapEndpoint =
+  | 'POST /v1/providers/openrouter/issue'
+  | 'POST /v1/providers/openrouter/discord/issue';
+
+export interface BrokerDailyIssuanceCapConfig {
+  endpoint: BrokerDailyIssuanceCapEndpoint;
+  scope: 'global';
+  maxCount: number | null;
+  windowDays: number;
+}
+
+export interface BrokerPendingDiscordOAuthSessionsConfig {
+  maxPerInstallation: number;
+  maxPerIp: number;
+  windowMinutes: number;
+}
+
+export interface BrokerImmediateAlertsConfig {
+  warn1: number;
+  warn2: number;
+  warn3: number;
+  critical: number;
+}
+
+export interface BrokerAsnFastPathConfig {
+  enabled: boolean;
+  minIssueSuccess1h: number;
+  minTopAsnSharePct: number;
+}
+
+export interface BrokerAsnClassificationEntry {
+  asn: number;
+  kind: 'cloud_or_vps';
+  displayName?: string;
+}
+
+export interface BrokerAbuseRetentionConfig {
+  requestEventsDays: number;
+  issueSuccessDays: number;
+  runtimeAuditDays: number;
+  referralSkippedDays: number;
+  referralFailedDays: number;
+}
+
+export interface BrokerReferralAttemptControlsConfig {
+  validShaped: {
+    maxPerInstallation: number;
+    maxPerIp: number;
+    windowMinutes: number;
+  };
+  unknown: {
+    maxPerInstallation: number;
+    maxPerIp: number;
+    windowMinutes: number;
+  };
+  perReferralIdVelocity: {
+    maxAttempts: number;
+    windowMinutes: number;
+  };
+  perReferrerRewardVelocity: {
+    maxRewards: number;
+    windowMinutes: number;
+  };
+}
+
+export interface BrokerDailyReportConfig {
+  enabled: boolean;
+  hourUtc: number;
+  minuteUtc: number;
+  includeZeroActivity: boolean;
+}
+
+export interface BrokerAbuseControlsConfigValue {
+  trialChallenge: BrokerEndpointRateLimitConfig;
+  trialChallengeVerify: BrokerEndpointRateLimitConfig;
+  openrouterIssue: BrokerEndpointRateLimitConfig;
+  trialStatus: BrokerEndpointRateLimitConfig;
+  discordAuthStartIp: BrokerEndpointRateLimitConfig;
+  discordAuthStartInstallation: BrokerEndpointRateLimitConfig;
+  discordOpenrouterIssueIp: BrokerEndpointRateLimitConfig;
+  discordOpenrouterIssueInstallation: BrokerEndpointRateLimitConfig;
+  pendingDiscordOAuthSessions: BrokerPendingDiscordOAuthSessionsConfig;
+  newActiveEntitlementsPerDay: BrokerDailyIssuanceCapConfig;
+  immediateAlerts: BrokerImmediateAlertsConfig;
+  asnFastPath: BrokerAsnFastPathConfig;
+  asnClassifications: BrokerAsnClassificationEntry[];
+  retention: BrokerAbuseRetentionConfig;
+  referralAttempts: BrokerReferralAttemptControlsConfig;
+  dailyReport: BrokerDailyReportConfig;
+}
+
+export const DEFAULT_BROKER_ABUSE_CONTROLS: BrokerAbuseControlsConfigValue = {
+  trialChallenge: {
+    endpoint: 'POST /v1/trial/challenge',
+    scope: 'ip',
+    maxRequests: 10,
+    windowMinutes: 15,
+  },
+  trialChallengeVerify: {
+    endpoint: 'POST /v1/trial/challenge/verify',
+    scope: 'installation_id',
+    maxRequests: 5,
+    windowMinutes: 15,
+  },
+  openrouterIssue: {
+    endpoint: 'POST /v1/providers/openrouter/issue',
+    scope: 'installation_id',
+    maxRequests: 3,
+    windowMinutes: 15,
+  },
+  trialStatus: {
+    endpoint: 'GET /v1/trial/status',
+    scope: 'installation_id',
+    maxRequests: 30,
+    windowMinutes: 15,
+  },
+  discordAuthStartIp: {
+    endpoint: 'POST /v1/auth/discord/start',
+    scope: 'ip',
+    maxRequests: 20,
+    windowMinutes: 15,
+  },
+  discordAuthStartInstallation: {
+    endpoint: 'POST /v1/auth/discord/start',
+    scope: 'installation_id',
+    maxRequests: 5,
+    windowMinutes: 15,
+  },
+  discordOpenrouterIssueIp: {
+    endpoint: 'POST /v1/providers/openrouter/discord/issue',
+    scope: 'ip',
+    maxRequests: 10,
+    windowMinutes: 15,
+  },
+  discordOpenrouterIssueInstallation: {
+    endpoint: 'POST /v1/providers/openrouter/discord/issue',
+    scope: 'installation_id',
+    maxRequests: 3,
+    windowMinutes: 15,
+  },
+  pendingDiscordOAuthSessions: {
+    maxPerInstallation: 2,
+    maxPerIp: 20,
+    windowMinutes: 15,
+  },
+  newActiveEntitlementsPerDay: {
+    endpoint: 'POST /v1/providers/openrouter/discord/issue',
+    scope: 'global',
+    maxCount: 500,
+    windowDays: 1,
+  },
+  immediateAlerts: {
+    warn1: 10,
+    warn2: 25,
+    warn3: 50,
+    critical: 70,
+  },
+  asnFastPath: {
+    enabled: true,
+    minIssueSuccess1h: 20,
+    minTopAsnSharePct: 70,
+  },
+  asnClassifications: [],
+  retention: {
+    requestEventsDays: 30,
+    issueSuccessDays: 30,
+    runtimeAuditDays: 90,
+    referralSkippedDays: 7,
+    referralFailedDays: 30,
+  },
+  referralAttempts: {
+    validShaped: {
+      maxPerInstallation: 8,
+      maxPerIp: 30,
+      windowMinutes: 15,
+    },
+    unknown: {
+      maxPerInstallation: 3,
+      maxPerIp: 10,
+      windowMinutes: 15,
+    },
+    perReferralIdVelocity: {
+      maxAttempts: 25,
+      windowMinutes: 60,
+    },
+    perReferrerRewardVelocity: {
+      maxRewards: 5,
+      windowMinutes: 1440,
+    },
+  },
+  dailyReport: {
+    enabled: true,
+    hourUtc: 13,
+    minuteUtc: 0,
+    includeZeroActivity: false,
+  },
+};
+
+export interface BrokerAbuseRuntimeBrakeState {
+  active: boolean;
+  reason: 'global_threshold' | 'asn_fast_path' | 'manual' | null;
+  changedAt: string | null;
+  changedBy: 'system' | 'operator' | null;
+}
+
+export interface BrokerAbuseRuntimeAlertLatches {
+  warn1: boolean;
+  warn2: boolean;
+  warn3: boolean;
+  critical: boolean;
+}
+
+export interface BrokerAbuseRuntimeDailyReportState {
+  lastDeliveredAt: string | null;
+  lastDeliveredDateUtc: string | null;
+}
+
+export interface BrokerAbuseRuntimeStateValue {
+  brake: BrokerAbuseRuntimeBrakeState;
+  alertLatches: BrokerAbuseRuntimeAlertLatches;
+  dailyReport: BrokerAbuseRuntimeDailyReportState;
+}
+
+export const DEFAULT_BROKER_ABUSE_RUNTIME_STATE: BrokerAbuseRuntimeStateValue = {
+  brake: {
+    active: false,
+    reason: null,
+    changedAt: null,
+    changedBy: null,
+  },
+  alertLatches: {
+    warn1: false,
+    warn2: false,
+    warn3: false,
+    critical: false,
+  },
+  dailyReport: {
+    lastDeliveredAt: null,
+    lastDeliveredDateUtc: null,
+  },
+};
+
+export const BROKER_RUNTIME_CONFIG_SCHEMA = {
+  [BROKER_RUNTIME_CONFIG_KEYS.fingerprintSalt]: ['current', 'previous', 'rotated_at'],
+  [BROKER_RUNTIME_CONFIG_KEYS.abuseControls]: DEFAULT_BROKER_ABUSE_CONTROLS,
+  [BROKER_RUNTIME_CONFIG_KEYS.abuseRuntimeState]: DEFAULT_BROKER_ABUSE_RUNTIME_STATE,
+} as const;
+
+export type BrokerRuntimeConfigKey =
+  (typeof BROKER_RUNTIME_CONFIG_KEYS)[keyof typeof BROKER_RUNTIME_CONFIG_KEYS];
+
+export interface BrokerConfigRow {
+  key: BrokerRuntimeConfigKey;
+  value: string;
+  updated_at: string;
+}
+
+export interface FingerprintSaltVersion {
+  version: number;
+  salt: string;
+  valid_until: string | null;
+}
+
+export interface FingerprintSaltConfigValue {
+  current: {
+    version: number;
+    salt: string;
+  };
+  previous: FingerprintSaltVersion | null;
+  rotated_at: string | null;
+}
+
+export interface InstallationRecord {
+  installation_id: string;
+  device_public_key: string;
+  hardware_hash: string | null;
+  hardware_hash_salt_version: number | null;
+  app_version: string;
+  challenge: string | null;
+  challenge_expires_at: string | null;
+  challenge_salt_version: number | null;
+  created_at: string;
+  last_seen_at: string;
+}
+
+export const BROKER_PUBLIC_INPUT_BOUNDS = {
+  installation_id: {
+    minLength: 1,
+    maxLength: 128,
+    rejectWhitespaceOnly: true,
+    rejectControlCharacters: true,
+    rejectNewlines: true,
+  },
+  app_version: {
+    minLength: 1,
+    maxLength: 64,
+    rejectWhitespaceOnly: true,
+    rejectControlCharacters: true,
+    rejectNewlines: true,
+  },
+  hardware_hash: {
+    minLength: 1,
+    maxLength: 128,
+    nullable: true,
+    rejectWhitespaceOnly: true,
+    rejectControlCharacters: true,
+    rejectNewlines: true,
+  },
+} as const;
+
+export const OPENROUTER_ENTITLEMENT_STATUS_VALUES = [
+  'pending_release',
+  'active',
+  'expired',
+  'revoked',
+] as const;
+
+export const DISCORD_OAUTH_SESSION_STATUS_VALUES = [
+  'pending',
+  'processing',
+  'consumed',
+  'canceled',
+  'failed',
+  'expired',
+] as const;
+
+export const REFERRAL_ID_FORMAT_DESCRIPTION =
+  'six uppercase approved-alphabet characters excluding 0/O/1/I/L';
+
+export const REFERRAL_CODE_STATUS_VALUES = ['active', 'disabled'] as const;
+
+export const REFERRAL_REFERRED_BONUS_STATUS_VALUES = [
+  'reserved',
+  'credited',
+  'skipped',
+  'failed',
+] as const;
+
+export const REFERRAL_REFERRER_BONUS_STATUS_VALUES = [
+  'pending',
+  'applying',
+  'credited',
+  'skipped',
+  'failed',
+] as const;
+
+export type OpenRouterEntitlementStatus =
+  (typeof OPENROUTER_ENTITLEMENT_STATUS_VALUES)[number];
+
+export type DiscordOAuthSessionStatus =
+  (typeof DISCORD_OAUTH_SESSION_STATUS_VALUES)[number];
+
+export type ReferralCodeStatus = (typeof REFERRAL_CODE_STATUS_VALUES)[number];
+
+export type ReferralReferredBonusStatus =
+  (typeof REFERRAL_REFERRED_BONUS_STATUS_VALUES)[number];
+
+export type ReferralReferrerBonusStatus =
+  (typeof REFERRAL_REFERRER_BONUS_STATUS_VALUES)[number];
+
+export interface DiscordOAuthSessionRecord {
+  state_hash: string;
+  installation_id: string;
+  device_public_key: string;
+  redirect_uri: string;
+  pkce_code_verifier: string | null;
+  issue_nonce_hash: string;
+  fingerprint_salt_version: number;
+  discord_user_ref: string | null;
+  discord_email_verified: 0 | 1 | null;
+  discord_account_created_at: string | null;
+  eligibility_checked_at: string | null;
+  status: DiscordOAuthSessionStatus;
+  created_at: string;
+  expires_at: string;
+  processing_started_at: string | null;
+  consumed_at: string | null;
+  referral_id: string | null;
+}
+
+export interface ReferralCodeRecord {
+  referral_id: string;
+  owner_discord_user_ref: string;
+  owner_installation_id: string | null;
+  status: ReferralCodeStatus;
+  disabled_reason?: string | null;
+  disabled_by?: string | null;
+  disabled_at?: string | null;
+  created_at: string;
+  updated_at: string;
+}
+
+export interface ReferralRewardRecord {
+  id: number;
+  referral_id: string;
+  referrer_discord_user_ref: string | null;
+  referrer_installation_id: string | null;
+  referred_discord_user_ref: string;
+  referred_installation_id: string;
+  referred_hardware_hash: string;
+  referred_hardware_hash_salt_version: number;
+  referred_bonus_status: ReferralReferredBonusStatus;
+  referrer_bonus_status: ReferralReferrerBonusStatus;
+  skip_reason: string | null;
+  failure_reason: string | null;
+  referred_managed_credential_ref: string | null;
+  referrer_managed_credential_ref: string | null;
+  attempt_ip_hash?: string | null;
+  created_at: string;
+  updated_at: string;
+  credited_at: string | null;
+}
+
+export interface OpenRouterEntitlementRecord {
+  installation_id: string;
+  status: OpenRouterEntitlementStatus;
+  budget_usd: number;
+  managed_credential_ref: string | null;
+  issued_at: string | null;
+  expires_at: string | null;
+  release_session_ref: string | null;
+  release_token_hash: string | null;
+  release_token_expires_at: string | null;
+  verified_hardware_hash: string | null;
+  verified_hardware_hash_salt_version: number | null;
+  discord_user_ref: string | null;
+  discord_issue_status: 'issuing' | 'active' | 'failed' | 'cleanup_required' | null;
+  discord_issue_reserved_at: string | null;
+  discord_issue_delivered_at: string | null;
+}
+
+export interface BrokerRequestEventRecord {
+  id: number;
+  endpoint: string;
+  ip: string | null;
+  installation_id: string | null;
+  observed_at: string;
+}
+
+export interface BrokerIssueSuccessEventRecord {
+  id: number;
+  installation_id: string;
+  managed_credential_ref: string | null;
+  ip_hash: string | null;
+  ip_prefix_hash: string | null;
+  asn: number | null;
+  country: string | null;
+  http_protocol: string | null;
+  tls_version: string | null;
+  tls_cipher: string | null;
+  risk_label: string | null;
+  observed_at: string;
+}
+
+export interface BrokerAbuseRuntimeAuditRecord {
+  id: number;
+  event_kind: string;
+  reason: string | null;
+  payload_json: string;
+  created_at: string;
+}
+
+export interface BrokerVelocityCapHookRecord {
+  id: number;
+  subject_type: 'ip' | 'installation_id';
+  subject_value: string;
+  max_requests: number;
+  window_minutes: number;
+  outcome_code:
+    | 'rate_limited'
+    | 'issuance_suspended'
+    | 'trial_unavailable'
+    | 'trial_not_eligible';
+  outcome_class: 'retryable' | 'terminal' | 'security_fail';
+  outcome_subcode: string | null;
+  reason: string | null;
+  active: 0 | 1;
+  created_at: string;
+  expires_at: string | null;
+}
+
+export interface BrokerAbuseSubjectHookRecord {
+  id: number;
+  hook_kind: 'denylist' | 'reputation' | 'revocation';
+  subject_type: 'ip' | 'installation_id' | 'hardware_hash';
+  subject_value: string;
+  outcome_code:
+    | 'issuance_suspended'
+    | 'trial_unavailable'
+    | 'trial_not_eligible';
+  outcome_class: 'retryable' | 'terminal' | 'security_fail';
+  outcome_subcode: string | null;
+  reason: string | null;
+  active: 0 | 1;
+  created_at: string;
+  expires_at: string | null;
+}
+
+export const BROKER_PERSISTENCE_MODEL = {
+  database: 'Cloudflare D1',
+  tables: {
+    brokerConfig: {
+      name: 'broker_config',
+      primaryKey: 'key',
+        columns: ['key', 'value', 'updated_at'],
+        valueEncoding: 'JSON',
+        supportedKeys: ['fingerprint_salt', 'abuse_controls', 'abuse_runtime_state'],
+        constraints: {
+          key: 'supported-keys-only',
+          value: 'valid-json',
+        },
+        seedRows: ['fingerprint_salt', 'abuse_controls', 'abuse_runtime_state'],
+      },
+    installations: {
+      name: 'installations',
+      primaryKey: 'installation_id',
+      columns: [
+        'installation_id',
+        'device_public_key',
+        'hardware_hash',
+        'hardware_hash_salt_version',
+        'app_version',
+        'challenge',
+        'challenge_expires_at',
+        'challenge_salt_version',
+        'created_at',
+        'last_seen_at',
+      ],
+      unique: ['device_public_key'],
+      indexed: [
+        'hardware_hash',
+        'hardware_hash_salt_version',
+        'challenge_expires_at',
+        'last_seen_at',
+      ],
+      textBounds: BROKER_PUBLIC_INPUT_BOUNDS,
+      updateRules: {
+        onChallenge: [
+          'overwrite challenge',
+            'overwrite challenge_expires_at',
+            'overwrite challenge_salt_version',
+            'overwrite app_version',
+            'clear hardware_hash and hardware_hash_salt_version only when lifecycle is none or pending_release',
+            'preserve hardware_hash state for active, expired, and revoked lifecycles',
+            'touch last_seen_at',
+          ],
+        onVerify: [
+          'clear challenge',
+          'clear challenge_expires_at',
+          'clear challenge_salt_version',
+          'persist hardware_hash only after successful verify',
+          'persist hardware_hash_salt_version with hardware_hash',
+        ],
+        beforeVerify: ['hardware_hash stays null until verify'],
+      },
+    },
+    openrouterEntitlements: {
+      name: 'openrouter_entitlements',
+      provider: 'OpenRouter',
+      rowCardinality: 'zero-or-one-row-per-installation',
+      primaryKey: 'installation_id',
+      absenceRepresents: 'none',
+      storedStatuses: OPENROUTER_ENTITLEMENT_STATUS_VALUES,
+      columns: [
+        'installation_id',
+        'status',
+        'budget_usd',
+        'managed_credential_ref',
+        'issued_at',
+        'expires_at',
+        'release_session_ref',
+        'release_token_hash',
+        'release_token_expires_at',
+        'verified_hardware_hash',
+        'verified_hardware_hash_salt_version',
+        'discord_user_ref',
+        'discord_issue_status',
+        'discord_issue_reserved_at',
+        'discord_issue_delivered_at',
+      ],
+      unique: ['managed_credential_ref', 'discord_user_ref'],
+      indexed: ['status', 'expires_at', 'discord_issue_reserved_at'],
+      partialUniqueIndexes: [
+        {
+          name: 'idx_openrouter_entitlements_release_token_hash',
+          columns: ['release_token_hash'],
+          predicate: 'release_token_hash IS NOT NULL',
+        },
+        {
+          name: 'idx_openrouter_entitlements_discord_user_ref',
+          columns: ['discord_user_ref'],
+          predicate: 'discord_user_ref IS NOT NULL',
+        },
+      ],
+      updateStrategy: 'in-place',
+      liveRemainingBudgetSource: 'OpenRouter metadata',
+      releaseSessionState: {
+        storage: 'ephemeral-columns-on-openrouter_entitlements',
+        fields: [
+          'release_session_ref',
+          'release_token_hash',
+          'release_token_expires_at',
+        ],
+        releaseToken: {
+          binding: 'installation-bound',
+          oneTimeUse: true,
+          ttlMinutes: 15,
+          issuanceIdempotencyKey: 'installation_identity + release_session_ref',
+          verifyBehavior: 'rotate for existing pending_release row',
+        },
+      },
+    },
+    discordOAuthSessions: {
+      name: 'discord_oauth_sessions',
+      purpose:
+        'bounded OAuth PKCE/session state for Discord-gated managed OpenRouter issuance',
+      primaryKey: 'state_hash',
+      columns: [
+        'state_hash',
+        'installation_id',
+        'device_public_key',
+        'redirect_uri',
+        'pkce_code_verifier',
+        'issue_nonce_hash',
+        'fingerprint_salt_version',
+        'discord_user_ref',
+        'discord_email_verified',
+        'discord_account_created_at',
+        'eligibility_checked_at',
+        'status',
+        'created_at',
+        'expires_at',
+        'processing_started_at',
+        'consumed_at',
+        'referral_id',
+      ],
+      storedStatuses: DISCORD_OAUTH_SESSION_STATUS_VALUES,
+      retention: 'expires_at cleanup only; durable entitlement and identity evidence is separate',
+      indexed: ['installation_id + status + created_at', 'expires_at', 'referral_id'],
+    },
+    referralCodes: {
+      name: 'referral_codes',
+      purpose: 'stable owned Referral ID per Discord identity',
+      primaryKey: 'referral_id',
+      columns: [
+        'referral_id',
+        'owner_discord_user_ref',
+        'owner_installation_id',
+        'status',
+        'created_at',
+        'updated_at',
+        'disabled_reason',
+        'disabled_by',
+        'disabled_at',
+      ],
+      referralIdFormat: REFERRAL_ID_FORMAT_DESCRIPTION,
+      storedStatuses: REFERRAL_CODE_STATUS_VALUES,
+      unique: ['owner_discord_user_ref'],
+      indexed: [
+        'owner_discord_user_ref',
+        'owner_installation_id',
+        'status + referral_id',
+      ],
+      deletionBehavior:
+        'installation aging must not cascade-delete referral code history',
+    },
+    referralRewards: {
+      name: 'referral_rewards',
+      purpose: 'append-only referral attempt and reward ledger',
+      primaryKey: 'id',
+      columns: [
+        'id',
+        'referral_id',
+        'referrer_discord_user_ref',
+        'referrer_installation_id',
+        'referred_discord_user_ref',
+        'referred_installation_id',
+        'referred_hardware_hash',
+        'referred_hardware_hash_salt_version',
+        'referred_bonus_status',
+        'referrer_bonus_status',
+        'skip_reason',
+        'failure_reason',
+        'referred_managed_credential_ref',
+        'referrer_managed_credential_ref',
+        'created_at',
+        'updated_at',
+        'credited_at',
+        'attempt_ip_hash',
+      ],
+      referralIdFormat: REFERRAL_ID_FORMAT_DESCRIPTION,
+      referredBonusStatuses: REFERRAL_REFERRED_BONUS_STATUS_VALUES,
+      referrerBonusStatuses: REFERRAL_REFERRER_BONUS_STATUS_VALUES,
+      reasonBounds: {
+        skip_reason: '1-64 chars when present',
+        failure_reason: '1-64 chars when present',
+      },
+      indexed: [
+        'referral_id',
+        'referrer_discord_user_ref + referred_bonus_status',
+        'referred_installation_id + created_at',
+        'attempt_ip_hash + created_at',
+        'referral_id + created_at',
+        'referrer_discord_user_ref + created_at',
+      ],
+      partialUniqueIndexes: [
+        {
+          name: 'idx_referral_rewards_counted_referred_discord_user',
+          columns: ['referred_discord_user_ref'],
+          predicate: "referred_bonus_status IN ('reserved', 'credited')",
+        },
+        {
+          name: 'idx_referral_rewards_counted_referred_installation',
+          columns: ['referred_installation_id'],
+          predicate: "referred_bonus_status IN ('reserved', 'credited')",
+        },
+      ],
+      deletionBehavior:
+        'installation aging must not cascade-delete referral reward ledger history',
+    },
+    discordIdentities: {
+      name: 'discord_identities',
+      purpose: 'durable HMAC Discord user reference uniqueness for managed issuance',
+      primaryKey: 'discord_user_ref',
+      columns: [
+        'discord_user_ref',
+        'entitlement_installation_id',
+        'status',
+        'ref_secret_version',
+        'created_at',
+        'updated_at',
+      ],
+      storedStatuses: ['issuing', 'active', 'failed', 'cleanup_required'],
+      foreignKeys: ['entitlement_installation_id -> installations.installation_id'],
+    },
+    brokerRequestEvents: {
+      name: 'broker_request_events',
+      purpose: ['per-endpoint rate limits', 'cross-endpoint velocity hooks'],
+      columns: ['id', 'endpoint', 'ip', 'installation_id', 'observed_at'],
+      appendOnly: true,
+      indexed: [
+        'endpoint + ip + observed_at',
+        'endpoint + installation_id + observed_at',
+        'ip + observed_at',
+        'installation_id + observed_at',
+        ],
+      },
+    brokerIssueSuccessEvents: {
+      name: 'broker_issue_success_events',
+      purpose: ['issue success alerting', 'daily reporting', 'asn-based heuristics'],
+      columns: [
+        'id',
+        'installation_id',
+        'managed_credential_ref',
+        'ip_hash',
+        'ip_prefix_hash',
+        'asn',
+        'country',
+        'http_protocol',
+        'tls_version',
+        'tls_cipher',
+        'risk_label',
+        'observed_at',
+      ],
+      appendOnly: true,
+      indexed: [
+        'installation_id + observed_at',
+        'managed_credential_ref + observed_at',
+        'ip_hash + observed_at',
+        'ip_prefix_hash + observed_at',
+        'asn + observed_at',
+        'observed_at',
+      ],
+    },
+    brokerAbuseRuntimeAudit: {
+      name: 'broker_abuse_runtime_audit',
+      purpose:
+        'append-only audit trail for runtime-state changes and abuse-monitoring decisions',
+      columns: ['id', 'event_kind', 'reason', 'payload_json', 'created_at'],
+      appendOnly: true,
+      indexed: ['event_kind + created_at', 'created_at'],
+    },
+    brokerVelocityCapHooks: {
+      name: 'broker_velocity_cap_hooks',
+      purpose: 'manual cross-endpoint velocity controls with observable outcomes',
+      columns: [
+        'id',
+        'subject_type',
+        'subject_value',
+        'max_requests',
+        'window_minutes',
+        'outcome_code',
+        'outcome_class',
+        'outcome_subcode',
+        'reason',
+        'active',
+        'created_at',
+        'expires_at',
+      ],
+      supportedSubjects: ['ip', 'installation_id'],
+      indexed: ['subject_type + subject_value + active + expires_at'],
+    },
+    brokerAbuseSubjectHooks: {
+      name: 'broker_abuse_subject_hooks',
+      purpose:
+        'denylist, reputation, and fast-revocation controls with observable outcomes',
+      columns: [
+        'id',
+        'hook_kind',
+        'subject_type',
+        'subject_value',
+        'outcome_code',
+        'outcome_class',
+        'outcome_subcode',
+        'reason',
+        'active',
+        'created_at',
+        'expires_at',
+      ],
+      hookKinds: ['denylist', 'reputation', 'revocation'],
+      supportedSubjects: ['ip', 'installation_id', 'hardware_hash'],
+      indexed: ['subject_type + subject_value + hook_kind + active + expires_at'],
+    },
+  },
+} as const;
+
+export const BROKER_RETENTION_POLICY = {
+  challengePreflight: {
+    statuses: ['none'],
+    entitlementRow: 'absent',
+    challengeState: 'present',
+    inactiveDays: 1,
+    reference: 'max(installations.last_seen_at, installations.challenge_expires_at)',
+    deleteFrom: 'installations',
+    cascadesTo: [],
+  },
+  pendingRelease: {
+    statuses: ['pending_release'],
+    inactiveDays: 30,
+    reference: 'installations.last_seen_at',
+    deleteFrom: 'installations',
+    cascadesTo: ['openrouter_entitlements'],
+  },
+  terminal: {
+    statuses: ['expired', 'revoked'],
+    inactiveDays: 90,
+    reference: 'max(installations.last_seen_at, openrouter_entitlements.expires_at)',
+    deleteFrom: 'installations',
+    cascadesTo: ['openrouter_entitlements'],
+  },
+} as const;
+
+export const FINGERPRINT_SALT_POLICY = {
+  configKey: 'fingerprint_salt',
+  managedBy: 'broker',
+  sharedAcrossClients: true,
+  duplicateDetectionScope: 'cross-installation',
+  storageModel: 'bounded-current-plus-previous',
+  valueShape: {
+    current: ['version', 'salt'],
+    previous: ['version', 'salt', 'valid_until'],
+    rotated_at: 'timestamp-or-null',
+  },
+  installationTracking: {
+    challengeSaltVersionField: 'challenge_salt_version',
+    hardwareHashSaltVersionField: 'hardware_hash_salt_version',
+  },
+  duplicateMatching: {
+    hashField: 'hardware_hash',
+    currentVersionOnly: true,
+  },
+  rotation: {
+    newChallengesUse: 'current salt only',
+    inFlightChallenges: 'accept previous salt version until challenge_expires_at',
+    staleHardwareHash:
+      'exclude non-current hardware_hash from duplicate matching until refreshed or cleared',
+    migrationPath:
+      'overwrite hardware_hash in place on next verify with current salt, otherwise clear on challenge reissue only for none or pending_release lifecycles',
+  },
+} as const;

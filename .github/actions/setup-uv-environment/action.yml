@@ -1,0 +1,29 @@
+name: Setup UV Environment
+description: Set up a pinned Python toolchain and sync the lockfile with uv.
+
+inputs:
+  python-version:
+    description: Exact Python version to install.
+    required: true
+  uv-version:
+    description: Exact uv version to install.
+    required: true
+  sync-args:
+    description: Arguments to pass to uv sync before --frozen.
+    required: true
+
+runs:
+  using: composite
+  steps:
+    - name: Setup Python
+      uses: actions/setup-python@v5
+      with:
+        python-version: ${{ inputs.python-version }}
+        cache: pip
+        cache-dependency-path: uv.lock
+
+    - name: Install pinned uv and sync lockfile
+      shell: bash
+      run: |
+        python -m pip install --upgrade pip "uv==${{ inputs.uv-version }}"
+        uv sync ${{ inputs.sync-args }} --frozen

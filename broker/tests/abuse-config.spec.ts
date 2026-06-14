@@ -1,0 +1,286 @@
+import { afterEach, describe, expect, it, vi } from 'vitest';
+
+import app from '../src/index';
+import { getBrokerAbuseControlsConfig } from '../src/abuse-controls';
+import {
+  TEST_DEFAULT_ABUSE_CONTROLS,
+  TEST_DEFAULT_ABUSE_RUNTIME_STATE,
+  readAbuseControls,
+  readAbuseRuntimeState,
+  replaceAbuseControlsValue,
+  updateAbuseControls,
+  updateAbuseRuntimeState,
+} from './test-support/abuse-controls';
+import { createDeviceKeyPair } from './test-support/ed25519';
+import { createTestBrokerEnv } from './test-support/sqlite-d1';
+
+describe('broker abuse-controls runtime config validation', () => {
+  afterEach(() => {
+    vi.useRealTimers();
+  });
+
+  it('falls back to default abuse controls when the stored config is still on the previous rollout layout', async () => {
+    vi.useFakeTimers();
+    vi.setSystemTime(new Date('2026-04-08T06:00:00Z'));
+
+    const env = createTestBrokerEnv();
+    replaceAbuseControlsValue(env, {
+      trialChallenge: {
+        endpoint: 'POST /v1/trial/challenge',
+        scope: 'ip',
+        maxRequests: 1,
+        windowMinutes: 15,
+      },
+      trialChallengeVerify: {
+        endpoint: 'POST /v1/trial/challenge/verify',
+        scope: 'installation_id',
+        maxRequests: 5,
+        windowMinutes: 15,
+      },
+      openrouterIssue: {
+        endpoint: 'POST /v1/providers/openrouter/issue',
+        scope: 'installation_id',
+        maxRequests: 3,
+        windowMinutes: 15,
+      },
+      trialStatus: {
+        endpoint: 'GET /v1/trial/status',
+        scope: 'installation_id',
+        maxRequests: 30,
+        windowMinutes: 15,
+      },
+      newActiveEntitlementsPerDay: {
+        endpoint: 'POST /v1/providers/openrouter/issue',
+        scope: 'global',
+        maxCount: null,
+        windowDays: 1,
+      },
+    });
+
+    for (const suffix of Array.from({ length: 10 }, (_, index) => `${index + 1}`)) {
+      const keyPair = await createDeviceKeyPair();
+      const response = await app.request(
+        'http://broker.test/v1/trial/challenge',
+        {
+          method: 'POST',
+          headers: {
+            'content-type': 'application/json',
+            'cf-connecting-ip': '203.0.113.71',
+          },
+          body: JSON.stringify({
+            installation_id: `install-malformed-config-${suffix}`,
+            device_public_key: keyPair.devicePublicKey,
+            app_version: '1.2.3',
+          }),
+        },
+        env,
+      );
+
+      expect(response.status).toBe(200);
+    }
+
+    const blockedKeyPair = await createDeviceKeyPair();
+    const blockedResponse = await app.request(
+      'http://broker.test/v1/trial/challenge',
+      {
+        method: 'POST',
+        headers: {
+          'content-type': 'application/json',
+          'cf-connecting-ip': '203.0.113.71',
+        },
+        body: JSON.stringify({
+          installation_id: 'install-malformed-config-11',
+          device_public_key: blockedKeyPair.devicePublicKey,
+          app_version: '1.2.3',
+        }),
+      },
+      env,
+    );
+
+    expect(blockedResponse.status).toBe(429);
+  });
+
+  it('uses runtime overrides only when the full exact abuse-control layout is valid', async () => {
+    vi.useFakeTimers();
+    vi.setSystemTime(new Date('2026-04-08T06:00:00Z'));
+
+    const env = createTestBrokerEnv();
+    updateAbuseControls(env, (controls) => {
+      controls.trialChallenge.maxRequests = 1;
+    });
+
+    const firstKeyPair = await createDeviceKeyPair();
+    const firstResponse = await app.request(
+      'http://broker.test/v1/trial/challenge',
+      {
+        method: 'POST',
+        headers: {
+          'content-type': 'application/json',
+          'cf-connecting-ip': '203.0.113.72',
+        },
+        body: JSON.stringify({
+          installation_id: 'install-valid-runtime-config-1',
+          device_public_key: firstKeyPair.devicePublicKey,
+          app_version: '1.2.3',
+        }),
+      },
+      env,
+    );
+    expect(firstResponse.status).toBe(200);
+
+    const secondKeyPair = await createDeviceKeyPair();
+    const blockedResponse = await app.request(
+      'http://broker.test/v1/trial/challenge',
+      {
+        method: 'POST',
+        headers: {
+          'content-type': 'application/json',
+          'cf-connecting-ip': '203.0.113.72',
+        },
+        body: JSON.stringify({
+          installation_id: 'install-valid-runtime-config-2',
+          device_public_key: secondKeyPair.devicePublicKey,
+          app_version: '1.2.3',
+        }),
+      },
+      env,
+    );
+
+    expect(blockedResponse.status).toBe(429);
+  });
+
+  it('seeds the approved immediate alert and ASN fast-path defaults', () => {
+    const env = createTestBrokerEnv();
+
+    expect(readAbuseControls(env).immediateAlerts).toEqual({
+      warn1: 10,
+      warn2: 25,
+      warn3: 50,
+      critical: 70,
+    });
+    expect(readAbuseControls(env).asnFastPath).toEqual({
+      enabled: true,
+      minIssueSuccess1h: 20,
+      minTopAsnSharePct: 70,
+    });
+  });
+
+  it('seeds Discord OAuth endpoint, pending-session, and daily cap defaults', () => {
+    const env = createTestBrokerEnv();
+    const controls = readAbuseControls(env) as ReturnType<typeof readAbuseControls> &
+      Record<string, unknown>;
+
+    expect(controls.discordAuthStartIp).toEqual({
+      endpoint: 'POST /v1/auth/discord/start',
+      scope: 'ip',
+      maxRequests: 20,
+      windowMinutes: 15,
+    });
+    expect(controls.discordAuthStartInstallation).toEqual({
+      endpoint: 'POST /v1/auth/discord/start',
+      scope: 'installation_id',
+      maxRequests: 5,
+      windowMinutes: 15,
+    });
+    expect(controls.discordOpenrouterIssueIp).toEqual({
+      endpoint: 'POST /v1/providers/openrouter/discord/issue',
+      scope: 'ip',
+      maxRequests: 10,
+      windowMinutes: 15,
+    });
+    expect(controls.discordOpenrouterIssueInstallation).toEqual({
+      endpoint: 'POST /v1/providers/openrouter/discord/issue',
+      scope: 'installation_id',
+      maxRequests: 3,
+      windowMinutes: 15,
+    });
+    expect(controls.pendingDiscordOAuthSessions).toEqual({
+      maxPerInstallation: 2,
+      maxPerIp: 20,
+      windowMinutes: 15,
+    });
+    expect(controls.newActiveEntitlementsPerDay.maxCount).toBe(500);
+  });
+
+  it('seeds referral attempt, velocity, and retention defaults', async () => {
+    const env = createTestBrokerEnv();
+    const controls = await getBrokerAbuseControlsConfig(env.BROKER_DB);
+
+    expect(controls.retention).toEqual(
+      expect.objectContaining({
+        referralSkippedDays: 7,
+        referralFailedDays: 30,
+      }),
+    );
+    expect(controls.referralAttempts).toEqual({
+      validShaped: {
+        maxPerInstallation: 8,
+        maxPerIp: 30,
+        windowMinutes: 15,
+      },
+      unknown: {
+        maxPerInstallation: 3,
+        maxPerIp: 10,
+        windowMinutes: 15,
+      },
+      perReferralIdVelocity: {
+        maxAttempts: 25,
+        windowMinutes: 60,
+      },
+      perReferrerRewardVelocity: {
+        maxRewards: 5,
+        windowMinutes: 1440,
+      },
+    });
+  });
+
+  it('falls back to default abuse controls when immediate-alert thresholds are not strictly increasing', async () => {
+    const env = createTestBrokerEnv();
+    updateAbuseControls(env, (controls) => {
+      controls.immediateAlerts.warn1 = 10;
+      controls.immediateAlerts.warn2 = 25;
+      controls.immediateAlerts.warn3 = 20;
+      controls.immediateAlerts.critical = 70;
+    });
+
+    await expect(getBrokerAbuseControlsConfig(env.BROKER_DB)).resolves.toEqual(
+      TEST_DEFAULT_ABUSE_CONTROLS,
+    );
+  });
+
+  it('seeds exact abuse runtime state defaults and persists runtime-state helper updates', () => {
+    const env = createTestBrokerEnv();
+
+    expect(readAbuseRuntimeState(env)).toEqual(TEST_DEFAULT_ABUSE_RUNTIME_STATE);
+
+    updateAbuseRuntimeState(env, (state) => {
+      state.brake.active = true;
+      state.brake.reason = 'manual';
+      state.brake.changedAt = '2026-04-08T06:05:00Z';
+      state.brake.changedBy = 'operator';
+      state.alertLatches.warn1 = true;
+      state.alertLatches.warn3 = true;
+      state.dailyReport.lastDeliveredAt = '2026-04-08T06:10:00Z';
+      state.dailyReport.lastDeliveredDateUtc = '2026-04-08';
+    });
+
+    expect(readAbuseRuntimeState(env)).toEqual({
+      brake: {
+        active: true,
+        reason: 'manual',
+        changedAt: '2026-04-08T06:05:00Z',
+        changedBy: 'operator',
+      },
+      alertLatches: {
+        warn1: true,
+        warn2: false,
+        warn3: true,
+        critical: false,
+      },
+      dailyReport: {
+        lastDeliveredAt: '2026-04-08T06:10:00Z',
+        lastDeliveredDateUtc: '2026-04-08',
+      },
+    });
+  });
+});

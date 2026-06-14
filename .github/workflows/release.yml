@@ -1,0 +1,235 @@
+name: Release
+
+on:
+  push:
+    tags:
+      - "v*"
+
+permissions:
+  contents: write
+
+concurrency:
+  group: release-${{ github.ref }}
+  cancel-in-progress: false
+
+env:
+  PYTHON_VERSION: "3.12.10"
+  UV_VERSION: "0.9.17"
+  INNOSETUP_VERSION: "6.6.1"
+
+jobs:
+  verify-version:
+    name: Verify tag and version sync
+    runs-on: ubuntu-latest
+    outputs:
+      version: ${{ steps.sync.outputs.version }}
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Validate tag and project versions
+        id: sync
+        env:
+          TAG_NAME: ${{ github.ref_name }}
+        run: |
+          python - <<'PY'
+          import os
+          import re
+          import sys
+          import tomllib
+          from pathlib import Path
+
+          root = Path(".")
+          tag_name = os.environ["TAG_NAME"]
+          tag_version = tag_name[1:] if tag_name.startswith("v") else tag_name
+
+          if not tag_version:
+              print(f"Invalid tag: {tag_name}")
+              sys.exit(1)
+
+          pyproject_path = root / "pyproject.toml"
+          init_path = root / "src" / "puripuly_heart" / "__init__.py"
+          installer_path = root / "installer.iss"
+          overlay_cargo_path = root / "native" / "overlay" / "Cargo.toml"
+
+          pyproject = tomllib.loads(pyproject_path.read_text(encoding="utf-8"))
+          pyproject_version = pyproject["project"]["version"]
+          overlay_cargo = tomllib.loads(overlay_cargo_path.read_text(encoding="utf-8"))
+          overlay_version = overlay_cargo["package"]["version"]
+
+          init_match = re.search(
+              r'^__version__\s*=\s*"([^"]+)"',
+              init_path.read_text(encoding="utf-8"),
+              re.MULTILINE,
+          )
+          if not init_match:
+              print("Could not find __version__ in src/puripuly_heart/__init__.py")
+              sys.exit(1)
+          init_version = init_match.group(1)
+
+          installer_match = re.search(
+              r'^#define\s+MyAppVersion\s+"([^"]+)"',
+              installer_path.read_text(encoding="utf-8"),
+              re.MULTILINE,
+          )
+          if not installer_match:
+              print("Could not find MyAppVersion in installer.iss")
+              sys.exit(1)
+          installer_version = installer_match.group(1)
+
+          versions = {
+              "tag": tag_version,
+              "pyproject.toml": pyproject_version,
+              "src/puripuly_heart/__init__.py": init_version,
+              "installer.iss": installer_version,
+              "native/overlay/Cargo.toml": overlay_version,
+          }
+
+          unique_versions = set(versions.values())
+          if len(unique_versions) != 1:
+              print("Version mismatch detected:")
+              for source, value in versions.items():
+                  print(f"  {source}: {value}")
+              sys.exit(1)
+
+          output_path = Path(os.environ["GITHUB_OUTPUT"])
+          with output_path.open("a", encoding="utf-8") as fh:
+              fh.write(f"version={tag_version}\n")
+
+          print(f"Version sync OK: {tag_version}")
+          PY
+
+  build-installer:
+    name: Build Windows installer
+    runs-on: windows-latest
+    needs: verify-version
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Setup UV environment
+        uses: ./.github/actions/setup-uv-environment
+        with:
+          python-version: ${{ env.PYTHON_VERSION }}
+          uv-version: ${{ env.UV_VERSION }}
+          sync-args: --extra build
+
+      - name: Prepare soxr release inputs
+        shell: pwsh
+        run: |
+          ./scripts/ci/prepare-soxr-release-inputs.ps1
+
+      - name: Setup Rust toolchain
+        uses: dtolnay/rust-toolchain@stable
+
+      - name: Build Rust overlay
+        shell: pwsh
+        run: |
+          cargo build `
+            --manifest-path native/overlay/Cargo.toml `
+            --locked `
+            --release `
+            --bin PuriPulyHeartOverlay `
+            --target-dir target
+
+      - name: Stage overlay runtime
+        shell: pwsh
+        run: |
+          New-Item -ItemType Directory -Force -Path build/overlay | Out-Null
+          Copy-Item target/release/PuriPulyHeartOverlay.exe build/overlay/PuriPulyHeartOverlay.exe -Force
+          Copy-Item third_party/openvr/win64/openvr_api.dll build/overlay/openvr_api.dll -Force
+
+      - name: Build Windows executable
+        shell: pwsh
+        run: |
+          ./.venv/Scripts/python.exe -m PyInstaller --clean --noconfirm build.spec
+
+      - name: Stage soxr compliance bundle
+        shell: pwsh
+        run: |
+          $manifest = Get-Content build/soxr-release-inputs/manifest.json -Raw -Encoding utf8 | ConvertFrom-Json
+          $sourceBundle = Join-Path $PWD $manifest.third_party_source_bundle_path
+          $complianceDir = "dist/PuriPulyHeart/third_party/soxr"
+          New-Item -ItemType Directory -Force -Path $complianceDir | Out-Null
+          Copy-Item src/puripuly_heart/data/licenses/COPYING.LGPL-2.1.txt "$complianceDir/COPYING.LGPL-2.1.txt" -Force
+          Copy-Item $sourceBundle "$complianceDir/$(Split-Path $sourceBundle -Leaf)" -Force
+
+      - name: Build installer
+        env:
+          APP_VERSION: ${{ needs.verify-version.outputs.version }}
+          INNOSETUP_VERSION: ${{ env.INNOSETUP_VERSION }}
+        shell: pwsh
+        run: |
+          $iscc = Join-Path ${env:ProgramFiles(x86)} "Inno Setup 6/ISCC.exe"
+          choco install innosetup --version=$env:INNOSETUP_VERSION --allow-downgrade --force --no-progress -y
+          if (-not (Test-Path $iscc)) { throw "ISCC.exe not found: $iscc" }
+          $innoRegistryPaths = @(
+            "HKLM:\Software\WOW6432Node\Microsoft\Windows\CurrentVersion\Uninstall\Inno Setup 6_is1",
+            "HKLM:\Software\Microsoft\Windows\CurrentVersion\Uninstall\Inno Setup 6_is1"
+          )
+          $currentInnoVersion = $null
+          foreach ($registryPath in $innoRegistryPaths) {
+            if (Test-Path $registryPath) {
+              $currentInnoVersion = (Get-ItemProperty $registryPath).DisplayVersion
+              break
+            }
+          }
+          if ($currentInnoVersion -ne $env:INNOSETUP_VERSION) {
+            throw "Inno Setup version mismatch: expected $env:INNOSETUP_VERSION, found $currentInnoVersion"
+          }
+          & $iscc installer.iss
+          $installer = "installer_output/PuriPulyHeart-Setup-$env:APP_VERSION.exe"
+          if (-not (Test-Path $installer)) { throw "Installer not found: $installer" }
+
+      - name: Upload release artifacts
+        uses: actions/upload-artifact@v4
+        with:
+          name: release-artifacts
+          path: |
+            installer_output/PuriPulyHeart-Setup-${{ needs.verify-version.outputs.version }}.exe
+            build/soxr-release-inputs/PuriPulyHeart-soxr-third-party-source-bundle.zip
+          if-no-files-found: error
+
+  publish-release:
+    name: Publish GitHub release
+    runs-on: ubuntu-latest
+    needs:
+      - verify-version
+      - build-installer
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Download release artifacts
+        uses: actions/download-artifact@v4
+        with:
+          name: release-artifacts
+          path: release-artifacts
+
+      - name: Render release body
+        env:
+          INSTALLER_EXE: PuriPulyHeart-Setup-${{ needs.verify-version.outputs.version }}.exe
+        run: |
+          python - <<'PY'
+          import os
+          from pathlib import Path
+
+          template_path = Path(".github/release-template.md")
+          release_body_path = Path("release-body.md")
+          release_body = template_path.read_text(encoding="utf-8").replace(
+              "{{INSTALLER_EXE}}",
+              os.environ["INSTALLER_EXE"],
+          )
+          release_body_path.write_text(release_body, encoding="utf-8")
+          PY
+
+      - name: Create release
+        uses: softprops/action-gh-release@v2
+        with:
+          tag_name: ${{ github.ref_name }}
+          name: ${{ github.ref_name }}
+          draft: true
+          body_path: release-body.md
+          files: |
+            release-artifacts/installer_output/PuriPulyHeart-Setup-${{ needs.verify-version.outputs.version }}.exe
+            release-artifacts/build/soxr-release-inputs/PuriPulyHeart-soxr-third-party-source-bundle.zip

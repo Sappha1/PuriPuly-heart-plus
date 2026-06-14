@@ -1,0 +1,97 @@
+PuriPulyHeart+ — Third-Party Notices
+==============================================
+
+PuriPulyHeart+ is a modified fork of PuriPuly Heart by salee (kapitalismho).
+Original project: https://github.com/kapitalismho/PuriPuly-heart
+PuriPuly Heart's source code is licensed under AGPL-3.0-or-later.
+The full project license text is in the root LICENSE file.
+
+UI design and color palette are heavily inspired by VRCT (https://github.com/misyaguziya/VRCT)
+by misyaguziya, which is licensed under the MIT License. No VRCT source code is included.
+
+The third-party components listed below remain under their respective upstream licenses.
+
+----
+
+Runtime / bundled components
+
+Notable shipped license families: MIT, Apache-2.0, BSD-3-Clause, MPL-2.0,
+LGPL-2.1-or-later, SIL Open Font License 1.1, GPL-2.0-or-later WITH Bootloader-exception
+(PyInstaller).
+
+- soxr / libsoxr: LGPL-2.1-or-later. LGPL compliance bundle included in third_party\soxr\.
+- certifi: MPL-2.0.
+- NumPy binary wheels may include OpenBLAS, LAPACK, and GCC runtime library notices.
+- OpenVR runtime DLL (openvr_api.dll, ValveSoftware/openvr v2.15.6): BSD-3-Clause.
+- Noto Sans CJK Medium TTC: SIL Open Font License 1.1.
+- Silero VAD ONNX model: MIT.
+- Bundled UI fonts (NanumSquareRound, M PLUS Rounded 1c, Resource Han Rounded CN): SIL OFL 1.1.
+- PyInstaller bootloader: GPL-2.0-or-later WITH Bootloader-exception.
+- Hono (broker runtime): MIT.
+
+----
+
+Qwen3-ASR local model assets (optional download)
+Official upstream: https://huggingface.co/Qwen/Qwen3-ASR-0.6B
+License: Apache-2.0
+
+The local Qwen ASR model is not bundled — it is downloaded separately on request.
+
+----
+
+Silero VAD (v6.2.1)
+Source: https://github.com/snakers4/silero-vad
+License: MIT — https://opensource.org/license/mit/
+
+----
+
+Python-SoXR / libsoxr
+Sources: https://pypi.org/project/soxr/ · https://sourceforge.net/projects/soxr/
+License: LGPL-2.1-or-later
+LGPL compliance bundle: third_party\soxr\ (includes COPYING.LGPL-2.1.txt and source bundle)
+
+----
+
+OpenVR client binding library (openvr_api.dll)
+Upstream pin: ValveSoftware/openvr@v2.15.6
+License: BSD-3-Clause — https://opensource.org/license/bsd-3-clause/
+Provenance bundle: third_party\openvr\
+
+----
+
+Noto Sans CJK Medium TTC
+Source: https://github.com/notofonts/noto-cjk (tag: Sans2.004)
+License: SIL Open Font License 1.1 — https://openfontlicense.org/
+
+----
+
+NanumSquareRound
+Source: https://help.naver.com/service/30016/contents/18088
+Copyright (c) 2010 NAVER Corporation
+License: SIL Open Font License 1.1
+
+----
+
+M PLUS Rounded 1c
+Source: https://github.com/google/fonts/tree/main/ofl/mplusrounded1c
+Copyright (c) 2016 The Rounded M+ Project Authors
+License: SIL Open Font License 1.1
+
+----
+
+Resource Han Rounded CN
+Source: https://github.com/CyanoHao/Resource-Han-Rounded
+Copyright (c) 2018-2022 Cyano Hao. Portions (c) 2014-2021 Adobe.
+License: SIL Open Font License 1.1
+
+----
+
+License URLs
+- AGPL-3.0:      https://www.gnu.org/licenses/agpl-3.0.txt
+- Apache-2.0:    https://www.apache.org/licenses/LICENSE-2.0
+- MIT:           https://opensource.org/license/mit/
+- BSD-3-Clause:  https://opensource.org/license/bsd-3-clause/
+- MPL-2.0:       https://www.mozilla.org/en-US/MPL/2.0/
+- LGPL-2.1:      src\puripuly_heart\data\licenses\COPYING.LGPL-2.1.txt
+- SIL OFL 1.1:   https://openfontlicense.org/
+- PyInstaller:   https://github.com/pyinstaller/pyinstaller/blob/develop/COPYING.txt

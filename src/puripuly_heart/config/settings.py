@@ -230,8 +230,8 @@ class TranslationConnection(str, Enum):
 
 @dataclass(slots=True)
 class TranslationSettings:
-    model: TranslationModel = TranslationModel.GEMMA4
-    connection: TranslationConnection = TranslationConnection.MANAGED
+    model: TranslationModel = TranslationModel.GOOGLE_TRANSLATE
+    connection: TranslationConnection = TranslationConnection.FREE_WEB
     connection_history: dict[str, TranslationConnection] = field(
         default_factory=lambda: _default_translation_connection_history()
     )

@@ -263,7 +263,7 @@ class DashboardView(ft.Row):
 
         self._pending_sent_col: ft.Column | None = None
         self._pending_version: int = 0
-        self._show_pending_echo: bool = False  # off by default; toggled by "Live preview" chip
+        self._show_pending_echo: bool = True  # on by default; toggled in Settings
         self._translation_showing_warning = False
         self._stt_showing_warning = False
         self._managed_auth_pending = False
@@ -537,20 +537,20 @@ class DashboardView(ft.Row):
         )
         self._peer_src_card.expand = True
         self._peer_tgt_card.expand = True
-        self._peer_src_plus_btn = ft.Container(
-            content=ft.Icon(ft.Icons.ADD_CIRCLE_OUTLINE, size=14, color=_TEXT_FAINT),
-            on_click=self._on_add_extra_peer_source,
-            tooltip="Listen to another peer language",
-            padding=ft.padding.only(left=4),
-        )
-        _peer_src_plus_slot = ft.Container(content=self._peer_src_plus_btn, width=_BTN_SLOT, alignment=ft.alignment.center_left)
         _peer_src_row = ft.Row(
-            [self._peer_src_card, _peer_src_plus_slot],
+            [self._peer_src_card],
             spacing=4,
             vertical_alignment=ft.CrossAxisAlignment.CENTER,
         )
         self._extra_peer_src_rows_col = ft.Column(
-            [],
+            [
+                ft.Row([ft.Container(
+                    content=ft.Icon(ft.Icons.ADD_CIRCLE_OUTLINE, size=14, color=_TEXT_FAINT),
+                    on_click=self._on_add_extra_peer_source,
+                    tooltip="Listen to another peer language",
+                    padding=ft.padding.only(left=4),
+                )], spacing=0),
+            ],
             spacing=3,
             horizontal_alignment=ft.CrossAxisAlignment.STRETCH,
         )
@@ -954,23 +954,10 @@ class DashboardView(ft.Row):
             bgcolor=ft.Colors.TRANSPARENT,
             border=_pill_border_on,
         )
-        self._echo_preview_btn = ft.Container(
-            content=ft.Text("Live preview", size=9, color=_TEXT_FAINT, weight=ft.FontWeight.W_600),
-            on_click=self._on_echo_preview_toggle,
-            tooltip="Show sent text immediately while waiting for translation",
-            padding=ft.padding.symmetric(horizontal=7, vertical=3),
-            border_radius=10,
-            bgcolor=ft.Colors.TRANSPARENT,
-            border=_pill_border_off,
-        )
         chat_header = ft.Row(
             [
                 ft.Text("Chat", size=11, color=_TEXT_FAINT, weight=ft.FontWeight.W_500),
                 ft.Container(expand=True),
-                self._echo_preview_btn,
-                ft.Container(width=4),
-                self._filter_peer_btn,
-                ft.Container(width=4),
                 self._autoscroll_btn,
                 ft.Container(width=4),
                 self._overlay_header_btn,
@@ -2282,14 +2269,18 @@ class DashboardView(ft.Row):
                 tooltip="Remove peer language", width=_BTN_SLOT,
             )
             rows.append(ft.Row([card, minus], spacing=4, vertical_alignment=ft.CrossAxisAlignment.CENTER))
+        if len(self._extra_peer_source_lang_codes) < self._MAX_EXTRA_LANGS:
+            plus_btn = ft.Container(
+                content=ft.Icon(ft.Icons.ADD_CIRCLE_OUTLINE, size=14, color=_TEXT_FAINT),
+                on_click=self._on_add_extra_peer_source,
+                tooltip="Listen to another peer language",
+                padding=ft.padding.only(left=4),
+            )
+            rows.append(ft.Row([plus_btn], spacing=0))
         self._extra_peer_src_rows_col.controls = rows
-        visible = len(self._extra_peer_source_lang_codes) < self._MAX_EXTRA_LANGS
-        self._peer_src_plus_btn.visible = visible
         try:
             if self._extra_peer_src_rows_col.page:
                 self._extra_peer_src_rows_col.update()
-            if self._peer_src_plus_btn.page:
-                self._peer_src_plus_btn.update()
         except Exception:
             pass
 

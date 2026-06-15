@@ -3305,12 +3305,29 @@ class GuiController:
         if not self._peer_local_stt_requested(self.settings):
             self._reset_local_stt_pending_peer_enable_after_install()
 
+    def _on_local_stt_model_loading(self) -> None:
+        """Called from a background thread just before sherpa-onnx model init starts."""
+        self._local_stt_runtime_status = "loading"
+        dash = getattr(self.app, "view_dashboard", None)
+        if dash is not None:
+            with contextlib.suppress(Exception):
+                dash.set_local_stt_notice("loading", percent=None)
+
+    def _on_local_stt_model_loaded(self) -> None:
+        """Called from a background thread after sherpa-onnx model init finishes (success or fail)."""
+        if self._local_stt_runtime_status == "loading":
+            self._local_stt_runtime_status = "ready"
+        dash = getattr(self.app, "view_dashboard", None)
+        if dash is not None:
+            with contextlib.suppress(Exception):
+                dash.set_local_stt_notice(None, percent=None)
+
     def _sync_local_stt_notice(self) -> None:
         dash = getattr(self.app, "view_dashboard", None)
         if dash is None or self.settings is None:
             return
         status = self._current_local_stt_runtime_status()
-        should_show = status == "downloading" or (
+        should_show = status in ("downloading", "loading") or (
             (
                 self.settings.provider.stt == STTProviderName.LOCAL_QWEN
                 or self._peer_local_stt_requested(self.settings)
@@ -3521,6 +3538,8 @@ class GuiController:
             self.settings,
             secrets=secrets,
             diagnostics_enabled=self._detailed_audio_diag_enabled,
+            on_model_loading=self._on_local_stt_model_loading,
+            on_model_loaded=self._on_local_stt_model_loaded,
         )
         session = None
         try:
@@ -4212,6 +4231,8 @@ class GuiController:
                 self.settings,
                 secrets=secrets,
                 diagnostics_enabled=self._detailed_audio_diag_enabled,
+                on_model_loading=self._on_local_stt_model_loading,
+                on_model_loaded=self._on_local_stt_model_loaded,
             )
             stt = ManagedSTTProvider(
                 backend=backend,
@@ -4221,6 +4242,7 @@ class GuiController:
                 reset_deadline_s=STT_RESET_DEADLINE_S,
                 drain_timeout_s=self.settings.stt.drain_timeout_s,
                 bridging_ms=self.settings.audio.ring_buffer_ms,
+
                 on_final_transcript_suppressed=self._on_final_transcript_suppressed,
                 runtime_logging=self.runtime_logging,
                 stt_input_fault_profile_provider=lambda: (
@@ -4257,6 +4279,8 @@ class GuiController:
             self.settings,
             secrets=secrets,
             diagnostics_enabled=self._detailed_audio_diag_enabled,
+            on_model_loading=self._on_local_stt_model_loading,
+            on_model_loaded=self._on_local_stt_model_loaded,
         )
         return ManagedSTTProvider(
             backend=peer_backend,
@@ -4562,6 +4586,8 @@ class GuiController:
                 self.settings,
                 secrets=secrets,
                 diagnostics_enabled=self._detailed_audio_diag_enabled,
+                on_model_loading=self._on_local_stt_model_loading,
+                on_model_loaded=self._on_local_stt_model_loaded,
             )
             stt = ManagedSTTProvider(
                 backend=backend,

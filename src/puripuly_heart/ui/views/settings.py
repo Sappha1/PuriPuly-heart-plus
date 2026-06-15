@@ -1409,7 +1409,7 @@ class SettingsView(ft.Column):
         )
         chatbox_send_peer_card = self._wrap_unit_card(
             title=self._info_title(
-                ft.Text("Speaker 2 chatbox", size=13, weight=ft.FontWeight.BOLD, color=COLOR_NEUTRAL),
+                ft.Text("Speak to chatbox", size=13, weight=ft.FontWeight.BOLD, color=COLOR_NEUTRAL),
                 "When ON, the translated text of incoming peer speech is also sent to "
                 "the VRChat chatbox — so your peer can see what you received in English."),
             value=self._chatbox_send_peer_text,

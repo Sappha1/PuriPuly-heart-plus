@@ -3894,6 +3894,7 @@ class GuiController:
             self.hub.show_latin = bool(getattr(settings.ui, "show_latin", False))
             self.hub.self_in_overlay = bool(getattr(settings.ui, "self_in_overlay", True))
             self.hub.filter_peer_by_target_languages = bool(getattr(settings.ui, "filter_peer_by_target_languages", False))
+            self.hub.chatbox_send_peer = bool(getattr(settings.ui, "chatbox_send_peer", False))
             self.hub.extra_target_languages = list(self._active_preset_extra_targets())
             self._sync_effective_hub_flags(settings)
         with contextlib.suppress(Exception):
@@ -4122,6 +4123,7 @@ class GuiController:
             self.hub.show_romaji = bool(getattr(next_settings.ui, "show_romaji", False))
             self.hub.self_in_overlay = bool(getattr(next_settings.ui, "self_in_overlay", True))
             self.hub.filter_peer_by_target_languages = bool(getattr(next_settings.ui, "filter_peer_by_target_languages", False))
+            self.hub.chatbox_send_peer = bool(getattr(next_settings.ui, "chatbox_send_peer", False))
             self.hub.extra_target_languages = list(self._active_preset_extra_targets())
             self._sync_effective_hub_flags(next_settings)
 
@@ -4615,6 +4617,7 @@ class GuiController:
             show_romaji=bool(getattr(self.settings.ui, "show_romaji", False)),
             show_latin=bool(getattr(self.settings.ui, "show_latin", False)),
             self_in_overlay=bool(getattr(self.settings.ui, "self_in_overlay", True)),
+            chatbox_send_peer=bool(getattr(self.settings.ui, "chatbox_send_peer", False)),
             extra_target_languages=list(self._active_preset_extra_targets()),
             fallback_transcript_only=True,
             translation_enabled=True,

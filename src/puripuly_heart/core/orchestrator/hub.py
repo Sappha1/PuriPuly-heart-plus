@@ -127,6 +127,7 @@ class ClientHub:
     self_in_overlay: bool = True
     extra_target_languages: list[str] = field(default_factory=list)
     filter_peer_by_target_languages: bool = False
+    chatbox_send_peer: bool = False
     _pending_overlay_transcripts: dict = field(default_factory=dict)
     fallback_transcript_only: bool = False
     translation_enabled: bool = True
@@ -3104,6 +3105,21 @@ class ClientHub:
             )
         else:
             self._finalize_latency_timeline(channel=runtime.channel, utterance_id=utterance_id)
+        if runtime.channel == "peer" and self.chatbox_send_peer:
+            # Send the translated peer text to VRChat chatbox (translation only, no source)
+            peer_translit = ""
+            if self.send_pinyin or self.send_romaji or self.send_latin:
+                try:
+                    from puripuly_heart.core.transliteration import transliterate_for_language as _tfl
+                    peer_translit = _tfl(
+                        translation.text, self.target_language,
+                        show_pinyin=self.send_pinyin, show_romaji=self.send_romaji, show_latin=self.send_latin,
+                    )
+                except Exception:
+                    pass
+            peer_osc_text = f"{peer_translit}\n{translation.text}" if peer_translit else translation.text
+            peer_msg = OSCMessage(utterance_id=utterance_id, text=peer_osc_text, created_at=self.clock.now())
+            self.osc.enqueue(peer_msg)
         if runtime.channel == "peer":
             self._complete_peer_logical_turn(utterance_id)
 
@@ -3183,11 +3199,11 @@ class ClientHub:
         if translation_text is None:
             merged = transcript_text
         elif self.chatbox_include_source:
-            # pinyin goes ABOVE Chinese; no blank line when pinyin is present
+            # pinyin goes between original and translation; no blank line
             if translit:
                 merged = f"{transcript_text}\n{translit}\n{translation_text}"
             else:
-                merged = f"{transcript_text}\n\n{translation_text}"
+                merged = f"{transcript_text}\n{translation_text}"
         else:
             # pinyin goes ABOVE Chinese: "pinyin\nChinese"
             if translit:

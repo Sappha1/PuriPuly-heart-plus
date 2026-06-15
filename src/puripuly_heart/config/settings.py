@@ -2379,12 +2379,27 @@ def resolve_first_run_ui_locale(system_locale: str | None) -> str:
     return "en"
 
 
+def _detect_china_timezone() -> bool:
+    """Return True if the system timezone is China Standard Time."""
+    try:
+        import subprocess
+        result = subprocess.run(["tzutil", "/g"], capture_output=True, text=True, timeout=3)
+        return "China Standard Time" in result.stdout
+    except Exception:
+        return False
+
+
 def new_settings_for_first_run(system_locale: str | None = None) -> AppSettings:
     if system_locale is None:
         system_locale = detect_system_locale()
     settings = AppSettings()
     settings.ui.locale = resolve_first_run_ui_locale(system_locale)
     ensure_prompt_defaults(settings)
+    # If the user is on a China timezone, default to Bing (Google is blocked there)
+    normalized_locale = _normalize_first_run_locale(system_locale)
+    is_china = _detect_china_timezone() or normalized_locale.startswith("zh-cn")
+    if is_china:
+        settings.translation.model = TranslationModel.BING
     settings.validate()
     return settings
 

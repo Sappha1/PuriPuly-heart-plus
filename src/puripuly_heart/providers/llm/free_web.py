@@ -95,9 +95,14 @@ class FreeWebTranslationProvider:
             self._translator, source_language, target_language, from_lang, to_lang, text,
         )
         loop = asyncio.get_event_loop()
-        translated = await loop.run_in_executor(
-            None, self._translate_sync, text, from_lang, to_lang
-        )
+        try:
+            translated = await asyncio.wait_for(
+                loop.run_in_executor(None, self._translate_sync, text, from_lang, to_lang),
+                timeout=10.0,
+            )
+        except asyncio.TimeoutError:
+            logger.warning("[%s] translation timed out after 10s (service may be blocked)", self._translator)
+            translated = ""
         logger.info("[%s] result: %r", self._translator, translated)
         return Translation(utterance_id=utterance_id, text=translated)
 

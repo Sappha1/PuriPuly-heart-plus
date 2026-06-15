@@ -160,6 +160,8 @@ class LocalQwenSherpaSTTBackend(STTBackend):
     language_hint: str | None = None
     hotwords: tuple[str, ...] = ()
     diagnostics_enabled: Callable[[], bool] | None = None
+    on_model_loading: object = None  # Callable[[], None] — fired just before blocking model init
+    on_model_loaded: object = None   # Callable[[], None] — fired after model init completes
     _recognizer: object | None = field(init=False, default=None, repr=False)
     _load_lock: asyncio.Lock = field(init=False, repr=False)
     _decode_lock: asyncio.Lock = field(init=False, repr=False)
@@ -187,7 +189,19 @@ class LocalQwenSherpaSTTBackend(STTBackend):
             if self._recognizer is not None:
                 return self._recognizer
             await asyncio.to_thread(validate_local_stt_runtime_ready, self.model_dir)
-            self._recognizer = await asyncio.to_thread(self._create_recognizer)
+            if callable(self.on_model_loading):
+                try:
+                    self.on_model_loading()
+                except Exception:
+                    pass
+            try:
+                self._recognizer = await asyncio.to_thread(self._create_recognizer)
+            finally:
+                if callable(self.on_model_loaded):
+                    try:
+                        self.on_model_loaded()
+                    except Exception:
+                        pass
             return self._recognizer
 
     def _create_recognizer(self) -> object:

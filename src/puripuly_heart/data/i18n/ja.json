@@ -370,6 +370,7 @@
   "dashboard.local_stt_notice_downloading": "STTモデルダウンロード中...",
   "dashboard.local_stt_notice_downloading_progress": "STTモデルダウンロード中 {percent}%",
   "dashboard.local_stt_notice_download_failed": "STTモデルのダウンロードに失敗しました",
+  "dashboard.local_stt_notice_loading": "音声モデルをメモリに読み込んでいます。初回は数分かかる場合があります...",
   "provider.local_qwen.description": "コンピューターのCPUが直接モデルを駆動します。VRAMを占有しません",
   "provider.qwen_asr": "Qwen ASR (Cloud)",
   "provider.qwen_asr.description": "Localモデルより音声認識性能が高いです",

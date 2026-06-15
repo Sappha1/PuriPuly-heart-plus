@@ -12,7 +12,7 @@ from puripuly_heart.ui.fonts import font_for_language
 from puripuly_heart.ui.i18n import get_locale, language_name, t
 from puripuly_heart.ui.overlay_peer_contract import OverlayPeerConsumerContract
 
-_BUILD_TAG = "r66"  #increment each build so user can confirm version
+_BUILD_TAG = "r67"  #increment each build so user can confirm version
 
 # ── VRCT-style dark palette ──────────────────────────────────────────────────
 _BG_MAIN = "#2e2f32"
@@ -2701,12 +2701,14 @@ class DashboardView(ft.Row):
             "invalid": "dashboard.local_stt_notice_invalid",
             "downloading": "dashboard.local_stt_notice_downloading",
             "download_failed": "dashboard.local_stt_notice_download_failed",
+            "loading": "dashboard.local_stt_notice_loading",
         }
         tone_by_status = {
             "missing": "warning",
             "invalid": "warning",
             "downloading": "info",
             "download_failed": "error",
+            "loading": "info",
         }
         notice_key = notice_key_by_status.get(status)
         if notice_key is None:

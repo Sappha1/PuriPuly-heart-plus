@@ -558,6 +558,8 @@ def create_stt_backend(
     *,
     secrets: SecretStore,
     diagnostics_enabled: Callable[[], bool] | None = None,
+    on_model_loading: object = None,
+    on_model_loaded: object = None,
 ) -> STTBackend:
     effective_terms = get_effective_custom_terms(settings, settings.languages.source_language)
 
@@ -572,6 +574,8 @@ def create_stt_backend(
             stream_label="self",
             language_hint=get_local_qwen_language_hint(settings.languages.source_language),
             diagnostics_enabled=diagnostics_enabled,
+            on_model_loading=on_model_loading,
+            on_model_loaded=on_model_loaded,
         )
 
     if settings.provider.stt == STTProviderName.DEEPGRAM:
@@ -724,6 +728,8 @@ def create_peer_stt_backend(
     *,
     secrets: SecretStore,
     diagnostics_enabled: Callable[[], bool] | None = None,
+    on_model_loading: object = None,
+    on_model_loaded: object = None,
 ) -> STTBackend:
     resolved = resolve_peer_stt_config(settings)
 
@@ -794,6 +800,8 @@ def create_peer_stt_backend(
             stream_label="peer",
             language_hint=get_local_qwen_language_hint(resolved.source_language),
             diagnostics_enabled=diagnostics_enabled,
+            on_model_loading=on_model_loading,
+            on_model_loaded=on_model_loaded,
         )
 
     if resolved.provider == STTProviderName.GOOGLE_STT:

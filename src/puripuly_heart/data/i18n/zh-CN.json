@@ -369,7 +369,7 @@
     "dashboard.local_stt_notice_downloading": "正在下载 STT 模型...",
     "dashboard.local_stt_notice_downloading_progress": "STT 模型下载中 {percent}%",
     "dashboard.local_stt_notice_download_failed": "STT 模型下载失败",
-  "dashboard.local_stt_notice_loading": "正在将语音模型加载到内存中，请稍候——首次使用可能需要几分钟...",
+  "dashboard.local_stt_notice_loading": "正在加载语音模型，请稍候...",
     "provider.local_qwen.description": "由电脑的 CPU 直接运行模型，不占用 VRAM",
     "provider.qwen_asr": "Qwen ASR",
     "provider.qwen_asr.description": "语音识别性能比本地模型更好",

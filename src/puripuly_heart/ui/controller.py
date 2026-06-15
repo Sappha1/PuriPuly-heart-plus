@@ -3445,6 +3445,12 @@ class GuiController:
         if resume_self and dash is not None:
             dash.set_stt_enabled(False)
             dash.set_stt_needs_key(False)
+            if status == "invalid":
+                with contextlib.suppress(Exception):
+                    dash.set_stt_error_state(True)
+        if resume_peer and dash is not None and status == "invalid":
+            with contextlib.suppress(Exception):
+                dash.set_peer_error_state(True)
         self._sync_local_stt_notice()
         self._start_local_stt_download(origin="manual")
         return False

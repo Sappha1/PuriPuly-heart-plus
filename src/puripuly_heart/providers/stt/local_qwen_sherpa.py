@@ -195,7 +195,15 @@ class LocalQwenSherpaSTTBackend(STTBackend):
                 except Exception:
                     pass
             try:
-                self._recognizer = await asyncio.to_thread(self._create_recognizer)
+                self._recognizer = await asyncio.wait_for(
+                    asyncio.to_thread(self._create_recognizer),
+                    timeout=180.0,
+                )
+            except asyncio.TimeoutError:
+                raise LocalQwenSherpaLoadError(
+                    "Speech model took too long to load — antivirus may be blocking it. "
+                    "Try whitelisting the app folder, then toggle MIC off and on to retry."
+                )
             finally:
                 if callable(self.on_model_loaded):
                     try:

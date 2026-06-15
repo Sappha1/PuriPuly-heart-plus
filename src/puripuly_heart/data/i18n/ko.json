@@ -369,7 +369,7 @@
   "dashboard.local_stt_notice_downloading": "STT 모델 다운로드 중...",
   "dashboard.local_stt_notice_downloading_progress": "STT 모델 다운로드 중 {percent}%",
   "dashboard.local_stt_notice_download_failed": "STT 모델 다운로드에 실패했어요",
-  "dashboard.local_stt_notice_loading": "음성 모델을 메모리에 로드 중입니다. 처음 실행 시 1분 정도 걸릴 수 있어요...",
+  "dashboard.local_stt_notice_loading": "음성 모델을 로드 중입니다. 잠시만 기다려 주세요...",
   "provider.local_qwen.description": "컴퓨터에서 CPU가 직접 모델을 구동해요. VRAM을 점유하지 않아요",
   "provider.qwen_asr": "Qwen ASR (Cloud)",
   "provider.qwen_asr.description": "Local 모델보다 음성 인식 성능이 더 좋아요",

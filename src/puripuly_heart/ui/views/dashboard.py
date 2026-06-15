@@ -12,7 +12,7 @@ from puripuly_heart.ui.fonts import font_for_language
 from puripuly_heart.ui.i18n import get_locale, language_name, t
 from puripuly_heart.ui.overlay_peer_contract import OverlayPeerConsumerContract
 
-_BUILD_TAG = "r67"  #increment each build so user can confirm version
+_BUILD_TAG = "r68"  #increment each build so user can confirm version
 
 # ── VRCT-style dark palette ──────────────────────────────────────────────────
 _BG_MAIN = "#2e2f32"
@@ -29,6 +29,7 @@ _TOGGLE_ON = "#48a495"
 _TOGGLE_OFF = "#535457"
 _TOGGLE_ON_HOVER = "#55ac9e"
 _TOGGLE_WARNING = "#cf7b1b"
+_TOGGLE_ERROR = "#e03030"
 _SENT_COLOR = "#6197b4"
 _RECV_COLOR = "#a861b4"
 _DIVIDER = "#4b4c4f"
@@ -87,13 +88,15 @@ class _ToggleRow(ft.Container):
         except Exception:
             pass
 
-    def set_state(self, on: bool, *, warning: bool = False):
+    def set_state(self, on: bool, *, warning: bool = False, error: bool = False):
         self._state = on
         self._warning = warning
         self._loading = False
         self._spinner.visible = False
         self._dot.visible = True
-        if warning:
+        if error:
+            self._dot.bgcolor = _TOGGLE_ERROR
+        elif warning:
             self._dot.bgcolor = _TOGGLE_WARNING
         elif on:
             self._dot.bgcolor = _TOGGLE_ON
@@ -209,8 +212,11 @@ class _MiniIconBtn(ft.Container):
         except Exception:
             pass
 
-    def set_state(self, on: bool, *, warning: bool = False):
-        if warning:
+    def set_state(self, on: bool, *, warning: bool = False, error: bool = False):
+        if error:
+            self._dot.bgcolor = _TOGGLE_ERROR
+            self._icon.color = _TOGGLE_ERROR
+        elif warning:
             self._dot.bgcolor = _TOGGLE_WARNING
             self._icon.color = _TOGGLE_WARNING
         elif on:
@@ -272,6 +278,8 @@ class DashboardView(ft.Row):
         self._vrc_mute_sync_osc_state: bool | None = None  # None=not yet synced, True=VRC muted, False=VRC unmuted
         self._translation_showing_warning = False
         self._stt_showing_warning = False
+        self._stt_showing_error = False
+        self._peer_showing_error = False
         self._managed_auth_pending = False
         self._local_stt_notice_status: str | None = None
         self._local_stt_notice_percent: int | None = None
@@ -1176,6 +1184,7 @@ class DashboardView(ft.Row):
             self.on_toggle_overlay(enabled)
 
     def _toggle_peer_translation(self) -> None:
+        self._peer_showing_error = False
         enabled = True
         if self._overlay_peer_contract is not None:
             enabled = not self._overlay_peer_contract.peer.intent_enabled
@@ -1185,9 +1194,9 @@ class DashboardView(ft.Row):
     # ── State sync ───────────────────────────────────────────────────────────
 
     def _sync_stt_button_state(self) -> None:
-        self._row_stt.set_state(self.is_stt_on, warning=self._stt_showing_warning)
+        self._row_stt.set_state(self.is_stt_on, warning=self._stt_showing_warning, error=self._stt_showing_error)
         if hasattr(self, "_mini_stt_btn"):
-            self._mini_stt_btn.set_state(self.is_stt_on, warning=self._stt_showing_warning)
+            self._mini_stt_btn.set_state(self.is_stt_on, warning=self._stt_showing_warning, error=self._stt_showing_error)
 
     def _sync_translation_button_state(self) -> None:
         self._row_trans.set_state(self.is_translation_on, warning=self._translation_showing_warning)
@@ -1204,9 +1213,9 @@ class DashboardView(ft.Row):
             return
         peer_on = contract.peer.state == "on"
         peer_warn = contract.peer.state == "warning"
-        self._row_peer.set_state(peer_on, warning=peer_warn)
+        self._row_peer.set_state(peer_on, warning=peer_warn, error=self._peer_showing_error)
         if hasattr(self, "_mini_peer_btn"):
-            self._mini_peer_btn.set_state(peer_on, warning=peer_warn)
+            self._mini_peer_btn.set_state(peer_on, warning=peer_warn, error=self._peer_showing_error)
         overlay_on = contract.overlay.state == "on"
         overlay_warn = contract.overlay.state == "warning"
         self._row_overlay.set_state(overlay_on, warning=overlay_warn)
@@ -1250,6 +1259,7 @@ class DashboardView(ft.Row):
     # ── STT toggle ───────────────────────────────────────────────────────────
 
     def _toggle_stt(self):
+        self._stt_showing_error = False
         if self.is_stt_on:
             self.is_stt_on = False
             self._stt_showing_warning = False
@@ -2617,6 +2627,16 @@ class DashboardView(ft.Row):
         if update_ui and not self.is_stt_on:
             self._stt_showing_warning = bool(needs_key)
             self._sync_stt_button_state()
+
+    def set_stt_error_state(self, error: bool) -> None:
+        """Show red error dot on MIC button (e.g. model failed to load)."""
+        self._stt_showing_error = bool(error)
+        self._sync_stt_button_state()
+
+    def set_peer_error_state(self, error: bool) -> None:
+        """Show red error dot on PEER button (e.g. model failed to load)."""
+        self._peer_showing_error = bool(error)
+        self._sync_overlay_peer_buttons()
 
     def set_display_text(
         self,

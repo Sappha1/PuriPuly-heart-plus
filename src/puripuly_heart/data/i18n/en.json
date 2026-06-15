@@ -387,7 +387,7 @@
   "dashboard.local_stt_notice_downloading": "Downloading Qwen ASR model (~980 MB), please wait...",
   "dashboard.local_stt_notice_downloading_progress": "Downloading Qwen ASR model: {percent}%",
   "dashboard.local_stt_notice_download_failed": "Qwen ASR download failed — check connection and retry",
-  "dashboard.local_stt_notice_loading": "Loading speech model into memory, please wait — this may take a minute on first use...",
+  "dashboard.local_stt_notice_loading": "Loading speech model, please wait...",
   "provider.local_qwen.description": "Your computer runs the model directly on CPU. It doesn't use VRAM",
   "provider.qwen_asr": "Qwen ASR",
   "provider.qwen_asr.description": "Better speech recognition than the local model",

@@ -1085,6 +1085,8 @@ class TranslatorApp:
             dash.show_romaji = bool(getattr(_ui, "show_romaji", False))
             dash.send_pinyin = bool(getattr(_ui, "send_pinyin", False))
             dash.send_romaji = bool(getattr(_ui, "send_romaji", False))
+            dash._show_pending_echo = bool(getattr(_ui, "show_pending_echo", True))
+            dash._chatbox_send_peer = bool(getattr(_ui, "chatbox_send_peer", False))
             self._sync_translator_label(settings)
             try:
                 set_flags = getattr(dash, "set_stt_key_flags", None)

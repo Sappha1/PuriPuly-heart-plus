@@ -820,6 +820,8 @@ class UiSettings:
     send_latin: bool = False
     self_in_overlay: bool = True
     filter_peer_by_target_languages: bool = False
+    show_pending_echo: bool = True
+    chatbox_send_peer: bool = False
     window_width: int = 0
     window_height: int = 0
     github_star_prompt_clicked: bool = False
@@ -1512,6 +1514,8 @@ def to_dict(settings: AppSettings) -> dict[str, Any]:
             "send_latin": settings.ui.send_latin,
             "self_in_overlay": settings.ui.self_in_overlay,
             "filter_peer_by_target_languages": settings.ui.filter_peer_by_target_languages,
+            "show_pending_echo": settings.ui.show_pending_echo,
+            "chatbox_send_peer": settings.ui.chatbox_send_peer,
             "window_width": settings.ui.window_width,
             "window_height": settings.ui.window_height,
             "github_star_prompt_clicked": settings.ui.github_star_prompt_clicked,
@@ -3675,6 +3679,8 @@ def from_dict(data: dict[str, Any]) -> AppSettings:
             send_latin=bool(ui_data.get("send_latin", False)),
             self_in_overlay=bool(ui_data.get("self_in_overlay", True)),
             filter_peer_by_target_languages=bool(ui_data.get("filter_peer_by_target_languages", False)),
+            show_pending_echo=bool(ui_data.get("show_pending_echo", True)),
+            chatbox_send_peer=bool(ui_data.get("chatbox_send_peer", False)),
             window_width=int(ui_data.get("window_width") or 0),
             window_height=int(ui_data.get("window_height") or 0),
             github_star_prompt_clicked=_parse_bool(ui_data.get("github_star_prompt_clicked")),

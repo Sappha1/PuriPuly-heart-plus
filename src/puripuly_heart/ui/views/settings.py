@@ -1391,18 +1391,37 @@ class SettingsView(ft.Column):
             value=self._filter_peer_lang_text,
         )
 
+        self._live_preview_text = self._build_clickable_text(
+            t("settings.option.on"),
+            self._on_live_preview_click,
+        )
+        live_preview_card = self._wrap_unit_card(
+            title=self._info_title(
+                ft.Text("Live preview", size=13, weight=ft.FontWeight.BOLD, color=COLOR_NEUTRAL),
+                "When ON, your typed or spoken text appears in the chat immediately "
+                "while waiting for the translation to arrive."),
+            value=self._live_preview_text,
+        )
+
+        self._chatbox_send_peer_text = self._build_clickable_text(
+            t("settings.option.off"),
+            self._on_chatbox_send_peer_click,
+        )
+        chatbox_send_peer_card = self._wrap_unit_card(
+            title=self._info_title(
+                ft.Text("Speaker 2 chatbox", size=13, weight=ft.FontWeight.BOLD, color=COLOR_NEUTRAL),
+                "When ON, the translated text of incoming peer speech is also sent to "
+                "the VRChat chatbox — so your peer can see what you received in English."),
+            value=self._chatbox_send_peer_text,
+        )
+
         general_clipboard_row = ft.Column(
                 [
                     clipboard_auto_translate_card,
                     vrc_mic_card,
-                    show_pinyin_card,
-                    show_romaji_card,
-                    send_pinyin_card,
-                    send_romaji_card,
-                    show_latin_card,
-                    send_latin_card,
+                    live_preview_card,
+                    chatbox_send_peer_card,
                     self_in_overlay_card,
-                    filter_peer_lang_card,
                 ],
                 spacing=0,
             )
@@ -3000,6 +3019,12 @@ class SettingsView(ft.Column):
         )
         self._filter_peer_lang_text.content.value = t(
             "settings.filter_peer_by_target_languages.on" if bool(getattr(settings.ui, "filter_peer_by_target_languages", False)) else "settings.filter_peer_by_target_languages.off"
+        )
+        self._live_preview_text.content.value = t(
+            "settings.option.on" if bool(getattr(settings.ui, "show_pending_echo", True)) else "settings.option.off"
+        )
+        self._chatbox_send_peer_text.content.value = t(
+            "settings.option.on" if bool(getattr(settings.ui, "chatbox_send_peer", False)) else "settings.option.off"
         )
         # Prompt
         provider_name = self._active_prompt_key()
@@ -4886,6 +4911,30 @@ class SettingsView(ft.Column):
         )
         if self.page:
             self._filter_peer_lang_text.update()
+        self._emit_settings_changed()
+
+    def _on_live_preview_click(self, e) -> None:
+        if not self._settings:
+            return
+        new_value = not bool(getattr(self._settings.ui, "show_pending_echo", True))
+        self._settings.ui.show_pending_echo = new_value
+        self._live_preview_text.content.value = t(
+            "settings.option.on" if new_value else "settings.option.off"
+        )
+        if self.page:
+            self._live_preview_text.update()
+        self._emit_settings_changed()
+
+    def _on_chatbox_send_peer_click(self, e) -> None:
+        if not self._settings:
+            return
+        new_value = not bool(getattr(self._settings.ui, "chatbox_send_peer", False))
+        self._settings.ui.chatbox_send_peer = new_value
+        self._chatbox_send_peer_text.content.value = t(
+            "settings.option.on" if new_value else "settings.option.off"
+        )
+        if self.page:
+            self._chatbox_send_peer_text.update()
         self._emit_settings_changed()
 
     def _on_low_latency_click(self, e) -> None:

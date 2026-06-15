@@ -112,6 +112,8 @@ datas = [
     (str(src_path / "puripuly_heart" / "data"), "puripuly_heart/data"),
     # Prompt templates
     ("prompts", "prompts"),
+    # Native VR Subtitle Overlay executable
+    (str(overlay_staged_path), "."),
     # Native VR Subtitle Overlay distribution provenance.
     # The TTC itself is included by the packaged puripuly_heart/data tree above.
     (str(NOTO_CJK_PROVENANCE_DIR / "OFL.txt"), NOTO_CJK_PACKAGED_PROVENANCE_RELATIVE_DIR.as_posix()),

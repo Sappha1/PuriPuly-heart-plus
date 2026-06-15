@@ -443,5 +443,10 @@
   "settings.chatbox_source.off": "번역만",
   "settings.section.peer_stt": "상대 음성 인식",
   "settings.dashboard_language_redirect": "셀프와 상대 언어 조합은 대시보드 언어 카드에서 바꿔주세요.",
-  "settings.peer_stt_provider": "상대 STT 프로바이더"
+  "settings.peer_stt_provider": "상대 STT 프로바이더",
+  "language.auto": "자동 감지",
+  "dashboard.chat.sent": "전송됨",
+  "dashboard.chat.received": "수신됨",
+  "dashboard.chat.translation_failed": "번역 실패 — 모델 설정을 확인해주세요",
+  "settings_modal.requires_api_key": "API 키 필요 — 설정에서 입력해주세요"
 }

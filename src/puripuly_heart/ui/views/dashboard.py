@@ -537,20 +537,24 @@ class DashboardView(ft.Row):
         )
         self._peer_src_card.expand = True
         self._peer_tgt_card.expand = True
+        self._peer_src_plus_btn = ft.Container(
+            content=ft.Icon(ft.Icons.ADD_CIRCLE_OUTLINE, size=14, color=_TEXT_FAINT),
+            on_click=self._on_add_extra_peer_source,
+            tooltip="Listen to another peer language",
+            padding=ft.padding.only(left=4),
+        )
+        self._peer_src_plus_slot = ft.Container(
+            content=self._peer_src_plus_btn,
+            width=_BTN_SLOT,
+            alignment=ft.alignment.center_left,
+        )
         _peer_src_row = ft.Row(
-            [self._peer_src_card],
+            [self._peer_src_card, self._peer_src_plus_slot],
             spacing=4,
             vertical_alignment=ft.CrossAxisAlignment.CENTER,
         )
         self._extra_peer_src_rows_col = ft.Column(
-            [
-                ft.Row([ft.Container(
-                    content=ft.Icon(ft.Icons.ADD_CIRCLE_OUTLINE, size=14, color=_TEXT_FAINT),
-                    on_click=self._on_add_extra_peer_source,
-                    tooltip="Listen to another peer language",
-                    padding=ft.padding.only(left=4),
-                )], spacing=0),
-            ],
+            [],
             spacing=3,
             horizontal_alignment=ft.CrossAxisAlignment.STRETCH,
         )
@@ -2213,7 +2217,7 @@ class DashboardView(ft.Row):
 
     # ── Extra peer source language (multi-listen) ────────────────────────────
 
-    _MAX_EXTRA_LANGS = 3
+    _MAX_EXTRA_LANGS = 1
 
     def _on_add_extra_peer_source(self, _=None) -> None:
         if len(self._extra_peer_source_lang_codes) >= self._MAX_EXTRA_LANGS:
@@ -2269,18 +2273,15 @@ class DashboardView(ft.Row):
                 tooltip="Remove peer language", width=_BTN_SLOT,
             )
             rows.append(ft.Row([card, minus], spacing=4, vertical_alignment=ft.CrossAxisAlignment.CENTER))
-        if len(self._extra_peer_source_lang_codes) < self._MAX_EXTRA_LANGS:
-            plus_btn = ft.Container(
-                content=ft.Icon(ft.Icons.ADD_CIRCLE_OUTLINE, size=14, color=_TEXT_FAINT),
-                on_click=self._on_add_extra_peer_source,
-                tooltip="Listen to another peer language",
-                padding=ft.padding.only(left=4),
-            )
-            rows.append(ft.Row([plus_btn], spacing=0))
         self._extra_peer_src_rows_col.controls = rows
+        # Show/hide the + slot next to the primary peer src card
+        slot_visible = len(self._extra_peer_source_lang_codes) < self._MAX_EXTRA_LANGS
+        self._peer_src_plus_slot.visible = slot_visible
         try:
             if self._extra_peer_src_rows_col.page:
                 self._extra_peer_src_rows_col.update()
+            if self._peer_src_plus_slot.page:
+                self._peer_src_plus_slot.update()
         except Exception:
             pass
 

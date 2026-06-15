@@ -138,18 +138,26 @@ class _WhisperSTTSession:
     _audio_chunks: list[bytes] = field(default_factory=list)
     _events_queue: asyncio.Queue = field(default_factory=asyncio.Queue)
     _speech_ended: bool = False
+    _inflight: int = 0  # number of transcriptions in progress
 
     async def send_audio(self, pcm16le: bytes) -> None:
         self._audio_chunks.append(pcm16le)
 
     async def on_speech_end(self, *, trailing_silence_ms: int | None = None) -> None:
+        # Snapshot and clear the chunks so each utterance is independent
         raw = b"".join(self._audio_chunks)
+        self._audio_chunks.clear()
+        if not raw:
+            return
         wav_bytes = _pcm16le_to_wav(raw, self.sample_rate_hz)
         loop = asyncio.get_event_loop()
-        text = await loop.run_in_executor(None, self._transcribe_sync, wav_bytes)
+        self._inflight += 1
+        try:
+            text = await loop.run_in_executor(None, self._transcribe_sync, wav_bytes)
+        finally:
+            self._inflight -= 1
         if text:
             await self._events_queue.put(STTBackendTranscriptEvent(text=text, is_final=True))
-        self._speech_ended = True
 
     def _transcribe_sync(self, wav_bytes: bytes) -> str:
         try:
@@ -188,18 +196,21 @@ class _WhisperSTTSession:
             return ""
 
     async def stop(self) -> None:
+        # Wait for any in-flight transcription to finish so its result can be yielded
+        while self._inflight > 0:
+            await asyncio.sleep(0.05)
         self._speech_ended = True
 
     async def close(self) -> None:
-        pass
+        self._speech_ended = True
 
     async def events(self) -> AsyncIterator[STTBackendTranscriptEvent]:
-        while not self._speech_ended or not self._events_queue.empty():
+        while not self._speech_ended or not self._events_queue.empty() or self._inflight > 0:
             try:
                 event = self._events_queue.get_nowait()
                 yield event
             except asyncio.QueueEmpty:
-                if self._speech_ended:
+                if self._speech_ended and self._inflight == 0:
                     break
                 await asyncio.sleep(0.05)
 

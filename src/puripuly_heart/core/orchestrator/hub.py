@@ -125,6 +125,7 @@ class ClientHub:
     show_romaji: bool = False
     show_latin: bool = False
     self_in_overlay: bool = True
+    typed_in_overlay: bool = True
     extra_target_languages: list[str] = field(default_factory=list)
     filter_peer_by_target_languages: bool = False
     chatbox_send_peer: bool = False
@@ -1172,8 +1173,13 @@ class ClientHub:
             return
         await self._ensure_translation(transcript)
 
+    def _overlay_flag_for_utterance(self, utterance_id: UUID) -> bool:
+        """Return the correct overlay visibility flag based on whether the utterance was typed or spoken."""
+        src = self._get_source(utterance_id)
+        return self.typed_in_overlay if src == "You" else self.self_in_overlay
+
     async def _emit_final_transcript_to_overlay(self, transcript: Transcript) -> None:
-        if self.overlay_sink is None or not self.self_in_overlay:
+        if self.overlay_sink is None or not self._overlay_flag_for_utterance(transcript.utterance_id):
             return
         # When translation will run, hold this emit until translation is ready so the
         # overlay doesn't flash English-only before Chinese/pinyin arrive.
@@ -1466,7 +1472,7 @@ class ClientHub:
         """Send SelfActiveUpdate with translation as secondary so the overlay shows
         pinyin+Chinese alongside the typed English (mirrors what _sync_overlay_active_self
         does for the spec/STT path after translation completes)."""
-        if self.overlay_sink is None or not self.self_in_overlay:
+        if self.overlay_sink is None or not self._overlay_flag_for_utterance(utterance_id):
             return
         target_lang = self._language_or_fallback(translation.target_language, self.target_language)
         secondary_text = self._with_overlay_translit(translation.text, target_lang)
@@ -1499,7 +1505,7 @@ class ClientHub:
         translation: Translation,
         applied_context_mode: ContextMode | None,
     ) -> None:
-        if self.overlay_sink is None or not self.self_in_overlay:
+        if self.overlay_sink is None or not self._overlay_flag_for_utterance(translation.utterance_id):
             return
 
         self._record_overlay_emit(
@@ -2896,7 +2902,7 @@ class ClientHub:
         except asyncio.CancelledError:
             if runtime.channel == "self":
                 pending = self._pending_overlay_transcripts.pop(utterance_id, None)
-                if pending is not None and self.overlay_sink is not None and self.self_in_overlay:
+                if pending is not None and self.overlay_sink is not None and self._overlay_flag_for_utterance(utterance_id):
                     src_lang, tgt_lang = self._self_overlay_languages_for_utterance(utterance_id)
                     await self._emit_overlay_event(
                         self.overlay_event_adapter.transcript_final(
@@ -2942,7 +2948,7 @@ class ClientHub:
             )
             if runtime.channel == "self":
                 pending = self._pending_overlay_transcripts.pop(utterance_id, None)
-                if pending is not None and self.overlay_sink is not None and self.self_in_overlay:
+                if pending is not None and self.overlay_sink is not None and self._overlay_flag_for_utterance(utterance_id):
                     src_lang, tgt_lang = self._self_overlay_languages_for_utterance(utterance_id)
                     await self._emit_overlay_event(
                         self.overlay_event_adapter.transcript_final(
@@ -3038,7 +3044,7 @@ class ClientHub:
         if runtime.channel == "self":
             # Flush delayed transcript (held back so overlay doesn't flash English-only)
             pending_transcript = self._pending_overlay_transcripts.pop(utterance_id, None)
-            if pending_transcript is not None and self.overlay_sink is not None and self.self_in_overlay:
+            if pending_transcript is not None and self.overlay_sink is not None and self._overlay_flag_for_utterance(utterance_id):
                 src_lang, tgt_lang = self._self_overlay_languages_for_utterance(utterance_id)
                 await self._emit_overlay_event(
                     self.overlay_event_adapter.transcript_final(

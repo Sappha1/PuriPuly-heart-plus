@@ -211,7 +211,7 @@ DISCORD_AUTH_ERROR_KEY_BY_SUBCODE = {
     "loopback_unavailable": "discord_auth.error.loopback_unavailable",
 }
 _MICROPHONE_TEST_LEVEL_INTERVAL_S = 1.0
-LOCAL_QWEN_HALLUCINATION_GUIDANCE_TRIGGER_COUNT = 2
+LOCAL_QWEN_HALLUCINATION_GUIDANCE_TRIGGER_COUNT = 20
 
 
 def _mic_test_log_value(value: object) -> str:
@@ -1908,13 +1908,7 @@ class GuiController:
         desktop_settings.validate()
         bounds = self._desktop_launch_bounds_for_current_launch(desktop_settings)
         visual = desktop_settings.visual
-        # If background_alpha is 0, the overlay will be invisible. Clamp to a
-        # visible minimum so the user isn't stuck with an invisible overlay.
-        if getattr(visual, "background_alpha", 0) < 0.05:
-            try:
-                visual.background_alpha = 0.5
-            except Exception:
-                pass
+        # 0% background_alpha is valid — text still shows, just no background box
         interaction_mode = (
             DESKTOP_INTERACTION_MODE_PASS_THROUGH
             if desktop_settings.locked
@@ -2156,7 +2150,7 @@ class GuiController:
     async def set_desktop_overlay_background_alpha(self, alpha: float) -> None:
         if self.settings is None:
             return
-        clamped = max(0.05, min(1.0, float(alpha)))
+        clamped = max(0.0, min(1.0, float(alpha)))
         updated = copy.deepcopy(self.settings)
         updated.overlay.desktop_flet.visual.background_alpha = clamped
         updated.overlay.desktop_flet.visual.validate()
@@ -3893,6 +3887,7 @@ class GuiController:
             self.hub.show_romaji = bool(getattr(settings.ui, "show_romaji", False))
             self.hub.show_latin = bool(getattr(settings.ui, "show_latin", False))
             self.hub.self_in_overlay = bool(getattr(settings.ui, "self_in_overlay", True))
+            self.hub.typed_in_overlay = bool(getattr(settings.ui, "typed_in_overlay", True))
             self.hub.filter_peer_by_target_languages = bool(getattr(settings.ui, "filter_peer_by_target_languages", False))
             self.hub.chatbox_send_peer = bool(getattr(settings.ui, "chatbox_send_peer", False))
             self.hub.extra_target_languages = list(self._active_preset_extra_targets())
@@ -4122,6 +4117,7 @@ class GuiController:
             self.hub.show_pinyin = bool(getattr(next_settings.ui, "show_pinyin", False))
             self.hub.show_romaji = bool(getattr(next_settings.ui, "show_romaji", False))
             self.hub.self_in_overlay = bool(getattr(next_settings.ui, "self_in_overlay", True))
+            self.hub.typed_in_overlay = bool(getattr(next_settings.ui, "typed_in_overlay", True))
             self.hub.filter_peer_by_target_languages = bool(getattr(next_settings.ui, "filter_peer_by_target_languages", False))
             self.hub.chatbox_send_peer = bool(getattr(next_settings.ui, "chatbox_send_peer", False))
             self.hub.extra_target_languages = list(self._active_preset_extra_targets())
@@ -4491,7 +4487,8 @@ class GuiController:
             self._peer_runtime = None
 
         await self.set_stt_enabled(False)
-        await self._configure_vrc_mic_receiver(enabled=False)
+        # Do NOT stop the VRC mic receiver here — preserves mute state across
+        # pipeline rebuilds so the gate stays closed while VRChat mic is muted.
         if self.hub is not None:
             with contextlib.suppress(Exception):
                 await self.hub.stop()

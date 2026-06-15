@@ -2632,12 +2632,33 @@ class SettingsView(ft.Column):
             return STTProviderName.LOCAL_QWEN
         return self._normalized_peer_stt_provider(settings.provider.peer_stt)
 
-    def _peer_stt_option_item(self, provider: STTProviderName) -> OptionItem:
+    def _stt_needs_key(self, provider: STTProviderName) -> bool:
+        """Return True if this STT provider requires an API key that isn't set."""
+        key_map = {
+            STTProviderName.DEEPGRAM: self._deepgram_key.value,
+            STTProviderName.SONIOX: self._soniox_key.value,
+            STTProviderName.GOOGLE_STT: self._google_key.value,
+            STTProviderName.QWEN_ASR: (
+                self._alibaba_key_beijing.value or self._alibaba_key_singapore.value
+            ),
+        }
+        if provider not in key_map:
+            return False
+        return not key_map[provider]
+
+    def _stt_option_item(self, provider: STTProviderName) -> OptionItem:
+        needs_key = self._stt_needs_key(provider)
+        base_desc = t(f"provider.{provider.value}.description", default="")
+        description = (base_desc + " — " if base_desc else "") + "Requires API key" if needs_key else base_desc
         return OptionItem(
             value=provider.value,
             label=provider_label(provider.value),
-            description=t(f"provider.{provider.value}.description", default=""),
+            description=description,
+            disabled=needs_key,
         )
+
+    def _peer_stt_option_item(self, provider: STTProviderName) -> OptionItem:
+        return self._stt_option_item(provider)
 
     def _local_llm_extra_body_error_message(
         self,
@@ -3246,14 +3267,7 @@ class SettingsView(ft.Column):
         """Open STT provider selection modal."""
         if not self.page:
             return
-        options = [
-            OptionItem(
-                value=p.value,
-                label=provider_label(p.value),
-                description=t(f"provider.{p.value}.description", default=""),
-            )
-            for p in STTProviderName
-        ]
+        options = [self._stt_option_item(p) for p in STTProviderName]
         display_settings = self._build_settings_with_provider_draft()
         current = (
             display_settings.provider.stt.value
@@ -3357,12 +3371,38 @@ class SettingsView(ft.Column):
         """Open LLM provider selection modal."""
         if not self.page:
             return
-        options = [
-            OptionItem(
+        _free_models = {
+            TranslationModel.GOOGLE_TRANSLATE,
+            TranslationModel.BING,
+            TranslationModel.PAPAGO,
+        }
+        _model_key_map = {
+            TranslationModel.DEEPL: self._deepl_key.value,
+            TranslationModel.GEMMA4: self._openrouter_key.value,
+            TranslationModel.DEEPSEEK_V4_FLASH: self._openrouter_key.value or self._deepseek_key.value,
+            TranslationModel.DEEPSEEK_V4_PRO: self._deepseek_key.value,
+            TranslationModel.GEMINI_3_FLASH: self._openrouter_key.value,
+            TranslationModel.GEMINI_31_FLASH_LITE: self._openrouter_key.value,
+            TranslationModel.QWEN_35_PLUS: self._alibaba_key_beijing.value or self._alibaba_key_singapore.value,
+            TranslationModel.LOCAL_LLM: self._local_llm_api_key.value,
+        }
+
+        def _translation_option(model: TranslationModel) -> OptionItem:
+            if model in _free_models:
+                needs_key = False
+            else:
+                needs_key = not _model_key_map.get(model, True)
+            base_desc = t(f"settings.translation_model.{model.value}.description", default="")
+            description = (base_desc + " — " if base_desc else "") + "Requires API key" if needs_key else base_desc
+            return OptionItem(
                 value=model.value,
                 label=self._translation_model_display_label(model),
-                description=t(f"settings.translation_model.{model.value}.description", default=""),
+                description=description,
+                disabled=needs_key,
             )
+
+        options = [
+            _translation_option(model)
             for model in (
                 TranslationModel.GEMMA4,
                 TranslationModel.DEEPSEEK_V4_FLASH,

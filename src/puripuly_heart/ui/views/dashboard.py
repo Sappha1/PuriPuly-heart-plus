@@ -604,7 +604,7 @@ class DashboardView(ft.Row):
                 or setattr(e.control, "border", ft.border.all(1, _TOGGLE_ON if e.data == "true" else "#4a4b4f"))
                 or (e.control.update() if e.control.page else None)
             ),
-            tooltip="Change translation provider",
+            tooltip="Change translation AI model (not microphone)",
             expand=True,
         )
         self.on_translator_change: object = None  # callback(model_value: str)

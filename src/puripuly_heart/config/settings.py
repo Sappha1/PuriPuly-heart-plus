@@ -641,7 +641,7 @@ class OSCSettings:
     chatbox_send: bool = True
     chatbox_clear: bool = False
     chatbox_max_chars: int = 144
-    vrc_mic_intercept: bool = False
+    vrc_mic_intercept: bool = True
     chatbox_include_source: bool = True
 
     def validate(self) -> None:

@@ -140,6 +140,8 @@ def t_for_locale(
 
 
 def language_name(code: str) -> str:
+    if not code:
+        return t("language.auto", default="Auto Detect")
     info = get_language_info(code)
     if not info:
         return code

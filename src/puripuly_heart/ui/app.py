@@ -148,6 +148,9 @@ class TranslatorApp:
         self.view_dashboard.on_filter_peer_by_target_languages_change = self._on_filter_peer_change
         self.view_dashboard.on_translator_change = self._on_translator_change
         self.view_dashboard.on_transliteration_change = self._on_transliteration_change
+        self.view_dashboard.on_request_stt_download = self._on_request_stt_download
+        self.view_dashboard.on_stt_provider_change = self._on_dashboard_stt_provider_change
+        self.view_dashboard.on_peer_stt_provider_change = self._on_dashboard_peer_stt_provider_change
         self.view_dashboard.on_overlay_lock_change = self._on_dashboard_overlay_lock_change
         self.view_dashboard.on_overlay_transparency_change = self._on_overlay_transparency_change
 
@@ -212,6 +215,7 @@ class TranslatorApp:
         self.page.window.min_height = MIN_WINDOW_HEIGHT
         self.page.window.icon = "icons/icon.ico"
         self.page.on_keyboard_event = self._on_keyboard_event
+        self.page.on_resize = self._on_page_resize
 
     def _build_layout(self):
         self.view_dashboard = DashboardView()
@@ -823,6 +827,20 @@ class TranslatorApp:
 
         self.page.run_task(_task)
 
+    def _on_page_resize(self, e) -> None:
+        try:
+            settings = getattr(self.controller, "settings", None)
+            if settings is None:
+                return
+            w = int(self.page.window.width or 0)
+            h = int(self.page.window.height or 0)
+            if w >= MIN_WINDOW_WIDTH and h >= MIN_WINDOW_HEIGHT:
+                settings.ui.window_width = w
+                settings.ui.window_height = h
+                save_settings(self.controller.config_path, settings)
+        except Exception:
+            pass
+
     def _on_keyboard_event(self, event) -> None:
         if getattr(event, "key", None) != "Tab":
             return
@@ -1016,6 +1034,48 @@ class TranslatorApp:
             await self.controller.apply_settings(updated)
         self._queue_settings_mutation_task(_task)
 
+    def _stt_key_flags_from_settings(self, settings) -> dict:
+        """Return {provider_value: True/False} indicating whether each STT provider has its API key set."""
+        try:
+            from puripuly_heart.config.settings import STTProviderName
+            verified = getattr(settings, "api_key_verified", None)
+            return {
+                STTProviderName.LOCAL_QWEN.value: True,  # no key needed
+                STTProviderName.DEEPGRAM.value: bool(getattr(verified, "deepgram", False)),
+                STTProviderName.SONIOX.value: bool(getattr(verified, "soniox", False)),
+            }
+        except Exception:
+            return {}
+
+    def _translator_key_flags_from_settings(self, settings) -> dict:
+        """Return {model_value: True/False} indicating whether each translator model has its API key."""
+        try:
+            from puripuly_heart.config.settings import TranslationModel
+            verified = getattr(settings, "api_key_verified", None)
+            google_ok = bool(getattr(verified, "google", False))
+            openrouter_ok = bool(getattr(verified, "openrouter", False))
+            deepseek_ok = bool(getattr(verified, "deepseek", False))
+            alibaba_ok = (
+                bool(getattr(verified, "alibaba_beijing", False))
+                or bool(getattr(verified, "alibaba_singapore", False))
+            )
+            deepl_ok = bool(getattr(verified, "deepl", False))
+            return {
+                TranslationModel.GEMMA4.value: True,              # managed (free)
+                TranslationModel.DEEPSEEK_V4_FLASH.value: True,   # managed (free)
+                TranslationModel.DEEPSEEK_V4_PRO.value: deepseek_ok,
+                TranslationModel.GEMINI_3_FLASH.value: google_ok,
+                TranslationModel.GEMINI_31_FLASH_LITE.value: google_ok,
+                TranslationModel.QWEN_35_PLUS.value: openrouter_ok or alibaba_ok,
+                TranslationModel.DEEPL.value: deepl_ok,
+                TranslationModel.GOOGLE_TRANSLATE.value: True,    # free web
+                TranslationModel.BING.value: True,                # free web
+                TranslationModel.PAPAGO.value: True,              # free web
+                TranslationModel.LOCAL_LLM.value: True,           # local, no key
+            }
+        except Exception:
+            return {}
+
     def _on_settings_changed(self, settings) -> None:
         # Sync transliteration display flags directly to dashboard
         dash = getattr(self, "view_dashboard", None)
@@ -1026,6 +1086,18 @@ class TranslatorApp:
             dash.send_pinyin = bool(getattr(_ui, "send_pinyin", False))
             dash.send_romaji = bool(getattr(_ui, "send_romaji", False))
             self._sync_translator_label(settings)
+            try:
+                set_flags = getattr(dash, "set_stt_key_flags", None)
+                if callable(set_flags):
+                    set_flags(self._stt_key_flags_from_settings(settings))
+            except Exception:
+                pass
+            try:
+                set_trans_flags = getattr(dash, "set_translator_key_flags", None)
+                if callable(set_trans_flags):
+                    set_trans_flags(self._translator_key_flags_from_settings(settings))
+            except Exception:
+                pass
 
         async def _task():
             await self.controller.apply_settings(settings)
@@ -1108,6 +1180,50 @@ class TranslatorApp:
             dash = getattr(self, "view_dashboard", None)
             if dash is not None and matched in _TRANSLATION_MODEL_LABEL_KEYS:
                 dash.set_translator_label(t(_TRANSLATION_MODEL_LABEL_KEYS[matched]), model_value=matched.value)
+        except Exception:
+            pass
+
+    def _on_request_stt_download(self) -> None:
+        try:
+            start = getattr(self.controller, "_start_local_stt_download", None)
+            if callable(start):
+                start(origin="manual_notice_btn")
+        except Exception:
+            pass
+
+    def _on_dashboard_stt_provider_change(self, provider_value: str) -> None:
+        try:
+            import copy
+            from puripuly_heart.config.settings import STTProviderName
+            current = self.controller.settings
+            if current is None:
+                return
+            updated = copy.deepcopy(current)
+            updated.provider.stt = STTProviderName(provider_value)
+
+            async def _task():
+                await self.controller.apply_settings(updated)
+                await self.controller.apply_providers(force_rebuild_stt=True)
+
+            self._queue_settings_mutation_task(_task)
+        except Exception:
+            pass
+
+    def _on_dashboard_peer_stt_provider_change(self, provider_value: str) -> None:
+        try:
+            import copy
+            from puripuly_heart.config.settings import STTProviderName
+            current = self.controller.settings
+            if current is None:
+                return
+            updated = copy.deepcopy(current)
+            updated.provider.peer_stt = STTProviderName(provider_value)
+
+            async def _task():
+                await self.controller.apply_settings(updated)
+                await self.controller.apply_providers(force_rebuild_stt=True)
+
+            self._queue_settings_mutation_task(_task)
         except Exception:
             pass
 
@@ -1520,6 +1636,12 @@ class TranslatorApp:
         # Sync verification result with dashboard needs_key flags (UI update on user click)
         if provider in ("deepgram", "soniox", "qwen_asr"):
             self.view_dashboard.set_stt_needs_key(not success, update_ui=False)
+            try:
+                set_flags = getattr(self.view_dashboard, "set_stt_key_flags", None)
+                if callable(set_flags):
+                    set_flags(self._stt_key_flags_from_settings(self.controller.settings))
+            except Exception:
+                pass
         elif provider in (
             "google",
             "openrouter",
@@ -1529,6 +1651,12 @@ class TranslatorApp:
             "deepl",
         ):
             self.view_dashboard.set_translation_needs_key(not success, update_ui=False)
+            try:
+                set_trans_flags = getattr(self.view_dashboard, "set_translator_key_flags", None)
+                if callable(set_trans_flags):
+                    set_trans_flags(self._translator_key_flags_from_settings(self.controller.settings))
+            except Exception:
+                pass
 
         return success, msg
 
@@ -1554,6 +1682,12 @@ class TranslatorApp:
             # Update dashboard needs_key flag
             if provider in ("deepgram", "soniox"):
                 self.view_dashboard.set_stt_needs_key(True, update_ui=False)
+                try:
+                    set_flags = getattr(self.view_dashboard, "set_stt_key_flags", None)
+                    if callable(set_flags):
+                        set_flags(self._stt_key_flags_from_settings(self.controller.settings))
+                except Exception:
+                    pass
             elif provider in (
                 "google",
                 "openrouter",
@@ -1563,6 +1697,12 @@ class TranslatorApp:
                 "deepl",
             ):
                 self.view_dashboard.set_translation_needs_key(True, update_ui=False)
+                try:
+                    set_trans_flags = getattr(self.view_dashboard, "set_translator_key_flags", None)
+                    if callable(set_trans_flags):
+                        set_trans_flags(self._translator_key_flags_from_settings(self.controller.settings))
+                except Exception:
+                    pass
 
     def _show_snackbar(self, message: str, bgcolor, duration: int = 4000) -> None:
         """Show a snackbar above the bottom nav."""
@@ -1601,6 +1741,21 @@ async def main_gui(page: ft.Page, *, config_path, debug_ui_preview: bool = False
         debug_ui_preview=debug_ui_preview,
     )
     await app.controller.start()
+
+    # Restore saved window size (settings loaded by controller.start)
+    try:
+        _ui = getattr(getattr(app.controller, "settings", None), "ui", None)
+        if _ui is not None:
+            _w = getattr(_ui, "window_width", 0) or 0
+            _h = getattr(_ui, "window_height", 0) or 0
+            if _w >= MIN_WINDOW_WIDTH:
+                app.page.window.width = _w
+            if _h >= MIN_WINDOW_HEIGHT:
+                app.page.window.height = _h
+            if _w >= MIN_WINDOW_WIDTH or _h >= MIN_WINDOW_HEIGHT:
+                app.page.update()
+    except Exception:
+        pass
 
     # Check for updates in background
     update_kwargs = {"log_detailed": app._log_detailed}

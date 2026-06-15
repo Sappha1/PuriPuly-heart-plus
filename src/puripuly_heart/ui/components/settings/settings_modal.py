@@ -96,13 +96,15 @@ class SettingsModal:
                         ft.Text(
                             option.label,
                             size=14,
-                            color=COLOR_PRIMARY if is_selected else COLOR_ON_BACKGROUND,
+                            color=COLOR_NEUTRAL if option.disabled else (
+                                COLOR_PRIMARY if is_selected else COLOR_ON_BACKGROUND
+                            ),
                             weight=ft.FontWeight.W_600 if is_selected else ft.FontWeight.NORMAL,
                         ),
                         ft.Text(
                             option.description,
                             size=12,
-                            color=COLOR_NEUTRAL,
+                            color=ft.Colors.with_opacity(0.5, COLOR_NEUTRAL) if option.disabled else COLOR_NEUTRAL,
                         ),
                     ],
                     spacing=2,

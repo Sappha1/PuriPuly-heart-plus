@@ -382,11 +382,11 @@
   "provider.google_stt.description": "Google's free speech recognition — no API key needed",
   "provider.whisper": "Whisper (Local)",
   "provider.whisper.description": "Run OpenAI Whisper locally on your CPU — downloads model on first use",
-  "dashboard.local_stt_notice_missing": "STT files are missing",
-  "dashboard.local_stt_notice_invalid": "STT files need repair",
-  "dashboard.local_stt_notice_downloading": "Downloading STT model...",
-  "dashboard.local_stt_notice_downloading_progress": "Downloading STT model {percent}%",
-  "dashboard.local_stt_notice_download_failed": "Failed to download STT model",
+  "dashboard.local_stt_notice_missing": "Qwen ASR model not downloaded — MIC won't work until downloaded",
+  "dashboard.local_stt_notice_invalid": "Qwen ASR model files are corrupted — re-download required",
+  "dashboard.local_stt_notice_downloading": "Downloading Qwen ASR model (~980 MB), please wait...",
+  "dashboard.local_stt_notice_downloading_progress": "Downloading Qwen ASR model: {percent}%",
+  "dashboard.local_stt_notice_download_failed": "Qwen ASR download failed — check connection and retry",
   "provider.local_qwen.description": "Your computer runs the model directly on CPU. It doesn't use VRAM",
   "provider.qwen_asr": "Qwen ASR",
   "provider.qwen_asr.description": "Better speech recognition than the local model",
@@ -488,5 +488,10 @@
   "settings.chatbox_source.off": "Translation Only",
   "settings.section.peer_stt": "Peer Speech Recognition",
   "settings.dashboard_language_redirect": "Change self and peer language pairs from the Dashboard language card.",
-  "settings.peer_stt_provider": "Peer STT Provider"
+  "settings.peer_stt_provider": "Peer STT Provider",
+  "language.auto": "Auto Detect",
+  "dashboard.chat.sent": "Sent",
+  "dashboard.chat.received": "Received",
+  "dashboard.chat.translation_failed": "Translation failed — check model settings",
+  "settings_modal.requires_api_key": "Requires API key — set it in Settings"
 }

@@ -12,7 +12,7 @@ from puripuly_heart.ui.fonts import font_for_language
 from puripuly_heart.ui.i18n import get_locale, language_name, t
 from puripuly_heart.ui.overlay_peer_contract import OverlayPeerConsumerContract
 
-_BUILD_TAG = "r50"  # increment each build so user can confirm version
+_BUILD_TAG = "r55"  #increment each build so user can confirm version
 
 # ── VRCT-style dark palette ──────────────────────────────────────────────────
 _BG_MAIN = "#2e2f32"
@@ -261,6 +261,9 @@ class DashboardView(ft.Row):
         self._chat_list_view: ft.ListView | None = None
         self.single_turn_mode: bool = False
 
+        self._pending_sent_col: ft.Column | None = None
+        self._pending_version: int = 0
+        self._show_pending_echo: bool = False  # off by default; toggled by "Live preview" chip
         self._translation_showing_warning = False
         self._stt_showing_warning = False
         self._managed_auth_pending = False
@@ -270,10 +273,13 @@ class DashboardView(ft.Row):
 
         self._source_lang_code = "ko"
         self._target_lang_code = "en"
-        self._extra_target_lang_code: str | None = None  # second target language (None = hidden)
-        self._peer_source_lang_code = "en"
-        self._peer_target_lang_code = "ko"
-        self._extra_peer_target_lang_code: str | None = None  # second peer target (None = hidden)
+        self._extra_target_lang_codes: list[str] = []  # extra target languages (unlimited)
+        self._peer_source_lang_code = ""  # empty = auto-detect; user sets via "Peer voice" card
+        self._peer_target_lang_code = ""
+        self._extra_peer_source_lang_codes: list[str] = []  # extra peer source languages (e.g. listen to JP + ZH)
+        self._extra_peer_target_lang_codes: list[str] = []  # extra peer target languages
+        self._extra_tgt_translit_cols: list[ft.Column] = []
+        self._extra_peer_tgt_translit_cols: list[ft.Column] = []
         self._alt_source_lang_code: str | None = None  # second "you speak" language (None = hidden)
         self._active_preset: int = 0
         self._preset_data: list[dict] = [
@@ -283,7 +289,7 @@ class DashboardView(ft.Row):
         ]
         self._message_input_focused = False
         self._last_chat_content_col: ft.Column | None = None
-        self._filter_peer_lang_active: bool = False
+        self._filter_peer_lang_active: bool = True  # default ON: only show peer messages in configured language
 
         self._recent_source_langs: list[str] = []
         self._recent_target_langs: list[str] = []
@@ -307,7 +313,9 @@ class DashboardView(ft.Row):
     def _build_ui(self):
         # ── Toggle rows ──────────────────────────────────────────────────────
         self._row_stt = _ToggleRow(ft.Icons.MIC, t("dashboard.stt_label"), on_click=self._on_stt_click)
+        self._row_stt.tooltip = "Click to toggle • Right-click to change STT provider"
         self._row_peer = _ToggleRow(ft.Icons.RECORD_VOICE_OVER, t("dashboard.peer_label"), on_click=self._on_peer_click)
+        self._row_peer.tooltip = "Click to toggle peer translation • Right-click to change provider"
         self._row_trans = _ToggleRow(ft.Icons.TRANSLATE, t("dashboard.trans_label"), on_click=self._on_trans_click)
         self._row_overlay = _ToggleRow(ft.Icons.SUBTITLES, t("dashboard.overlay_label"), on_click=self._on_overlay_click)
         self._overlay_header_btn: ft.Container | None = None  # built later in chat header
@@ -379,45 +387,25 @@ class DashboardView(ft.Row):
         self._tgt1_lang_card = _make_lang_card(
             language_name(self._target_lang_code), self._open_target_dialog
         )
-        self._tgt2_lang_card = _make_lang_card(
-            language_name(self._extra_target_lang_code or "en"), self._open_extra_target_dialog
-        )
-
         # Inline transliteration chip rows (Show / Send Pinyin|Romaji)
         self._tgt1_translit_col = self._build_translit_col(self._target_lang_code)
-        self._tgt2_translit_col = self._build_translit_col(self._extra_target_lang_code or "")
 
-        # + button next to "Target Language 1" label (add a second target)
+        # + button next to tgt1 card — always visible, adds another target language
         self._plus_btn = ft.Container(
             content=ft.Icon(ft.Icons.ADD_CIRCLE_OUTLINE, size=14, color=_TEXT_FAINT),
             on_click=self._on_add_extra_target,
-            tooltip="Add second target language",
-            visible=self._extra_target_lang_code is None,
-            padding=ft.padding.only(left=4),
-        )
-        # - button inline with "Target Language 2" label (remove that row)
-        self._minus_btn = ft.Container(
-            content=ft.Icon(ft.Icons.REMOVE_CIRCLE_OUTLINE, size=14, color=_TEXT_FAINT),
-            on_click=self._on_remove_extra_target,
-            tooltip="Remove second target language",
+            tooltip="Add target language",
             padding=ft.padding.only(left=4),
         )
 
-        # Fixed width for +/- button slot so all card rows align identically
+        # Fixed width for button slot so all card rows align identically
         _BTN_SLOT = 22
 
-        self._tgt2_row = ft.Column(
-            [
-                ft.Row(
-                    [self._tgt2_lang_card, self._minus_btn],
-                    spacing=4,
-                    vertical_alignment=ft.CrossAxisAlignment.CENTER,
-                ),
-                self._tgt2_translit_col,
-            ],
+        # Dynamic column for extra target rows (rebuilt when targets change)
+        self._extra_tgt_rows_col = ft.Column(
+            [],
             spacing=3,
             horizontal_alignment=ft.CrossAxisAlignment.STRETCH,
-            visible=self._extra_target_lang_code is not None,
         )
 
         self._swap_row_text = None  # no longer used
@@ -459,32 +447,71 @@ class DashboardView(ft.Row):
         # so every card is the same width regardless of which slot has a button.
         self._src_lang_card.expand = True
         self._tgt1_lang_card.expand = True
-        self._tgt2_lang_card.expand = True
 
         _src_row = ft.Row(
             [self._src_lang_card, ft.Container(width=_BTN_SLOT)],
             spacing=4,
             vertical_alignment=ft.CrossAxisAlignment.CENTER,
         )
+        _tgt_plus_slot = ft.Container(content=self._plus_btn, width=_BTN_SLOT, alignment=ft.alignment.center_left)
         _tgt1_with_plus = ft.Row(
-            [self._tgt1_lang_card, self._plus_btn],
+            [self._tgt1_lang_card, _tgt_plus_slot],
             spacing=4,
             vertical_alignment=ft.CrossAxisAlignment.CENTER,
         )
-        # tgt2 row already has the minus button inline, apply same expand
-        self._tgt2_lang_card.expand = True
+
+        # Alt-source (bilingual quick-switch) controls — must be defined before lang_panel
+        self._src_plus_btn = ft.Container(
+            content=ft.Icon(ft.Icons.ADD_CIRCLE_OUTLINE, size=14, color=_TEXT_FAINT),
+            on_click=self._on_add_alt_source,
+            tooltip="Add second spoken language (bilingual quick-switch)",
+            visible=self._alt_source_lang_code is None,
+            padding=ft.padding.only(left=4),
+        )
+        self._src_minus_btn = ft.Container(
+            content=ft.Icon(ft.Icons.REMOVE_CIRCLE_OUTLINE, size=14, color=_TEXT_FAINT),
+            on_click=self._on_remove_alt_source,
+            tooltip="Remove second spoken language",
+            padding=ft.padding.only(left=4),
+        )
+        self._src_lang_card.expand = True
+        self._alt_src_lang_card.expand = True
+        _src_plus_slot = ft.Container(
+            content=self._src_plus_btn,
+            width=_BTN_SLOT,
+            alignment=ft.alignment.center_left,
+        )
+        _src_with_plus = ft.Row(
+            [self._src_lang_card, _src_plus_slot],
+            spacing=4,
+            vertical_alignment=ft.CrossAxisAlignment.CENTER,
+        )
+        self._alt_src_row = ft.Column(
+            [
+                ft.Row(
+                    [self._alt_src_lang_card, self._src_minus_btn],
+                    spacing=4,
+                    vertical_alignment=ft.CrossAxisAlignment.CENTER,
+                ),
+            ],
+            spacing=3,
+            horizontal_alignment=ft.CrossAxisAlignment.STRETCH,
+            visible=self._alt_source_lang_code is not None,
+        )
 
         self._preset_tabs_row = ft.Row(
             self._preset_tab_containers,
             spacing=6,
             alignment=ft.MainAxisAlignment.CENTER,
         )
+        _translate_to_label = ft.Text("Translate to", size=10, color="#c8c9cc")
         lang_panel = ft.Container(
             content=ft.Column(
                 [
+                    _translate_to_label,
                     _tgt1_with_plus,
                     self._tgt1_translit_col,
-                    self._tgt2_row,
+                    self._extra_tgt_rows_col,
                 ],
                 spacing=3,
                 tight=True,
@@ -502,87 +529,50 @@ class DashboardView(ft.Row):
             language_name(self._effective_peer_target_lang_code()),
             self._open_peer_target_dialog,
         )
-        self._peer_tgt2_lang_card = _make_lang_card(
-            language_name(self._extra_peer_target_lang_code or "en"),
-            self._open_extra_peer_target_dialog,
-        )
         self._peer_plus_btn = ft.Container(
             content=ft.Icon(ft.Icons.ADD_CIRCLE_OUTLINE, size=14, color=_TEXT_FAINT),
             on_click=self._on_add_extra_peer_target,
-            tooltip="Add second peer target language",
-            visible=self._extra_peer_target_lang_code is None,
-            padding=ft.padding.only(left=4),
-        )
-        self._peer_minus_btn = ft.Container(
-            content=ft.Icon(ft.Icons.REMOVE_CIRCLE_OUTLINE, size=14, color=_TEXT_FAINT),
-            on_click=self._on_remove_extra_peer_target,
-            tooltip="Remove second peer target language",
+            tooltip="Add peer target language",
             padding=ft.padding.only(left=4),
         )
         self._peer_src_card.expand = True
         self._peer_tgt_card.expand = True
-        self._peer_tgt2_lang_card.expand = True
-        _peer_tgt_with_plus = ft.Row(
-            [self._peer_tgt_card, self._peer_plus_btn],
-            spacing=4,
-            vertical_alignment=ft.CrossAxisAlignment.CENTER,
-        )
-        self._peer_tgt2_row = ft.Column(
-            [
-                ft.Row(
-                    [self._peer_tgt2_lang_card, self._peer_minus_btn],
-                    spacing=4,
-                    vertical_alignment=ft.CrossAxisAlignment.CENTER,
-                ),
-            ],
-            spacing=3,
-            horizontal_alignment=ft.CrossAxisAlignment.STRETCH,
-            visible=self._extra_peer_target_lang_code is not None,
-        )
-        self._src_plus_btn = ft.Container(
+        self._peer_src_plus_btn = ft.Container(
             content=ft.Icon(ft.Icons.ADD_CIRCLE_OUTLINE, size=14, color=_TEXT_FAINT),
-            on_click=self._on_add_alt_source,
-            tooltip="Add second spoken language (bilingual quick-switch)",
-            visible=self._alt_source_lang_code is None,
+            on_click=self._on_add_extra_peer_source,
+            tooltip="Listen to another peer language",
             padding=ft.padding.only(left=4),
         )
-        self._src_minus_btn = ft.Container(
-            content=ft.Icon(ft.Icons.REMOVE_CIRCLE_OUTLINE, size=14, color=_TEXT_FAINT),
-            on_click=self._on_remove_alt_source,
-            tooltip="Remove second spoken language",
-            padding=ft.padding.only(left=4),
-        )
-        self._src_lang_card.expand = True
-        self._alt_src_lang_card.expand = True
-        _src_with_plus = ft.Row(
-            [self._src_lang_card, self._src_plus_btn],
+        _peer_src_plus_slot = ft.Container(content=self._peer_src_plus_btn, width=_BTN_SLOT, alignment=ft.alignment.center_left)
+        _peer_src_row = ft.Row(
+            [self._peer_src_card, _peer_src_plus_slot],
             spacing=4,
             vertical_alignment=ft.CrossAxisAlignment.CENTER,
         )
-        self._alt_src_row = ft.Column(
-            [
-                ft.Row(
-                    [self._alt_src_lang_card, self._src_minus_btn],
-                    spacing=4,
-                    vertical_alignment=ft.CrossAxisAlignment.CENTER,
-                ),
-            ],
+        self._extra_peer_src_rows_col = ft.Column(
+            [],
             spacing=3,
             horizontal_alignment=ft.CrossAxisAlignment.STRETCH,
-            visible=self._alt_source_lang_code is not None,
+        )
+        _peer_tgt_plus_slot = ft.Container(content=self._peer_plus_btn, width=_BTN_SLOT, alignment=ft.alignment.center_left)
+        _peer_tgt_with_plus = ft.Row(
+            [self._peer_tgt_card, _peer_tgt_plus_slot],
+            spacing=4,
+            vertical_alignment=ft.CrossAxisAlignment.CENTER,
+        )
+        self._extra_peer_tgt_rows_col = ft.Column(
+            [],
+            spacing=3,
+            horizontal_alignment=ft.CrossAxisAlignment.STRETCH,
         )
         _you_speak_info = ft.Container(
             content=ft.Icon(ft.Icons.INFO_OUTLINE, size=11, color=_TEXT_FAINT),
-            tooltip="Your spoken language — sets the microphone (STT) recognition language.\nClick either card to activate it as the current language.",
+            tooltip="Your spoken language — sets the microphone (STT) recognition language.\nAlso used as source for text translation.\nClick to change; select Auto Detect to let it guess.",
             padding=ft.padding.only(left=2),
         )
-        _peer_info = ft.Container(
+        _peer_speaks_info = ft.Container(
             content=ft.Icon(ft.Icons.INFO_OUTLINE, size=11, color=_TEXT_FAINT),
-            tooltip=(
-                "The language your peer speaks — auto-detected\n"
-                "from loopback audio. Peer translation output\n"
-                "is shown in the target language below."
-            ),
+            tooltip="The language your peer speaks.\nSet this so incoming audio translates correctly.\nAuto Detect works if you're unsure.",
             padding=ft.padding.only(left=2),
         )
         self._peer_panel = ft.Container(
@@ -597,12 +587,12 @@ class DashboardView(ft.Row):
                     self._alt_src_row,
                     ft.Divider(height=5, color=_DIVIDER, thickness=1),
                     ft.Row(
-                        [ft.Text(t("dashboard.language.peer"), size=10, color="#c8c9cc"), _peer_info],
+                        [ft.Text(t("dashboard.language.peer"), size=10, color="#c8c9cc"), _peer_speaks_info],
                         spacing=0,
                         vertical_alignment=ft.CrossAxisAlignment.CENTER,
                     ),
-                    _peer_tgt_with_plus,
-                    self._peer_tgt2_row,
+                    _peer_src_row,
+                    self._extra_peer_src_rows_col,
                 ],
                 spacing=3,
                 horizontal_alignment=ft.CrossAxisAlignment.STRETCH,
@@ -669,6 +659,8 @@ class DashboardView(ft.Row):
         self.on_translator_change: object = None  # callback(model_value: str)
         self.on_stt_provider_change: object = None  # callback(provider_value: str)
         self.on_peer_stt_provider_change: object = None  # callback(provider_value: str)
+        self._stt_provider_has_key: dict[str, bool] = {}  # provider_value → has key
+        self._translator_model_has_key: dict[str, bool] = {}  # model_value → has key
         self.on_transliteration_change: object = None  # callback(show_pinyin, send_pinyin, show_romaji, send_romaji)
         self.on_overlay_lock_change: object = None  # callback(locked: bool)
         self.on_overlay_transparency_change: object = None  # callback(alpha: float)
@@ -844,12 +836,30 @@ class DashboardView(ft.Row):
         self.display_card.visible = False
 
         # ── Status notice strip (shown when there's a notice) ────────────────
+        self.on_request_stt_download: object = None  # callback() → triggers model download
         self._notice_text_ctrl = ft.Text("", size=12, color=_TOGGLE_WARNING, expand=True)
+        self._notice_download_btn = ft.Container(
+            content=ft.Row(
+                [
+                    ft.Icon(ft.Icons.DOWNLOAD, size=12, color="#ffffff"),
+                    ft.Text("Download", size=11, color="#ffffff", weight=ft.FontWeight.W_600),
+                ],
+                spacing=3,
+                tight=True,
+            ),
+            bgcolor=_TOGGLE_ON,
+            border_radius=4,
+            padding=ft.padding.symmetric(horizontal=7, vertical=3),
+            on_click=lambda _: self.on_request_stt_download() if callable(self.on_request_stt_download) else None,
+            visible=False,
+            tooltip="Download the Qwen ASR local model (~980 MB)",
+        )
         self._notice_strip = ft.Container(
             content=ft.Row(
                 [
                     ft.Icon(ft.Icons.INFO_OUTLINE, size=14, color=_TOGGLE_WARNING),
                     self._notice_text_ctrl,
+                    self._notice_download_btn,
                 ],
                 spacing=6,
                 vertical_alignment=ft.CrossAxisAlignment.CENTER,
@@ -880,19 +890,20 @@ class DashboardView(ft.Row):
         _pill_border_off = ft.border.all(1, "#3a3b3f")
         _pill_border_on = ft.border.all(1, _TOGGLE_ON)
         _pill_border_peer = ft.border.all(1, _RECV_COLOR)
+        # Filter button — default ON (matches _filter_peer_lang_active = True)
         self._filter_peer_btn = ft.Container(
             content=ft.Text(
                 "Target langs only",
                 size=9,
-                color=_TEXT_FAINT,
+                color=_RECV_COLOR,
                 weight=ft.FontWeight.W_600,
             ),
             on_click=self._on_chat_filter_peer_click,
-            tooltip="When on: hides received messages spoken in languages not in your target list",
+            tooltip="When on: only shows received messages from your configured Peer voice language(s)",
             padding=ft.padding.symmetric(horizontal=7, vertical=3),
             border_radius=10,
-            bgcolor=ft.Colors.TRANSPARENT,
-            border=_pill_border_off,
+            bgcolor="#2d1f33",
+            border=_pill_border_peer,
         )
         self._overlay_header_text = ft.Text(
             "Overlay", size=9, color=_TEXT_FAINT, weight=ft.FontWeight.W_600,
@@ -943,16 +954,27 @@ class DashboardView(ft.Row):
             bgcolor=ft.Colors.TRANSPARENT,
             border=_pill_border_on,
         )
+        self._echo_preview_btn = ft.Container(
+            content=ft.Text("Live preview", size=9, color=_TEXT_FAINT, weight=ft.FontWeight.W_600),
+            on_click=self._on_echo_preview_toggle,
+            tooltip="Show sent text immediately while waiting for translation",
+            padding=ft.padding.symmetric(horizontal=7, vertical=3),
+            border_radius=10,
+            bgcolor=ft.Colors.TRANSPARENT,
+            border=_pill_border_off,
+        )
         chat_header = ft.Row(
             [
                 ft.Text("Chat", size=11, color=_TEXT_FAINT, weight=ft.FontWeight.W_500),
                 ft.Container(expand=True),
-                self._autoscroll_btn,
-                ft.Container(width=6),
+                self._echo_preview_btn,
+                ft.Container(width=4),
                 self._filter_peer_btn,
-                ft.Container(width=6),
+                ft.Container(width=4),
+                self._autoscroll_btn,
+                ft.Container(width=4),
                 self._overlay_header_btn,
-                ft.Container(width=6),
+                ft.Container(width=4),
                 self._chat_clear_button,
             ],
             vertical_alignment=ft.CrossAxisAlignment.CENTER,
@@ -1366,7 +1388,7 @@ class DashboardView(ft.Row):
         timestamp = _dt.datetime.now().strftime("%H:%M")
         is_peer = channel == "peer"
         label_color = _RECV_COLOR if is_peer else _SENT_COLOR
-        direction = "Received" if is_peer else "Sent"
+        direction = t("dashboard.chat.received") if is_peer else t("dashboard.chat.sent")
         # Determine source/target language for transliteration
         if is_peer:
             src_lang = self._peer_source_lang_code
@@ -1393,17 +1415,17 @@ class DashboardView(ft.Row):
             if translit_src:
                 content_rows.append(ft.Text(translit_src, size=11, color=_TRANSLIT_COLOR, selectable=True, italic=True))
             content_rows.append(ft.Text(source_text.strip(), size=12, color=_TEXT_FAINT, selectable=True))
-            # Translation block: translation first, then pinyin/romaji below it
-            content_rows.append(ft.Text(translated_text.strip(), size=13, color=_TEXT_PRIMARY, selectable=True, weight=ft.FontWeight.W_500))
+            # Translation block: pinyin/romaji above, then translation text
             if translit_tgt and translit_tgt != translit_src:
                 content_rows.append(ft.Text(translit_tgt, size=11, color=_TRANSLIT_COLOR, selectable=True, italic=True))
+            content_rows.append(ft.Text(translated_text.strip(), size=13, color=_TEXT_PRIMARY, selectable=True, weight=ft.FontWeight.W_500))
         elif translated_text:
             translit = transliterate_for_language(
                 translated_text, tgt_lang, show_pinyin=_want_pinyin, show_romaji=_want_romaji, show_latin=_want_latin
             )
-            content_rows.append(ft.Text(translated_text.strip(), size=13, color=_TEXT_PRIMARY, selectable=True, weight=ft.FontWeight.W_500))
             if translit:
                 content_rows.append(ft.Text(translit, size=11, color=_TRANSLIT_COLOR, selectable=True, italic=True))
+            content_rows.append(ft.Text(translated_text.strip(), size=13, color=_TEXT_PRIMARY, selectable=True, weight=ft.FontWeight.W_500))
         else:
             content_rows.append(ft.Text(source_text.strip(), size=13, color=_TEXT_PRIMARY, selectable=True))
 
@@ -1416,6 +1438,21 @@ class DashboardView(ft.Row):
             spacing=0,
             tight=True,
         )
+
+        # If a pending sent entry exists and this is a self-channel result, update it in-place
+        if not is_peer and self._pending_sent_col is not None:
+            self._pending_version += 1  # cancel timeout
+            col = self._pending_sent_col
+            self._pending_sent_col = None
+            col.controls.clear()
+            col.controls.extend([header, *content_rows])
+            self._last_chat_content_col = col
+            try:
+                if self._chat_list_view.page:
+                    self._chat_list_view.update()
+            except Exception:
+                pass
+            return
 
         entry = ft.Container(
             content=ft.Column(
@@ -1452,9 +1489,9 @@ class DashboardView(ft.Row):
             translit = transliterate_for_language(
                 text, lang_code, show_pinyin=_want_pinyin, show_romaji=_want_romaji, show_latin=_want_latin
             )
-            col.controls.append(ft.Text(text.strip(), size=13, color=_TEXT_PRIMARY, selectable=True, weight=ft.FontWeight.W_500))
             if translit:
                 col.controls.append(ft.Text(translit, size=11, color=_TRANSLIT_COLOR, selectable=True, italic=True))
+            col.controls.append(ft.Text(text.strip(), size=13, color=_TEXT_PRIMARY, selectable=True, weight=ft.FontWeight.W_500))
         try:
             self._chat_list_view.update()
         except Exception:
@@ -1475,6 +1512,63 @@ class DashboardView(ft.Row):
 
     def _on_submit(self, text: str):
         self.set_display_text(text, language_code=self._source_lang_code)
+        if self._chat_list_view is not None and self._show_pending_echo:
+            import datetime as _dt
+            timestamp = _dt.datetime.now().strftime("%H:%M")
+            pending_text = ft.Text(text.strip(), size=13, color=_TEXT_FAINT, selectable=True, italic=True)
+            pending_col = ft.Column(
+                [
+                    ft.Row(
+                        [
+                            ft.Text(t("dashboard.chat.sent"), size=11, color=_SENT_COLOR, weight=ft.FontWeight.W_700, selectable=True),
+                            ft.Text(f" {timestamp}", size=11, color=_TEXT_FAINT, selectable=True),
+                        ],
+                        spacing=0, tight=True,
+                    ),
+                    pending_text,
+                ],
+                spacing=1, tight=True,
+            )
+            entry = ft.Container(
+                content=pending_col,
+                padding=ft.padding.only(left=10, top=6, bottom=6, right=8),
+                border=ft.border.only(left=ft.BorderSide(2, _SENT_COLOR)),
+                margin=ft.margin.only(top=4),
+                border_radius=ft.border_radius.only(top_right=4, bottom_right=4),
+            )
+            self._last_chat_content_col = pending_col
+            self._chat_list_view.controls.append(entry)
+            if len(self._chat_list_view.controls) > CHAT_MAX_ENTRIES:
+                del self._chat_list_view.controls[:20]
+            try:
+                self._chat_list_view.update()
+            except Exception:
+                pass
+            self._pending_sent_col = pending_col
+            self._pending_version += 1
+            version = self._pending_version
+
+            async def _timeout():
+                import asyncio as _asyncio
+                await _asyncio.sleep(6)
+                if self._pending_version != version or self._pending_sent_col is not pending_col:
+                    return
+                self._pending_sent_col = None
+                pending_col.controls.append(
+                    ft.Text(
+                        t("dashboard.chat.translation_failed"),
+                        color="#e05050", size=11, italic=True, selectable=True,
+                    )
+                )
+                pending_text.color = "#888888"
+                try:
+                    if self._chat_list_view and self._chat_list_view.page:
+                        self._chat_list_view.update()
+                except Exception:
+                    pass
+
+            if self.page:
+                self.page.run_task(_timeout)
         if self.on_send_message:
             self.on_send_message("You", text)
 
@@ -1523,10 +1617,9 @@ class DashboardView(ft.Row):
         if index == self._active_preset:
             return
         # Save current state back to preset data
-        extra = self._extra_target_lang_code
         self._preset_data[self._active_preset] = {
             "source": self._source_lang_code,
-            "targets": [self._target_lang_code] + ([extra] if extra else []),
+            "targets": [self._target_lang_code] + list(self._extra_target_lang_codes),
             "peer_source": self._peer_source_lang_code,
             "peer_target": self._peer_target_lang_code,
         }
@@ -1536,7 +1629,7 @@ class DashboardView(ft.Row):
         self._source_lang_code = preset["source"]
         targets = preset.get("targets", ["en"])
         self._target_lang_code = targets[0] if targets else "en"
-        self._extra_target_lang_code = targets[1] if len(targets) > 1 else None
+        self._extra_target_lang_codes = list(targets[1:])
         self._peer_source_lang_code = preset.get("peer_source", "")
         self._peer_target_lang_code = preset.get("peer_target", "")
         self._update_input_font()
@@ -1545,32 +1638,102 @@ class DashboardView(ft.Row):
         self._notify_language_change()
 
     def _on_add_extra_target(self, _=None) -> None:
-        if self._extra_target_lang_code is not None:
+        if len(self._extra_target_lang_codes) >= self._MAX_EXTRA_LANGS:
             return
-        self._extra_target_lang_code = "ja"  # default second target
-        self._refresh_language_panel()
+        self._extra_target_lang_codes.append("ja")
+        self._rebuild_extra_tgt_rows()
         self._notify_language_change()
 
-    def _on_remove_extra_target(self, _=None) -> None:
-        if self._extra_target_lang_code is None:
-            return
-        self._extra_target_lang_code = None
-        self._refresh_language_panel()
+    def _on_remove_extra_target(self, idx: int) -> None:
+        if 0 <= idx < len(self._extra_target_lang_codes):
+            del self._extra_target_lang_codes[idx]
+        self._rebuild_extra_tgt_rows()
         self._notify_language_change()
 
     def _on_add_extra_peer_target(self, _=None) -> None:
-        if self._extra_peer_target_lang_code is not None:
+        if len(self._extra_peer_target_lang_codes) >= self._MAX_EXTRA_LANGS:
             return
-        self._extra_peer_target_lang_code = "ja"
-        self._refresh_language_rows()
+        self._extra_peer_target_lang_codes.append("ja")
+        self._rebuild_extra_peer_tgt_rows()
         self._notify_language_change()
 
-    def _on_remove_extra_peer_target(self, _=None) -> None:
-        if self._extra_peer_target_lang_code is None:
-            return
-        self._extra_peer_target_lang_code = None
-        self._refresh_language_rows()
+    def _on_remove_extra_peer_target(self, idx: int) -> None:
+        if 0 <= idx < len(self._extra_peer_target_lang_codes):
+            del self._extra_peer_target_lang_codes[idx]
+        self._rebuild_extra_peer_tgt_rows()
         self._notify_language_change()
+
+    def _rebuild_extra_tgt_rows(self) -> None:
+        """Rebuild the dynamic extra target language rows from _extra_target_lang_codes."""
+        _BTN_SLOT = 22
+        rows: list[ft.Control] = []
+        translit_cols: list[ft.Column] = []
+        for i, lang_code in enumerate(self._extra_target_lang_codes):
+            lbl = ft.Text(language_name(lang_code), size=12, color=_TEXT_MUTED, no_wrap=True,
+                          overflow=ft.TextOverflow.ELLIPSIS, text_align=ft.TextAlign.CENTER, expand=True)
+            arrow = ft.Icon(ft.Icons.CHEVRON_RIGHT, size=12, color=_TEXT_FAINT)
+            card = ft.Container(
+                content=ft.Row([lbl, arrow], spacing=2, vertical_alignment=ft.CrossAxisAlignment.CENTER),
+                bgcolor="#2a2b2e", border_radius=6, border=ft.border.all(1, "#3a3b3e"),
+                padding=ft.padding.symmetric(horizontal=8, vertical=5), expand=True,
+                on_click=lambda _, idx=i: self._open_extra_target_dialog(idx),
+                on_hover=lambda e, l=lbl: (
+                    setattr(l, "color", _TOGGLE_ON if e.data == "true" else _TEXT_MUTED)
+                    or (l.update() if l.page else None)
+                ),
+            )
+            minus = ft.Container(
+                content=ft.Icon(ft.Icons.REMOVE_CIRCLE_OUTLINE, size=14, color=_TEXT_FAINT),
+                on_click=lambda _, idx=i: self._on_remove_extra_target(idx),
+                tooltip="Remove target language", width=_BTN_SLOT,
+            )
+            card_row = ft.Row([card, minus], spacing=4, vertical_alignment=ft.CrossAxisAlignment.CENTER)
+            translit_col = self._build_translit_col(lang_code)
+            translit_cols.append(translit_col)
+            rows.append(ft.Column([card_row, translit_col], spacing=3, horizontal_alignment=ft.CrossAxisAlignment.STRETCH))
+        self._extra_tgt_translit_cols = translit_cols
+        self._extra_tgt_rows_col.controls = rows
+        try:
+            if self._extra_tgt_rows_col.page:
+                self._extra_tgt_rows_col.update()
+        except Exception:
+            pass
+
+    def _rebuild_extra_peer_tgt_rows(self) -> None:
+        """Rebuild the dynamic extra peer target language rows from _extra_peer_target_lang_codes."""
+        _BTN_SLOT = 22
+        rows: list[ft.Control] = []
+        translit_cols: list[ft.Column] = []
+        for i, lang_code in enumerate(self._extra_peer_target_lang_codes):
+            lbl = ft.Text(language_name(lang_code), size=12, color=_TEXT_MUTED, no_wrap=True,
+                          overflow=ft.TextOverflow.ELLIPSIS, text_align=ft.TextAlign.CENTER, expand=True)
+            arrow = ft.Icon(ft.Icons.CHEVRON_RIGHT, size=12, color=_TEXT_FAINT)
+            card = ft.Container(
+                content=ft.Row([lbl, arrow], spacing=2, vertical_alignment=ft.CrossAxisAlignment.CENTER),
+                bgcolor="#2a2b2e", border_radius=6, border=ft.border.all(1, "#3a3b3e"),
+                padding=ft.padding.symmetric(horizontal=8, vertical=5), expand=True,
+                on_click=lambda _, idx=i: self._open_extra_peer_target_dialog(idx),
+                on_hover=lambda e, l=lbl: (
+                    setattr(l, "color", _TOGGLE_ON if e.data == "true" else _TEXT_MUTED)
+                    or (l.update() if l.page else None)
+                ),
+            )
+            minus = ft.Container(
+                content=ft.Icon(ft.Icons.REMOVE_CIRCLE_OUTLINE, size=14, color=_TEXT_FAINT),
+                on_click=lambda _, idx=i: self._on_remove_extra_peer_target(idx),
+                tooltip="Remove peer target language", width=_BTN_SLOT,
+            )
+            card_row = ft.Row([card, minus], spacing=4, vertical_alignment=ft.CrossAxisAlignment.CENTER)
+            translit_col = self._build_translit_col(lang_code)
+            translit_cols.append(translit_col)
+            rows.append(ft.Column([card_row, translit_col], spacing=3, horizontal_alignment=ft.CrossAxisAlignment.STRETCH))
+        self._extra_peer_tgt_translit_cols = translit_cols
+        self._extra_peer_tgt_rows_col.controls = rows
+        try:
+            if self._extra_peer_tgt_rows_col.page:
+                self._extra_peer_tgt_rows_col.update()
+        except Exception:
+            pass
 
     def _on_add_alt_source(self, _=None) -> None:
         if self._alt_source_lang_code is not None:
@@ -1627,18 +1790,12 @@ class DashboardView(ft.Row):
         # Update language card labels + tooltips
         src_name = language_name(self._source_lang_code)
         tgt1_name = language_name(self._target_lang_code)
-        extra = self._extra_target_lang_code
-        extra_name = language_name(extra) if extra else ""
         self._src_lang_card.content.controls[0].value = src_name
         self._src_lang_card.tooltip = src_name
         self._tgt1_lang_card.content.controls[0].value = tgt1_name
         self._tgt1_lang_card.tooltip = tgt1_name
-        self._tgt2_lang_card.content.controls[0].value = extra_name
-        self._tgt2_lang_card.tooltip = extra_name or None
-        self._tgt2_row.visible = extra is not None
-        self._plus_btn.visible = extra is None
         self._refresh_translit_col(self._tgt1_translit_col, self._target_lang_code)
-        self._refresh_translit_col(self._tgt2_translit_col, extra or "")
+        self._rebuild_extra_tgt_rows()
         # Update mini sidebar language indicator
         try:
             src_short = self._source_lang_code.upper()[:2]
@@ -1647,8 +1804,7 @@ class DashboardView(ft.Row):
             self._mini_lang_text.update()
         except Exception:
             pass
-        for ctrl in (self._src_lang_card, self._tgt1_lang_card, self._tgt2_row, self._plus_btn,
-                     self._tgt1_translit_col):
+        for ctrl in (self._src_lang_card, self._tgt1_lang_card, self._tgt1_translit_col):
             try:
                 ctrl.update()
             except Exception:
@@ -1700,17 +1856,26 @@ class DashboardView(ft.Row):
             TranslationModel.PAPAGO: "Papago (free)",
             TranslationModel.LOCAL_LLM: "Local LLMs",
         }
-        options = [
-            OptionItem(value=m.value, label=_LABELS.get(m, m.value), description="")
-            for m in _ORDERED_MODELS
-        ]
+        # Models that require an API key (no managed/free fallback)
+        _NEEDS_KEY = {
+            TranslationModel.DEEPSEEK_V4_PRO,
+            TranslationModel.GEMINI_3_FLASH,
+            TranslationModel.GEMINI_31_FLASH_LITE,
+            TranslationModel.QWEN_35_PLUS,
+            TranslationModel.DEEPL,
+        }
+        options = []
+        for m in _ORDERED_MODELS:
+            needs_key = m in _NEEDS_KEY and not self._translator_model_has_key.get(m.value, False)
+            desc = t("settings_modal.requires_api_key") if needs_key else ""
+            options.append(OptionItem(value=m.value, label=_LABELS.get(m, m.value), description=desc, disabled=needs_key))
         current_val = getattr(self, "_current_translator_model_value", "") or ""
         SettingsModal(
             self.page,
             "Translator",
             options,
             self._on_translator_selected,
-            show_description=False,
+            show_description=True,
         ).open(current_val)
 
     def _on_translator_selected(self, value: str) -> None:
@@ -1720,17 +1885,30 @@ class DashboardView(ft.Row):
     def _on_trans_right_click(self, _=None) -> None:
         self._on_translator_btn_click()
 
+    def _build_stt_options(self) -> list:
+        from puripuly_heart.config.settings import STTProviderName
+        from puripuly_heart.ui.i18n import provider_label
+        options = []
+        for p in STTProviderName:
+            needs_key = not self._stt_provider_has_key.get(p.value, True)
+            desc = t("settings_modal.requires_api_key") if needs_key else ""
+            options.append(OptionItem(value=p.value, label=provider_label(p.value), description=desc, disabled=needs_key))
+        return options
+
+    def set_stt_key_flags(self, flags: dict) -> None:
+        """Update which STT providers have their API key set. flags: {provider_value: bool}"""
+        self._stt_provider_has_key.update(flags)
+
+    def set_translator_key_flags(self, flags: dict) -> None:
+        """Update which translation models have their API key set. flags: {model_value: bool}"""
+        self._translator_model_has_key.update(flags)
+
     def _on_stt_right_click(self, _=None) -> None:
         if not self.page:
             return
         from puripuly_heart.config.settings import STTProviderName
-        from puripuly_heart.ui.i18n import provider_label
-        options = [
-            OptionItem(value=p.value, label=provider_label(p.value), description="")
-            for p in STTProviderName
-        ]
         current = getattr(self, "_current_stt_provider_value", STTProviderName.LOCAL_QWEN.value)
-        SettingsModal(self.page, "Mic (STT)", options, self._on_stt_provider_selected, show_description=False).open(current)
+        SettingsModal(self.page, "Mic (STT)", self._build_stt_options(), self._on_stt_provider_selected, show_description=True).open(current)
 
     def _on_stt_provider_selected(self, value: str) -> None:
         if callable(self.on_stt_provider_change):
@@ -1740,13 +1918,8 @@ class DashboardView(ft.Row):
         if not self.page:
             return
         from puripuly_heart.config.settings import STTProviderName
-        from puripuly_heart.ui.i18n import provider_label
-        options = [
-            OptionItem(value=p.value, label=provider_label(p.value), description="")
-            for p in STTProviderName
-        ]
         current = getattr(self, "_current_peer_stt_provider_value", STTProviderName.LOCAL_QWEN.value)
-        SettingsModal(self.page, "Peer Voice (STT)", options, self._on_peer_stt_provider_selected, show_description=False).open(current)
+        SettingsModal(self.page, "Peer Voice (STT)", self._build_stt_options(), self._on_peer_stt_provider_selected, show_description=True).open(current)
 
     def _on_peer_stt_provider_selected(self, value: str) -> None:
         if callable(self.on_peer_stt_provider_change):
@@ -1763,7 +1936,9 @@ class DashboardView(ft.Row):
         self._row_peer.set_tooltip(f"Model: {label}\nRight-click to change")
 
     def _open_source_dialog(self, _=None):
-        modal = LanguageModal(page=self.page, languages=self._LANG_OPTIONS, on_select=self._on_source_select)
+        auto_label = t("language.auto", default="Auto Detect")
+        source_langs = [("", auto_label)] + list(self._LANG_OPTIONS)
+        modal = LanguageModal(page=self.page, languages=source_langs, on_select=self._on_source_select)
         modal.open(current=self._source_lang_code, recent=self._recent_source_langs)
 
     def _open_target_dialog(self, _=None):
@@ -1774,13 +1949,15 @@ class DashboardView(ft.Row):
         )
         modal.open(current=self._target_lang_code, recent=self._recent_target_langs)
 
-    def _open_extra_target_dialog(self, _=None):
+    def _open_extra_target_dialog(self, idx: int = 0, _e=None):
+        if idx >= len(self._extra_target_lang_codes):
+            return
         modal = LanguageModal(
             page=self.page,
             languages=self._LANG_OPTIONS,
-            on_select=self._on_extra_target_select,
+            on_select=lambda code, i=idx: self._on_extra_target_select(i, code),
         )
-        modal.open(current=self._extra_target_lang_code or "en", recent=self._recent_target_langs)
+        modal.open(current=self._extra_target_lang_codes[idx], recent=self._recent_target_langs)
 
     # ── Inline transliteration chips ─────────────────────────────────────────
 
@@ -1974,10 +2151,10 @@ class DashboardView(ft.Row):
         self._sync_translit_cols()
 
     def _sync_translit_cols(self) -> None:
-        for col, lang in [
-            (self._tgt1_translit_col, self._target_lang_code),
-            (self._tgt2_translit_col, self._extra_target_lang_code or ""),
-        ]:
+        for col, lang in (
+            [(self._tgt1_translit_col, self._target_lang_code)]
+            + list(zip(self._extra_tgt_translit_cols, self._extra_target_lang_codes))
+        ):
             try:
                 self._refresh_translit_col(col, lang)
                 if col.page:
@@ -1986,22 +2163,28 @@ class DashboardView(ft.Row):
                 pass
 
     def _open_peer_source_dialog(self, _=None):
-        modal = LanguageModal(page=self.page, languages=self._LANG_OPTIONS, on_select=self._on_peer_source_select)
-        modal.open(current=self._effective_peer_source_lang_code(), recent=self._recent_source_langs)
+        auto_label = t("language.auto", default="Auto Detect")
+        peer_src_langs = [("", auto_label)] + list(self._LANG_OPTIONS)
+        modal = LanguageModal(page=self.page, languages=peer_src_langs, on_select=self._on_peer_source_select)
+        modal.open(current=self._peer_source_lang_code, recent=self._recent_source_langs)
 
     def _open_peer_target_dialog(self, _=None):
         modal = LanguageModal(page=self.page, languages=self._LANG_OPTIONS, on_select=self._on_peer_target_select)
         modal.open(current=self._effective_peer_target_lang_code(), recent=self._recent_target_langs)
 
-    def _open_extra_peer_target_dialog(self, _=None):
-        modal = LanguageModal(page=self.page, languages=self._LANG_OPTIONS, on_select=self._on_extra_peer_target_select)
-        modal.open(current=self._extra_peer_target_lang_code or "en", recent=self._recent_target_langs)
+    def _open_extra_peer_target_dialog(self, idx: int = 0, _e=None):
+        if idx >= len(self._extra_peer_target_lang_codes):
+            return
+        modal = LanguageModal(page=self.page, languages=self._LANG_OPTIONS,
+                              on_select=lambda code, i=idx: self._on_extra_peer_target_select(i, code))
+        modal.open(current=self._extra_peer_target_lang_codes[idx], recent=self._recent_target_langs)
 
     # ── Language selection callbacks ─────────────────────────────────────────
 
     def _on_source_select(self, lang_code: str):
         self._source_lang_code = lang_code
-        self._add_to_recent(lang_code, is_source=True)
+        if lang_code:  # don't add "Auto" to recent
+            self._add_to_recent(lang_code, is_source=True)
         self._update_input_font()
         self._refresh_language_panel()
         self._refresh_language_rows()
@@ -2014,15 +2197,17 @@ class DashboardView(ft.Row):
         self._refresh_language_rows()
         self._notify_language_change()
 
-    def _on_extra_target_select(self, lang_code: str):
-        self._extra_target_lang_code = lang_code
+    def _on_extra_target_select(self, idx: int, lang_code: str):
+        if 0 <= idx < len(self._extra_target_lang_codes):
+            self._extra_target_lang_codes[idx] = lang_code
         self._add_to_recent(lang_code, is_source=False)
-        self._refresh_language_panel()
+        self._rebuild_extra_tgt_rows()
         self._notify_language_change()
 
     def _on_peer_source_select(self, lang_code: str):
-        self._peer_source_lang_code = "" if lang_code == self._source_lang_code else lang_code
-        self._add_to_recent(lang_code, is_source=True)
+        self._peer_source_lang_code = lang_code
+        if lang_code:  # don't add Auto Detect ("") to recents
+            self._add_to_recent(lang_code, is_source=True)
         self._refresh_language_rows()
         self._notify_language_change()
 
@@ -2032,11 +2217,95 @@ class DashboardView(ft.Row):
         self._refresh_language_rows()
         self._notify_language_change()
 
-    def _on_extra_peer_target_select(self, lang_code: str):
-        self._extra_peer_target_lang_code = lang_code
+    def _on_extra_peer_target_select(self, idx: int, lang_code: str):
+        if 0 <= idx < len(self._extra_peer_target_lang_codes):
+            self._extra_peer_target_lang_codes[idx] = lang_code
         self._add_to_recent(lang_code, is_source=False)
-        self._refresh_language_rows()
+        self._rebuild_extra_peer_tgt_rows()
         self._notify_language_change()
+
+    # ── Extra peer source language (multi-listen) ────────────────────────────
+
+    _MAX_EXTRA_LANGS = 3
+
+    def _on_add_extra_peer_source(self, _=None) -> None:
+        if len(self._extra_peer_source_lang_codes) >= self._MAX_EXTRA_LANGS:
+            return
+        self._extra_peer_source_lang_codes.append("ja")
+        self._rebuild_extra_peer_src_rows()
+        self._notify_language_change()
+
+    def _on_remove_extra_peer_source(self, idx: int) -> None:
+        if 0 <= idx < len(self._extra_peer_source_lang_codes):
+            del self._extra_peer_source_lang_codes[idx]
+        self._rebuild_extra_peer_src_rows()
+        self._notify_language_change()
+
+    def _open_extra_peer_source_dialog(self, idx: int = 0, _e=None):
+        if idx >= len(self._extra_peer_source_lang_codes):
+            return
+        auto_label = t("language.auto", default="Auto Detect")
+        langs = [("", auto_label)] + list(self._LANG_OPTIONS)
+        modal = LanguageModal(page=self.page, languages=langs,
+                              on_select=lambda code, i=idx: self._on_extra_peer_source_select(i, code))
+        modal.open(current=self._extra_peer_source_lang_codes[idx], recent=self._recent_source_langs)
+
+    def _on_extra_peer_source_select(self, idx: int, lang_code: str):
+        if 0 <= idx < len(self._extra_peer_source_lang_codes):
+            self._extra_peer_source_lang_codes[idx] = lang_code
+        if lang_code:
+            self._add_to_recent(lang_code, is_source=True)
+        self._rebuild_extra_peer_src_rows()
+        self._notify_language_change()
+
+    def _rebuild_extra_peer_src_rows(self) -> None:
+        _BTN_SLOT = 22
+        rows: list[ft.Control] = []
+        for i, lang_code in enumerate(self._extra_peer_source_lang_codes):
+            display = language_name(lang_code) if lang_code else t("language.auto", default="Auto Detect")
+            lbl = ft.Text(display, size=12, color=_TEXT_MUTED, no_wrap=True,
+                          overflow=ft.TextOverflow.ELLIPSIS, text_align=ft.TextAlign.CENTER, expand=True)
+            arrow = ft.Icon(ft.Icons.CHEVRON_RIGHT, size=12, color=_TEXT_FAINT)
+            card = ft.Container(
+                content=ft.Row([lbl, arrow], spacing=2, vertical_alignment=ft.CrossAxisAlignment.CENTER),
+                bgcolor="#2a2b2e", border_radius=6, border=ft.border.all(1, "#3a3b3e"),
+                padding=ft.padding.symmetric(horizontal=8, vertical=5), expand=True,
+                on_click=lambda _, idx=i: self._open_extra_peer_source_dialog(idx),
+                on_hover=lambda e, l=lbl: (
+                    setattr(l, "color", _RECV_COLOR if e.data == "true" else _TEXT_MUTED)
+                    or (l.update() if l.page else None)
+                ),
+            )
+            minus = ft.Container(
+                content=ft.Icon(ft.Icons.REMOVE_CIRCLE_OUTLINE, size=14, color=_TEXT_FAINT),
+                on_click=lambda _, idx=i: self._on_remove_extra_peer_source(idx),
+                tooltip="Remove peer language", width=_BTN_SLOT,
+            )
+            rows.append(ft.Row([card, minus], spacing=4, vertical_alignment=ft.CrossAxisAlignment.CENTER))
+        self._extra_peer_src_rows_col.controls = rows
+        visible = len(self._extra_peer_source_lang_codes) < self._MAX_EXTRA_LANGS
+        self._peer_src_plus_btn.visible = visible
+        try:
+            if self._extra_peer_src_rows_col.page:
+                self._extra_peer_src_rows_col.update()
+            if self._peer_src_plus_btn.page:
+                self._peer_src_plus_btn.update()
+        except Exception:
+            pass
+
+    # ── Echo preview toggle ──────────────────────────────────────────────────
+
+    def _on_echo_preview_toggle(self, _=None) -> None:
+        self._show_pending_echo = not self._show_pending_echo
+        btn = self._echo_preview_btn
+        active = self._show_pending_echo
+        btn.content.color = _TOGGLE_ON if active else _TEXT_FAINT
+        btn.bgcolor = "#1a2a1a" if active else ft.Colors.TRANSPARENT
+        btn.border = ft.border.all(1, _TOGGLE_ON if active else "#3a3b3f")
+        try:
+            btn.update()
+        except Exception:
+            pass
 
     def _swap_languages(self, _=None):
         self._source_lang_code, self._target_lang_code = self._target_lang_code, self._source_lang_code
@@ -2064,37 +2333,31 @@ class DashboardView(ft.Row):
             self.on_recent_languages_change(self._recent_source_langs, self._recent_target_langs)
 
     def _notify_language_change(self):
-        extra = self._extra_target_lang_code
         if self.on_language_change:
             self.on_language_change(
                 self._source_lang_code,
                 self._target_lang_code,
                 self._peer_source_lang_code,
-                self._peer_target_lang_code,
+                self._effective_peer_target_lang_code(),
                 self._active_preset,
-                [extra] if extra else [],
+                list(self._extra_target_lang_codes),
             )
 
     def _effective_peer_source_lang_code(self) -> str:
-        return self._peer_source_lang_code or self._source_lang_code
+        return self._peer_source_lang_code  # empty string = auto-detect by backend
 
     def _effective_peer_target_lang_code(self) -> str:
-        return self._peer_target_lang_code or self._target_lang_code
+        return self._peer_target_lang_code or self._source_lang_code
 
     def _refresh_language_rows(self) -> None:
         src_name = language_name(self._effective_peer_source_lang_code())
         tgt_name = language_name(self._effective_peer_target_lang_code())
-        extra_peer = self._extra_peer_target_lang_code
-        extra_peer_name = language_name(extra_peer) if extra_peer else ""
         self._peer_src_card.content.controls[0].value = src_name
         self._peer_tgt_card.content.controls[0].value = tgt_name
         self._peer_src_card.tooltip = src_name
         self._peer_tgt_card.tooltip = tgt_name
-        self._peer_tgt2_lang_card.content.controls[0].value = extra_peer_name
-        self._peer_tgt2_lang_card.tooltip = extra_peer_name or None
-        self._peer_tgt2_row.visible = extra_peer is not None
-        self._peer_plus_btn.visible = extra_peer is None
-        for ctrl in (self._peer_src_card, self._peer_tgt_card, self._peer_tgt2_row, self._peer_plus_btn):
+        self._rebuild_extra_peer_tgt_rows()
+        for ctrl in (self._peer_src_card, self._peer_tgt_card):
             try:
                 ctrl.update()
             except Exception:
@@ -2131,10 +2394,10 @@ class DashboardView(ft.Row):
             ]
             while len(self._preset_data) < 3:
                 self._preset_data.append({"source": "en", "targets": ["en"]})
-        # Restore extra target from active preset
+        # Restore extra targets from active preset
         active = self._preset_data[self._active_preset]
         targets = active.get("targets", [target_code])
-        self._extra_target_lang_code = targets[1] if len(targets) > 1 else None
+        self._extra_target_lang_codes = list(targets[1:])
         self._update_input_font()
         self._refresh_language_panel()
         self._refresh_language_rows()
@@ -2312,6 +2575,7 @@ class DashboardView(ft.Row):
             return
         if not text:
             self._notice_strip.visible = False
+            self._notice_download_btn.visible = False
         else:
             color = _TOGGLE_WARNING if tone == "warning" else (
                 "#cf4040" if tone == "error" else _TOGGLE_ON
@@ -2320,6 +2584,9 @@ class DashboardView(ft.Row):
             self._notice_text_ctrl.color = color
             self._notice_strip.bgcolor = ft.Colors.with_opacity(0.15, color)
             self._notice_strip.visible = True
+            # Show download button when model is missing or download failed
+            show_dl = self._local_stt_notice_status in ("missing", "invalid", "download_failed")
+            self._notice_download_btn.visible = show_dl
         try:
             self._notice_strip.update()
         except Exception:

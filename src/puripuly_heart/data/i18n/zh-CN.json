@@ -443,5 +443,10 @@
     "settings.chatbox_source.off": "仅翻译",
     "settings.section.peer_stt": "对方语音识别",
     "settings.dashboard_language_redirect": "请在仪表板的语言卡片中修改自己与对方的语言组合。",
-    "settings.peer_stt_provider": "对方 STT 服务商"
+    "settings.peer_stt_provider": "对方 STT 服务商",
+    "language.auto": "自动检测",
+    "dashboard.chat.sent": "已发送",
+    "dashboard.chat.received": "已接收",
+    "dashboard.chat.translation_failed": "翻译失败 — 请检查模型设置",
+    "settings_modal.requires_api_key": "需要 API 密钥 — 请在设置中填写"
 }

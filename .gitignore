@@ -1,4 +1,4 @@
-﻿# Byte-compiled / optimized / DLL files
+# Byte-compiled / optimized / DLL files
 __pycache__/
 *.py[codz]
 *$py.class
@@ -251,7 +251,5 @@ opencode.json
 .opencode/
 .impeccable.md
 
-
-*.lnk
-target/
-
+# VRCT reference copy (local reference only, not part of this project)
+vrct refernece/

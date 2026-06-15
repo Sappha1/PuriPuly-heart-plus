@@ -12,7 +12,7 @@ from puripuly_heart.ui.fonts import font_for_language
 from puripuly_heart.ui.i18n import get_locale, language_name, t
 from puripuly_heart.ui.overlay_peer_contract import OverlayPeerConsumerContract
 
-_BUILD_TAG = "r55"  #increment each build so user can confirm version
+_BUILD_TAG = "r66"  #increment each build so user can confirm version
 
 # ── VRCT-style dark palette ──────────────────────────────────────────────────
 _BG_MAIN = "#2e2f32"
@@ -265,6 +265,11 @@ class DashboardView(ft.Row):
         self._pending_version: int = 0
         self._show_pending_echo: bool = True  # on by default; toggled in Settings
         self._chatbox_send_peer: bool = False  # toggled in Settings and dashboard header
+        self._self_in_overlay: bool = True  # show spoken messages on overlay
+        self._typed_in_overlay: bool = True  # show typed messages on overlay
+        self._stt_input_device: str = ""  # active mic device name for tooltip
+        self._vrc_mute_sync: bool = False  # VRChat mute sync gate
+        self._vrc_mute_sync_osc_state: bool | None = None  # None=not yet synced, True=VRC muted, False=VRC unmuted
         self._translation_showing_warning = False
         self._stt_showing_warning = False
         self._managed_auth_pending = False
@@ -669,6 +674,9 @@ class DashboardView(ft.Row):
         self.on_transliteration_change: object = None  # callback(show_pinyin, send_pinyin, show_romaji, send_romaji)
         self.on_overlay_lock_change: object = None  # callback(locked: bool)
         self.on_chatbox_send_peer_toggle: object = None  # callback(value: bool)
+        self.on_self_in_overlay_toggle: object = None  # callback(value: bool) — spoken
+        self.on_typed_in_overlay_toggle: object = None  # callback(value: bool) — typed
+        self.on_vrc_mute_sync_toggle: object = None  # callback(value: bool)
         self.on_overlay_transparency_change: object = None  # callback(alpha: float)
         self._overlay_locked: bool = False
         self._overlay_background_alpha: float = 0.5
@@ -915,7 +923,6 @@ class DashboardView(ft.Row):
             "Overlay", size=9, color=_TEXT_FAINT, weight=ft.FontWeight.W_600,
         )
         self._overlay_lock_icon = ft.Icon(ft.Icons.LOCK_OPEN, size=11, color=_TEXT_FAINT)
-        self._overlay_lock_text = ft.Text("Lock", size=9, color=_TEXT_FAINT, weight=ft.FontWeight.W_600)
         _overlay_divider = ft.Container(
             width=1, height=12,
             bgcolor="#4a4b4f",
@@ -930,12 +937,7 @@ class DashboardView(ft.Row):
             on_secondary_tap=self._on_overlay_right_click,
         )
         self._overlay_lock_side = ft.Container(
-            content=ft.Row(
-                [self._overlay_lock_icon, self._overlay_lock_text],
-                spacing=3,
-                vertical_alignment=ft.CrossAxisAlignment.CENTER,
-                tight=True,
-            ),
+            content=self._overlay_lock_icon,
             on_click=self._on_overlay_lock_click,
             tooltip="Lock overlay position",
             padding=ft.padding.only(left=5, right=7, top=3, bottom=3),
@@ -968,7 +970,7 @@ class DashboardView(ft.Row):
         )
         self._chatbox_peer_btn = ft.Container(
             content=ft.Text(
-                "Peer→VRC",
+                "Loopback",
                 size=9,
                 color=_TEXT_FAINT,
                 weight=ft.FontWeight.W_600,
@@ -980,15 +982,31 @@ class DashboardView(ft.Row):
             bgcolor=ft.Colors.TRANSPARENT,
             border=_pill_border_off,
         )
+        self._vrc_mute_sync_btn = ft.Container(
+            content=ft.Text(
+                "Mute Sync",
+                size=9,
+                color=_TEXT_FAINT,
+                weight=ft.FontWeight.W_600,
+            ),
+            on_click=self._on_vrc_mute_sync_click,
+            tooltip=t("dashboard.mute_sync.tooltip.off"),
+            padding=ft.padding.symmetric(horizontal=7, vertical=3),
+            border_radius=10,
+            bgcolor=ft.Colors.TRANSPARENT,
+            border=_pill_border_off,
+        )
         chat_header = ft.Row(
             [
                 ft.Text("Chat", size=11, color=_TEXT_FAINT, weight=ft.FontWeight.W_500),
                 ft.Container(expand=True),
+                self._vrc_mute_sync_btn,
+                ft.Container(width=4),
                 self._chatbox_peer_btn,
                 ft.Container(width=4),
-                self._autoscroll_btn,
-                ft.Container(width=4),
                 self._overlay_header_btn,
+                ft.Container(width=4),
+                self._autoscroll_btn,
                 ft.Container(width=4),
                 self._chat_clear_button,
             ],
@@ -1278,11 +1296,9 @@ class DashboardView(ft.Row):
         self._overlay_locked = locked
         self._overlay_lock_icon.name = ft.Icons.LOCK if locked else ft.Icons.LOCK_OPEN
         self._overlay_lock_icon.color = _TOGGLE_ON if locked else _TEXT_FAINT
-        self._overlay_lock_text.value = "Locked" if locked else "Lock"
-        self._overlay_lock_text.color = _TOGGLE_ON if locked else _TEXT_FAINT
         self._overlay_lock_side.tooltip = "Unlock overlay position" if locked else "Lock overlay position"
         try:
-            self._overlay_lock_side.update()
+            self._overlay_lock_icon.update()
         except Exception:
             pass
 
@@ -1296,9 +1312,9 @@ class DashboardView(ft.Row):
         )
         slider = ft.Slider(
             value=self._overlay_background_alpha,
-            min=0.01,
+            min=0.0,
             max=1.0,
-            divisions=99,
+            divisions=100,
             active_color=_TOGGLE_ON,
             inactive_color=_TOGGLE_OFF,
             thumb_color=_TOGGLE_ON,
@@ -1317,19 +1333,93 @@ class DashboardView(ft.Row):
 
         slider.on_change = _on_change
 
+        # "Show spoken messages" toggle row
+        _spoken_label = ft.Text(
+            "On" if self._self_in_overlay else "Off",
+            size=11, color=_TOGGLE_ON if self._self_in_overlay else _TEXT_FAINT,
+            weight=ft.FontWeight.W_600,
+        )
+
+        def _on_spoken_toggle(ev):
+            self._self_in_overlay = not self._self_in_overlay
+            _spoken_label.value = "On" if self._self_in_overlay else "Off"
+            _spoken_label.color = _TOGGLE_ON if self._self_in_overlay else _TEXT_FAINT
+            _spoken_border.border = ft.border.all(1, _TOGGLE_ON if self._self_in_overlay else "#3a3b3f")
+            try:
+                _spoken_label.update()
+                _spoken_border.update()
+            except Exception:
+                pass
+            if callable(self.on_self_in_overlay_toggle):
+                self.on_self_in_overlay_toggle(self._self_in_overlay)
+
+        _spoken_border = ft.Container(content=_spoken_label, on_click=_on_spoken_toggle,
+                             padding=ft.padding.symmetric(horizontal=8, vertical=3),
+                             border_radius=6,
+                             border=ft.border.all(1, _TOGGLE_ON if self._self_in_overlay else "#3a3b3f"))
+
+        _spoken_row = ft.Container(
+            content=ft.Row(
+                [
+                    ft.Text("Show my voice messages", size=11, color=_TEXT_MUTED, expand=True),
+                    _spoken_border,
+                ],
+                spacing=8,
+                vertical_alignment=ft.CrossAxisAlignment.CENTER,
+            ),
+            padding=ft.padding.only(left=8, right=8, top=6, bottom=2),
+        )
+
+        # "Show typed messages" toggle row
+        _typed_label = ft.Text(
+            "On" if self._typed_in_overlay else "Off",
+            size=11, color=_TOGGLE_ON if self._typed_in_overlay else _TEXT_FAINT,
+            weight=ft.FontWeight.W_600,
+        )
+
+        def _on_typed_toggle(ev):
+            self._typed_in_overlay = not self._typed_in_overlay
+            _typed_label.value = "On" if self._typed_in_overlay else "Off"
+            _typed_label.color = _TOGGLE_ON if self._typed_in_overlay else _TEXT_FAINT
+            _typed_border.border = ft.border.all(1, _TOGGLE_ON if self._typed_in_overlay else "#3a3b3f")
+            try:
+                _typed_label.update()
+                _typed_border.update()
+            except Exception:
+                pass
+            if callable(self.on_typed_in_overlay_toggle):
+                self.on_typed_in_overlay_toggle(self._typed_in_overlay)
+
+        _typed_border = ft.Container(content=_typed_label, on_click=_on_typed_toggle,
+                             padding=ft.padding.symmetric(horizontal=8, vertical=3),
+                             border_radius=6,
+                             border=ft.border.all(1, _TOGGLE_ON if self._typed_in_overlay else "#3a3b3f"))
+
+        _typed_row = ft.Container(
+            content=ft.Row(
+                [
+                    ft.Text("Show my text messages", size=11, color=_TEXT_MUTED, expand=True),
+                    _typed_border,
+                ],
+                spacing=8,
+                vertical_alignment=ft.CrossAxisAlignment.CENTER,
+            ),
+            padding=ft.padding.only(left=8, right=8, top=4, bottom=2),
+        )
+
         dlg = ft.AlertDialog(
             modal=False,
             title=ft.Row(
                 [
                     ft.Icon(ft.Icons.OPACITY, size=13, color=_TEXT_MUTED),
-                    ft.Text("Overlay Opacity", size=12, color=_TEXT_MUTED, weight=ft.FontWeight.W_600),
+                    ft.Text("Overlay Options", size=12, color=_TEXT_MUTED, weight=ft.FontWeight.W_600),
                 ],
                 spacing=6,
                 tight=True,
             ),
             content=ft.Container(
                 content=ft.Column(
-                    [slider, alpha_label],
+                    [slider, alpha_label, _spoken_row, _typed_row],
                     spacing=0,
                     tight=True,
                     horizontal_alignment=ft.CrossAxisAlignment.CENTER,
@@ -1347,7 +1437,7 @@ class DashboardView(ft.Row):
             pass
 
     def set_overlay_background_alpha(self, alpha: float) -> None:
-        self._overlay_background_alpha = max(0.01, min(1.0, float(alpha)))
+        self._overlay_background_alpha = max(0.0, min(1.0, float(alpha)))
 
     def _on_autoscroll_toggle(self, e) -> None:
         self._auto_scroll_enabled = not self._auto_scroll_enabled
@@ -1467,6 +1557,8 @@ class DashboardView(ft.Row):
             try:
                 if self._chat_list_view.page:
                     self._chat_list_view.update()
+                    if self._auto_scroll_enabled:
+                        self._chat_list_view.scroll_to(offset=-1, duration=150)
             except Exception:
                 pass
             return
@@ -1905,9 +1997,14 @@ class DashboardView(ft.Row):
     def _build_stt_options(self) -> list:
         from puripuly_heart.config.settings import STTProviderName
         from puripuly_heart.ui.i18n import provider_label
+        # LOCAL_QWEN and WHISPER are local models — always free, no API key needed
+        _FREE_PROVIDERS = {STTProviderName.LOCAL_QWEN.value, STTProviderName.WHISPER.value}
         options = []
         for p in STTProviderName:
-            needs_key = not self._stt_provider_has_key.get(p.value, True)
+            if p.value in _FREE_PROVIDERS:
+                needs_key = False
+            else:
+                needs_key = not self._stt_provider_has_key.get(p.value, False)
             desc = t("settings_modal.requires_api_key") if needs_key else ""
             options.append(OptionItem(value=p.value, label=provider_label(p.value), description=desc, disabled=needs_key))
         return options
@@ -1945,7 +2042,21 @@ class DashboardView(ft.Row):
     def set_stt_provider_label(self, label: str, provider_value: str = "") -> None:
         if provider_value:
             self._current_stt_provider_value = provider_value
-        self._row_stt.set_tooltip(f"Model: {label}\nRight-click to change")
+        self._refresh_stt_tooltip(label)
+
+    def set_stt_input_device(self, device_name: str) -> None:
+        self._stt_input_device = device_name or ""
+        self._refresh_stt_tooltip()
+
+    def _refresh_stt_tooltip(self, label: str | None = None) -> None:
+        if label is None:
+            label = getattr(self, "_current_stt_label", "")
+        else:
+            self._current_stt_label = label
+        tip = f"Model: {label}\nRight-click to change"
+        if self._stt_input_device:
+            tip += f"\nDevice: {self._stt_input_device}"
+        self._row_stt.set_tooltip(tip)
 
     def set_peer_stt_provider_label(self, label: str, provider_value: str = "") -> None:
         if provider_value:
@@ -2310,6 +2421,46 @@ class DashboardView(ft.Row):
                 self._peer_src_plus_slot.update()
         except Exception:
             pass
+
+    # ── VRC mute sync toggle ─────────────────────────────────────────────────
+
+    def _on_vrc_mute_sync_click(self, _=None) -> None:
+        self._vrc_mute_sync = not self._vrc_mute_sync
+        if self._vrc_mute_sync:
+            self._vrc_mute_sync_osc_state = None  # reset synced state; wait for VRChat to re-send
+        self._refresh_vrc_mute_sync_btn()
+        if callable(self.on_vrc_mute_sync_toggle):
+            self.on_vrc_mute_sync_toggle(self._vrc_mute_sync)
+
+    def _refresh_vrc_mute_sync_btn(self) -> None:
+        active = self._vrc_mute_sync
+        btn = self._vrc_mute_sync_btn
+        if active and self._vrc_mute_sync_osc_state is None:
+            # Enabled but waiting for VRChat to send its mute state — show orange "syncing"
+            _COLOR = "#e8a020"
+            btn.content.color = _COLOR
+            btn.bgcolor = "#2a1e08"
+            btn.border = ft.border.all(1, _COLOR)
+            btn.tooltip = t("dashboard.mute_sync.tooltip.syncing")
+        elif active:
+            btn.content.color = _TOGGLE_ON
+            btn.bgcolor = "#1a2a1a"
+            btn.border = ft.border.all(1, _TOGGLE_ON)
+            btn.tooltip = t("dashboard.mute_sync.tooltip.active")
+        else:
+            btn.content.color = _TEXT_FAINT
+            btn.bgcolor = ft.Colors.TRANSPARENT
+            btn.border = ft.border.all(1, "#3a3b3f")
+            btn.tooltip = t("dashboard.mute_sync.tooltip.off")
+        try:
+            btn.update()
+        except Exception:
+            pass
+
+    def set_vrc_mute_sync_osc_state(self, muted: bool | None) -> None:
+        """Called when VRChat OSC sends a mute state update."""
+        self._vrc_mute_sync_osc_state = muted
+        self._refresh_vrc_mute_sync_btn()
 
     # ── Peer voice to chatbox toggle ─────────────────────────────────────────
 

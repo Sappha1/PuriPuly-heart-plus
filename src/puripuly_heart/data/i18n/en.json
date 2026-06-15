@@ -450,7 +450,7 @@
   "toggle.on.description": "Starts translating while you speak",
   "toggle.off": "Stable",
   "toggle.off.description": "Translates after you finish speaking. Saves costs",
-  "settings.vrc_mic_intercept": "VRChat Mute Sync",
+  "settings.vrc_mic_intercept": "Mute Sync",
   "settings.vrc_mic.on": "ON",
   "settings.vrc_mic.off": "OFF",
   "settings.chatbox_include_source": "Chatbox Output Format",
@@ -493,5 +493,8 @@
   "dashboard.chat.sent": "Sent",
   "dashboard.chat.received": "Received",
   "dashboard.chat.translation_failed": "Translation failed — check model settings",
-  "settings_modal.requires_api_key": "Requires API key — set it in Settings"
+  "settings_modal.requires_api_key": "Requires API key — set it in Settings",
+  "dashboard.mute_sync.tooltip.off": "Mute Sync: silences your mic automatically when you mute in VRChat.",
+  "dashboard.mute_sync.tooltip.active": "Mute Sync is active — your mic is silenced when you're muted in VRChat.",
+  "dashboard.mute_sync.tooltip.syncing": "Mute Sync is on but hasn't heard from VRChat yet. Press your mute button in VRChat once to sync."
 }

@@ -18,15 +18,26 @@ VRC_OSC_MUTE_ADDRESS = "/avatar/parameters/MuteSelf"
 @dataclass(slots=True)
 class VrcMicState:
     muted: bool | None = None
+    on_state_changed: object = None  # Callable[[bool | None], None]
 
     def update(self, muted: bool) -> bool:
         if self.muted == muted:
             return False
         self.muted = muted
+        if callable(self.on_state_changed):
+            try:
+                self.on_state_changed(muted)
+            except Exception:
+                pass
         return True
 
     def reset(self) -> None:
         self.muted = None
+        if callable(self.on_state_changed):
+            try:
+                self.on_state_changed(None)
+            except Exception:
+                pass
 
 
 class VrcOscReceiver:
@@ -71,8 +82,11 @@ class VrcOscReceiver:
         if self.transport is not None:
             return
 
-        # A restarted receiver must wait for a fresh VRChat mute edge.
-        self.state.reset()
+        # Do NOT reset state on restart — preserve last known mute state so
+        # a pipeline rebuild mid-session doesn't un-mute the gate while VRChat
+        # is still muted (VRC only sends MuteSelf on state *change*, not as a
+        # continuous stream, so resetting would leave state=None until the user
+        # toggles their mic).
 
         dispatcher = Dispatcher()
         dispatcher.map(VRC_OSC_MUTE_ADDRESS, self.mute_handler)

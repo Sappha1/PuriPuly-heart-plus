@@ -448,5 +448,8 @@
   "dashboard.chat.sent": "전송됨",
   "dashboard.chat.received": "수신됨",
   "dashboard.chat.translation_failed": "번역 실패 — 모델 설정을 확인해주세요",
-  "settings_modal.requires_api_key": "API 키 필요 — 설정에서 입력해주세요"
+  "settings_modal.requires_api_key": "API 키 필요 — 설정에서 입력해주세요",
+  "dashboard.mute_sync.tooltip.off": "뮤트 동기화: VRChat에서 음소거하면 마이크가 자동으로 꺼집니다.",
+  "dashboard.mute_sync.tooltip.active": "뮤트 동기화가 활성화되었습니다 — VRChat에서 음소거 중일 때 마이크가 꺼집니다.",
+  "dashboard.mute_sync.tooltip.syncing": "뮤트 동기화가 켜져 있지만 아직 VRChat에서 상태를 받지 못했습니다. VRChat에서 음소거 버튼을 한 번 눌러 동기화하세요."
 }

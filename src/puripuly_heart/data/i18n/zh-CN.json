@@ -448,5 +448,8 @@
     "dashboard.chat.sent": "已发送",
     "dashboard.chat.received": "已接收",
     "dashboard.chat.translation_failed": "翻译失败 — 请检查模型设置",
-    "settings_modal.requires_api_key": "需要 API 密钥 — 请在设置中填写"
+    "settings_modal.requires_api_key": "需要 API 密钥 — 请在设置中填写",
+  "dashboard.mute_sync.tooltip.off": "静音同步：在 VRChat 中静音时自动关闭麦克风。",
+  "dashboard.mute_sync.tooltip.active": "静音同步已激活 — 在 VRChat 中静音时麦克风将被关闭。",
+  "dashboard.mute_sync.tooltip.syncing": "静音同步已开启，但尚未收到 VRChat 的状态。请在 VRChat 中按一次静音按钮来同步。"
 }

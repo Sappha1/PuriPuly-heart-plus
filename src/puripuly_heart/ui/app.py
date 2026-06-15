@@ -154,6 +154,9 @@ class TranslatorApp:
         self.view_dashboard.on_overlay_lock_change = self._on_dashboard_overlay_lock_change
         self.view_dashboard.on_overlay_transparency_change = self._on_overlay_transparency_change
         self.view_dashboard.on_chatbox_send_peer_toggle = self._on_dashboard_chatbox_send_peer_toggle
+        self.view_dashboard.on_self_in_overlay_toggle = self._on_dashboard_self_in_overlay_toggle
+        self.view_dashboard.on_typed_in_overlay_toggle = self._on_dashboard_typed_in_overlay_toggle
+        self.view_dashboard.on_vrc_mute_sync_toggle = self._on_dashboard_vrc_mute_sync_toggle
 
         self.view_settings.on_settings_changed = self._on_settings_changed
         self.view_settings.on_prompt_apply_settings = self._on_prompt_apply_settings
@@ -640,12 +643,46 @@ class TranslatorApp:
             self._close_open_dialog_for_navigation()
         self._current_tab = index
 
+        # Temporarily lock overlay while Settings is open so it doesn't block clicks
+        dash = getattr(self, "view_dashboard", None)
+        if index == 1 and previous_tab != 1:
+            # Entering settings: remember lock state and lock
+            if dash is not None:
+                self._settings_tab_overlay_was_locked = getattr(dash, "_overlay_locked", False)
+                if not self._settings_tab_overlay_was_locked:
+                    try:
+                        dash.set_overlay_locked(True)
+                        if callable(getattr(dash, "on_overlay_lock_change", None)):
+                            dash.on_overlay_lock_change(True)
+                    except Exception:
+                        pass
+        elif previous_tab == 1 and index != 1:
+            # Leaving settings: restore lock state
+            was_locked = getattr(self, "_settings_tab_overlay_was_locked", None)
+            if was_locked is not None and dash is not None:
+                try:
+                    dash.set_overlay_locked(bool(was_locked))
+                    if callable(getattr(dash, "on_overlay_lock_change", None)):
+                        dash.on_overlay_lock_change(bool(was_locked))
+                except Exception:
+                    pass
+
         # Auto-apply Settings changes when leaving Settings (tab 1)
         if previous_tab == 1 and index != 1:
             if self.view_settings.has_provider_changes:
                 pending_settings = self.view_settings.consume_provider_apply_settings()
                 if pending_settings is not None:
                     self.view_settings.has_provider_changes = False
+                    self._sync_stt_label(pending_settings)
+                    try:
+                        sync_fn = getattr(self.view_settings, "sync_stt_provider_label", None)
+                        if callable(sync_fn) and pending_settings is not None:
+                            _prov = getattr(getattr(pending_settings, "provider", None), "stt", None)
+                            if _prov is not None:
+                                _val = _prov.value if hasattr(_prov, "value") else str(_prov)
+                                sync_fn(_val)
+                    except Exception:
+                        pass
 
                     async def _task():
                         await self.controller.apply_providers(pending_settings)
@@ -765,9 +802,21 @@ class TranslatorApp:
             pass
 
     def _on_dashboard_chatbox_send_peer_toggle(self, value: bool) -> None:
-        if self.settings and self.settings.ui:
-            self.settings.ui.chatbox_send_peer = value
-            self._save_settings()
+        _s = getattr(self.controller, "settings", None)
+        if _s and getattr(_s, "ui", None):
+            _s.ui.chatbox_send_peer = value
+            try:
+                from puripuly_heart.config.settings import save_settings
+                save_settings(self.controller.config_path, _s)
+            except Exception:
+                pass
+        # Keep settings view's internal draft in sync so it can't overwrite this toggle
+        try:
+            _sv_s = getattr(getattr(self, "view_settings", None), "_settings", None)
+            if _sv_s and getattr(_sv_s, "ui", None):
+                _sv_s.ui.chatbox_send_peer = value
+        except Exception:
+            pass
         if self.controller and self.controller.hub:
             self.controller.hub.chatbox_send_peer = value
         try:
@@ -779,6 +828,61 @@ class TranslatorApp:
                 self.view_settings._chatbox_send_peer_text.update()
         except Exception:
             pass
+
+    def _on_dashboard_self_in_overlay_toggle(self, value: bool) -> None:
+        _s = getattr(self.controller, "settings", None)
+        if _s and getattr(_s, "ui", None):
+            _s.ui.self_in_overlay = value
+            try:
+                from puripuly_heart.config.settings import save_settings
+                save_settings(self.controller.config_path, _s)
+            except Exception:
+                pass
+        if self.controller and self.controller.hub:
+            self.controller.hub.self_in_overlay = value
+
+    def _on_dashboard_typed_in_overlay_toggle(self, value: bool) -> None:
+        _s = getattr(self.controller, "settings", None)
+        if _s and getattr(_s, "ui", None):
+            _s.ui.typed_in_overlay = value
+            try:
+                from puripuly_heart.config.settings import save_settings
+                save_settings(self.controller.config_path, _s)
+            except Exception:
+                pass
+        if self.controller and self.controller.hub:
+            self.controller.hub.typed_in_overlay = value
+
+    def _on_vrc_mute_osc_state_changed(self, muted: bool | None) -> None:
+        """Callback from VrcMicState when VRChat sends a mute state update via OSC."""
+        try:
+            dash = getattr(self, "view_dashboard", None)
+            if dash is not None and callable(getattr(dash, "set_vrc_mute_sync_osc_state", None)):
+                dash.set_vrc_mute_sync_osc_state(muted)
+        except Exception:
+            pass
+
+    def _on_dashboard_vrc_mute_sync_toggle(self, value: bool) -> None:
+        _s = getattr(self.controller, "settings", None)
+        if _s and getattr(_s, "osc", None):
+            _s.osc.vrc_mic_intercept = value
+            try:
+                from puripuly_heart.config.settings import save_settings
+                save_settings(self.controller.config_path, _s)
+            except Exception:
+                pass
+        # Keep settings view's internal draft in sync so it can't overwrite this toggle
+        try:
+            _sv_s = getattr(getattr(self, "view_settings", None), "_settings", None)
+            if _sv_s and getattr(_sv_s, "osc", None):
+                _sv_s.osc.vrc_mic_intercept = value
+        except Exception:
+            pass
+
+        async def _task():
+            await self.controller._configure_vrc_mic_receiver(enabled=value)
+
+        self.page.run_task(_task)
 
     def _on_overlay_transparency_change(self, alpha: float) -> None:
         async def _task():
@@ -1056,8 +1160,13 @@ class TranslatorApp:
         try:
             from puripuly_heart.config.settings import STTProviderName
             verified = getattr(settings, "api_key_verified", None)
+            alibaba_ok = (
+                bool(getattr(verified, "alibaba_beijing", False))
+                or bool(getattr(verified, "alibaba_singapore", False))
+            )
             return {
                 STTProviderName.LOCAL_QWEN.value: True,  # no key needed
+                STTProviderName.QWEN_ASR.value: alibaba_ok,
                 STTProviderName.DEEPGRAM.value: bool(getattr(verified, "deepgram", False)),
                 STTProviderName.SONIOX.value: bool(getattr(verified, "soniox", False)),
             }
@@ -1094,6 +1203,22 @@ class TranslatorApp:
             return {}
 
     def _on_settings_changed(self, settings) -> None:
+        # For values that can be toggled from the dashboard (not just settings view),
+        # merge the live controller state so a stale settings-view draft can't overwrite
+        # a dashboard toggle the user just made.
+        _live = getattr(self.controller, "settings", None)
+        if settings is not None and _live is not None:
+            try:
+                if getattr(settings, "osc", None) and getattr(_live, "osc", None):
+                    settings.osc.vrc_mic_intercept = _live.osc.vrc_mic_intercept
+            except Exception:
+                pass
+            try:
+                if getattr(settings, "ui", None) and getattr(_live, "ui", None):
+                    settings.ui.chatbox_send_peer = _live.ui.chatbox_send_peer
+            except Exception:
+                pass
+
         # Sync transliteration display flags directly to dashboard
         dash = getattr(self, "view_dashboard", None)
         if dash is not None and settings is not None:
@@ -1110,7 +1235,27 @@ class TranslatorApp:
                     dash._refresh_chatbox_peer_btn()
                 except Exception:
                     pass
+            new_self_in_overlay = bool(getattr(_ui, "self_in_overlay", True))
+            dash._self_in_overlay = new_self_in_overlay
+            dash._typed_in_overlay = bool(getattr(_ui, "typed_in_overlay", True))
+            _audio = getattr(settings, "audio", None)
+            _input_device = getattr(_audio, "input_device", "") or ""
+            try:
+                set_dev = getattr(dash, "set_stt_input_device", None)
+                if callable(set_dev):
+                    set_dev(_input_device)
+            except Exception:
+                pass
+            _osc = getattr(settings, "osc", None)
+            new_mute_sync = bool(getattr(_osc, "vrc_mic_intercept", False))
+            if getattr(dash, "_vrc_mute_sync", None) != new_mute_sync:
+                dash._vrc_mute_sync = new_mute_sync
+                try:
+                    dash._refresh_vrc_mute_sync_btn()
+                except Exception:
+                    pass
             self._sync_translator_label(settings)
+            self._sync_stt_label(settings)
             try:
                 set_flags = getattr(dash, "set_stt_key_flags", None)
                 if callable(set_flags):
@@ -1129,6 +1274,49 @@ class TranslatorApp:
             self._sync_microphone_test_dialog_if_inactive()
 
         self._queue_settings_mutation_task(_task)
+
+    def _sync_dashboard_from_controller_settings(self) -> None:
+        """Sync dashboard button states from the loaded controller settings on startup."""
+        s = getattr(self.controller, "settings", None)
+        if s is None:
+            return
+        dash = getattr(self, "view_dashboard", None)
+        if dash is None:
+            return
+        try:
+            new_mute_sync = bool(getattr(getattr(s, "osc", None), "vrc_mic_intercept", True))
+            dash._vrc_mute_sync = new_mute_sync
+            dash._refresh_vrc_mute_sync_btn()
+        except Exception:
+            pass
+        try:
+            new_peer = bool(getattr(getattr(s, "ui", None), "chatbox_send_peer", False))
+            dash._chatbox_send_peer = new_peer
+            dash._refresh_chatbox_peer_btn()
+        except Exception:
+            pass
+        try:
+            self._sync_stt_label(s)
+        except Exception:
+            pass
+
+    def _sync_stt_label(self, settings) -> None:
+        dash = getattr(self, "view_dashboard", None)
+        if dash is None or settings is None:
+            return
+        try:
+            from puripuly_heart.config.settings import STTProviderName
+            from puripuly_heart.ui.i18n import provider_label
+            provider = getattr(getattr(settings, "provider", None), "stt", None)
+            if provider is None:
+                return
+            val = provider.value if hasattr(provider, "value") else str(provider)
+            label = provider_label(val)
+            set_fn = getattr(dash, "set_stt_provider_label", None)
+            if callable(set_fn):
+                set_fn(label, val)
+        except Exception:
+            pass
 
     def _sync_translator_label(self, settings) -> None:
         dash = getattr(self, "view_dashboard", None)
@@ -1220,15 +1408,28 @@ class TranslatorApp:
         try:
             import copy
             from puripuly_heart.config.settings import STTProviderName
+            from puripuly_heart.ui.i18n import provider_label
             current = self.controller.settings
             if current is None:
                 return
             updated = copy.deepcopy(current)
             updated.provider.stt = STTProviderName(provider_value)
+            # Update label immediately so UI reflects the change
+            dash = getattr(self, "view_dashboard", None)
+            if dash is not None:
+                set_fn = getattr(dash, "set_stt_provider_label", None)
+                if callable(set_fn):
+                    set_fn(provider_label(provider_value), provider_value)
+            try:
+                sync_fn = getattr(self.view_settings, "sync_stt_provider_label", None)
+                if callable(sync_fn):
+                    sync_fn(provider_value)
+            except Exception:
+                pass
 
             async def _task():
                 await self.controller.apply_settings(updated)
-                await self.controller.apply_providers(force_rebuild_stt=True)
+                await self.controller.apply_providers()
 
             self._queue_settings_mutation_task(_task)
         except Exception:
@@ -1246,7 +1447,7 @@ class TranslatorApp:
 
             async def _task():
                 await self.controller.apply_settings(updated)
-                await self.controller.apply_providers(force_rebuild_stt=True)
+                await self.controller.apply_providers()
 
             self._queue_settings_mutation_task(_task)
         except Exception:
@@ -1766,6 +1967,20 @@ async def main_gui(page: ft.Page, *, config_path, debug_ui_preview: bool = False
         debug_ui_preview=debug_ui_preview,
     )
     await app.controller.start()
+
+    # Sync dashboard button states from loaded settings (mute sync, loopback, STT label)
+    try:
+        app._sync_dashboard_from_controller_settings()
+    except Exception:
+        pass
+
+    # Wire VRChat OSC mute state callback → dashboard orange "syncing" indicator
+    try:
+        _vms = getattr(app.controller, "vrc_mic_state", None)
+        if _vms is not None:
+            _vms.on_state_changed = app._on_vrc_mute_osc_state_changed
+    except Exception:
+        pass
 
     # Restore saved window size (settings loaded by controller.start)
     try:

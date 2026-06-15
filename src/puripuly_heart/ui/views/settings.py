@@ -1035,7 +1035,6 @@ class SettingsView(ft.Column):
                 self._deepl_usage_row,
                 self._alibaba_key_beijing,
                 self._alibaba_key_singapore,
-                self._whisper_model_card_wrapper,
             ],
             spacing=12,
         )
@@ -1133,8 +1132,8 @@ class SettingsView(ft.Column):
         )
         vrc_mic_card = self._wrap_unit_card(
             title=self._info_title(self._vrc_mic_title,
-                "When ON, PuriPuly mutes your VRChat microphone while you speak "
-                "so your raw voice isn't heard — only the translated chatbox text appears."),
+                "Sync mic mute state with VRChat — suppresses your microphone input to the app "
+                "while you are muted in VRChat."),
             value=self._vrc_mic_text,
         )
 
@@ -1454,7 +1453,7 @@ class SettingsView(ft.Column):
             value=self._peer_stt_text,
         )
         row1 = ft.Column(
-            [stt_card, peer_stt_card, trans_card],
+            [stt_card, self._whisper_model_card_wrapper, peer_stt_card, trans_card],
             spacing=0,
         )
 
@@ -3248,6 +3247,11 @@ class SettingsView(ft.Column):
 
         whisper_active = STTProviderName.WHISPER in active_stt_providers
         self._whisper_model_card_wrapper.visible = whisper_active
+        if self.page:
+            try:
+                self._whisper_model_card_wrapper.update()
+            except Exception:
+                pass
 
     # --- Event Handlers ---
     def _on_whisper_model_click(self, e) -> None:
@@ -3355,6 +3359,16 @@ class SettingsView(ft.Column):
             self._qwen_region_btn.update()
             self._api_keys_column.update()
             self._stt_text.update()
+
+    def sync_stt_provider_label(self, provider_value: str) -> None:
+        """Update the settings view STT label when changed externally (e.g. dashboard right-click)."""
+        try:
+            from puripuly_heart.ui.i18n import provider_label
+            self._set_unit_card_value_text(self._stt_text, provider_label(provider_value))
+            if self.page:
+                self._stt_text.update()
+        except Exception:
+            pass
 
     def _on_peer_stt_click(self, e) -> None:
         if not self.page:

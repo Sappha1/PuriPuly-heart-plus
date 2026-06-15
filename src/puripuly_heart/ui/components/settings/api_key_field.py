@@ -47,7 +47,7 @@ class ApiKeyField(ft.Row):
         self._reveal_button = ft.IconButton(
             icon=icons.VISIBILITY_OFF_ROUNDED,
             icon_color=COLOR_DIVIDER,
-            icon_size=24,
+            icon_size=16,
             on_click=self._toggle_password_visibility,
         )
 
@@ -57,21 +57,23 @@ class ApiKeyField(ft.Row):
             can_reveal_password=False,
             on_blur=self._handle_blur,
             on_change=self._handle_change,
-            border_radius=12,
+            border_radius=8,
             border_color=COLOR_DIVIDER,
             focused_border_color=COLOR_PRIMARY,
             expand=True,
-            text_size=28,
+            text_size=14,
             color=COLOR_NEUTRAL_DARK,
-            label_style=ft.TextStyle(size=20, weight=ft.FontWeight.BOLD, color=COLOR_NEUTRAL_DARK),
+            label_style=ft.TextStyle(size=13, weight=ft.FontWeight.W_500, color=COLOR_NEUTRAL_DARK),
             suffix=self._reveal_button,
+            dense=True,
+            content_padding=ft.padding.symmetric(horizontal=12, vertical=10),
         )
 
         self._current_status = "idle"
         self._status_icon = ft.Icon(
             name=icons.HELP_OUTLINE_ROUNDED,
             color=COLOR_NEUTRAL,
-            size=36,
+            size=20,
             tooltip=t("api_key.status.idle"),
         )
 

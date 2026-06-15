@@ -50,7 +50,7 @@ DESKTOP_FLET_DEFAULT_TEXT_SCALE = 1.0
 DESKTOP_FLET_MIN_TEXT_SCALE = 0.75
 DESKTOP_FLET_MAX_TEXT_SCALE = 1.5
 DESKTOP_FLET_DEFAULT_BACKGROUND_ALPHA = 0.6
-DESKTOP_FLET_MIN_BACKGROUND_ALPHA = 0.001
+DESKTOP_FLET_MIN_BACKGROUND_ALPHA = 0.01
 DESKTOP_FLET_MAX_BACKGROUND_ALPHA = 1.0
 DESKTOP_FLET_MIN_OUTLINE_WIDTH = 0.5
 DESKTOP_FLET_MAX_OUTLINE_WIDTH = 8.0
@@ -511,7 +511,7 @@ class DesktopAudioSettings:
 @dataclass(slots=True)
 class STTSettings:
     drain_timeout_s: float = 2.0
-    vad_speech_threshold: float = 0.5
+    vad_speech_threshold: float = 0.35
     low_latency_mode: bool = True
     low_latency_vad_hangover_ms: int = 600
     low_latency_merge_gap_ms: int = 600
@@ -819,6 +819,7 @@ class UiSettings:
     show_latin: bool = False
     send_latin: bool = False
     self_in_overlay: bool = True
+    typed_in_overlay: bool = True
     filter_peer_by_target_languages: bool = False
     show_pending_echo: bool = True
     chatbox_send_peer: bool = False
@@ -1513,6 +1514,7 @@ def to_dict(settings: AppSettings) -> dict[str, Any]:
             "show_latin": settings.ui.show_latin,
             "send_latin": settings.ui.send_latin,
             "self_in_overlay": settings.ui.self_in_overlay,
+            "typed_in_overlay": settings.ui.typed_in_overlay,
             "filter_peer_by_target_languages": settings.ui.filter_peer_by_target_languages,
             "show_pending_echo": settings.ui.show_pending_echo,
             "chatbox_send_peer": settings.ui.chatbox_send_peer,
@@ -3556,7 +3558,7 @@ def from_dict(data: dict[str, Any]) -> AppSettings:
         ),
         stt=STTSettings(
             drain_timeout_s=float(stt_data.get("drain_timeout_s", 2.0)),
-            vad_speech_threshold=float(vad_threshold_raw) if vad_threshold_raw is not None else 0.5,
+            vad_speech_threshold=(lambda v: 0.35 if v >= 0.9 else v)(float(vad_threshold_raw)) if vad_threshold_raw is not None else 0.35,
             low_latency_mode=bool(stt_data.get("low_latency_mode", False)),
             low_latency_vad_hangover_ms=int(stt_data.get("low_latency_vad_hangover_ms", 600)),
             low_latency_merge_gap_ms=int(stt_data.get("low_latency_merge_gap_ms", 600)),
@@ -3648,7 +3650,7 @@ def from_dict(data: dict[str, Any]) -> AppSettings:
             chatbox_send=bool(data.get("osc", {}).get("chatbox_send", True)),
             chatbox_clear=bool(data.get("osc", {}).get("chatbox_clear", False)),
             chatbox_max_chars=int(data.get("osc", {}).get("chatbox_max_chars", 144)),
-            vrc_mic_intercept=bool(data.get("osc", {}).get("vrc_mic_intercept", False)),
+            vrc_mic_intercept=bool(data.get("osc", {}).get("vrc_mic_intercept", True)),
             chatbox_include_source=bool(data.get("osc", {}).get("chatbox_include_source", False)),
         ),
         secrets=SecretsSettings(
@@ -3678,6 +3680,7 @@ def from_dict(data: dict[str, Any]) -> AppSettings:
             show_latin=bool(ui_data.get("show_latin", False)),
             send_latin=bool(ui_data.get("send_latin", False)),
             self_in_overlay=bool(ui_data.get("self_in_overlay", True)),
+            typed_in_overlay=bool(ui_data.get("typed_in_overlay", True)),
             filter_peer_by_target_languages=bool(ui_data.get("filter_peer_by_target_languages", False)),
             show_pending_echo=bool(ui_data.get("show_pending_echo", True)),
             chatbox_send_peer=bool(ui_data.get("chatbox_send_peer", False)),

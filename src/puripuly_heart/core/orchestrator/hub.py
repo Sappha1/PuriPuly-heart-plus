@@ -3106,7 +3106,7 @@ class ClientHub:
         else:
             self._finalize_latency_timeline(channel=runtime.channel, utterance_id=utterance_id)
         if runtime.channel == "peer" and self.chatbox_send_peer:
-            # Send the translated peer text to VRChat chatbox (translation only, no source)
+            # Send peer text to VRChat chatbox: source first, then transliteration (if enabled), then translation
             peer_translit = ""
             if self.send_pinyin or self.send_romaji or self.send_latin:
                 try:
@@ -3117,7 +3117,10 @@ class ClientHub:
                     )
                 except Exception:
                     pass
-            peer_osc_text = f"{peer_translit}\n{translation.text}" if peer_translit else translation.text
+            if peer_translit:
+                peer_osc_text = f"{text}\n{peer_translit}\n{translation.text}"
+            else:
+                peer_osc_text = f"{text}\n{translation.text}"
             peer_msg = OSCMessage(utterance_id=utterance_id, text=peer_osc_text, created_at=self.clock.now())
             self.osc.enqueue(peer_msg)
         if runtime.channel == "peer":

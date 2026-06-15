@@ -153,6 +153,7 @@ class TranslatorApp:
         self.view_dashboard.on_peer_stt_provider_change = self._on_dashboard_peer_stt_provider_change
         self.view_dashboard.on_overlay_lock_change = self._on_dashboard_overlay_lock_change
         self.view_dashboard.on_overlay_transparency_change = self._on_overlay_transparency_change
+        self.view_dashboard.on_chatbox_send_peer_toggle = self._on_dashboard_chatbox_send_peer_toggle
 
         self.view_settings.on_settings_changed = self._on_settings_changed
         self.view_settings.on_prompt_apply_settings = self._on_prompt_apply_settings
@@ -763,6 +764,22 @@ class TranslatorApp:
         except Exception:
             pass
 
+    def _on_dashboard_chatbox_send_peer_toggle(self, value: bool) -> None:
+        if self.settings and self.settings.ui:
+            self.settings.ui.chatbox_send_peer = value
+            self._save_settings()
+        if self.controller and self.controller.hub:
+            self.controller.hub.chatbox_send_peer = value
+        try:
+            from puripuly_heart.ui.i18n import t
+            self.view_settings._chatbox_send_peer_text.content.value = t(
+                "settings.option.on" if value else "settings.option.off"
+            )
+            if self.view_settings.page:
+                self.view_settings._chatbox_send_peer_text.update()
+        except Exception:
+            pass
+
     def _on_overlay_transparency_change(self, alpha: float) -> None:
         async def _task():
             await self.controller.set_desktop_overlay_background_alpha(float(alpha))
@@ -1086,7 +1103,13 @@ class TranslatorApp:
             dash.send_pinyin = bool(getattr(_ui, "send_pinyin", False))
             dash.send_romaji = bool(getattr(_ui, "send_romaji", False))
             dash._show_pending_echo = bool(getattr(_ui, "show_pending_echo", True))
-            dash._chatbox_send_peer = bool(getattr(_ui, "chatbox_send_peer", False))
+            new_chatbox_peer = bool(getattr(_ui, "chatbox_send_peer", False))
+            if dash._chatbox_send_peer != new_chatbox_peer:
+                dash._chatbox_send_peer = new_chatbox_peer
+                try:
+                    dash._refresh_chatbox_peer_btn()
+                except Exception:
+                    pass
             self._sync_translator_label(settings)
             try:
                 set_flags = getattr(dash, "set_stt_key_flags", None)

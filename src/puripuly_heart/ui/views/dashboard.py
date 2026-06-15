@@ -264,6 +264,7 @@ class DashboardView(ft.Row):
         self._pending_sent_col: ft.Column | None = None
         self._pending_version: int = 0
         self._show_pending_echo: bool = True  # on by default; toggled in Settings
+        self._chatbox_send_peer: bool = False  # toggled in Settings and dashboard header
         self._translation_showing_warning = False
         self._stt_showing_warning = False
         self._managed_auth_pending = False
@@ -667,6 +668,7 @@ class DashboardView(ft.Row):
         self._translator_model_has_key: dict[str, bool] = {}  # model_value → has key
         self.on_transliteration_change: object = None  # callback(show_pinyin, send_pinyin, show_romaji, send_romaji)
         self.on_overlay_lock_change: object = None  # callback(locked: bool)
+        self.on_chatbox_send_peer_toggle: object = None  # callback(value: bool)
         self.on_overlay_transparency_change: object = None  # callback(alpha: float)
         self._overlay_locked: bool = False
         self._overlay_background_alpha: float = 0.5
@@ -913,6 +915,7 @@ class DashboardView(ft.Row):
             "Overlay", size=9, color=_TEXT_FAINT, weight=ft.FontWeight.W_600,
         )
         self._overlay_lock_icon = ft.Icon(ft.Icons.LOCK_OPEN, size=11, color=_TEXT_FAINT)
+        self._overlay_lock_text = ft.Text("Lock", size=9, color=_TEXT_FAINT, weight=ft.FontWeight.W_600)
         _overlay_divider = ft.Container(
             width=1, height=12,
             bgcolor="#4a4b4f",
@@ -927,7 +930,12 @@ class DashboardView(ft.Row):
             on_secondary_tap=self._on_overlay_right_click,
         )
         self._overlay_lock_side = ft.Container(
-            content=self._overlay_lock_icon,
+            content=ft.Row(
+                [self._overlay_lock_icon, self._overlay_lock_text],
+                spacing=3,
+                vertical_alignment=ft.CrossAxisAlignment.CENTER,
+                tight=True,
+            ),
             on_click=self._on_overlay_lock_click,
             tooltip="Lock overlay position",
             padding=ft.padding.only(left=5, right=7, top=3, bottom=3),
@@ -958,10 +966,26 @@ class DashboardView(ft.Row):
             bgcolor=ft.Colors.TRANSPARENT,
             border=_pill_border_on,
         )
+        self._chatbox_peer_btn = ft.Container(
+            content=ft.Text(
+                "Peer→VRC",
+                size=9,
+                color=_TEXT_FAINT,
+                weight=ft.FontWeight.W_600,
+            ),
+            on_click=self._on_chatbox_peer_btn_click,
+            tooltip="Send peer voice to VRChat chatbox (original + translation)",
+            padding=ft.padding.symmetric(horizontal=7, vertical=3),
+            border_radius=10,
+            bgcolor=ft.Colors.TRANSPARENT,
+            border=_pill_border_off,
+        )
         chat_header = ft.Row(
             [
                 ft.Text("Chat", size=11, color=_TEXT_FAINT, weight=ft.FontWeight.W_500),
                 ft.Container(expand=True),
+                self._chatbox_peer_btn,
+                ft.Container(width=4),
                 self._autoscroll_btn,
                 ft.Container(width=4),
                 self._overlay_header_btn,
@@ -1254,9 +1278,11 @@ class DashboardView(ft.Row):
         self._overlay_locked = locked
         self._overlay_lock_icon.name = ft.Icons.LOCK if locked else ft.Icons.LOCK_OPEN
         self._overlay_lock_icon.color = _TOGGLE_ON if locked else _TEXT_FAINT
+        self._overlay_lock_text.value = "Locked" if locked else "Lock"
+        self._overlay_lock_text.color = _TOGGLE_ON if locked else _TEXT_FAINT
         self._overlay_lock_side.tooltip = "Unlock overlay position" if locked else "Lock overlay position"
         try:
-            self._overlay_lock_icon.update()
+            self._overlay_lock_side.update()
         except Exception:
             pass
 
@@ -2282,6 +2308,25 @@ class DashboardView(ft.Row):
                 self._extra_peer_src_rows_col.update()
             if self._peer_src_plus_slot.page:
                 self._peer_src_plus_slot.update()
+        except Exception:
+            pass
+
+    # ── Peer voice to chatbox toggle ─────────────────────────────────────────
+
+    def _on_chatbox_peer_btn_click(self, _=None) -> None:
+        self._chatbox_send_peer = not self._chatbox_send_peer
+        self._refresh_chatbox_peer_btn()
+        if callable(self.on_chatbox_send_peer_toggle):
+            self.on_chatbox_send_peer_toggle(self._chatbox_send_peer)
+
+    def _refresh_chatbox_peer_btn(self) -> None:
+        active = self._chatbox_send_peer
+        btn = self._chatbox_peer_btn
+        btn.content.color = _TOGGLE_ON if active else _TEXT_FAINT
+        btn.bgcolor = "#1a2a1a" if active else ft.Colors.TRANSPARENT
+        btn.border = ft.border.all(1, _TOGGLE_ON if active else "#3a3b3f")
+        try:
+            btn.update()
         except Exception:
             pass
 

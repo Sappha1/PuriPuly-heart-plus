@@ -1,0 +1,2 @@
+cd C:\Users\Owner\Desktop\PuriPuly-heart-2.1.2
+echo Y | C:\Users\Owner\AppData\Local\Packages\PythonSoftwareFoundation.Python.3.11_qbz5n2kfra8p0\LocalCache\local-packages\Python311\Scripts\uv.exe run pyinstaller build.spec

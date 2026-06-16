@@ -12,7 +12,7 @@ from puripuly_heart.ui.fonts import font_for_language
 from puripuly_heart.ui.i18n import get_locale, language_name, t
 from puripuly_heart.ui.overlay_peer_contract import OverlayPeerConsumerContract
 
-_BUILD_TAG = "r71"  #increment each build so user can confirm version
+_BUILD_TAG = "r72"  #increment each build so user can confirm version
 
 # ── VRCT-style dark palette ──────────────────────────────────────────────────
 _BG_MAIN = "#2e2f32"
@@ -1197,6 +1197,8 @@ class DashboardView(ft.Row):
         self._row_stt.set_state(self.is_stt_on, warning=self._stt_showing_warning, error=self._stt_showing_error)
         if hasattr(self, "_mini_stt_btn"):
             self._mini_stt_btn.set_state(self.is_stt_on, warning=self._stt_showing_warning, error=self._stt_showing_error)
+        if hasattr(self, "_vrc_mute_sync_btn"):
+            self._refresh_vrc_mute_sync_btn()
 
     def _sync_translation_button_state(self) -> None:
         self._row_trans.set_state(self.is_translation_on, warning=self._translation_showing_warning)
@@ -2435,6 +2437,8 @@ class DashboardView(ft.Row):
     # ── VRC mute sync toggle ─────────────────────────────────────────────────
 
     def _on_vrc_mute_sync_click(self, _=None) -> None:
+        if not self.is_stt_on:
+            return
         self._vrc_mute_sync = not self._vrc_mute_sync
         if self._vrc_mute_sync:
             self._vrc_mute_sync_osc_state = None  # reset synced state; wait for VRChat to re-send
@@ -2443,9 +2447,15 @@ class DashboardView(ft.Row):
             self.on_vrc_mute_sync_toggle(self._vrc_mute_sync)
 
     def _refresh_vrc_mute_sync_btn(self) -> None:
-        active = self._vrc_mute_sync
+        active = self._vrc_mute_sync and self.is_stt_on
         btn = self._vrc_mute_sync_btn
-        if active and self._vrc_mute_sync_osc_state is None:
+        if not self.is_stt_on:
+            # MIC is off — button is inert, show as fully dimmed
+            btn.content.color = _TEXT_FAINT
+            btn.bgcolor = ft.Colors.TRANSPARENT
+            btn.border = ft.border.all(1, "#3a3b3f")
+            btn.tooltip = t("dashboard.mute_sync.tooltip.off")
+        elif active and self._vrc_mute_sync_osc_state is None:
             # Enabled but waiting for VRChat to send its mute state — show orange "syncing"
             _COLOR = "#e8a020"
             btn.content.color = _COLOR

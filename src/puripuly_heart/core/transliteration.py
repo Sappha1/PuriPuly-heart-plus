@@ -371,6 +371,28 @@ def transliterate_for_language(
     if not text.strip():
         return ""
     lang = (language_code or "").lower().split("-")[0]
+
+    # Auto-detect script from text content when language is unknown ("" = Auto Detect)
+    if not lang:
+        if show_pinyin and _is_mostly_cjk(text) and not _is_mostly_japanese(text):
+            return to_pinyin(text)
+        if show_romaji and _is_mostly_japanese(text):
+            return to_romaji(text)
+        if show_romaji and _is_mostly_korean(text):
+            return to_romaja(text)
+        if show_latin:
+            if _is_mostly_cyrillic(text):
+                return to_latin_cyrillic(text)
+            if _is_mostly_greek(text):
+                return to_latin_greek(text)
+            if _is_mostly_arabic(text):
+                return to_latin_arabic(text)
+            if _is_mostly_devanagari(text):
+                return to_latin_hindi(text)
+            if _is_mostly_thai(text):
+                return to_latin_thai(text)
+        return ""
+
     if show_pinyin and lang in ("zh", "zh_cn", "zh_tw", "cmn") and _is_mostly_cjk(text):
         return to_pinyin(text)
     if show_romaji and lang in ("ja", "jpn") and _is_mostly_japanese(text):

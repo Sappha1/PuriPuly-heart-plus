@@ -192,10 +192,10 @@ class LocalQwenSherpaSTTBackend(STTBackend):
         async with self._load_lock:
             if self._recognizer is not None:
                 return self._recognizer
-            await asyncio.to_thread(validate_local_stt_runtime_ready, self.model_dir)
 
-            # If a sentinel file exists, a previous load attempt crashed the process.
-            # Delete the sentinel and surface an error rather than crashing again.
+            # Check sentinel BEFORE any DLL loading. The crash from AV/memory issues
+            # happens inside validate_local_stt_runtime_ready → ensure_local_qwen_windows_runtime,
+            # so the sentinel must be written first or it will never survive the crash.
             sentinel = self._crash_sentinel_path
             if sentinel.exists():
                 try:
@@ -208,18 +208,28 @@ class LocalQwenSherpaSTTBackend(STTBackend):
                     "and on to retry."
                 )
 
+            # Write sentinel now, before DLL loading begins. If the process hard-crashes
+            # (e.g. AV kills it during DLL init), this file survives and we detect it
+            # on the next run instead of crashing again silently.
+            try:
+                sentinel.write_text("loading", encoding="utf-8")
+            except Exception:
+                pass
+
+            try:
+                await asyncio.to_thread(validate_local_stt_runtime_ready, self.model_dir)
+            except Exception:
+                try:
+                    sentinel.unlink(missing_ok=True)
+                except Exception:
+                    pass
+                raise
+
             if callable(self.on_model_loading):
                 try:
                     self.on_model_loading()
                 except Exception:
                     pass
-
-            # Write sentinel before loading. If the process hard-crashes during DLL init
-            # (e.g. AV kills it), this file survives and we detect it on the next run.
-            try:
-                sentinel.write_text("loading", encoding="utf-8")
-            except Exception:
-                pass
 
             try:
                 self._recognizer = await asyncio.wait_for(

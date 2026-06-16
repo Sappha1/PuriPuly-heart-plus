@@ -216,31 +216,27 @@ class LocalQwenSherpaSTTBackend(STTBackend):
             except Exception:
                 pass
 
+            # Outer try/finally ensures the sentinel is always cleaned up, including
+            # on CancelledError (BaseException), which bypasses except Exception blocks.
             try:
                 await asyncio.to_thread(validate_local_stt_runtime_ready, self.model_dir)
-            except Exception:
-                try:
-                    sentinel.unlink(missing_ok=True)
-                except Exception:
-                    pass
-                raise
 
-            if callable(self.on_model_loading):
-                try:
-                    self.on_model_loading()
-                except Exception:
-                    pass
+                if callable(self.on_model_loading):
+                    try:
+                        self.on_model_loading()
+                    except Exception:
+                        pass
 
-            try:
-                self._recognizer = await asyncio.wait_for(
-                    asyncio.to_thread(self._create_recognizer),
-                    timeout=180.0,
-                )
-            except asyncio.TimeoutError:
-                raise LocalQwenSherpaLoadError(
-                    "Speech model took too long to load — antivirus may be blocking it. "
-                    "Try whitelisting the app folder, then toggle MIC off and on to retry."
-                )
+                try:
+                    self._recognizer = await asyncio.wait_for(
+                        asyncio.to_thread(self._create_recognizer),
+                        timeout=180.0,
+                    )
+                except asyncio.TimeoutError:
+                    raise LocalQwenSherpaLoadError(
+                        "Speech model took too long to load — antivirus may be blocking it. "
+                        "Try whitelisting the app folder, then toggle MIC off and on to retry."
+                    )
             finally:
                 try:
                     sentinel.unlink(missing_ok=True)

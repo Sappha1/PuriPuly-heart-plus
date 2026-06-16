@@ -3531,6 +3531,10 @@ class GuiController:
                 resume_peer=True,
             )
         except (LocalSTTManifestInvalidError, LocalQwenSherpaLoadError):
+            # If peer was disabled while the probe was loading, discard the error
+            # silently — the user already turned peer off, so a red light is misleading.
+            if self.settings is None or not self._peer_local_stt_requested(self.settings):
+                return False
             return self._handle_local_stt_unavailable(
                 "invalid",
                 resume_self=False,

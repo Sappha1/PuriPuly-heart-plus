@@ -2685,8 +2685,11 @@ class ClientHub:
         return other_runtime.get_source(utterance_id)
 
     def _source_language_for(self, runtime: ChannelRuntime) -> str:
-        if runtime.channel == "peer" and self.peer_source_language:
-            return self.peer_source_language
+        if runtime.channel == "peer":
+            if self.peer_source_language:
+                return self.peer_source_language
+            # Auto Detect: assume peer speaks the user's target language (what we output to)
+            return self.target_language
         return self.source_language
 
     def _target_language_for(self, runtime: ChannelRuntime) -> str:

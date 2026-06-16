@@ -183,7 +183,8 @@ class LocalQwenSherpaSTTBackend(STTBackend):
 
     @property
     def _crash_sentinel_path(self) -> Path:
-        return self.model_dir.parent / ".stt_load_sentinel"
+        label = self.stream_label or "self"
+        return self.model_dir.parent / f".stt_load_sentinel_{label}"
 
     async def _ensure_recognizer(self) -> object:
         if self._recognizer is not None:

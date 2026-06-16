@@ -61,6 +61,7 @@ SUPPORTED_LANGUAGES: dict[str, LanguageInfo] = {
     "sk": LanguageInfo(code="sk", name="Slovak"),
     "sv": LanguageInfo(code="sv", name="Swedish"),
     "th": LanguageInfo(code="th", name="Thai"),
+    "tl": LanguageInfo(code="tl", name="Tagalog"),
     "tr": LanguageInfo(code="tr", name="Turkish"),
     "uk": LanguageInfo(code="uk", name="Ukrainian"),
     "vi": LanguageInfo(code="vi", name="Vietnamese"),

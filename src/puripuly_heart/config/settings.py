@@ -429,6 +429,8 @@ def _translation_settings_is_exact_default(settings: TranslationSettings) -> boo
 class LanguagePreset:
     source_language: str = "en"
     target_languages: list[str] = field(default_factory=lambda: ["zh-CN"])
+    peer_source_language: str = ""
+    peer_target_language: str = ""
 
     @property
     def primary_target(self) -> str:
@@ -1412,6 +1414,8 @@ def to_dict(settings: AppSettings) -> dict[str, Any]:
                 {
                     "source_language": p.source_language,
                     "target_languages": p.target_languages,
+                    "peer_source_language": p.peer_source_language,
+                    "peer_target_language": p.peer_target_language,
                 }
                 for p in settings.languages.presets
             ],
@@ -3475,6 +3479,8 @@ def from_dict(data: dict[str, Any]) -> AppSettings:
                 LanguagePreset(
                     source_language=str(p.get("source_language", "en")),
                     target_languages=[str(t) for t in p.get("target_languages", ["zh-CN"])] or ["zh-CN"],
+                    peer_source_language=str(p.get("peer_source_language", "")),
+                    peer_target_language=str(p.get("peer_target_language", "")),
                 )
                 for p in (data.get("languages", {}).get("presets") or [])
             ] or [

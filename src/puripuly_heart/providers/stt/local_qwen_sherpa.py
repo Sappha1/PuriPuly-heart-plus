@@ -181,6 +181,10 @@ class LocalQwenSherpaSTTBackend(STTBackend):
     async def close(self) -> None:
         self._recognizer = None
 
+    @property
+    def _crash_sentinel_path(self) -> Path:
+        return self.model_dir.parent / ".stt_load_sentinel"
+
     async def _ensure_recognizer(self) -> object:
         if self._recognizer is not None:
             return self._recognizer
@@ -189,11 +193,34 @@ class LocalQwenSherpaSTTBackend(STTBackend):
             if self._recognizer is not None:
                 return self._recognizer
             await asyncio.to_thread(validate_local_stt_runtime_ready, self.model_dir)
+
+            # If a sentinel file exists, a previous load attempt crashed the process.
+            # Delete the sentinel and surface an error rather than crashing again.
+            sentinel = self._crash_sentinel_path
+            if sentinel.exists():
+                try:
+                    sentinel.unlink(missing_ok=True)
+                except Exception:
+                    pass
+                raise LocalQwenSherpaLoadError(
+                    "Speech model crashed the app during last load — antivirus may be "
+                    "blocking it. Try whitelisting the app folder, then toggle MIC off "
+                    "and on to retry."
+                )
+
             if callable(self.on_model_loading):
                 try:
                     self.on_model_loading()
                 except Exception:
                     pass
+
+            # Write sentinel before loading. If the process hard-crashes during DLL init
+            # (e.g. AV kills it), this file survives and we detect it on the next run.
+            try:
+                sentinel.write_text("loading", encoding="utf-8")
+            except Exception:
+                pass
+
             try:
                 self._recognizer = await asyncio.wait_for(
                     asyncio.to_thread(self._create_recognizer),
@@ -205,6 +232,10 @@ class LocalQwenSherpaSTTBackend(STTBackend):
                     "Try whitelisting the app folder, then toggle MIC off and on to retry."
                 )
             finally:
+                try:
+                    sentinel.unlink(missing_ok=True)
+                except Exception:
+                    pass
                 if callable(self.on_model_loaded):
                     try:
                         self.on_model_loaded()

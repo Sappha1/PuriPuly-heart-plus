@@ -3448,9 +3448,8 @@ class GuiController:
             if status == "invalid":
                 with contextlib.suppress(Exception):
                     dash.set_stt_error_state(True)
-        if resume_peer and dash is not None and status == "invalid":
-            with contextlib.suppress(Exception):
-                dash.set_peer_error_state(True)
+        # Peer never shows a red error dot — failures are transient (rapid toggle,
+        # concurrent probe, etc.) and the user can simply try again.
         self._sync_local_stt_notice()
         self._start_local_stt_download(origin="manual")
         return False

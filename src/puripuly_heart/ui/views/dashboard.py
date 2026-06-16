@@ -12,7 +12,7 @@ from puripuly_heart.ui.fonts import font_for_language
 from puripuly_heart.ui.i18n import get_locale, language_name, t
 from puripuly_heart.ui.overlay_peer_contract import OverlayPeerConsumerContract
 
-_BUILD_TAG = "r76"  #increment each build so user can confirm version
+_BUILD_TAG = "r87"  #increment each build so user can confirm version
 
 # ── VRCT-style dark palette ──────────────────────────────────────────────────
 _BG_MAIN = "#2e2f32"
@@ -2597,15 +2597,23 @@ class DashboardView(ft.Row):
         self._active_preset = max(0, min(active_preset, 2))
         if presets:
             self._preset_data = [
-                {"source": p.get("source", "en"), "targets": p.get("targets", ["zh-CN"])}
+                {
+                    "source": p.get("source", "en"),
+                    "targets": p.get("targets", ["zh-CN"]),
+                    "peer_source": p.get("peer_source", ""),
+                    "peer_target": p.get("peer_target", ""),
+                }
                 for p in presets[:3]
             ]
             while len(self._preset_data) < 3:
                 self._preset_data.append({"source": "en", "targets": ["en"]})
-        # Restore extra targets from active preset
+        # Restore extra targets and peer languages from active preset
         active = self._preset_data[self._active_preset]
         targets = active.get("targets", [target_code])
         self._extra_target_lang_codes = list(targets[1:])
+        if active.get("peer_source", "") or active.get("peer_target", ""):
+            self._peer_source_lang_code = active.get("peer_source", "")
+            self._peer_target_lang_code = active.get("peer_target", "")
         self._update_input_font()
         self._refresh_language_panel()
         self._refresh_language_rows()

@@ -1116,10 +1116,12 @@ class TranslatorApp:
         )
 
         # Check STT provider compatibility and show warning if needed
+        stt_provider = settings.provider.stt.value
         warning = None
         if source_code != previous_source_code:
-            stt_provider = settings.provider.stt.value
             warning = get_stt_compatibility_warning(source_code, stt_provider)
+        if not warning and peer_source_code and peer_source_code != previous_peer_source_code:
+            warning = get_stt_compatibility_warning(peer_source_code, stt_provider)
         if warning:
             snackbar = ft.SnackBar(
                 ft.Text(t(warning.key, language=language_name(warning.language_code))),
@@ -1297,6 +1299,18 @@ class TranslatorApp:
             pass
         try:
             self._sync_stt_label(s)
+        except Exception:
+            pass
+        try:
+            set_stt_flags = getattr(dash, "set_stt_key_flags", None)
+            if callable(set_stt_flags):
+                set_stt_flags(self._stt_key_flags_from_settings(s))
+        except Exception:
+            pass
+        try:
+            set_trans_flags = getattr(dash, "set_translator_key_flags", None)
+            if callable(set_trans_flags):
+                set_trans_flags(self._translator_key_flags_from_settings(s))
         except Exception:
             pass
 

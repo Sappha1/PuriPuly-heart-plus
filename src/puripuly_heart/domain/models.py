@@ -55,6 +55,7 @@ class Translation:
     source_text_hash: str | None
     source_text_len: int | None
     logical_turn_key: str | None
+    romanization: str | None = None
 
     def __init__(
         self,
@@ -73,6 +74,7 @@ class Translation:
         source_text_hash: str | None = None,
         source_text_len: int | None = None,
         logical_turn_key: str | None = None,
+        romanization: str | None = None,
     ) -> None:
         if text is not None and translated_text is not None and text != translated_text:
             raise ValueError("text and translated_text must match when both are set")
@@ -116,6 +118,7 @@ class Translation:
             "logical_turn_key",
             logical_turn_key if logical_turn_key is not None else f"{channel}:{utterance_id}",
         )
+        object.__setattr__(self, "romanization", romanization)
 
     @property
     def text(self) -> str:

@@ -1475,7 +1475,9 @@ class ClientHub:
         if self.overlay_sink is None or not self._overlay_flag_for_utterance(utterance_id):
             return
         target_lang = self._language_or_fallback(translation.target_language, self.target_language)
-        secondary_text = self._with_overlay_translit(translation.text, target_lang)
+        secondary_text = self._with_overlay_translit(
+            translation.text, target_lang, precomputed=translation.romanization
+        )
         if extra_translation_texts:
             secondary_text = secondary_text + "\n" + "\n".join(extra_translation_texts)
         if not secondary_text.strip():
@@ -1515,7 +1517,9 @@ class ClientHub:
             secondary_len=len(translation.text.strip()),
         )
         target_lang = self._language_or_fallback(translation.target_language, self.target_language)
-        overlay_text = self._with_overlay_translit(translation.text, target_lang)
+        overlay_text = self._with_overlay_translit(
+            translation.text, target_lang, precomputed=translation.romanization
+        )
         await self._emit_overlay_event(
             self.overlay_event_adapter.translation_final(
                 utterance_id=translation.utterance_id,
@@ -1615,13 +1619,17 @@ class ClientHub:
     async def _emit_self_active_overlay_event(self, event: object) -> None:
         await self._emit_overlay_event(event)
 
-    def _with_overlay_translit(self, text: str, language: str) -> str:
+    def _with_overlay_translit(
+        self, text: str, language: str, *, precomputed: str | None = None
+    ) -> str:
         """Prepend pinyin/romaji/latin above non-Roman text for overlay display."""
         _want_pinyin = self.show_pinyin or self.send_pinyin
         _want_romaji = self.show_romaji or self.send_romaji
         _want_latin = self.show_latin or self.send_latin
         if not text.strip() or not (_want_pinyin or _want_romaji or _want_latin):
             return text
+        if precomputed:
+            return f"{precomputed}\n{text}"
         try:
             from puripuly_heart.core.transliteration import transliterate_for_language
             translit = transliterate_for_language(
@@ -1681,6 +1689,7 @@ class ClientHub:
                 secondary = self._with_overlay_translit(
                     translation.text.strip(),
                     self._language_or_fallback(translation.target_language, self.target_language),
+                    precomputed=translation.romanization,
                 )
                 return secondary, "spec", reuse_mode
         sticky_secondary = self._cached_active_self_secondary_text().strip()
@@ -2527,6 +2536,7 @@ class ClientHub:
                     buffer.merge_id,
                     transcript_text=final_text,
                     translation_text=translation.text,
+                    precomputed_translit=translation.romanization,
                 )
                 return
 
@@ -2699,11 +2709,28 @@ class ClientHub:
 
     def _format_system_prompt(self, runtime: ChannelRuntime | None = None) -> str:
         runtime = runtime or self.self_runtime
-        return render_translation_prompt_template(
+        target_lang = self._target_language_for(runtime)
+        prompt = render_translation_prompt_template(
             self.system_prompt,
             source_name=get_llm_language_name(self._source_language_for(runtime)),
-            target_name=get_llm_language_name(self._target_language_for(runtime)),
+            target_name=get_llm_language_name(target_lang),
         )
+        # When Latin romanization is requested for RTL languages that omit short vowels,
+        # ask the LLM to prepend a romanization line so we get accurate pronunciation.
+        _want_latin = self.send_latin or self.show_latin
+        _needs_llm_roman = _want_latin and target_lang.split("-")[0].lower() in ("ar", "fa", "ur")
+        if _needs_llm_roman:
+            prompt += (
+                "\n\n## Romanization\n"
+                "Before the translation, output one line of how the translation sounds when spoken aloud "
+                "written in Latin letters (full phonetic pronunciation, NOT a transcription of the script — "
+                "include ALL short vowels that native speakers pronounce but the script omits). "
+                "Then a newline, then the translated text.\n"
+                "Example: 'god is great' → first line: 'Allahu Akbar' (the 'u' after Allah is spoken), "
+                "second line: 'الله أكبر'.\n"
+                "No labels, no extra blank lines between them."
+            )
+        return prompt
 
     def _other_runtime(self, runtime: ChannelRuntime) -> ChannelRuntime:
         return self.peer_runtime if runtime is self.self_runtime else self.self_runtime
@@ -2763,9 +2790,27 @@ class ClientHub:
         source_language: str,
         target_language: str,
     ) -> Translation:
+        translated_text = translation.text
+        romanization: str | None = None
+
+        # Parse LLM-prepended romanization line for Arabic/Farsi/Urdu when Latin is active
+        _want_latin = self.send_latin or self.show_latin
+        _tl_base = target_language.split("-")[0].lower()
+        if _want_latin and _tl_base in ("ar", "fa", "ur") and "\n" in translated_text:
+            first_line, rest = translated_text.split("\n", 1)
+            first_line = first_line.strip()
+            rest = rest.strip()
+            _rest_has_script = any("؀" <= c <= "ۿ" for c in rest)
+            _first_is_latin = first_line and all(
+                c.isascii() or not c.isalpha() for c in first_line
+            )
+            if first_line and rest and _rest_has_script and _first_is_latin:
+                romanization = first_line
+                translated_text = rest
+
         return Translation(
             utterance_id=translation.utterance_id,
-            translated_text=translation.text,
+            translated_text=translated_text,
             source_text=text,
             source_language=self._language_or_fallback(
                 translation.source_language,
@@ -2783,6 +2828,7 @@ class ClientHub:
             source_text_hash=translation.source_text_hash,
             source_text_len=translation.source_text_len,
             logical_turn_key=f"{runtime.channel}:{translation.utterance_id}",
+            romanization=romanization,
         )
 
     async def _translate_text(
@@ -3111,13 +3157,14 @@ class ClientHub:
                 utterance_id,
                 transcript_text=text,
                 translation_text=combined_translation,
+                precomputed_translit=translation.romanization,
             )
         else:
             self._finalize_latency_timeline(channel=runtime.channel, utterance_id=utterance_id)
         if runtime.channel == "peer" and self.chatbox_send_peer:
             # Send peer text to VRChat chatbox: source first, then transliteration (if enabled), then translation
-            peer_translit = ""
-            if self.send_pinyin or self.send_romaji or self.send_latin:
+            peer_translit = translation.romanization or ""
+            if not peer_translit and (self.send_pinyin or self.send_romaji or self.send_latin):
                 try:
                     from puripuly_heart.core.transliteration import transliterate_for_language as _tfl
                     peer_translit = _tfl(
@@ -3189,37 +3236,41 @@ class ClientHub:
         *,
         transcript_text: str,
         translation_text: str | None,
+        precomputed_translit: str | None = None,
     ) -> None:
         # Compute pinyin/romaji for primary language only (first segment before any \n from extras)
         translit = ""
         if translation_text is not None and (self.send_pinyin or self.send_romaji or self.send_latin):
             runtime_check = self._runtime_for_utterance(utterance_id)
             if runtime_check.channel == "self":
-                try:
-                    from puripuly_heart.core.transliteration import transliterate_for_language
-                    primary_segment = translation_text.split("\n")[0]
-                    translit = transliterate_for_language(
-                        primary_segment,
-                        self.target_language,
-                        show_pinyin=self.send_pinyin,
-                        show_romaji=self.send_romaji,
-                        show_latin=self.send_latin,
-                    )
-                except Exception:
-                    pass
+                if precomputed_translit:
+                    translit = precomputed_translit
+                else:
+                    try:
+                        from puripuly_heart.core.transliteration import transliterate_for_language
+                        primary_segment = translation_text.split("\n")[0]
+                        translit = transliterate_for_language(
+                            primary_segment,
+                            self.target_language,
+                            show_pinyin=self.send_pinyin,
+                            show_romaji=self.send_romaji,
+                            show_latin=self.send_latin,
+                        )
+                    except Exception:
+                        pass
 
+        _rtl_lang = self.target_language.split("-")[0].lower() in ("ar", "he", "fa", "ur")
+        _translit_sep = "\n\n" if translit and _rtl_lang else "\n"
         if translation_text is None:
             merged = transcript_text
         elif self.chatbox_include_source:
-            # pinyin goes between original and translation; no blank line
             if translit:
-                merged = f"{transcript_text}\n{translit}\n{translation_text}"
+                merged = f"{transcript_text}\n{translit}{_translit_sep}{translation_text}"
             else:
                 merged = f"{transcript_text}\n{translation_text}"
         else:
-            # pinyin goes ABOVE Chinese: "pinyin\nChinese"
             if translit:
-                merged = f"{translit}\n{translation_text}"
+                merged = f"{translit}{_translit_sep}{translation_text}"
             else:
                 merged = translation_text
 

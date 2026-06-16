@@ -226,12 +226,12 @@ class LanguageModal:
 
     def _build_recent_chips(self, recent: list[str], current: str) -> ft.Control:
         chips = []
-        for lang_code in recent[:6]:
+        for lang_code in recent[:3]:
             is_current = lang_code == current
             chip = ft.Container(
                 content=ft.Text(
                     language_name(lang_code),
-                    size=13,
+                    size=12,
                     weight=ft.FontWeight.W_600 if is_current else ft.FontWeight.NORMAL,
                     color=COLOR_PRIMARY if is_current else COLOR_ON_BACKGROUND,
                     text_align=ft.TextAlign.CENTER,
@@ -241,13 +241,14 @@ class LanguageModal:
                 bgcolor=_BG_ITEM_SELECTED if is_current else _BG_ITEM,
                 border_radius=8,
                 border=ft.border.all(1, COLOR_PRIMARY if is_current else COLOR_DIVIDER),
-                padding=ft.padding.symmetric(horizontal=12, vertical=8),
+                padding=ft.padding.symmetric(horizontal=10, vertical=5),
                 alignment=ft.alignment.center,
+                expand=True,
                 on_click=lambda e, code=lang_code: self._select(code),
                 on_hover=lambda e, is_sel=is_current: self._on_chip_hover(e, is_sel),
             )
             chips.append(chip)
-        return ft.Row(controls=chips, wrap=True, spacing=8, run_spacing=6)
+        return ft.Row(controls=chips, spacing=8)
 
     def _build_all_lang_items(self, current: str) -> list[tuple[str, ft.Container]]:
         """Returns list of (name_lower, widget) for search filtering."""

@@ -3743,6 +3743,8 @@ class GuiController:
             updated.languages.presets[idx] = LanguagePreset(
                 source_language=source_code,
                 target_languages=targets if targets else [target_code],
+                peer_source_language=peer_source_code,
+                peer_target_language=peer_target_code,
             )
         # Sync language and extra targets to hub immediately so in-flight
         # translations use the new language before apply_settings completes.
@@ -5648,7 +5650,12 @@ class GuiController:
                     settings.languages.peer_target_language,
                     active_preset=settings.languages.active_preset,
                     presets=[
-                        {"source": p.source_language, "targets": list(p.target_languages)}
+                        {
+                            "source": p.source_language,
+                            "targets": list(p.target_languages),
+                            "peer_source": p.peer_source_language,
+                            "peer_target": p.peer_target_language,
+                        }
                         for p in settings.languages.presets
                     ],
                 )

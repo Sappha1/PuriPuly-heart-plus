@@ -171,60 +171,202 @@ def to_latin_greek(text: str) -> str:
 
 
 # ── Arabic → Latin ────────────────────────────────────────────────────────────
-_AR_MAP: dict[str, str] = {
-    "ا": "a",   # ا alef
-    "ب": "b",   # ب ba
-    "ت": "t",   # ت ta
-    "ث": "th",  # ث tha
-    "ج": "j",   # ج jim
-    "ح": "h",   # ح ha
-    "خ": "kh",  # خ kha
-    "د": "d",   # د dal
-    "ذ": "dh",  # ذ dhal
-    "ر": "r",   # ر ra
-    "ز": "z",   # ز zayn
-    "س": "s",   # س sin
-    "ش": "sh",  # ش shin
-    "ص": "s",   # ص sad
-    "ض": "d",   # ض dad
-    "ط": "t",   # ط ta
-    "ظ": "z",   # ظ za
-    "ع": "'",   # ع ayn
-    "غ": "gh",  # غ ghayn
-    "ف": "f",   # ف fa
-    "ق": "q",   # ق qaf
-    "ك": "k",   # ك kaf
-    "ل": "l",   # ل lam
-    "م": "m",   # م mim
-    "ن": "n",   # ن nun
-    "ه": "h",   # ه ha
-    "و": "w",   # و waw
-    "ي": "y",   # ي ya
-    "ة": "t",   # ة ta marbuta
-    "ى": "a",   # ى alef maqsura
-    "ء": "'",   # ء hamza
-    "أ": "a",   # أ alef with hamza above
-    "إ": "i",   # إ alef with hamza below
-    "آ": "aa",  # آ alef with madda
-    "ؤ": "w",   # ؤ waw with hamza
-    "ئ": "y",   # ئ ya with hamza
-    # Diacritics (harakat)
+# Consonant set: letters that map to consonant sounds (not vowel markers)
+_AR_CONSONANTS = frozenset("بتثجحخدذرزسشصضطظعغفقكلمنهةء")
+# Long-vowel letters (ا ى are always vowels; و ي context-dependent)
+_AR_LONG_VOWEL_ALWAYS = frozenset("اىآأإ")
+# Base consonant map (و and ي handled separately based on context)
+_AR_BASE_MAP: dict[str, str] = {
+    "ا": "a",   # alef — long vowel
+    "ب": "b",
+    "ت": "t",
+    "ث": "th",
+    "ج": "j",
+    "ح": "h",
+    "خ": "kh",
+    "د": "d",
+    "ذ": "dh",
+    "ر": "r",
+    "ز": "z",
+    "س": "s",
+    "ش": "sh",
+    "ص": "s",
+    "ض": "d",
+    "ط": "t",
+    "ظ": "z",
+    "ع": "",    # ayn — silent in casual romanization
+    "غ": "gh",
+    "ف": "f",
+    "ق": "q",
+    "ك": "k",
+    "ل": "l",
+    "م": "m",
+    "ن": "n",
+    "ه": "h",
+    "ة": "a",   # ta marbuta — usually pronounced as trailing "a"
+    "ى": "a",   # alef maqsura
+    "ء": "",    # hamza — silent
+    "أ": "a",   # alef with hamza above
+    "إ": "i",   # alef with hamza below
+    "آ": "aa",  # alef with madda
+    "ؤ": "u",   # waw with hamza — vowel "u"
+    "ئ": "i",   # ya with hamza — vowel "i"
+    # Diacritics (harakat) — when present they give exact vowels
     "َ": "a",   # fatha
     "ُ": "u",   # damma
     "ِ": "i",   # kasra
-    "ّ": "",    # shadda (double) — skip
+    "ّ": "",    # shadda — gemination, skip
     "ْ": "",    # sukun — skip
     "ً": "an",  # tanwin fath
     "ٌ": "un",  # tanwin damm
     "ٍ": "in",  # tanwin kasr
-    # Tatweel
-    "ـ": "",
+    "ـ": "",    # tatweel
 }
+
+# Common Arabic words → correct romanization (avoids guessing vowels)
+_AR_WORD_DICT: dict[str, str] = {
+    "الله": "Allah",
+    "أكبر": "Akbar",
+    "اكبر": "Akbar",
+    "الحمد": "Alhamd",
+    "لله": "lillah",
+    "الرحمن": "al-Rahman",
+    "الرحيم": "al-Rahim",
+    "بسم": "Bismi",
+    "السلام": "al-Salam",
+    "سلام": "Salam",
+    "عليكم": "alaykum",
+    "وعليكم": "wa-alaykum",
+    "شكرا": "shukran",
+    "شكراً": "shukran",
+    "مرحبا": "marhaba",
+    "مرحباً": "marhaban",
+    "نعم": "na'am",
+    "لا": "la",
+    "أنا": "ana",
+    "أنت": "anta",
+    "هو": "huwa",
+    "هي": "hiya",
+    "نحن": "nahnu",
+    "أهلا": "ahlan",
+    "أهلاً": "ahlan",
+    "وسهلا": "wa-sahlan",
+    "حبيبي": "habibi",
+    "حبيبتي": "habibti",
+    "يلا": "yalla",
+    "يالله": "yallah",
+    "إنشاء": "insha",
+    "الله": "Allah",
+    "ماشاء": "masha",
+    "ماشاءالله": "masha'Allah",
+    "سبحان": "subhan",
+    "سبحانالله": "subhanAllah",
+    "فلبيني": "Filipini",
+    "فلبينية": "Filipiniya",
+    "فلبين": "Filipin",
+    "عربي": "Arabi",
+    "عربية": "Arabiya",
+    "ياباني": "Yabani",
+    "صيني": "Sini",
+    "كوري": "Kuri",
+    "إنجليزي": "Ingleezi",
+    "مرحبا": "marhaba",
+    "كيف": "kayf",
+    "حالك": "halak",
+    "بخير": "bikhair",
+    "جيد": "jayyid",
+    "ممتاز": "mumtaz",
+    "شيء": "shay",
+    "كثير": "katheer",
+    "قليل": "qaleel",
+    "كبير": "kabeer",
+    "صغير": "sagheer",
+    "جميل": "jameel",
+    "حلو": "hilu",
+    "اسمي": "ismi",
+    "اسمك": "ismak",
+}
+
+# Characters that are inherently vowel-like (produce a vowel sound)
+_AR_VOWEL_CHARS = frozenset("ًٌٍَُِ")  # harakat
+_AR_VOWEL_OUTPUT_CHARS = frozenset("aeiouAEIOU")
+
+
+def _ar_word_to_latin(word: str) -> str:
+    """Convert a single Arabic word to Latin with context-sensitive ي/و handling."""
+    # Check word dictionary first
+    if word in _AR_WORD_DICT:
+        return _AR_WORD_DICT[word]
+
+    parts: list[str] = []
+    has_harakat = any(c in _AR_VOWEL_CHARS for c in word)
+
+    chars = list(word)
+    i = 0
+    while i < len(chars):
+        c = chars[i]
+        # Handle و (waw): vowel "u" after a consonant, consonant "w" otherwise
+        if c == "و":
+            prev_output = parts[-1] if parts else ""
+            prev_ends_consonant = prev_output and prev_output[-1] not in _AR_VOWEL_OUTPUT_CHARS
+            parts.append("u" if prev_ends_consonant else "w")
+            i += 1
+            continue
+        # Handle ي (ya): vowel "i" after a consonant, consonant "y" otherwise
+        if c == "ي":
+            prev_output = parts[-1] if parts else ""
+            prev_ends_consonant = prev_output and prev_output[-1] not in _AR_VOWEL_OUTPUT_CHARS
+            parts.append("i" if prev_ends_consonant else "y")
+            i += 1
+            continue
+        mapped = _AR_BASE_MAP.get(c, c)
+        parts.append(mapped)
+        i += 1
+
+    result = "".join(parts)
+
+    # If no harakat in the original text, insert 'a' between consecutive consonants
+    # to make the result more readable (rough approximation of inherent short vowels)
+    if not has_harakat:
+        result = _insert_arabic_short_vowels(result)
+
+    return result
+
+
+def _insert_arabic_short_vowels(text: str) -> str:
+    """Insert 'a' between adjacent consonant sounds to improve readability."""
+    _vowels = set("aeiouAEIOU")
+    out: list[str] = []
+    i = 0
+    while i < len(text):
+        out.append(text[i])
+        # If current char is a consonant and next is also a consonant (no space/vowel between)
+        if (
+            i + 1 < len(text)
+            and text[i] not in _vowels
+            and text[i] not in (" ", "-", "'", "")
+            and text[i + 1] not in _vowels
+            and text[i + 1] not in (" ", "-", "'", "")
+            and text[i].isalpha()
+            and text[i + 1].isalpha()
+        ):
+            out.append("a")
+        i += 1
+    return "".join(out)
 
 
 def to_latin_arabic(text: str) -> str:
-    """Transliterate Arabic text to Latin (simplified)."""
-    return "".join(_AR_MAP.get(c, c) for c in text)
+    """Transliterate Arabic text to readable Latin, with vowel reconstruction."""
+    words = text.split()
+    result_words: list[str] = []
+    for word in words:
+        # Strip leading/trailing punctuation for lookup, re-attach after
+        stripped = word.strip("،.؟!,?!;:")
+        punct_pre = word[: len(word) - len(word.lstrip("،.؟!,?!;:"))]
+        punct_post = word[len(stripped) + len(punct_pre):]
+        romanized = _ar_word_to_latin(stripped) if stripped else ""
+        result_words.append(punct_pre + romanized + punct_post)
+    return " ".join(result_words)
 
 
 # ── Devanagari (Hindi) → Latin ────────────────────────────────────────────────

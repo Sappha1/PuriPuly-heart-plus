@@ -1411,12 +1411,20 @@ class TranslatorApp:
             pass
 
     def _on_request_stt_download(self) -> None:
-        try:
+        # NOTE: Flet dispatches on_click on a UI handler thread, not the asyncio
+        # event-loop thread. _start_local_stt_download calls asyncio.create_task,
+        # which requires a running loop in the current thread — so it must be run
+        # via page.run_task (same mechanism every other dashboard action uses),
+        # otherwise it raises "no running event loop" and the button does nothing.
+        async def _task():
             start = getattr(self.controller, "_start_local_stt_download", None)
             if callable(start):
                 start(origin="manual_notice_btn")
+
+        try:
+            self.page.run_task(_task)
         except Exception:
-            pass
+            logger.exception("Failed to start local STT model download")
 
     def _on_dashboard_stt_provider_change(self, provider_value: str) -> None:
         try:

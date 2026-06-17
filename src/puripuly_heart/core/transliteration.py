@@ -31,12 +31,51 @@ def to_pinyin(text: str) -> str:
         return ""
 
 
+_CUTLET_INSTANCE = None
+
+# Language-name stems that the bundled (small) unidic-lite dictionary tokenizes
+# as "<stem> 語", producing romaji like "Nihon go" instead of "Nihongo". We merge
+# the trailing standalone "go" (語, "language") back onto the stem in post-processing.
+_JP_LANG_STEMS = (
+    "nihon", "chuugoku", "kankoku", "furansu", "doitsu", "supein", "roshia",
+    "itaria", "porutogaru", "arabia", "betonamu", "tai", "indoneshia",
+    "mareeshia", "firipin", "toruko", "girisha", "oranda", "suweeden",
+    "eigo",  # harmless no-op; kept for clarity (英語 already merges)
+)
+_JP_LANG_GO_RE = re.compile(
+    r"\b(" + "|".join(_JP_LANG_STEMS) + r")\s+go\b", re.IGNORECASE
+)
+
+
+def _merge_jp_language_compounds(s: str) -> str:
+    """Merge '<language-stem> go' → '<language-stem>go' (e.g. 'Nihon go' → 'Nihongo')."""
+    return _JP_LANG_GO_RE.sub(lambda m: m.group(1) + "go", s)
+
+
+def _get_cutlet():
+    """Return a cached Cutlet instance configured for phonetic romaji.
+
+    use_foreign_spelling defaults to True, which spells katakana loanwords with
+    their original foreign spelling (テスト→"Test", ハロー→"Hello") instead of
+    phonetic romaji. We want phonetic readings (テスト→"tesuto"), so disable it.
+    The 日本 exception fixes the dictionary's "Nippon" reading to "Nihon".
+    Caching avoids reloading the MeCab dictionary on every call.
+    """
+    global _CUTLET_INSTANCE
+    if _CUTLET_INSTANCE is None:
+        import cutlet
+        ct = cutlet.Cutlet()
+        ct.use_foreign_spelling = False
+        ct.add_exception("日本", "nihon")
+        _CUTLET_INSTANCE = ct
+    return _CUTLET_INSTANCE
+
+
 def to_romaji(text: str) -> str:
     """Convert Japanese text to Hepburn romaji with proper word spacing via MeCab/cutlet."""
     try:
-        import cutlet
-        ct = cutlet.Cutlet()
-        return ct.romaji(text).strip()
+        ct = _get_cutlet()
+        return _merge_jp_language_compounds(ct.romaji(text).strip())
     except Exception:
         pass
     # Fallback to pykakasi if cutlet unavailable

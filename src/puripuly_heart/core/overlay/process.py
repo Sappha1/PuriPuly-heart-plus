@@ -235,20 +235,35 @@ class DefaultOverlayProcessRunner:
         *,
         sys_executable: Path | None = None,
         repo_root: Path | None = None,
+        meipass: str | None = None,
     ) -> Path:
         packaged_sibling, staged = cls.default_executable_candidates(
             sys_executable=sys_executable,
             repo_root=repo_root,
         )
-        if packaged_sibling.exists() and staged.exists():
-            if staged.stat().st_mtime > packaged_sibling.stat().st_mtime:
+        # PyInstaller "_internal" (contents_directory) layout: the overlay exe is
+        # bundled into the contents dir — which is sys._MEIPASS at runtime — rather
+        # than sitting next to the main exe. Prefer the flat sibling when present,
+        # otherwise fall back to the contents-dir copy. (The OpenVR DLL is bundled
+        # alongside it, so the sibling lookup in ensure_bundled_openvr_runtime_dll
+        # follows automatically.)
+        packaged = packaged_sibling
+        if not packaged.exists():
+            if meipass is None:
+                meipass = getattr(sys, "_MEIPASS", None)
+            if meipass:
+                meipass_candidate = Path(meipass) / OVERLAY_EXECUTABLE_NAME
+                if meipass_candidate.exists():
+                    packaged = meipass_candidate
+        if packaged.exists() and staged.exists():
+            if staged.stat().st_mtime > packaged.stat().st_mtime:
                 return staged
-            return packaged_sibling
-        if packaged_sibling.exists():
-            return packaged_sibling
+            return packaged
+        if packaged.exists():
+            return packaged
         if staged.exists():
             return staged
-        return packaged_sibling
+        return packaged
 
     def _resolve_default_executable(self) -> Path:
         return self.resolve_default_executable()

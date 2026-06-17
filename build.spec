@@ -212,7 +212,7 @@ exe = EXE(
     target_arch=None,
     codesign_identity=None,
     entitlements_file=None,
-    contents_directory=".",
+    contents_directory="_internal",
     icon=str(src_path / "puripuly_heart" / "data" / "icons" / "icon.ico"),
     version_info=None,
 )

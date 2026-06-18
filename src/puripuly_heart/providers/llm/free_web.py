@@ -66,17 +66,18 @@ class FreeWebTranslationProvider:
     def _translate_sync(self, text: str, from_lang: str, to_lang: str) -> str:
         from translators import translate_text  # type: ignore
 
-        try:
-            result = translate_text(
-                query_text=text,
-                translator=self._translator,
-                from_language=from_lang,
-                to_language=to_lang,
-            )
-            return str(result).strip()
-        except Exception as exc:
-            logger.warning("[%s] translation failed: %s", self._translator, exc)
-            return ""
+        # Let exceptions propagate so the orchestrator can surface a visible
+        # error (UIEventType.ERROR) instead of silently showing nothing. The
+        # `translators` library raises e.g. "'NoneType' object has no attribute
+        # 'xpath'" when a free web endpoint is regionally blocked or its page
+        # structure changed; the user needs to see that, not an empty result.
+        result = translate_text(
+            query_text=text,
+            translator=self._translator,
+            from_language=from_lang,
+            to_language=to_lang,
+        )
+        return str(result).strip()
 
     async def translate(
         self,
@@ -94,15 +95,28 @@ class FreeWebTranslationProvider:
             "[%s] translate %s->%s (%s->%s): %r",
             self._translator, source_language, target_language, from_lang, to_lang, text,
         )
+        # Same-language: nothing to translate. Return the original text instead of
+        # asking the web translator (which errors with "from and to should not be same").
+        if from_lang == to_lang:
+            return Translation(utterance_id=utterance_id, text=text)
         loop = asyncio.get_event_loop()
         try:
             translated = await asyncio.wait_for(
                 loop.run_in_executor(None, self._translate_sync, text, from_lang, to_lang),
                 timeout=10.0,
             )
-        except asyncio.TimeoutError:
+        except asyncio.TimeoutError as exc:
             logger.warning("[%s] translation timed out after 10s (service may be blocked)", self._translator)
-            translated = ""
+            raise RuntimeError(
+                f"{self._translator} translation timed out after 10s (service may be blocked)"
+            ) from exc
+        except Exception as exc:
+            logger.warning("[%s] translation failed: %s", self._translator, exc)
+            raise RuntimeError(f"{self._translator} translation failed: {exc}") from exc
+        if not translated:
+            raise RuntimeError(
+                f"{self._translator} returned an empty translation (service may be blocked or rate-limited)"
+            )
         logger.info("[%s] result: %r", self._translator, translated)
         return Translation(utterance_id=utterance_id, text=translated)
 

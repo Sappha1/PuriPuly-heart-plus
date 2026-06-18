@@ -148,12 +148,14 @@ class TranslatorApp:
         self.view_dashboard.on_filter_peer_by_target_languages_change = self._on_filter_peer_change
         self.view_dashboard.on_translator_change = self._on_translator_change
         self.view_dashboard.on_transliteration_change = self._on_transliteration_change
+        self.view_dashboard.on_request_deepl_usage_refresh = self._on_request_deepl_usage_refresh
         self.view_dashboard.on_request_stt_download = self._on_request_stt_download
         self.view_dashboard.on_stt_provider_change = self._on_dashboard_stt_provider_change
         self.view_dashboard.on_peer_stt_provider_change = self._on_dashboard_peer_stt_provider_change
         self.view_dashboard.on_overlay_lock_change = self._on_dashboard_overlay_lock_change
         self.view_dashboard.on_overlay_transparency_change = self._on_overlay_transparency_change
         self.view_dashboard.on_chatbox_send_peer_toggle = self._on_dashboard_chatbox_send_peer_toggle
+        self.view_dashboard.on_loopback_mode_change = self._on_dashboard_loopback_mode_change
         self.view_dashboard.on_self_in_overlay_toggle = self._on_dashboard_self_in_overlay_toggle
         self.view_dashboard.on_typed_in_overlay_toggle = self._on_dashboard_typed_in_overlay_toggle
         self.view_dashboard.on_vrc_mute_sync_toggle = self._on_dashboard_vrc_mute_sync_toggle
@@ -829,6 +831,24 @@ class TranslatorApp:
         except Exception:
             pass
 
+    def _on_dashboard_loopback_mode_change(self, selected_only: bool) -> None:
+        _s = getattr(self.controller, "settings", None)
+        if _s and getattr(_s, "ui", None):
+            _s.ui.loopback_selected_languages_only = selected_only
+            try:
+                from puripuly_heart.config.settings import save_settings
+                save_settings(self.controller.config_path, _s)
+            except Exception:
+                pass
+        try:
+            _sv_s = getattr(getattr(self, "view_settings", None), "_settings", None)
+            if _sv_s and getattr(_sv_s, "ui", None):
+                _sv_s.ui.loopback_selected_languages_only = selected_only
+        except Exception:
+            pass
+        if self.controller and self.controller.hub:
+            self.controller.hub.loopback_selected_languages_only = selected_only
+
     def _on_dashboard_self_in_overlay_toggle(self, value: bool) -> None:
         _s = getattr(self.controller, "settings", None)
         if _s and getattr(_s, "ui", None):
@@ -1096,6 +1116,7 @@ class TranslatorApp:
         peer_target_code: str = "",
         preset_index: int | None = None,
         extra_target_codes: list[str] | None = None,
+        extra_peer_source_codes: list[str] | None = None,
     ) -> None:
         if self.controller.settings is None:
             return
@@ -1142,6 +1163,7 @@ class TranslatorApp:
                 peer_target_code=peer_target_code,
                 preset_index=preset_index,
                 extra_target_codes=extra_target_codes,
+                extra_peer_source_codes=extra_peer_source_codes,
             )
 
         self._queue_settings_mutation_task(_task)
@@ -1298,6 +1320,12 @@ class TranslatorApp:
         except Exception:
             pass
         try:
+            dash._loopback_selected_only = bool(
+                getattr(getattr(s, "ui", None), "loopback_selected_languages_only", False)
+            )
+        except Exception:
+            pass
+        try:
             self._sync_stt_label(s)
         except Exception:
             pass
@@ -1329,6 +1357,13 @@ class TranslatorApp:
             set_fn = getattr(dash, "set_stt_provider_label", None)
             if callable(set_fn):
                 set_fn(label, val)
+            # Peer STT label (so the PEER tooltip shows its model like MIC does)
+            peer_provider = getattr(getattr(settings, "provider", None), "peer_stt", None)
+            if peer_provider is not None:
+                pval = peer_provider.value if hasattr(peer_provider, "value") else str(peer_provider)
+                set_peer_fn = getattr(dash, "set_peer_stt_provider_label", None)
+                if callable(set_peer_fn):
+                    set_peer_fn(provider_label(pval), pval)
         except Exception:
             pass
 
@@ -1351,6 +1386,47 @@ class TranslatorApp:
                 dash.set_translator_label(t(_TRANSLATION_MODEL_LABEL_KEYS[matched]), model_value=matched.value)
         except Exception:
             pass
+
+    def _active_translator_is_deepl(self) -> bool:
+        settings = getattr(self.controller, "settings", None)
+        if settings is None:
+            return False
+        model_val = getattr(getattr(settings, "translation", None), "model", None)
+        return model_val == "deepl" or getattr(model_val, "value", None) == "deepl"
+
+    def _on_request_deepl_usage_refresh(self) -> None:
+        try:
+            self.page.run_task(self._refresh_deepl_usage_display)
+        except Exception:
+            logger.exception("Failed to refresh DeepL usage")
+
+    async def _refresh_deepl_usage_display(self) -> None:
+        dash = getattr(self, "view_dashboard", None)
+        if dash is None:
+            return
+        set_usage = getattr(dash, "set_translator_usage", None)
+        if not callable(set_usage):
+            return
+        # Only the DeepL translator exposes usage; clear it for anything else
+        # (e.g. local Qwen STT on MIC/PEER has no API usage to show).
+        if not self._active_translator_is_deepl():
+            set_usage(None)
+            return
+        result = await self.controller.fetch_deepl_usage()
+        from puripuly_heart.ui.i18n import t
+        if result is None:
+            set_usage(t("dashboard.deepl.usage.unavailable"))
+            return
+        used, limit = result
+        if limit >= 1_000_000_000:
+            # DeepL Pro / pay-as-you-go reports a 1,000,000,000 sentinel "no cap" limit.
+            set_usage(t("dashboard.deepl.usage.nocap", used=f"{used:,}"))
+        else:
+            remaining = max(0, limit - used)
+            set_usage(t(
+                "dashboard.deepl.usage.capped",
+                used=f"{used:,}", limit=f"{limit:,}", remaining=f"{remaining:,}",
+            ))
 
     def _on_transliteration_change(
         self,
@@ -1407,6 +1483,11 @@ class TranslatorApp:
             dash = getattr(self, "view_dashboard", None)
             if dash is not None and matched in _TRANSLATION_MODEL_LABEL_KEYS:
                 dash.set_translator_label(t(_TRANSLATION_MODEL_LABEL_KEYS[matched]), model_value=matched.value)
+            # Refresh the DeepL usage strip (shows/hides depending on the new model)
+            try:
+                self.page.run_task(self._refresh_deepl_usage_display)
+            except Exception:
+                pass
         except Exception:
             pass
 
@@ -1993,6 +2074,12 @@ async def main_gui(page: ft.Page, *, config_path, debug_ui_preview: bool = False
     # Sync dashboard button states from loaded settings (mute sync, loopback, STT label)
     try:
         app._sync_dashboard_from_controller_settings()
+    except Exception:
+        pass
+
+    # Populate the DeepL usage strip if DeepL is the active translator on startup
+    try:
+        app.page.run_task(app._refresh_deepl_usage_display)
     except Exception:
         pass
 

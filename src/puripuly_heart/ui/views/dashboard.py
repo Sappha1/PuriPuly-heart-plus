@@ -12,7 +12,7 @@ from puripuly_heart.ui.fonts import font_for_language
 from puripuly_heart.ui.i18n import get_locale, language_name, t
 from puripuly_heart.ui.overlay_peer_contract import OverlayPeerConsumerContract
 
-_BUILD_TAG = "r91"  #increment each build so user can confirm version
+_BUILD_TAG = "r109"  #increment each build so user can confirm version
 
 # ── VRCT-style dark palette ──────────────────────────────────────────────────
 _BG_MAIN = "#2e2f32"
@@ -271,6 +271,7 @@ class DashboardView(ft.Row):
         self._pending_version: int = 0
         self._show_pending_echo: bool = True  # on by default; toggled in Settings
         self._chatbox_send_peer: bool = False  # toggled in Settings and dashboard header
+        self._loopback_selected_only: bool = False  # loop back only selected peer languages
         self._self_in_overlay: bool = True  # show spoken messages on overlay
         self._typed_in_overlay: bool = True  # show typed messages on overlay
         self._stt_input_device: str = ""  # active mic device name for tooltip
@@ -403,6 +404,11 @@ class DashboardView(ft.Row):
         )
         # Inline transliteration chip rows (Show / Send Pinyin|Romaji)
         self._tgt1_translit_col = self._build_translit_col(self._target_lang_code)
+        # Generic romanization toggle ("Show/Send Latin") shown only when your voice
+        # or the peer voice is Auto Detect — so romanization can still be enabled when
+        # the language isn't fixed (e.g. auto-detected Korean → romaja in the logs).
+        self._auto_translit_col = self._build_translit_col("")
+        self._auto_translit_col.visible = self._auto_translit_should_show()
 
         # + button next to tgt1 card — always visible, adds another target language
         self._plus_btn = ft.Container(
@@ -525,6 +531,7 @@ class DashboardView(ft.Row):
                     _translate_to_label,
                     _tgt1_with_plus,
                     self._tgt1_translit_col,
+                    self._auto_translit_col,
                     self._extra_tgt_rows_col,
                 ],
                 spacing=3,
@@ -675,6 +682,9 @@ class DashboardView(ft.Row):
             expand=True,
         )
         self.on_translator_change: object = None  # callback(model_value: str)
+        self.on_request_deepl_usage_refresh: object = None  # callback() → refresh translator usage
+        self._current_translator_label: str = ""
+        self._translator_usage_text: str | None = None  # API-usage line for TRANS tooltip
         self.on_stt_provider_change: object = None  # callback(provider_value: str)
         self.on_peer_stt_provider_change: object = None  # callback(provider_value: str)
         self._stt_provider_has_key: dict[str, bool] = {}  # provider_value → has key
@@ -682,6 +692,7 @@ class DashboardView(ft.Row):
         self.on_transliteration_change: object = None  # callback(show_pinyin, send_pinyin, show_romaji, send_romaji)
         self.on_overlay_lock_change: object = None  # callback(locked: bool)
         self.on_chatbox_send_peer_toggle: object = None  # callback(value: bool)
+        self.on_loopback_mode_change: object = None  # callback(selected_only: bool)
         self.on_self_in_overlay_toggle: object = None  # callback(value: bool) — spoken
         self.on_typed_in_overlay_toggle: object = None  # callback(value: bool) — typed
         self.on_vrc_mute_sync_toggle: object = None  # callback(value: bool)
@@ -939,15 +950,15 @@ class DashboardView(ft.Row):
             content=ft.Container(
                 content=self._overlay_header_text,
                 on_click=self._on_overlay_click,
-                tooltip="Toggle  |  Right-click: opacity",
+                tooltip=t("dashboard.overlay.tooltip"),
                 padding=ft.padding.only(left=8, right=6, top=3, bottom=3),
             ),
-            on_secondary_tap=self._on_overlay_right_click,
+            on_secondary_tap_down=self._on_overlay_right_click,
         )
         self._overlay_lock_side = ft.Container(
             content=self._overlay_lock_icon,
             on_click=self._on_overlay_lock_click,
-            tooltip="Lock overlay position",
+            tooltip=t("dashboard.overlay.lock.unlocked"),
             padding=ft.padding.only(left=5, right=7, top=3, bottom=3),
         )
         self._overlay_header_btn = ft.Container(
@@ -962,20 +973,6 @@ class DashboardView(ft.Row):
             border=_pill_border_off,
             padding=0,
         )
-        self._autoscroll_btn = ft.Container(
-            content=ft.Text(
-                "Auto-scroll",
-                size=9,
-                color=_TOGGLE_ON,
-                weight=ft.FontWeight.W_600,
-            ),
-            on_click=self._on_autoscroll_toggle,
-            tooltip="Toggle auto-scroll to latest message",
-            padding=ft.padding.symmetric(horizontal=7, vertical=3),
-            border_radius=10,
-            bgcolor=ft.Colors.TRANSPARENT,
-            border=_pill_border_on,
-        )
         self._chatbox_peer_btn = ft.Container(
             content=ft.Text(
                 "Loopback",
@@ -984,7 +981,7 @@ class DashboardView(ft.Row):
                 weight=ft.FontWeight.W_600,
             ),
             on_click=self._on_chatbox_peer_btn_click,
-            tooltip="Send peer voice to VRChat chatbox (original + translation)",
+            tooltip=t("dashboard.loopback.tooltip"),
             padding=ft.padding.symmetric(horizontal=7, vertical=3),
             border_radius=10,
             bgcolor=ft.Colors.TRANSPARENT,
@@ -1010,23 +1007,29 @@ class DashboardView(ft.Row):
                 ft.Container(expand=True),
                 self._vrc_mute_sync_btn,
                 ft.Container(width=4),
-                self._chatbox_peer_btn,
+                ft.GestureDetector(
+                    content=self._chatbox_peer_btn,
+                    on_secondary_tap_down=self._on_loopback_right_click,
+                ),
                 ft.Container(width=4),
                 self._overlay_header_btn,
-                ft.Container(width=4),
-                self._autoscroll_btn,
                 ft.Container(width=4),
                 self._chat_clear_button,
             ],
             vertical_alignment=ft.CrossAxisAlignment.CENTER,
             spacing=0,
         )
-        chat_box = ft.Container(
-            content=self._chat_list_view,
+        # Right-click the chat/log area for a context menu (auto-scroll toggle).
+        chat_box = ft.GestureDetector(
+            content=ft.Container(
+                content=self._chat_list_view,
+                expand=True,
+                bgcolor=_BG_CHAT,
+                border_radius=6,
+                padding=ft.padding.all(8),
+            ),
+            on_secondary_tap_down=self._on_chat_right_click,
             expand=True,
-            bgcolor=_BG_CHAT,
-            border_radius=6,
-            padding=ft.padding.all(8),
         )
 
         # ── Message input at bottom (VRCT style) ─────────────────────────────
@@ -1308,7 +1311,9 @@ class DashboardView(ft.Row):
         self._overlay_locked = locked
         self._overlay_lock_icon.name = ft.Icons.LOCK if locked else ft.Icons.LOCK_OPEN
         self._overlay_lock_icon.color = _TOGGLE_ON if locked else _TEXT_FAINT
-        self._overlay_lock_side.tooltip = "Unlock overlay position" if locked else "Lock overlay position"
+        self._overlay_lock_side.tooltip = (
+            t("dashboard.overlay.lock.locked") if locked else t("dashboard.overlay.lock.unlocked")
+        )
         try:
             self._overlay_lock_icon.update()
         except Exception:
@@ -1347,14 +1352,14 @@ class DashboardView(ft.Row):
 
         # "Show spoken messages" toggle row
         _spoken_label = ft.Text(
-            "On" if self._self_in_overlay else "Off",
+            t("settings.option.on") if self._self_in_overlay else t("settings.option.off"),
             size=11, color=_TOGGLE_ON if self._self_in_overlay else _TEXT_FAINT,
             weight=ft.FontWeight.W_600,
         )
 
         def _on_spoken_toggle(ev):
             self._self_in_overlay = not self._self_in_overlay
-            _spoken_label.value = "On" if self._self_in_overlay else "Off"
+            _spoken_label.value = t("settings.option.on") if self._self_in_overlay else t("settings.option.off")
             _spoken_label.color = _TOGGLE_ON if self._self_in_overlay else _TEXT_FAINT
             _spoken_border.border = ft.border.all(1, _TOGGLE_ON if self._self_in_overlay else "#3a3b3f")
             try:
@@ -1373,7 +1378,7 @@ class DashboardView(ft.Row):
         _spoken_row = ft.Container(
             content=ft.Row(
                 [
-                    ft.Text("Show my voice messages", size=11, color=_TEXT_MUTED, expand=True),
+                    ft.Text(t("dashboard.overlay.show_voice"), size=11, color=_TEXT_MUTED, expand=True),
                     _spoken_border,
                 ],
                 spacing=8,
@@ -1384,14 +1389,14 @@ class DashboardView(ft.Row):
 
         # "Show typed messages" toggle row
         _typed_label = ft.Text(
-            "On" if self._typed_in_overlay else "Off",
+            t("settings.option.on") if self._typed_in_overlay else t("settings.option.off"),
             size=11, color=_TOGGLE_ON if self._typed_in_overlay else _TEXT_FAINT,
             weight=ft.FontWeight.W_600,
         )
 
         def _on_typed_toggle(ev):
             self._typed_in_overlay = not self._typed_in_overlay
-            _typed_label.value = "On" if self._typed_in_overlay else "Off"
+            _typed_label.value = t("settings.option.on") if self._typed_in_overlay else t("settings.option.off")
             _typed_label.color = _TOGGLE_ON if self._typed_in_overlay else _TEXT_FAINT
             _typed_border.border = ft.border.all(1, _TOGGLE_ON if self._typed_in_overlay else "#3a3b3f")
             try:
@@ -1410,7 +1415,7 @@ class DashboardView(ft.Row):
         _typed_row = ft.Container(
             content=ft.Row(
                 [
-                    ft.Text("Show my text messages", size=11, color=_TEXT_MUTED, expand=True),
+                    ft.Text(t("dashboard.overlay.show_text"), size=11, color=_TEXT_MUTED, expand=True),
                     _typed_border,
                 ],
                 spacing=8,
@@ -1419,46 +1424,147 @@ class DashboardView(ft.Row):
             padding=ft.padding.only(left=8, right=8, top=4, bottom=2),
         )
 
-        dlg = ft.AlertDialog(
-            modal=False,
-            title=ft.Row(
+        x, y = self._tap_xy(e)
+        content = ft.Container(
+            content=ft.Column(
                 [
-                    ft.Icon(ft.Icons.OPACITY, size=13, color=_TEXT_MUTED),
-                    ft.Text("Overlay Options", size=12, color=_TEXT_MUTED, weight=ft.FontWeight.W_600),
+                    ft.Row(
+                        [
+                            ft.Icon(ft.Icons.OPACITY, size=13, color=_TEXT_MUTED),
+                            ft.Text(t("dashboard.overlay.options.title"), size=12, color=_TEXT_MUTED, weight=ft.FontWeight.W_600),
+                        ],
+                        spacing=6,
+                        tight=True,
+                    ),
+                    slider,
+                    alpha_label,
+                    _spoken_row,
+                    _typed_row,
                 ],
-                spacing=6,
+                spacing=2,
                 tight=True,
+                horizontal_alignment=ft.CrossAxisAlignment.CENTER,
             ),
-            content=ft.Container(
-                content=ft.Column(
-                    [slider, alpha_label, _spoken_row, _typed_row],
-                    spacing=0,
-                    tight=True,
-                    horizontal_alignment=ft.CrossAxisAlignment.CENTER,
-                ),
-                width=220,
-                bgcolor="#2e2f32",
-            ),
-            bgcolor="#2e2f32",
-            content_padding=ft.padding.symmetric(horizontal=8, vertical=4),
-            title_padding=ft.padding.only(left=16, top=14, right=16, bottom=0),
         )
-        try:
-            self.page.open(dlg)
-        except Exception:
-            pass
+        self._open_popover_at(x, y, content, width=232.0)
 
     def set_overlay_background_alpha(self, alpha: float) -> None:
         self._overlay_background_alpha = max(0.0, min(1.0, float(alpha)))
 
-    def _on_autoscroll_toggle(self, e) -> None:
+    def _open_popover_at(self, x: float, y: float, content: ft.Control,
+                         width: float | None = None, clamp_width: float | None = None):
+        """Show an arbitrary popover panel anchored near page coordinates (x, y).
+
+        width=None lets the panel size tightly to its content (menus). The panel is
+        clamped to the window so it never gets clipped at an edge. Returns close().
+        """
+        if not self.page:
+            return lambda: None
+        holder: dict = {}
+
+        def _close() -> None:
+            try:
+                self.page.overlay.remove(holder["root"])
+                self.page.update()
+            except Exception:
+                pass
+
+        # Keep the panel inside the window: shift it left/up if it would overflow.
+        margin = 8.0
+        cw = clamp_width if clamp_width is not None else (width if width is not None else 240.0)
+        page_w = float(getattr(self.page, "width", 0) or 0)
+        page_h = float(getattr(self.page, "height", 0) or 0)
+        left = x
+        if page_w and (left + cw + margin) > page_w:
+            left = page_w - cw - margin
+        left = max(margin, left)
+        top = y
+        if page_h:
+            top = min(top, max(margin, page_h - margin - 56.0))
+        top = max(margin, top)
+
+        panel = ft.Container(
+            content=content,
+            width=width,
+            bgcolor="#26272b",
+            border_radius=8,
+            border=ft.border.all(1, "#3a3b3f"),
+            padding=5,
+            left=left,
+            top=top,
+            shadow=ft.BoxShadow(blur_radius=14, spread_radius=1, color="#000000aa"),
+        )
+        backdrop = ft.GestureDetector(
+            on_tap=lambda _e: _close(),
+            on_secondary_tap=lambda _e: _close(),
+            content=ft.Container(expand=True, bgcolor=ft.Colors.TRANSPARENT),
+        )
+        root = ft.Stack([backdrop, panel], expand=True)
+        holder["root"] = root
+        self.page.overlay.append(root)
+        self.page.update()
+        return _close
+
+    def _menu_item(self, label: str, checked: bool | None, on_click, close) -> ft.Container:
+        """A single context-menu row. checked=None → no checkbox; True/False → checkbox."""
+        controls: list[ft.Control] = []
+        if checked is not None:
+            controls.append(ft.Icon(
+                ft.Icons.CHECK_BOX if checked else ft.Icons.CHECK_BOX_OUTLINE_BLANK,
+                size=14,
+                color=_TOGGLE_ON if checked else _TEXT_FAINT,
+            ))
+        controls.append(ft.Text(label, size=12, color=_TEXT_PRIMARY, no_wrap=True))
+
+        def _click(_e):
+            if callable(close):
+                close()
+            if callable(on_click):
+                on_click()
+
+        return ft.Container(
+            content=ft.Row(controls, spacing=7, tight=True, vertical_alignment=ft.CrossAxisAlignment.CENTER),
+            padding=ft.padding.symmetric(horizontal=10, vertical=7),
+            border_radius=5,
+            on_click=_click,
+            on_hover=lambda e: (
+                setattr(e.control, "bgcolor", "#33343a" if e.data == "true" else ft.Colors.TRANSPARENT)
+                or (e.control.update() if e.control.page else None)
+            ),
+        )
+
+    def _open_context_menu(self, x: float, y: float, options: list[tuple]) -> None:
+        """Open a compact context menu at (x, y). options: list of (label, checked|None, callback)."""
+        # Fixed width sized to the longest label (a single short item stays compact).
+        longest = max((len(lbl) for (lbl, *_rest) in options), default=10)
+        has_check = any(checked is not None for (_l, checked, _cb) in options)
+        width = min(340.0, max(132.0, longest * 6.6 + (22.0 if has_check else 0.0) + 26.0))
+        holder: dict = {}
+        rows = [
+            self._menu_item(lbl, checked, cb, lambda: holder.get("close", lambda: None)())
+            for (lbl, checked, cb) in options
+        ]
+        close = self._open_popover_at(x, y, ft.Column(rows, spacing=1, tight=True), width=width)
+        holder["close"] = close
+
+    @staticmethod
+    def _tap_xy(e) -> tuple[float, float]:
+        return (
+            float(getattr(e, "global_x", None) or 0.0),
+            float(getattr(e, "global_y", None) or 0.0),
+        )
+
+
+    def _on_chat_right_click(self, e=None) -> None:
+        x, y = self._tap_xy(e)
+        self._open_context_menu(x, y, [
+            (t("dashboard.autoscroll.menu"), self._auto_scroll_enabled, self._toggle_autoscroll),
+        ])
+
+    def _toggle_autoscroll(self) -> None:
         self._auto_scroll_enabled = not self._auto_scroll_enabled
         self._chat_list_view.auto_scroll = self._auto_scroll_enabled
-        btn = self._autoscroll_btn
-        btn.content.color = _TOGGLE_ON if self._auto_scroll_enabled else _TEXT_FAINT
-        btn.border = ft.border.all(1, _TOGGLE_ON if self._auto_scroll_enabled else "#3a3b3f")
         try:
-            btn.update()
             self._chat_list_view.update()
         except Exception:
             pass
@@ -1797,6 +1903,7 @@ class DashboardView(ft.Row):
                 content=ft.Row([lbl, arrow], spacing=2, vertical_alignment=ft.CrossAxisAlignment.CENTER),
                 bgcolor="#2a2b2e", border_radius=6, border=ft.border.all(1, "#3a3b3e"),
                 padding=ft.padding.symmetric(horizontal=8, vertical=5), expand=True,
+                tooltip=self._lang_card_tooltip(lang_code, kind="target"),
                 on_click=lambda _, idx=i: self._open_extra_target_dialog(idx),
                 on_hover=lambda e, l=lbl: (
                     setattr(l, "color", _TOGGLE_ON if e.data == "true" else _TEXT_MUTED)
@@ -1819,6 +1926,7 @@ class DashboardView(ft.Row):
                 self._extra_tgt_rows_col.update()
         except Exception:
             pass
+        self._refresh_auto_translit()
 
     def _rebuild_extra_peer_tgt_rows(self) -> None:
         """Rebuild the dynamic extra peer target language rows from _extra_peer_target_lang_codes."""
@@ -1833,6 +1941,7 @@ class DashboardView(ft.Row):
                 content=ft.Row([lbl, arrow], spacing=2, vertical_alignment=ft.CrossAxisAlignment.CENTER),
                 bgcolor="#2a2b2e", border_radius=6, border=ft.border.all(1, "#3a3b3e"),
                 padding=ft.padding.symmetric(horizontal=8, vertical=5), expand=True,
+                tooltip=self._lang_card_tooltip(lang_code, kind="peer_target"),
                 on_click=lambda _, idx=i: self._open_extra_peer_target_dialog(idx),
                 on_hover=lambda e, l=lbl: (
                     setattr(l, "color", _TOGGLE_ON if e.data == "true" else _TEXT_MUTED)
@@ -1912,9 +2021,9 @@ class DashboardView(ft.Row):
         src_name = language_name(self._source_lang_code)
         tgt1_name = language_name(self._target_lang_code)
         self._src_lang_card.content.controls[0].value = src_name
-        self._src_lang_card.tooltip = src_name
+        self._src_lang_card.tooltip = self._lang_card_tooltip(self._source_lang_code, kind="self")
         self._tgt1_lang_card.content.controls[0].value = tgt1_name
-        self._tgt1_lang_card.tooltip = tgt1_name
+        self._tgt1_lang_card.tooltip = self._lang_card_tooltip(self._target_lang_code, kind="target")
         self._refresh_translit_col(self._tgt1_translit_col, self._target_lang_code)
         self._rebuild_extra_tgt_rows()
         # Update mini sidebar language indicator
@@ -1939,16 +2048,43 @@ class DashboardView(ft.Row):
         self._translator_value_text.value = label
         if model_value:
             self._current_translator_model_value = model_value
-        self._row_trans.set_tooltip(f"Model: {label}\nRight-click to change")
+        self._current_translator_label = label
+        self._refresh_trans_tooltip()
         try:
             if self._translator_value_text.page:
                 self._translator_value_text.update()
         except Exception:
             pass
 
+    def set_translator_usage(self, usage_text: str | None) -> None:
+        """Set the API-usage line shown in the TRANS tooltip (e.g. DeepL characters).
+
+        Pass None to clear it (provider has no usage API, e.g. local Qwen).
+        """
+        self._translator_usage_text = usage_text or None
+        self._refresh_trans_tooltip()
+
+    def _refresh_trans_tooltip(self) -> None:
+        label = getattr(self, "_current_translator_label", "") or "—"
+        lines = [
+            t("dashboard.trans.tooltip"),
+            t("dashboard.tooltip.model", model=label),
+        ]
+        usage = getattr(self, "_translator_usage_text", None)
+        if usage:
+            lines.append(usage)
+        lines.append(t("dashboard.tooltip.right_click_change"))
+        self._row_trans.set_tooltip("\n".join(lines))
+
     def _on_translator_btn_click(self, _=None) -> None:
         if not self.page:
             return
+        # Refresh provider usage (e.g. DeepL characters) so the TRANS tooltip is fresh.
+        if callable(self.on_request_deepl_usage_refresh):
+            try:
+                self.on_request_deepl_usage_refresh()
+            except Exception:
+                pass
         from puripuly_heart.config.settings import TranslationModel
 
         _ORDERED_MODELS = (
@@ -2065,15 +2201,20 @@ class DashboardView(ft.Row):
             label = getattr(self, "_current_stt_label", "")
         else:
             self._current_stt_label = label
-        tip = f"Model: {label}\nRight-click to change"
+        tip = t("dashboard.mic.tooltip") + "\n" + t("dashboard.tooltip.model", model=label)
         if self._stt_input_device:
-            tip += f"\nDevice: {self._stt_input_device}"
+            tip += "\n" + t("dashboard.tooltip.device", device=self._stt_input_device)
+        tip += "\n" + t("dashboard.tooltip.right_click_change")
         self._row_stt.set_tooltip(tip)
 
     def set_peer_stt_provider_label(self, label: str, provider_value: str = "") -> None:
         if provider_value:
             self._current_peer_stt_provider_value = provider_value
-        self._row_peer.set_tooltip(f"Model: {label}\nRight-click to change")
+        self._row_peer.set_tooltip(
+            t("dashboard.peer.tooltip")
+            + "\n" + t("dashboard.tooltip.model", model=label)
+            + "\n" + t("dashboard.tooltip.right_click_change")
+        )
 
     def _open_source_dialog(self, _=None):
         auto_label = t("language.auto", default="Auto Detect")
@@ -2107,6 +2248,10 @@ class DashboardView(ft.Row):
     _LATIN_LANGS = {"ru", "uk", "bg", "el", "ar", "hi", "th"}
 
     def _translit_script(self, lang_code: str) -> str | None:
+        # Auto Detect (empty) → a generic "Latin" toggle that flips pinyin+romaji+latin
+        # together, so whatever language the recognizer detects gets romanized.
+        if not lang_code or not lang_code.strip():
+            return "auto"
         base = lang_code.lower().split("-")[0]
         if base in self._PINYIN_LANGS:
             return "pinyin"
@@ -2123,7 +2268,7 @@ class DashboardView(ft.Row):
         label = self._translit_label(script)
         show_val, send_val = self._translit_vals(script)
 
-        def _chip(text: str, is_on: bool, cb) -> ft.Container:
+        def _chip(text: str, is_on: bool, cb, tooltip: str | None = None) -> ft.Container:
             icon = ft.Icon(
                 ft.Icons.CHECK_BOX if is_on else ft.Icons.CHECK_BOX_OUTLINE_BLANK,
                 size=11,
@@ -2137,14 +2282,21 @@ class DashboardView(ft.Row):
                 border_radius=4,
                 bgcolor="#2a2b2e",
                 border=ft.border.all(1, _TOGGLE_ON if is_on else "#3a3b3e"),
+                tooltip=tooltip,
                 on_click=lambda e, _cb=cb, _icon=icon, _lbl=lbl, _c=None: self._on_inline_chip_click(
                     e, _cb, icon, lbl
                 ),
             )
             return c
 
-        show_chip = _chip(f"Show {label}", show_val, self._translit_show_cb(script))
-        send_chip = _chip(f"Send {label}", send_val, self._translit_send_cb(script))
+        show_chip = _chip(
+            t("dashboard.translit.show", system=label), show_val, self._translit_show_cb(script),
+            tooltip=t("dashboard.translit.show.tooltip", system=label),
+        )
+        send_chip = _chip(
+            t("dashboard.translit.send", system=label), send_val, self._translit_send_cb(script),
+            tooltip=t("dashboard.translit.send.tooltip", system=label),
+        )
 
         return ft.Column(
             [ft.Row([show_chip, send_chip], spacing=6, alignment=ft.MainAxisAlignment.START)],
@@ -2167,13 +2319,23 @@ class DashboardView(ft.Row):
         callback(is_now_on)
 
     def _translit_label(self, script: str | None) -> str:
-        return {"pinyin": "Pinyin", "romaji": "Romaji", "romaja": "Romaja"}.get(script or "", "Latin")
+        key = {
+            "pinyin": "dashboard.translit.pinyin",
+            "romaji": "dashboard.translit.romaji",
+            "romaja": "dashboard.translit.romaja",
+        }.get(script or "", "dashboard.translit.latin")  # auto/None → Latin
+        return t(key)
 
     def _translit_vals(self, script: str | None) -> tuple[bool, bool]:
         if script == "pinyin":
             return self.show_pinyin, self.send_pinyin
         if script in ("romaji", "romaja"):
             return self.show_romaji, self.send_romaji
+        if script == "auto":
+            return (
+                self.show_pinyin or self.show_romaji or self.show_latin,
+                self.send_pinyin or self.send_romaji or self.send_latin,
+            )
         return self.show_latin, self.send_latin
 
     def _translit_show_cb(self, script: str | None):
@@ -2181,6 +2343,8 @@ class DashboardView(ft.Row):
             return self._on_show_pinyin_toggle
         if script in ("romaji", "romaja"):
             return self._on_show_romaji_toggle
+        if script == "auto":
+            return self._on_show_romanization_toggle
         return self._on_show_latin_toggle
 
     def _translit_send_cb(self, script: str | None):
@@ -2188,6 +2352,8 @@ class DashboardView(ft.Row):
             return self._on_send_pinyin_toggle
         if script in ("romaji", "romaja"):
             return self._on_send_romaji_toggle
+        if script == "auto":
+            return self._on_send_romanization_toggle
         return self._on_send_latin_toggle
 
     def _refresh_translit_col(self, col: ft.Column, lang_code: str) -> None:
@@ -2222,9 +2388,11 @@ class DashboardView(ft.Row):
             show_lbl = show_chip.content.controls[1]
             send_icon = send_chip.content.controls[0]
             send_lbl = send_chip.content.controls[1]
-        # Sync chip labels
-        show_lbl.value = f"Show {label}"
-        send_lbl.value = f"Send {label}"
+        # Sync chip labels + tooltips
+        show_lbl.value = t("dashboard.translit.show", system=label)
+        send_lbl.value = t("dashboard.translit.send", system=label)
+        show_chip.tooltip = t("dashboard.translit.show.tooltip", system=label)
+        send_chip.tooltip = t("dashboard.translit.send.tooltip", system=label)
         # Sync chip states
         for chip, icon, lbl, val in [
             (show_chip, show_icon, show_lbl, show_val),
@@ -2273,6 +2441,22 @@ class DashboardView(ft.Row):
         self._emit_transliteration_change()
         self._sync_translit_cols()
 
+    def _on_show_romanization_toggle(self, value: bool) -> None:
+        # Auto Detect: flip every "show" romanization flag so any detected language
+        # (Korean→romaja, Chinese→pinyin, Arabic→latin, …) gets romanized.
+        self.show_pinyin = value
+        self.show_romaji = value
+        self.show_latin = value
+        self._emit_transliteration_change()
+        self._sync_translit_cols()
+
+    def _on_send_romanization_toggle(self, value: bool) -> None:
+        self.send_pinyin = value
+        self.send_romaji = value
+        self.send_latin = value
+        self._emit_transliteration_change()
+        self._sync_translit_cols()
+
     def set_transliteration_flags(
         self,
         show_pinyin: bool,
@@ -2290,6 +2474,35 @@ class DashboardView(ft.Row):
         self.send_latin = send_latin
         self._sync_translit_cols()
 
+    def _auto_translit_should_show(self) -> bool:
+        # The generic "Latin" toggle is a fallback for when a spoken/peer language is
+        # Auto Detect AND no target already shows a per-language romanization chip.
+        # If a target chip exists (e.g. Chinese → "Show Pinyin"), use that instead of
+        # showing a second, redundant set.
+        auto_present = (not self._source_lang_code) or (not self._peer_source_lang_code)
+        if not auto_present:
+            return False
+        target_scripts = [self._translit_script(self._target_lang_code)] + [
+            self._translit_script(c) for c in self._extra_target_lang_codes
+        ]
+        if any(s is not None for s in target_scripts):
+            return False
+        return True
+
+    def _refresh_auto_translit(self) -> None:
+        col = getattr(self, "_auto_translit_col", None)
+        if col is None:
+            return
+        # Refresh the "auto" chip states, then override visibility (the generic toggle
+        # only appears when a spoken/peer language is Auto Detect).
+        self._refresh_translit_col(col, "")
+        col.visible = self._auto_translit_should_show()
+        try:
+            if col.page:
+                col.update()
+        except Exception:
+            pass
+
     def _sync_translit_cols(self) -> None:
         for col, lang in (
             [(self._tgt1_translit_col, self._target_lang_code)]
@@ -2301,6 +2514,7 @@ class DashboardView(ft.Row):
                     col.update()
             except Exception:
                 pass
+        self._refresh_auto_translit()
 
     def _open_peer_source_dialog(self, _=None):
         auto_label = t("language.auto", default="Auto Detect")
@@ -2490,6 +2704,20 @@ class DashboardView(ft.Row):
         if callable(self.on_chatbox_send_peer_toggle):
             self.on_chatbox_send_peer_toggle(self._chatbox_send_peer)
 
+    def _on_loopback_right_click(self, e=None) -> None:
+        x, y = self._tap_xy(e)
+        self._open_context_menu(x, y, [
+            (t("dashboard.loopback.menu.all"), not self._loopback_selected_only,
+             lambda: self._set_loopback_mode(False)),
+            (t("dashboard.loopback.menu.selected"), self._loopback_selected_only,
+             lambda: self._set_loopback_mode(True)),
+        ])
+
+    def _set_loopback_mode(self, selected_only: bool) -> None:
+        self._loopback_selected_only = bool(selected_only)
+        if callable(self.on_loopback_mode_change):
+            self.on_loopback_mode_change(self._loopback_selected_only)
+
     def _refresh_chatbox_peer_btn(self) -> None:
         active = self._chatbox_send_peer
         btn = self._chatbox_peer_btn
@@ -2549,6 +2777,7 @@ class DashboardView(ft.Row):
                 self._effective_peer_target_lang_code(),
                 self._active_preset,
                 list(self._extra_target_lang_codes),
+                list(self._extra_peer_source_lang_codes),
             )
 
     def _effective_peer_source_lang_code(self) -> str:
@@ -2557,19 +2786,39 @@ class DashboardView(ft.Row):
     def _effective_peer_target_lang_code(self) -> str:
         return self._peer_target_lang_code or self._source_lang_code
 
+    def _lang_card_tooltip(self, lang_code: str, *, kind: str) -> str:
+        """Tooltip for a language card; explains what the language setting does.
+
+        kind: "self" | "peer" | "target" | "peer_target".
+        """
+        if not lang_code:
+            # Only spoken-language cards (self/peer) can be Auto Detect.
+            return t("dashboard.lang.autodetect.peer" if kind == "peer" else "dashboard.lang.autodetect.self")
+        key = {
+            "self": "dashboard.lang.fixed.self",
+            "peer": "dashboard.lang.fixed.peer",
+            "target": "dashboard.lang.fixed.target",
+            "peer_target": "dashboard.lang.fixed.peer_target",
+        }.get(kind, "dashboard.lang.fixed.self")
+        return t(key, language=language_name(lang_code))
+
     def _refresh_language_rows(self) -> None:
         src_name = language_name(self._effective_peer_source_lang_code())
         tgt_name = language_name(self._effective_peer_target_lang_code())
         self._peer_src_card.content.controls[0].value = src_name
         self._peer_tgt_card.content.controls[0].value = tgt_name
-        self._peer_src_card.tooltip = src_name
-        self._peer_tgt_card.tooltip = tgt_name
+        self._peer_src_card.tooltip = self._lang_card_tooltip(self._peer_source_lang_code, kind="peer")
+        self._peer_tgt_card.tooltip = self._lang_card_tooltip(
+            self._effective_peer_target_lang_code(), kind="peer_target"
+        )
         self._rebuild_extra_peer_tgt_rows()
         for ctrl in (self._peer_src_card, self._peer_tgt_card):
             try:
                 ctrl.update()
             except Exception:
                 pass
+        # Show/hide the generic romanization toggle based on Auto Detect state.
+        self._refresh_auto_translit()
 
     # ── Compatibility: old callers used language_card ─────────────────────────
     def _refresh_language_card(self) -> None:

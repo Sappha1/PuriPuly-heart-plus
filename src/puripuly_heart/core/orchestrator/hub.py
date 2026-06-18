@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import asyncio
+import contextlib
 import logging
 import sys
 import time
@@ -115,6 +116,7 @@ class ClientHub:
     source_language: str = "ko"
     target_language: str = "en"
     peer_source_language: str = ""
+    extra_peer_source_languages: list[str] = field(default_factory=list)
     peer_target_language: str = ""
     system_prompt: str = ""
     chatbox_include_source: bool = True
@@ -129,6 +131,8 @@ class ClientHub:
     extra_target_languages: list[str] = field(default_factory=list)
     filter_peer_by_target_languages: bool = False
     chatbox_send_peer: bool = False
+    loopback_selected_languages_only: bool = False
+    _peer_language_filter_notice_shown: bool = False
     _pending_overlay_transcripts: dict = field(default_factory=dict)
     fallback_transcript_only: bool = False
     translation_enabled: bool = True
@@ -1127,8 +1131,20 @@ class ClientHub:
     ) -> None:
         _ = parent_utterance_id
         runtime = self.peer_runtime
+        if not self._peer_passes_source_language_filter(transcript.text):
+            # Peer language filter excluded this voice (wrong language for the chosen
+            # peer source). Show a one-time explanation so new users understand why a
+            # voice they can hear isn't appearing, then discard.
+            await self._maybe_notify_peer_language_filtered()
+            await self._emit_overlay_utterance_closed(
+                utterance_id=transcript.utterance_id,
+                channel="peer",
+                is_final=True,
+                finalize_latency=True,
+            )
+            return
         if not self._peer_text_passes_language_filter(transcript.text):
-            # Language filter active — discard peer transcript silently
+            # Target-language filter active — discard peer transcript silently
             await self._emit_overlay_utterance_closed(
                 utterance_id=transcript.utterance_id,
                 channel="peer",
@@ -1673,6 +1689,163 @@ class ClientHub:
             if any("가" <= c <= "힣" or "ᄀ" <= c <= "ᇿ" for c in text):
                 return True
         return False
+
+    @staticmethod
+    def _detect_text_script(text: str) -> str | None:
+        """Return the dominant script of `text`, or None if undetermined.
+
+        Distinguishes Korean / Japanese (kana) / Chinese (Han) / Cyrillic / Greek /
+        Arabic / Devanagari / Thai / Latin. Japanese is keyed off kana, since Japanese
+        kanji and Chinese Han share the same Unicode block.
+        """
+        counts: dict[str, int] = {}
+        total = 0
+        for c in text:
+            o = ord(c)
+            cat: str | None = None
+            if 0xAC00 <= o <= 0xD7A3 or 0x1100 <= o <= 0x11FF or 0x3130 <= o <= 0x318F:
+                cat = "korean"
+            elif 0x3040 <= o <= 0x309F or 0x30A0 <= o <= 0x30FF:
+                cat = "kana"
+            elif 0x4E00 <= o <= 0x9FFF or 0x3400 <= o <= 0x4DBF:
+                cat = "han"
+            elif 0x0400 <= o <= 0x04FF:
+                cat = "cyrillic"
+            elif 0x0370 <= o <= 0x03FF or 0x1F00 <= o <= 0x1FFF:
+                cat = "greek"
+            elif 0x0600 <= o <= 0x06FF or 0x0750 <= o <= 0x077F:
+                cat = "arabic"
+            elif 0x0900 <= o <= 0x097F:
+                cat = "devanagari"
+            elif 0x0E00 <= o <= 0x0E7F:
+                cat = "thai"
+            elif c.isalpha() and c.isascii():
+                cat = "latin"
+            if cat:
+                counts[cat] = counts.get(cat, 0) + 1
+                total += 1
+        if total == 0:
+            return None
+        if counts.get("kana", 0) > 0:
+            return "japanese"
+        best = max(counts, key=counts.get)
+        if counts[best] < total * 0.3:
+            return None
+        return "chinese" if best == "han" else best
+
+    @staticmethod
+    def _expected_script_for_language(lang_code: str) -> str | None:
+        base = (lang_code or "").lower().split("-")[0]
+        if base in ("ko", "kor"):
+            return "korean"
+        if base in ("ja", "jpn"):
+            return "japanese"
+        if base in ("zh", "cmn", "yue"):
+            return "chinese"
+        if base in ("ru", "uk", "bg", "sr", "mk", "be"):
+            return "cyrillic"
+        if base in ("el",):
+            return "greek"
+        if base in ("ar", "fa", "ur"):
+            return "arabic"
+        if base in ("hi", "mr", "ne"):
+            return "devanagari"
+        if base in ("th",):
+            return "thai"
+        # All remaining supported languages use the Latin script.
+        return "latin"
+
+    def _peer_passes_source_language_filter(self, text: str) -> bool:
+        """Drop peer transcripts whose script clearly isn't the chosen peer language.
+
+        The chosen peer source language(s) act as an allowlist. "Auto Detect"
+        (empty peer_source_language) is a wildcard that accepts everything. When a
+        specific language is chosen, only exclude lines that are confidently in a
+        different, identifiable script (e.g. peer set to Chinese but the line is
+        Korean hangul); undetermined text is kept to avoid false drops.
+        """
+        slots = [self.peer_source_language] + list(self.extra_peer_source_languages)
+        # "Auto Detect" is represented by an empty slot. If it's one of the choices
+        # (which includes the default state where no specific peer language is set),
+        # accept everything — no exclusion.
+        if any((not s or not s.strip()) for s in slots):
+            return True
+        chosen = [s for s in slots if s.strip()]
+        if not chosen:
+            return True
+        text = text.strip()
+        if not text:
+            return True
+        detected = self._detect_text_script(text)
+        if detected is None:
+            return True  # can't tell — keep it
+        allowed_scripts = {self._expected_script_for_language(lang) for lang in chosen}
+        allowed_scripts.discard(None)
+        if not allowed_scripts:
+            return True
+        return detected in allowed_scripts
+
+    def _loopback_language_allowed(self, text: str) -> bool:
+        """Whether a peer line should be looped back to the VRChat chatbox.
+
+        Unlike the hearing filter, this ignores the Auto Detect wildcard and matches
+        only against the *specific* peer languages you picked — so you can hear every
+        language (peer voice = Auto Detect) but still loop back only your selections
+        (e.g. a friend's Chinese, not his English).
+        """
+        specific = [
+            s for s in ([self.peer_source_language] + list(self.extra_peer_source_languages))
+            if s and s.strip()
+        ]
+        if not specific:
+            return True  # no specific selections → nothing to filter by; loop back all
+        text = text.strip()
+        if not text:
+            return True
+        detected = self._detect_text_script(text)
+        if detected is None:
+            return True
+        allowed_scripts = {self._expected_script_for_language(lang) for lang in specific}
+        allowed_scripts.discard(None)
+        if not allowed_scripts:
+            return True
+        return detected in allowed_scripts
+
+    async def _maybe_notify_peer_language_filtered(self) -> None:
+        """Show a one-time-per-session explanation when a peer voice is filtered out.
+
+        Without this, a new user hears someone speaking but sees nothing appear, with
+        no indication why. Shown once so it explains the behavior without spamming.
+        """
+        if self._peer_language_filter_notice_shown:
+            return
+        self._peer_language_filter_notice_shown = True
+        chosen = [
+            lang for lang in ([self.peer_source_language] + list(self.extra_peer_source_languages))
+            if lang and lang.strip()
+        ]
+        try:
+            names = ", ".join(get_llm_language_name(lang) for lang in chosen) or "the chosen language"
+        except Exception:
+            names = "the chosen language"
+        try:
+            from puripuly_heart.ui.i18n import t as _t
+            message = _t("dashboard.peer_filter.notice", names=names)
+        except Exception:
+            message = (
+                f"Hid a peer voice that isn't {names}. Peer voice is set to a specific "
+                f"language, so other languages are excluded — choose 'Auto Detect' for "
+                f"peer voice to show every language."
+            )
+        with contextlib.suppress(Exception):
+            await self.ui_events.put(
+                UIEvent(
+                    type=UIEventType.ERROR,
+                    payload=message,
+                    channel="peer",
+                    runtime_log_handled=True,
+                )
+            )
 
     def _active_self_secondary_decision(
         self,
@@ -3161,7 +3334,14 @@ class ClientHub:
             )
         else:
             self._finalize_latency_timeline(channel=runtime.channel, utterance_id=utterance_id)
-        if runtime.channel == "peer" and self.chatbox_send_peer:
+        if (
+            runtime.channel == "peer"
+            and self.chatbox_send_peer
+            and (
+                not self.loopback_selected_languages_only
+                or self._loopback_language_allowed(text)
+            )
+        ):
             # Send peer text to VRChat chatbox: source first, then transliteration (if enabled), then translation
             peer_translit = translation.romanization or ""
             if not peer_translit and (self.send_pinyin or self.send_romaji or self.send_latin):

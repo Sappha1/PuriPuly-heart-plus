@@ -825,6 +825,7 @@ class UiSettings:
     filter_peer_by_target_languages: bool = False
     show_pending_echo: bool = True
     chatbox_send_peer: bool = False
+    loopback_selected_languages_only: bool = False
     window_width: int = 0
     window_height: int = 0
     github_star_prompt_clicked: bool = False
@@ -1522,6 +1523,7 @@ def to_dict(settings: AppSettings) -> dict[str, Any]:
             "filter_peer_by_target_languages": settings.ui.filter_peer_by_target_languages,
             "show_pending_echo": settings.ui.show_pending_echo,
             "chatbox_send_peer": settings.ui.chatbox_send_peer,
+            "loopback_selected_languages_only": settings.ui.loopback_selected_languages_only,
             "window_width": settings.ui.window_width,
             "window_height": settings.ui.window_height,
             "github_star_prompt_clicked": settings.ui.github_star_prompt_clicked,
@@ -3690,6 +3692,7 @@ def from_dict(data: dict[str, Any]) -> AppSettings:
             filter_peer_by_target_languages=bool(ui_data.get("filter_peer_by_target_languages", False)),
             show_pending_echo=bool(ui_data.get("show_pending_echo", True)),
             chatbox_send_peer=bool(ui_data.get("chatbox_send_peer", False)),
+            loopback_selected_languages_only=bool(ui_data.get("loopback_selected_languages_only", False)),
             window_width=int(ui_data.get("window_width") or 0),
             window_height=int(ui_data.get("window_height") or 0),
             github_star_prompt_clicked=_parse_bool(ui_data.get("github_star_prompt_clicked")),

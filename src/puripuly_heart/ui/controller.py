@@ -3724,6 +3724,7 @@ class GuiController:
         peer_target_code: str = "",
         preset_index: int | None = None,
         extra_target_codes: list[str] | None = None,
+        extra_peer_source_codes: list[str] | None = None,
     ) -> None:
         if self.settings is None:
             return
@@ -3752,6 +3753,7 @@ class GuiController:
             self.hub.source_language = source_code
             self.hub.target_language = target_code
             self.hub.extra_target_languages = list(extra_target_codes or [])
+            self.hub.extra_peer_source_languages = list(extra_peer_source_codes or [])
         await self.apply_settings(updated)
 
     async def apply_settings(self, settings: AppSettings) -> None:
@@ -3920,6 +3922,9 @@ class GuiController:
             self.hub.typed_in_overlay = bool(getattr(settings.ui, "typed_in_overlay", True))
             self.hub.filter_peer_by_target_languages = bool(getattr(settings.ui, "filter_peer_by_target_languages", False))
             self.hub.chatbox_send_peer = bool(getattr(settings.ui, "chatbox_send_peer", False))
+            self.hub.loopback_selected_languages_only = bool(
+                getattr(settings.ui, "loopback_selected_languages_only", False)
+            )
             self.hub.extra_target_languages = list(self._active_preset_extra_targets())
             self._sync_effective_hub_flags(settings)
         with contextlib.suppress(Exception):
@@ -4150,6 +4155,9 @@ class GuiController:
             self.hub.typed_in_overlay = bool(getattr(next_settings.ui, "typed_in_overlay", True))
             self.hub.filter_peer_by_target_languages = bool(getattr(next_settings.ui, "filter_peer_by_target_languages", False))
             self.hub.chatbox_send_peer = bool(getattr(next_settings.ui, "chatbox_send_peer", False))
+            self.hub.loopback_selected_languages_only = bool(
+                getattr(next_settings.ui, "loopback_selected_languages_only", False)
+            )
             self.hub.extra_target_languages = list(self._active_preset_extra_targets())
             self._sync_effective_hub_flags(next_settings)
 
@@ -4652,6 +4660,9 @@ class GuiController:
             show_latin=bool(getattr(self.settings.ui, "show_latin", False)),
             self_in_overlay=bool(getattr(self.settings.ui, "self_in_overlay", True)),
             chatbox_send_peer=bool(getattr(self.settings.ui, "chatbox_send_peer", False)),
+            loopback_selected_languages_only=bool(
+                getattr(self.settings.ui, "loopback_selected_languages_only", False)
+            ),
             extra_target_languages=list(self._active_preset_extra_targets()),
             fallback_transcript_only=True,
             translation_enabled=True,
@@ -5893,6 +5904,20 @@ class GuiController:
 
     def _log_error(self, message: str) -> None:
         self.log_basic(message, level=logging.ERROR)
+
+    async def fetch_deepl_usage(self) -> tuple[int, int] | None:
+        """Return (characters_used, characters_limit) for the saved DeepL key, or None."""
+        if self.settings is None:
+            return None
+        try:
+            from puripuly_heart.providers.llm.deepl import DeepLTranslationProvider
+            secrets = create_secret_store(self.settings.secrets, config_path=self.config_path)
+            key = (secrets.get("deepl_api_key") if secrets else "") or ""
+            if not key:
+                return None
+            return await DeepLTranslationProvider.fetch_usage(key)
+        except Exception:
+            return None
 
     def _get_qwen_key_and_base_url(self, secrets) -> tuple[str, str]:
         if self.settings is None:

@@ -40,6 +40,7 @@ from puripuly_heart.config.settings import (
     TranslationModel,
     _normalize_local_llm_base_url,
     default_translation_connection,
+    effective_show_peer_original,
     materialize_translation_settings,
     normalize_owned_referral_id,
     supported_translation_connections,
@@ -4474,7 +4475,7 @@ class SettingsView(ft.Column):
             self._settings and self._settings.overlay.show_translation
         )
         overlay_peer_original_enabled = bool(
-            self._settings and self._settings.overlay.show_peer_original
+            self._settings and effective_show_peer_original(self._settings)
         )
         overlay_show_self_enabled = bool(
             self._settings.overlay.show_self if self._settings else True
@@ -4584,13 +4585,15 @@ class SettingsView(ft.Column):
     def _on_overlay_peer_original_click(self, e) -> None:
         if not self._settings or self._overlay_peer_original_button.disabled:
             return
-        next_value = "off" if self._settings.overlay.show_peer_original else "on"
+        next_value = "off" if effective_show_peer_original(self._settings) else "on"
         self._on_overlay_peer_original_selected(next_value)
 
     def _on_overlay_peer_original_selected(self, value: str) -> None:
         if not self._settings:
             return
         self._settings.overlay.show_peer_original = value == "on"
+        # Explicit choice here opts out of mirroring General's chatbox format.
+        self._settings.overlay.peer_original_follows_chatbox_format = False
         self._sync_overlay_controls()
         self._emit_settings_changed()
 

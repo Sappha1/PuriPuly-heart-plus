@@ -32,7 +32,36 @@ from puripuly_heart.core.stt.local_qwen_hallucination import (
 DEFAULT_SHERPA_NUM_THREADS = 3
 LOCAL_QWEN_RECOGNIZER_SAMPLE_RATE_HZ = 16000
 _KNOWN_HALLUCINATION_LOG_REDACTION = "<known-local-qwen-hallucination>"
+# Mean per-token log-prob below which a transcript is treated as garbage the model
+# hallucinated from noise/silence. Deliberately lenient so confident real speech is
+# never dropped; actual avg_logprob values are logged so this can be tightened from
+# real-world logs if needed.
+LOCAL_QWEN_MIN_AVG_LOGPROB = -2.3
 logger = logging.getLogger(__name__)
+
+
+def _mean_log_prob(ys_log_probs: object) -> float | None:
+    """Return the mean of the model's per-token log-probs, or None if unavailable.
+
+    Defensive against shape: ``ys_log_probs`` may be absent, a flat sequence of
+    floats, or a nested sequence (per-token lists). Non-numeric / empty inputs
+    yield None so the confidence filter simply no-ops.
+    """
+
+    if not ys_log_probs:
+        return None
+    flat: list[float] = []
+    try:
+        for entry in ys_log_probs:
+            if isinstance(entry, (list, tuple, np.ndarray)):
+                flat.extend(float(v) for v in np.asarray(entry).reshape(-1))
+            else:
+                flat.append(float(entry))
+    except (TypeError, ValueError):
+        return None
+    if not flat:
+        return None
+    return sum(flat) / len(flat)
 
 
 class LocalQwenSherpaLoadError(RuntimeError):
@@ -159,6 +188,9 @@ class LocalQwenSherpaSTTBackend(STTBackend):
     stream_label: str | None = None
     language_hint: str | None = None
     hotwords: tuple[str, ...] = ()
+    # Mean per-token log-prob below which a transcript is dropped as garbage. None
+    # disables the confidence filter entirely (no transcripts dropped on confidence).
+    min_avg_logprob: float | None = LOCAL_QWEN_MIN_AVG_LOGPROB
     diagnostics_enabled: Callable[[], bool] | None = None
     on_model_loading: object = None  # Callable[[], None] — fired just before blocking model init
     on_model_loaded: object = None   # Callable[[], None] — fired after model init completes
@@ -294,8 +326,41 @@ class LocalQwenSherpaSTTBackend(STTBackend):
         stream.accept_waveform(LOCAL_QWEN_RECOGNIZER_SAMPLE_RATE_HZ, samples)
         recognizer.decode_stream(stream)
         result = getattr(stream, "result", None)
-        text = getattr(result, "text", "")
-        return str(text).strip()
+        text = str(getattr(result, "text", "")).strip()
+
+        # Confidence-based garbage filter (free, model-native). The Qwen3 ASR model
+        # exposes per-token log-probs in `ys_log_probs`; very low average confidence
+        # is a strong signal that the model hallucinated text from noise/silence
+        # (e.g. mis-hearing quiet English as garbage Chinese). We compute the mean
+        # log-prob, log it so the threshold can be calibrated from real logs, and
+        # drop the transcript when it falls below LOCAL_QWEN_MIN_AVG_LOGPROB.
+        avg_logprob = _mean_log_prob(getattr(result, "ys_log_probs", None))
+        detected_lang = getattr(result, "lang", None)
+        if text and (avg_logprob is not None or detected_lang):
+            logger.info(
+                "%s decoded lang=%r avg_logprob=%s hint=%r text=%r",
+                _audio_diag_prefix(self.stream_label),
+                detected_lang,
+                "n/a" if avg_logprob is None else f"{avg_logprob:.3f}",
+                self.language_hint,
+                text[:60],
+            )
+        threshold = self.min_avg_logprob
+        if (
+            text
+            and threshold is not None
+            and avg_logprob is not None
+            and avg_logprob < threshold
+        ):
+            logger.info(
+                "%s dropped low-confidence transcript avg_logprob=%.3f (< %.3f) text=%r",
+                _audio_diag_prefix(self.stream_label),
+                avg_logprob,
+                threshold,
+                text[:60],
+            )
+            return ""
+        return text
 
 
 @dataclass(slots=True)

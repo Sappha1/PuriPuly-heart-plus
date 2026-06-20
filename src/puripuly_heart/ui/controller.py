@@ -48,6 +48,7 @@ from puripuly_heart.config.settings import (
     QwenRegion,
     STTProviderName,
     TranslationConnection,
+    effective_show_peer_original,
     load_settings,
     new_settings_for_first_run,
     normalize_owned_referral_id,
@@ -1881,6 +1882,33 @@ class GuiController:
             return OVERLAY_TARGET_STEAMVR
         return self._normalized_overlay_target(resolved_settings.overlay.target)
 
+    def _effective_overlay_target_for_launch(
+        self, settings: AppSettings | None = None
+    ) -> str:
+        """Resolve which overlay actually launches, auto-falling back to desktop.
+
+        If the stored preference is the SteamVR overlay but SteamVR isn't running,
+        we launch the desktop overlay instead of failing with steamvr_not_running.
+        This is what makes the overlay "just work" on a flat desktop and switch to
+        VR automatically once SteamVR is up.
+        """
+
+        resolved_settings = settings or self.settings
+        stored = self._overlay_target_for_settings(settings)
+        auto_switch = bool(
+            getattr(getattr(resolved_settings, "overlay", None), "auto_switch", True)
+        )
+        # Auto mode picks VR when SteamVR is live, else the desktop overlay. Even when
+        # the user has pinned VR explicitly (auto off), we still fall back to desktop
+        # if SteamVR isn't running so the overlay never silently fails.
+        if auto_switch or stored == OVERLAY_TARGET_STEAMVR:
+            from puripuly_heart.core.overlay.steamvr_detect import is_steamvr_running
+
+            if is_steamvr_running():
+                return OVERLAY_TARGET_STEAMVR
+            return OVERLAY_TARGET_DESKTOP
+        return stored
+
     def _overlay_runtime_is_active(self) -> bool:
         start_task = self._overlay_start_task
         return bool(
@@ -1906,7 +1934,9 @@ class GuiController:
     ) -> list[dict[str, object]]:
         desktop_settings = copy.deepcopy(settings.overlay.desktop_flet)
         desktop_settings.validate()
-        bounds = self._desktop_launch_bounds_for_current_launch(desktop_settings)
+        bounds = self._desktop_launch_bounds_for_current_launch(
+            desktop_settings, single_turn_mode=settings.overlay.single_turn_mode
+        )
         visual = desktop_settings.visual
         # 0% background_alpha is valid — text still shows, just no background box
         interaction_mode = (
@@ -1939,25 +1969,41 @@ class GuiController:
                 "background_alpha": visual.background_alpha,
                 "outline_width": visual.outline_width,
                 "single_turn_mode": self.settings.overlay.single_turn_mode,
+                "show_romanization": getattr(self.settings.overlay, "show_romanization", True),
+                "show_translation": getattr(self.settings.overlay, "show_translation", True),
+                "show_peer_original": effective_show_peer_original(self.settings),
             },
             {"command": "set_interaction_mode", "mode": interaction_mode},
         ]
 
     @staticmethod
-    def _desktop_dimensions_for_size_preset(size_preset: object) -> tuple[int, int]:
+    def _desktop_dimensions_for_size_preset(
+        size_preset: object,
+        *,
+        single_turn_mode: bool = True,
+    ) -> tuple[int, int]:
         if isinstance(size_preset, str) and size_preset in DESKTOP_FLET_SIZE_PRESETS:
-            return DESKTOP_FLET_SIZE_PRESETS[size_preset]
-        return DESKTOP_FLET_SIZE_PRESETS["medium"]
+            width, height = DESKTOP_FLET_SIZE_PRESETS[size_preset]
+        else:
+            width, height = DESKTOP_FLET_SIZE_PRESETS["medium"]
+        if not single_turn_mode:
+            # Two-turn mode stacks two slots; double the height so each slot keeps
+            # the same usable space a single-turn slot would get.
+            height *= 2
+        return width, height
 
     def _desktop_launch_bounds_for_current_launch(
         self,
         desktop_settings: object,
+        *,
+        single_turn_mode: bool = True,
     ) -> dict[str, int | float]:
         position = getattr(desktop_settings, "position", None)
         x = getattr(position, "x", None)
         y = getattr(position, "y", None)
         width, height = self._desktop_dimensions_for_size_preset(
-            getattr(desktop_settings, "size_preset", None)
+            getattr(desktop_settings, "size_preset", None),
+            single_turn_mode=single_turn_mode,
         )
         if self._is_finite_non_bool_number(x) and self._is_finite_non_bool_number(y):
             return {"x": x, "y": y, "width": width, "height": height}  # type: ignore[dict-item]
@@ -2379,7 +2425,8 @@ class GuiController:
     def _desktop_center_bounds_for_current_preset(self) -> dict[str, int | float]:
         assert self.settings is not None
         width, height = self._desktop_dimensions_for_size_preset(
-            self.settings.overlay.desktop_flet.size_preset
+            self.settings.overlay.desktop_flet.size_preset,
+            single_turn_mode=self.settings.overlay.single_turn_mode,
         )
         return self._desktop_centered_bounds_for_dimensions(width=width, height=height)
 
@@ -2449,10 +2496,16 @@ class GuiController:
         self,
         *,
         previous_desktop_settings: object,
+        previous_single_turn_mode: bool,
         next_size_preset: object,
+        next_single_turn_mode: bool,
     ) -> dict[str, int | float]:
-        previous_bounds = self._desktop_launch_bounds_for_current_launch(previous_desktop_settings)
-        next_width, next_height = self._desktop_dimensions_for_size_preset(next_size_preset)
+        previous_bounds = self._desktop_launch_bounds_for_current_launch(
+            previous_desktop_settings, single_turn_mode=previous_single_turn_mode
+        )
+        next_width, next_height = self._desktop_dimensions_for_size_preset(
+            next_size_preset, single_turn_mode=next_single_turn_mode
+        )
         old_center_x = previous_bounds["x"] + (previous_bounds["width"] / 2)
         old_center_y = previous_bounds["y"] + (previous_bounds["height"] / 2)
         return {
@@ -2477,23 +2530,26 @@ class GuiController:
         if not self._desktop_runtime_is_running_for_settings_update(next_settings):
             return []
 
+        previous_single_turn = getattr(previous_settings.overlay, "single_turn_mode", False)
+        next_single_turn = next_settings.overlay.single_turn_mode
+
         controls: list[dict[str, object]] = []
-        if previous_desktop.size_preset != next_desktop.size_preset:
+        if previous_desktop.size_preset != next_desktop.size_preset or previous_single_turn != next_single_turn:
+            # Two-turn mode doubles the window height (two stacked slots, each kept
+            # at the single-turn slot height) so a turn-mode flip needs new bounds too.
             self._discard_pending_desktop_bounds_persistence()
             self._drain_pending_desktop_user_bounds_events()
             bounds = self._desktop_center_preserving_bounds_for_size_preset_change(
                 previous_desktop_settings=previous_desktop,
+                previous_single_turn_mode=previous_single_turn,
                 next_size_preset=next_desktop.size_preset,
+                next_single_turn_mode=next_single_turn,
             )
             if previous_desktop.position.x is not None and previous_desktop.position.y is not None:
                 next_desktop.position.x = bounds["x"]
                 next_desktop.position.y = bounds["y"]
                 next_desktop.position.validate()
             controls.append({"command": "apply_window_bounds", **bounds})
-
-        previous_single_turn = getattr(previous_settings.overlay, "single_turn_mode", False)
-        next_single_turn = next_settings.overlay.single_turn_mode
-        # single_turn_mode no longer halves the window height; slot layout is dynamic (n_active_slots)
 
         previous_visual = previous_desktop.visual
         next_visual = next_desktop.visual
@@ -2502,6 +2558,12 @@ class GuiController:
             or previous_visual.background_alpha != next_visual.background_alpha
             or previous_visual.outline_width != next_visual.outline_width
             or previous_single_turn != next_single_turn
+            or getattr(previous_settings.overlay, "show_romanization", True)
+            != getattr(next_settings.overlay, "show_romanization", True)
+            or getattr(previous_settings.overlay, "show_translation", True)
+            != getattr(next_settings.overlay, "show_translation", True)
+            or effective_show_peer_original(previous_settings)
+            != effective_show_peer_original(next_settings)
         ):
             controls.append(
                 {
@@ -2510,6 +2572,9 @@ class GuiController:
                     "background_alpha": next_visual.background_alpha,
                     "outline_width": next_visual.outline_width,
                     "single_turn_mode": next_single_turn,
+                    "show_romanization": getattr(next_settings.overlay, "show_romanization", True),
+                    "show_translation": getattr(next_settings.overlay, "show_translation", True),
+                    "show_peer_original": effective_show_peer_original(next_settings),
                 }
             )
         return controls
@@ -2691,7 +2756,7 @@ class GuiController:
                 return
 
             await self._teardown_overlay_runtime(preserve_presenter_state=True)
-            self._active_overlay_target = self._overlay_target_for_settings(self.settings)
+            self._active_overlay_target = self._effective_overlay_target_for_launch(self.settings)
             previous_state = self.overlay_state
             self.overlay_state = "starting"
             self.auto_restart_scheduled = False
@@ -2732,7 +2797,7 @@ class GuiController:
                     diagnostics=diagnostics,
                     runtime_log_detailed=self.log_detailed,
                     show_translation=self.settings.overlay.show_translation,
-                    show_peer_original=self.settings.overlay.show_peer_original,
+                    show_peer_original=effective_show_peer_original(self.settings),
                     show_self=self.settings.overlay.show_self,
                     peer_presentation_refresh_burst=peer_presentation_refresh_burst,
                     self_presentation_refresh_burst=self_presentation_refresh_burst,
@@ -3918,6 +3983,7 @@ class GuiController:
             self.hub.show_pinyin = bool(getattr(settings.ui, "show_pinyin", False))
             self.hub.show_romaji = bool(getattr(settings.ui, "show_romaji", False))
             self.hub.show_latin = bool(getattr(settings.ui, "show_latin", False))
+            self.hub.overlay_show_romanization = bool(getattr(settings.overlay, "show_romanization", True))
             self.hub.self_in_overlay = bool(getattr(settings.ui, "self_in_overlay", True))
             self.hub.typed_in_overlay = bool(getattr(settings.ui, "typed_in_overlay", True))
             self.hub.filter_peer_by_target_languages = bool(getattr(settings.ui, "filter_peer_by_target_languages", False))
@@ -3954,7 +4020,7 @@ class GuiController:
         if presenter is not None:
             await presenter.update_display_preferences(
                 show_translation=settings.overlay.show_translation,
-                show_peer_original=settings.overlay.show_peer_original,
+                show_peer_original=effective_show_peer_original(settings),
                 show_self=settings.overlay.show_self,
             )
             await presenter.update_single_turn_mode(settings.overlay.single_turn_mode)
@@ -4151,6 +4217,7 @@ class GuiController:
             self.hub.send_latin = bool(getattr(next_settings.ui, "send_latin", False))
             self.hub.show_pinyin = bool(getattr(next_settings.ui, "show_pinyin", False))
             self.hub.show_romaji = bool(getattr(next_settings.ui, "show_romaji", False))
+            self.hub.overlay_show_romanization = bool(getattr(next_settings.overlay, "show_romanization", True))
             self.hub.self_in_overlay = bool(getattr(next_settings.ui, "self_in_overlay", True))
             self.hub.typed_in_overlay = bool(getattr(next_settings.ui, "typed_in_overlay", True))
             self.hub.filter_peer_by_target_languages = bool(getattr(next_settings.ui, "filter_peer_by_target_languages", False))

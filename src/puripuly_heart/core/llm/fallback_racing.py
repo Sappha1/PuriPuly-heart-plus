@@ -226,7 +226,9 @@ class FallbackRacingLLMProvider(LLMProvider):
                     fallback_unusable=False,
                     dual_bill_candidate=dual_bill_candidate,
                 )
-                raise RuntimeError(combined_message)
+                raise self._race_failure_error(
+                    primary_outcome.error, fallback_outcome.error, combined_message
+                )
 
             await self._allow_loser_grace(
                 started_at=started_at,
@@ -519,6 +521,22 @@ class FallbackRacingLLMProvider(LLMProvider):
         if not message:
             return type(error).__name__
         return f"{type(error).__name__}: {message}"
+
+    @staticmethod
+    def _race_failure_error(
+        primary_error: Exception, fallback_error: Exception, combined_message: str
+    ) -> Exception:
+        """Pick what to raise when both branches of the race fail.
+
+        Provider errors that carry a `message_key` (e.g. ManagedOpenRouterUserFacingError)
+        are meant to be shown to the user as-is — re-raise that instance instead of
+        flattening both sides into a generic combined string, or a specific failure
+        like "managed quota exhausted" gets lost as soon as a fallback is configured.
+        """
+        for error in (fallback_error, primary_error):
+            if hasattr(error, "message_key"):
+                return error
+        return RuntimeError(combined_message)
 
     @staticmethod
     def _consume_task_result(task: asyncio.Task[object]) -> None:

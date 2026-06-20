@@ -2160,6 +2160,7 @@ class FletDesktopRendererWindow:
         # different size to force a real native resize, then set the real bounds. A
         # single attempt is timing-flaky (the native view may not be ready), so we
         # retry several times at increasing delays until the page reports the size.
+        applied_once = False
         for attempt_delay in (0.12, 0.25, 0.5, 1.0, 1.6):
             try:
                 await asyncio.sleep(attempt_delay)
@@ -2171,25 +2172,31 @@ class FletDesktopRendererWindow:
             window = getattr(page, "window", None)
             if window is None:
                 return
-            if not _page_window_size_differs_from_bounds(page, bounds):
+            if applied_once and not _page_window_size_differs_from_bounds(page, bounds):
                 # The native window already has the real size — a prior attempt
                 # already stuck. Stop jiggling so we don't keep fighting a manual
                 # drag/resize the user starts while later attempts are still queued.
                 return
-            current_x = _finite_non_bool_number(getattr(window, "left", None))
-            current_y = _finite_non_bool_number(getattr(window, "top", None))
-            target_x = _finite_non_bool_number(bounds.get("x"))
-            target_y = _finite_non_bool_number(bounds.get("y"))
-            if (
-                current_x is not None
-                and current_y is not None
-                and target_x is not None
-                and target_y is not None
-                and (abs(current_x - target_x) > 1.0 or abs(current_y - target_y) > 1.0)
-            ):
-                # The window has already moved away from the startup position —
-                # the user is dragging it. Don't yank it back mid-drag.
-                return
+            if applied_once:
+                # Only treat a position drift as a manual drag once we've applied
+                # bounds ourselves at least once — the window's organic initial
+                # spawn position (before our first jiggle) routinely differs from
+                # the target and is not the user moving it, so checking this on
+                # attempt 1 would abort the resize before it ever runs.
+                current_x = _finite_non_bool_number(getattr(window, "left", None))
+                current_y = _finite_non_bool_number(getattr(window, "top", None))
+                target_x = _finite_non_bool_number(bounds.get("x"))
+                target_y = _finite_non_bool_number(bounds.get("y"))
+                if (
+                    current_x is not None
+                    and current_y is not None
+                    and target_x is not None
+                    and target_y is not None
+                    and (abs(current_x - target_x) > 1.0 or abs(current_y - target_y) > 1.0)
+                ):
+                    # The window has already moved away from the startup position —
+                    # the user is dragging it. Don't yank it back mid-drag.
+                    return
             try:
                 window.width = float(bounds["width"]) + 16
                 window.height = float(bounds["height"]) + 16
@@ -2205,6 +2212,7 @@ class FletDesktopRendererWindow:
             if self._closed.is_set() or self._page is None:
                 return
             self._apply_window_bounds(dict(bounds))
+            applied_once = True
 
     async def run_until_closed(self) -> None:
         task = self._app_task

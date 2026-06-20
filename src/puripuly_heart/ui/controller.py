@@ -2527,28 +2527,39 @@ class GuiController:
         next_desktop = next_settings.overlay.desktop_flet
         next_desktop.validate()
 
-        if not self._desktop_runtime_is_running_for_settings_update(next_settings):
-            return []
-
         previous_single_turn = getattr(previous_settings.overlay, "single_turn_mode", False)
         next_single_turn = next_settings.overlay.single_turn_mode
-
-        controls: list[dict[str, object]] = []
-        if previous_desktop.size_preset != next_desktop.size_preset or previous_single_turn != next_single_turn:
+        runtime_is_running = self._desktop_runtime_is_running_for_settings_update(next_settings)
+        size_or_mode_changed = (
+            previous_desktop.size_preset != next_desktop.size_preset
+            or previous_single_turn != next_single_turn
+        )
+        if size_or_mode_changed and previous_desktop.position.x is not None and previous_desktop.position.y is not None:
             # Two-turn mode doubles the window height (two stacked slots, each kept
-            # at the single-turn slot height) so a turn-mode flip needs new bounds too.
-            self._discard_pending_desktop_bounds_persistence()
-            self._drain_pending_desktop_user_bounds_events()
+            # at the single-turn slot height) so a turn-mode flip needs new bounds
+            # too. Recenter and persist the new position even while the overlay
+            # isn't running right now -- otherwise the stale position (centered for
+            # the old height) sticks in settings and the window can land partially
+            # off-position the next time the overlay launches.
             bounds = self._desktop_center_preserving_bounds_for_size_preset_change(
                 previous_desktop_settings=previous_desktop,
                 previous_single_turn_mode=previous_single_turn,
                 next_size_preset=next_desktop.size_preset,
                 next_single_turn_mode=next_single_turn,
             )
-            if previous_desktop.position.x is not None and previous_desktop.position.y is not None:
-                next_desktop.position.x = bounds["x"]
-                next_desktop.position.y = bounds["y"]
-                next_desktop.position.validate()
+            next_desktop.position.x = bounds["x"]
+            next_desktop.position.y = bounds["y"]
+            next_desktop.position.validate()
+        else:
+            bounds = None
+
+        if not runtime_is_running:
+            return []
+
+        controls: list[dict[str, object]] = []
+        if size_or_mode_changed and bounds is not None:
+            self._discard_pending_desktop_bounds_persistence()
+            self._drain_pending_desktop_user_bounds_events()
             controls.append({"command": "apply_window_bounds", **bounds})
 
         previous_visual = previous_desktop.visual

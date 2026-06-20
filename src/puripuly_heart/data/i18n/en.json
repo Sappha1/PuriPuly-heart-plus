@@ -510,6 +510,7 @@
   "dashboard.lang.autodetect.peer": "Auto Detect — the app figures out which language the other person is speaking each time, instead of assuming one fixed language. Good when the language varies; picking a specific language is faster and more accurate if you know it.",
   "dashboard.loopback.menu.all": "Loop back all peer voices",
   "dashboard.loopback.menu.selected": "Loop back only my selected languages",
+  "dashboard.loopback.menu.translation_only": "Loop back the translation only",
   "dashboard.loopback.tooltip": "Send peer voice to VRChat chatbox (original + translation).\nRight-click for options (loop back all vs. only your selected languages).",
   "dashboard.autoscroll.menu": "Auto-scroll to latest",
   "dashboard.peer_filter.notice": "Hid a peer voice that isn't {names}. Peer voice is set to a specific language, so other languages are excluded — choose 'Auto Detect' for peer voice to show every language.",

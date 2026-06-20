@@ -134,6 +134,7 @@ class ClientHub:
     extra_target_languages: list[str] = field(default_factory=list)
     filter_peer_by_target_languages: bool = False
     chatbox_send_peer: bool = False
+    chatbox_send_peer_translation_only: bool = False
     loopback_selected_languages_only: bool = False
     _peer_language_filter_notice_shown: bool = False
     _pending_overlay_transcripts: dict = field(default_factory=dict)
@@ -3408,7 +3409,15 @@ class ClientHub:
                     )
                 except Exception:
                     pass
-            if peer_translit:
+            if self.chatbox_send_peer_translation_only:
+                peer_osc_text = (
+                    f"{peer_translit}\n{translation.text}" if peer_translit else translation.text
+                )
+            elif text.strip() == translation.text.strip():
+                peer_osc_text = (
+                    f"{peer_translit}\n{translation.text}" if peer_translit else translation.text
+                )
+            elif peer_translit:
                 peer_osc_text = f"{text}\n{peer_translit}\n{translation.text}"
             else:
                 peer_osc_text = f"{text}\n{translation.text}"

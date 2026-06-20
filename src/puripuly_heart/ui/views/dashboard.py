@@ -272,6 +272,7 @@ class DashboardView(ft.Row):
         self._show_pending_echo: bool = True  # on by default; toggled in Settings
         self._chatbox_send_peer: bool = False  # toggled in Settings and dashboard header
         self._loopback_selected_only: bool = False  # loop back only selected peer languages
+        self._loopback_translation_only: bool = False  # loop back only the final translation
         self._self_in_overlay: bool = True  # show spoken messages on overlay
         self._typed_in_overlay: bool = True  # show typed messages on overlay
         self._stt_input_device: str = ""  # active mic device name for tooltip
@@ -694,6 +695,7 @@ class DashboardView(ft.Row):
         self.on_overlay_lock_change: object = None  # callback(locked: bool)
         self.on_chatbox_send_peer_toggle: object = None  # callback(value: bool)
         self.on_loopback_mode_change: object = None  # callback(selected_only: bool)
+        self.on_loopback_translation_only_change: object = None  # callback(translation_only: bool)
         self.on_self_in_overlay_toggle: object = None  # callback(value: bool) — spoken
         self.on_typed_in_overlay_toggle: object = None  # callback(value: bool) — typed
         self.on_vrc_mute_sync_toggle: object = None  # callback(value: bool)
@@ -2959,12 +2961,19 @@ class DashboardView(ft.Row):
              lambda: self._set_loopback_mode(False)),
             (t("dashboard.loopback.menu.selected"), self._loopback_selected_only,
              lambda: self._set_loopback_mode(True)),
+            (t("dashboard.loopback.menu.translation_only"), self._loopback_translation_only,
+             self._toggle_loopback_translation_only),
         ])
 
     def _set_loopback_mode(self, selected_only: bool) -> None:
         self._loopback_selected_only = bool(selected_only)
         if callable(self.on_loopback_mode_change):
             self.on_loopback_mode_change(self._loopback_selected_only)
+
+    def _toggle_loopback_translation_only(self) -> None:
+        self._loopback_translation_only = not self._loopback_translation_only
+        if callable(self.on_loopback_translation_only_change):
+            self.on_loopback_translation_only_change(self._loopback_translation_only)
 
     def _refresh_chatbox_peer_btn(self) -> None:
         active = self._chatbox_send_peer

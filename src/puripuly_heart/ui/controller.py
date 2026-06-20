@@ -2607,6 +2607,21 @@ class GuiController:
     def _build_peer_runtime_config(self, settings: AppSettings) -> PeerRuntimeConfig:
         backend = resolve_peer_stt_config(settings)
         provider_signature = build_peer_stt_provider_signature(settings)
+        # When peer language is "Auto Detect" (peer_source_language is unset),
+        # effective_peer_source falls back to *your* source_language as a hint —
+        # which means switching between favorite tabs with different self
+        # languages (but the same "Auto Detect" peer selection) silently produces
+        # a different hint each time. For local Qwen, the model is multilingual
+        # and the hint is a soft bias, but tearing down/reloading it is expensive
+        # (the "loading model" popup). So for local Qwen with peer Auto Detect,
+        # pin the signature's language slot to a stable sentinel instead of the
+        # self-language-derived hint, avoiding an unnecessary reload.
+        signature_language = backend.source_language
+        if (
+            settings.provider.peer_stt == STTProviderName.LOCAL_QWEN
+            and not settings.languages.peer_source_language
+        ):
+            signature_language = "__auto__"
         return PeerRuntimeConfig(
             backend=backend,
             output_device=settings.desktop_audio.output_device,
@@ -2615,7 +2630,7 @@ class GuiController:
             vad_pre_roll_ms=settings.desktop_audio.vad_pre_roll_ms,
             provider_signature=provider_signature,
             runtime_signature=(
-                backend.source_language,
+                signature_language,
                 settings.desktop_audio.output_device,
                 settings.desktop_audio.vad_speech_threshold,
                 settings.desktop_audio.vad_hangover_ms,
@@ -3847,7 +3862,11 @@ class GuiController:
             copy.deepcopy(self.settings) if self.settings is not None else None
         )
         prev_overlay_target = self._previous_overlay_target_for_apply()
-        next_overlay_target = self._overlay_target_for_settings(settings)
+        # Resolve through the same auto-fallback logic as the active target, not the
+        # raw stored preference — otherwise every settings change while running on
+        # the desktop overlay via SteamVR auto-fallback looks like a target change
+        # (active="desktop" vs stored="steamvr") and force-stops the overlay.
+        next_overlay_target = self._effective_overlay_target_for_launch(settings)
         if (
             prev_overlay_target != next_overlay_target
             and prev_overlay_enabled
@@ -3988,6 +4007,9 @@ class GuiController:
             self.hub.typed_in_overlay = bool(getattr(settings.ui, "typed_in_overlay", True))
             self.hub.filter_peer_by_target_languages = bool(getattr(settings.ui, "filter_peer_by_target_languages", False))
             self.hub.chatbox_send_peer = bool(getattr(settings.ui, "chatbox_send_peer", False))
+            self.hub.chatbox_send_peer_translation_only = bool(
+                getattr(settings.ui, "chatbox_send_peer_translation_only", False)
+            )
             self.hub.loopback_selected_languages_only = bool(
                 getattr(settings.ui, "loopback_selected_languages_only", False)
             )
@@ -4222,6 +4244,9 @@ class GuiController:
             self.hub.typed_in_overlay = bool(getattr(next_settings.ui, "typed_in_overlay", True))
             self.hub.filter_peer_by_target_languages = bool(getattr(next_settings.ui, "filter_peer_by_target_languages", False))
             self.hub.chatbox_send_peer = bool(getattr(next_settings.ui, "chatbox_send_peer", False))
+            self.hub.chatbox_send_peer_translation_only = bool(
+                getattr(next_settings.ui, "chatbox_send_peer_translation_only", False)
+            )
             self.hub.loopback_selected_languages_only = bool(
                 getattr(next_settings.ui, "loopback_selected_languages_only", False)
             )
@@ -4727,6 +4752,9 @@ class GuiController:
             show_latin=bool(getattr(self.settings.ui, "show_latin", False)),
             self_in_overlay=bool(getattr(self.settings.ui, "self_in_overlay", True)),
             chatbox_send_peer=bool(getattr(self.settings.ui, "chatbox_send_peer", False)),
+            chatbox_send_peer_translation_only=bool(
+                getattr(self.settings.ui, "chatbox_send_peer_translation_only", False)
+            ),
             loopback_selected_languages_only=bool(
                 getattr(self.settings.ui, "loopback_selected_languages_only", False)
             ),

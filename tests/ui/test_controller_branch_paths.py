@@ -5663,6 +5663,12 @@ async def test_overlay_target_routing_apply_settings_stops_before_switching_runn
         "_configure_vrc_mic_receiver",
         lambda self, *, enabled: asyncio.sleep(0),
     )
+    # SteamVR is genuinely "running" for this test, so the active target really
+    # is steamvr and switching to desktop is a real change (not just the
+    # no-SteamVR auto-fallback resolving the same way on both sides).
+    monkeypatch.setattr(
+        "puripuly_heart.core.overlay.steamvr_detect.is_steamvr_running", lambda: True
+    )
 
     controller = _make_controller(app=SimpleNamespace())
     controller.settings = AppSettings()
@@ -5677,6 +5683,7 @@ async def test_overlay_target_routing_apply_settings_stops_before_switching_runn
 
     updated = copy.deepcopy(controller.settings)
     updated.overlay.target = "desktop"
+    updated.overlay.auto_switch = False
     updated.ui.overlay_enabled = True
 
     await controller.apply_settings(updated)
@@ -5699,6 +5706,11 @@ async def test_overlay_target_routing_apply_settings_stops_after_in_place_target
         "_configure_vrc_mic_receiver",
         lambda self, *, enabled: asyncio.sleep(0),
     )
+    # SteamVR is genuinely "running" for this test, so the active target really
+    # is steamvr and switching to desktop is a real change.
+    monkeypatch.setattr(
+        "puripuly_heart.core.overlay.steamvr_detect.is_steamvr_running", lambda: True
+    )
 
     controller = _make_controller(app=SimpleNamespace())
     controller.settings = AppSettings()
@@ -5713,6 +5725,7 @@ async def test_overlay_target_routing_apply_settings_stops_after_in_place_target
 
     shared_settings = controller.settings
     shared_settings.overlay.target = "desktop"
+    shared_settings.overlay.auto_switch = False
     shared_settings.ui.overlay_enabled = True
 
     await controller.apply_settings(shared_settings)

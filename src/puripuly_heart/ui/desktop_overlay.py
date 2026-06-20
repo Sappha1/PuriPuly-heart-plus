@@ -2171,6 +2171,25 @@ class FletDesktopRendererWindow:
             window = getattr(page, "window", None)
             if window is None:
                 return
+            if not _page_window_size_differs_from_bounds(page, bounds):
+                # The native window already has the real size — a prior attempt
+                # already stuck. Stop jiggling so we don't keep fighting a manual
+                # drag/resize the user starts while later attempts are still queued.
+                return
+            current_x = _finite_non_bool_number(getattr(window, "left", None))
+            current_y = _finite_non_bool_number(getattr(window, "top", None))
+            target_x = _finite_non_bool_number(bounds.get("x"))
+            target_y = _finite_non_bool_number(bounds.get("y"))
+            if (
+                current_x is not None
+                and current_y is not None
+                and target_x is not None
+                and target_y is not None
+                and (abs(current_x - target_x) > 1.0 or abs(current_y - target_y) > 1.0)
+            ):
+                # The window has already moved away from the startup position —
+                # the user is dragging it. Don't yank it back mid-drag.
+                return
             try:
                 window.width = float(bounds["width"]) + 16
                 window.height = float(bounds["height"]) + 16

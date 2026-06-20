@@ -716,9 +716,21 @@ def resolve_peer_stt_config(settings: AppSettings) -> ResolvedPeerSTTConfig:
 
 def build_peer_stt_provider_signature(settings: AppSettings) -> tuple[object, ...]:
     resolved = resolve_peer_stt_config(settings)
+    # With peer Auto Detect (peer_source_language unset), the resolved language
+    # falls back to *your* source_language as a hint, which otherwise makes this
+    # signature change every time the self language changes (e.g. switching
+    # favorite tabs) even though the peer selection itself didn't change. For
+    # local Qwen specifically, that triggers an expensive model reload for no
+    # real reason, so pin the signature to a stable sentinel in that case.
+    signature_source_language = resolved.source_language
+    if (
+        resolved.provider == STTProviderName.LOCAL_QWEN
+        and not settings.languages.peer_source_language
+    ):
+        signature_source_language = "__auto__"
     return (
         resolved.provider,
-        resolved.source_language,
+        signature_source_language,
         resolved.sample_rate_hz,
         resolved.deepgram_model,
         resolved.qwen_model,

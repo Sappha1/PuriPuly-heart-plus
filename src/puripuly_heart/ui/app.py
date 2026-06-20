@@ -158,6 +158,9 @@ class TranslatorApp:
         self.view_dashboard.on_overlay_transparency_change = self._on_overlay_transparency_change
         self.view_dashboard.on_chatbox_send_peer_toggle = self._on_dashboard_chatbox_send_peer_toggle
         self.view_dashboard.on_loopback_mode_change = self._on_dashboard_loopback_mode_change
+        self.view_dashboard.on_loopback_translation_only_change = (
+            self._on_dashboard_loopback_translation_only_change
+        )
         self.view_dashboard.on_self_in_overlay_toggle = self._on_dashboard_self_in_overlay_toggle
         self.view_dashboard.on_typed_in_overlay_toggle = self._on_dashboard_typed_in_overlay_toggle
         self.view_dashboard.on_vrc_mute_sync_toggle = self._on_dashboard_vrc_mute_sync_toggle
@@ -968,6 +971,24 @@ class TranslatorApp:
         if self.controller and self.controller.hub:
             self.controller.hub.loopback_selected_languages_only = selected_only
 
+    def _on_dashboard_loopback_translation_only_change(self, translation_only: bool) -> None:
+        _s = getattr(self.controller, "settings", None)
+        if _s and getattr(_s, "ui", None):
+            _s.ui.chatbox_send_peer_translation_only = translation_only
+            try:
+                from puripuly_heart.config.settings import save_settings
+                save_settings(self.controller.config_path, _s)
+            except Exception:
+                pass
+        try:
+            _sv_s = getattr(getattr(self, "view_settings", None), "_settings", None)
+            if _sv_s and getattr(_sv_s, "ui", None):
+                _sv_s.ui.chatbox_send_peer_translation_only = translation_only
+        except Exception:
+            pass
+        if self.controller and self.controller.hub:
+            self.controller.hub.chatbox_send_peer_translation_only = translation_only
+
     def _on_dashboard_self_in_overlay_toggle(self, value: bool) -> None:
         _s = getattr(self.controller, "settings", None)
         if _s and getattr(_s, "ui", None):
@@ -1479,6 +1500,9 @@ class TranslatorApp:
         try:
             dash._loopback_selected_only = bool(
                 getattr(getattr(s, "ui", None), "loopback_selected_languages_only", False)
+            )
+            dash._loopback_translation_only = bool(
+                getattr(getattr(s, "ui", None), "chatbox_send_peer_translation_only", False)
             )
         except Exception:
             pass

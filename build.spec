@@ -119,7 +119,7 @@ datas = [
     (str(NOTO_CJK_PROVENANCE_DIR / "OFL.txt"), NOTO_CJK_PACKAGED_PROVENANCE_RELATIVE_DIR.as_posix()),
     (str(NOTO_CJK_PROVENANCE_DIR / "README.md"), NOTO_CJK_PACKAGED_PROVENANCE_RELATIVE_DIR.as_posix()),
     (str(NOTO_CJK_PROVENANCE_DIR / "SHA256SUMS.txt"), NOTO_CJK_PACKAGED_PROVENANCE_RELATIVE_DIR.as_posix()),
-] + collect_data_files("flet_desktop") + collect_data_files("pykakasi") + collect_data_files("unidic_lite") + collect_data_files("cutlet")
+] + collect_data_files("flet_desktop") + collect_data_files("pykakasi") + collect_data_files("unidic_lite") + collect_data_files("cutlet") + collect_data_files("langdetect")
 
 runtime_binaries = collect_dynamic_libs(
     "onnxruntime", destdir=LOCAL_QWEN_PACKAGED_RUNTIME_RELATIVE_DIR.as_posix()
@@ -168,6 +168,7 @@ hiddenimports = [
     "speech_recognition",
     "faster_whisper",
     "ctranslate2",
+    "langdetect",
 ]
 
 a = Analysis(

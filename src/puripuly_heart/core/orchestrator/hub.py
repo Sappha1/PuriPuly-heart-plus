@@ -126,6 +126,9 @@ class ClientHub:
     show_pinyin: bool = False
     show_romaji: bool = False
     show_latin: bool = False
+    # When False, romanization (pinyin/romaji/latin) is suppressed in the OVERLAY only;
+    # the chat log still shows it. Lets you keep pinyin in the log but not on-screen.
+    overlay_show_romanization: bool = True
     self_in_overlay: bool = True
     typed_in_overlay: bool = True
     extra_target_languages: list[str] = field(default_factory=list)
@@ -1055,7 +1058,13 @@ class ClientHub:
                 stage="stt_final",
             )
             await self._handle_transcript(event.transcript, is_final=True, source=source)
-            if self.llm is None or not self._translation_enabled_for_runtime(runtime):
+            if (
+                self.llm is None
+                or not self._translation_enabled_for_runtime(runtime)
+                or self._text_already_in_language(
+                    event.transcript.text, self._target_language_for(runtime)
+                )
+            ):
                 self._log_translation_skipped(
                     stage="final",
                     runtime=runtime,
@@ -1168,7 +1177,11 @@ class ClientHub:
             utterance_id=transcript.utterance_id,
             stage="stt_final",
         )
-        if self.llm is None or not self._translation_enabled_for_runtime(runtime):
+        if (
+            self.llm is None
+            or not self._translation_enabled_for_runtime(runtime)
+            or self._text_already_in_language(transcript.text, self._target_language_for(runtime))
+        ):
             self._log_translation_skipped(
                 stage="final",
                 runtime=runtime,
@@ -1577,16 +1590,24 @@ class ClientHub:
             stage="peer_overlay_first_emit",
             overwrite=False,
         )
+        source_language = self._language_or_fallback(
+            translation.source_language,
+            self._source_language_for(runtime),
+        )
+        # For peer captions the ORIGINAL (source) is the foreign-language line, so the
+        # pinyin/romaji belongs above it — romanize the source text (the self path
+        # romanizes its translation line instead). Without this the overlay showed no
+        # pinyin for peer Chinese even though the log did.
+        overlay_source_text = self._with_overlay_translit(
+            translation.source_text, source_language
+        )
         await self._emit_overlay_event(
             self.overlay_event_adapter.translation_final(
                 utterance_id=translation.utterance_id,
                 channel=translation.channel,
                 text=translation.text,
-                source_text=translation.source_text,
-                source_language=self._language_or_fallback(
-                    translation.source_language,
-                    self._source_language_for(runtime),
-                ),
+                source_text=overlay_source_text,
+                source_language=source_language,
                 target_language=self._language_or_fallback(
                     translation.target_language,
                     self._target_language_for(runtime),
@@ -1639,6 +1660,8 @@ class ClientHub:
         self, text: str, language: str, *, precomputed: str | None = None
     ) -> str:
         """Prepend pinyin/romaji/latin above non-Roman text for overlay display."""
+        if not self.overlay_show_romanization:
+            return text
         _want_pinyin = self.show_pinyin or self.send_pinyin
         _want_romaji = self.show_romaji or self.send_romaji
         _want_latin = self.show_latin or self.send_latin
@@ -1810,6 +1833,38 @@ class ClientHub:
         if not allowed_scripts:
             return True
         return detected in allowed_scripts
+
+    def _text_already_in_language(self, text: str, target_lang: str) -> bool:
+        """True when `text` is confidently already in `target_lang`, so translating it
+        would be a no-op (wasting translator tokens/requests). Conservative: requires
+        enough text, a matching script, and high detector confidence — when unsure it
+        returns False so the translation still happens."""
+        text = (text or "").strip()
+        if len(text) < 12:  # too short to detect reliably (e.g. "ok", "yeah")
+            return False
+        target_base = (target_lang or "").split("-")[0].lower()
+        if not target_base:
+            return False
+        # Cheap script sanity check first — guards against CJK detector confusion
+        # (e.g. Chinese mis-detected as Korean) causing a wrong skip.
+        detected_script = self._detect_text_script(text)
+        expected_script = self._expected_script_for_language(target_base)
+        if (
+            detected_script is not None
+            and expected_script is not None
+            and detected_script != expected_script
+        ):
+            return False
+        try:
+            from langdetect import detect_langs, DetectorFactory
+            DetectorFactory.seed = 0
+            langs = detect_langs(text)
+        except Exception:
+            return False
+        if not langs:
+            return False
+        top = langs[0]
+        return top.lang.split("-")[0].lower() == target_base and top.prob >= 0.90
 
     async def _maybe_notify_peer_language_filtered(self) -> None:
         """Show a one-time-per-session explanation when a peer voice is filtered out.
@@ -3443,6 +3498,10 @@ class ClientHub:
         _translit_sep = "\n\n" if translit and _rtl_lang else "\n"
         if translation_text is None:
             merged = transcript_text
+        elif self.chatbox_include_source and transcript_text.strip() == translation_text.strip():
+            # Original and translation are identical (e.g. "." -> "."); sending the
+            # source line would just duplicate the translation line under it.
+            merged = f"{translit}{_translit_sep}{translation_text}" if translit else translation_text
         elif self.chatbox_include_source:
             if translit:
                 merged = f"{transcript_text}\n{translit}{_translit_sep}{translation_text}"

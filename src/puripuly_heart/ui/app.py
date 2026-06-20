@@ -21,6 +21,7 @@ from puripuly_heart.config.settings import (
     OpenRouterProviderRouting,
     OpenRouterSelectionAlias,
     TranslationConnection,
+    effective_show_peer_original,
     save_settings,
 )
 from puripuly_heart.core.discord_oauth_loopback import (
@@ -148,6 +149,7 @@ class TranslatorApp:
         self.view_dashboard.on_filter_peer_by_target_languages_change = self._on_filter_peer_change
         self.view_dashboard.on_translator_change = self._on_translator_change
         self.view_dashboard.on_transliteration_change = self._on_transliteration_change
+        self.view_dashboard.on_request_current_translator = self._current_translator_model_value
         self.view_dashboard.on_request_deepl_usage_refresh = self._on_request_deepl_usage_refresh
         self.view_dashboard.on_request_stt_download = self._on_request_stt_download
         self.view_dashboard.on_stt_provider_change = self._on_dashboard_stt_provider_change
@@ -159,6 +161,9 @@ class TranslatorApp:
         self.view_dashboard.on_self_in_overlay_toggle = self._on_dashboard_self_in_overlay_toggle
         self.view_dashboard.on_typed_in_overlay_toggle = self._on_dashboard_typed_in_overlay_toggle
         self.view_dashboard.on_vrc_mute_sync_toggle = self._on_dashboard_vrc_mute_sync_toggle
+        self.view_dashboard.on_overlay_mode_select = self._on_dashboard_overlay_mode_select
+        self.view_dashboard.on_overlay_single_turn_change = self._on_dashboard_overlay_single_turn_change
+        self.view_dashboard.on_overlay_display_toggle = self._on_dashboard_overlay_display_toggle
 
         self.view_settings.on_settings_changed = self._on_settings_changed
         self.view_settings.on_prompt_apply_settings = self._on_prompt_apply_settings
@@ -769,15 +774,43 @@ class TranslatorApp:
             set_dashboard_contract(contract)
 
     def _sync_settings_overlay_runtime_state(self) -> None:
-        view_settings = getattr(self, "view_settings", None)
-        set_state = getattr(view_settings, "set_overlay_runtime_state", None)
-        if not callable(set_state):
-            return
         controller = getattr(self, "controller", None)
         settings = getattr(controller, "settings", None)
         overlay_target = None
         if settings is not None:
             overlay_target = getattr(settings.overlay, "target", None)
+        # Prefer the actually-active target so the dashboard chip reflects the real
+        # mode after SteamVR auto-fallback (e.g. shows PC when SteamVR is off even
+        # though the stored preference is VR).
+        if controller is not None:
+            active_target = getattr(controller, "_active_overlay_target", None)
+            if active_target:
+                overlay_target = active_target
+            else:
+                resolve_effective = getattr(
+                    controller, "_effective_overlay_target_for_launch", None
+                )
+                if callable(resolve_effective):
+                    try:
+                        overlay_target = resolve_effective(settings)
+                    except Exception:
+                        pass
+        # Mirror the VR/Desktop mode onto the dashboard overlay button so users can
+        # tell at a glance where captions render (avoids "why is it not showing?").
+        # Done before the view_settings early-return so the chip is correct at
+        # startup, not only after the first lock/overlay interaction.
+        dash = getattr(self, "view_dashboard", None)
+        set_mode = getattr(dash, "set_overlay_mode", None)
+        if callable(set_mode):
+            try:
+                set_mode(overlay_target)
+            except Exception:
+                pass
+
+        view_settings = getattr(self, "view_settings", None)
+        set_state = getattr(view_settings, "set_overlay_runtime_state", None)
+        if not callable(set_state):
+            return
         desktop_locked = False
         if controller is not None:
             desktop_locked = bool(getattr(controller, "desktop_overlay_captions_locked", False))
@@ -794,6 +827,92 @@ class TranslatorApp:
             self._refresh_settings_desktop_overlay_state()
 
         self.page.run_task(_task)
+
+    def _on_dashboard_overlay_mode_select(self, mode: str) -> None:
+        import copy as _copy
+        from puripuly_heart.config.settings import (
+            OVERLAY_TARGET_DESKTOP,
+            OVERLAY_TARGET_STEAMVR,
+        )
+
+        mode = str(mode).lower()
+        live = getattr(self.controller, "settings", None)
+        if live is None:
+            return
+        try:
+            next_settings = _copy.deepcopy(live)
+            overlay = next_settings.overlay
+            if mode == "auto":
+                overlay.auto_switch = True
+            else:
+                overlay.auto_switch = False
+                overlay.target = (
+                    OVERLAY_TARGET_DESKTOP
+                    if mode == OVERLAY_TARGET_DESKTOP
+                    else OVERLAY_TARGET_STEAMVR
+                )
+        except Exception:
+            return
+        # Keep the settings view's draft in sync so it can't overwrite this choice.
+        try:
+            sv = getattr(self, "view_settings", None)
+            sv_settings = getattr(sv, "_settings", None)
+            if sv_settings is not None and getattr(sv_settings, "overlay", None):
+                sv_settings.overlay.auto_switch = next_settings.overlay.auto_switch
+                sv_settings.overlay.target = next_settings.overlay.target
+                if callable(getattr(sv, "_sync_overlay_controls", None)):
+                    sv._sync_overlay_controls()
+        except Exception:
+            pass
+        self._on_settings_changed(next_settings)
+
+    def _on_dashboard_overlay_display_toggle(self, field: str, value: bool) -> None:
+        import copy as _copy
+
+        if field not in {"show_peer_original", "show_translation", "show_romanization"}:
+            return
+        live = getattr(self.controller, "settings", None)
+        if live is None:
+            return
+        try:
+            next_settings = _copy.deepcopy(live)
+            setattr(next_settings.overlay, field, bool(value))
+            if field == "show_peer_original":
+                # Explicitly touching "orig" opts out of mirroring General's chatbox
+                # format — from here on this device keeps its own explicit choice.
+                next_settings.overlay.peer_original_follows_chatbox_format = False
+        except Exception:
+            return
+        try:
+            sv = getattr(self, "view_settings", None)
+            sv_settings = getattr(sv, "_settings", None)
+            if sv_settings is not None and getattr(sv_settings, "overlay", None):
+                setattr(sv_settings.overlay, field, bool(value))
+                if field == "show_peer_original":
+                    sv_settings.overlay.peer_original_follows_chatbox_format = False
+        except Exception:
+            pass
+        self._on_settings_changed(next_settings)
+
+    def _on_dashboard_overlay_single_turn_change(self, value: bool) -> None:
+        import copy as _copy
+
+        live = getattr(self.controller, "settings", None)
+        if live is None:
+            return
+        try:
+            next_settings = _copy.deepcopy(live)
+            next_settings.overlay.single_turn_mode = bool(value)
+        except Exception:
+            return
+        try:
+            sv = getattr(self, "view_settings", None)
+            sv_settings = getattr(sv, "_settings", None)
+            if sv_settings is not None and getattr(sv_settings, "overlay", None):
+                sv_settings.overlay.single_turn_mode = bool(value)
+        except Exception:
+            pass
+        self._on_settings_changed(next_settings)
 
     def _on_dashboard_overlay_lock_change(self, locked: bool) -> None:
         self._on_desktop_overlay_lock_change(locked)
@@ -959,7 +1078,20 @@ class TranslatorApp:
         interaction_mode: str | None = None,
         captions_locked: bool | None = None,
     ) -> None:
-        _ = (interaction_mode, captions_locked)
+        # Mirror the overlay's own lock toggle (clicked from the in-overlay lock icon)
+        # back onto the dashboard + settings lock controls so they stay in sync.
+        if captions_locked is not None:
+            dash = getattr(self, "view_dashboard", None)
+            set_locked = getattr(dash, "set_overlay_locked", None)
+            if callable(set_locked):
+                try:
+                    set_locked(bool(captions_locked))
+                except Exception:
+                    pass
+            try:
+                self.view_settings.set_desktop_captions_locked(bool(captions_locked))
+            except Exception:
+                pass
         self._sync_settings_overlay_runtime_state()
 
     def _on_manual_submit(self, _source: str, text: str) -> None:
@@ -1262,6 +1394,31 @@ class TranslatorApp:
             new_self_in_overlay = bool(getattr(_ui, "self_in_overlay", True))
             dash._self_in_overlay = new_self_in_overlay
             dash._typed_in_overlay = bool(getattr(_ui, "typed_in_overlay", True))
+            # Initialize the overlay lock icon and VR/PC mode chip from settings at
+            # startup so they reflect reality before the user first toggles overlay.
+            try:
+                _overlay = getattr(settings, "overlay", None)
+                _desktop_flet = getattr(_overlay, "desktop_flet", None)
+                set_locked = getattr(dash, "set_overlay_locked", None)
+                if _desktop_flet is not None and callable(set_locked):
+                    set_locked(bool(getattr(_desktop_flet, "locked", False)))
+                if _overlay is not None:
+                    dash._overlay_target_pref = (
+                        "desktop"
+                        if str(getattr(_overlay, "target", "steamvr")).lower() == "desktop"
+                        else "steamvr"
+                    )
+                    dash._overlay_auto_switch = bool(getattr(_overlay, "auto_switch", True))
+                    dash._overlay_single_turn = bool(getattr(_overlay, "single_turn_mode", True))
+                    dash._overlay_show_original = effective_show_peer_original(settings)
+                    dash._overlay_show_translation = bool(getattr(_overlay, "show_translation", True))
+                    dash._overlay_show_romanization = bool(getattr(_overlay, "show_romanization", True))
+            except Exception:
+                pass
+            try:
+                self._sync_settings_overlay_runtime_state()
+            except Exception:
+                pass
             _audio = getattr(settings, "audio", None)
             _input_device = getattr(_audio, "input_device", "") or ""
             try:
@@ -1388,11 +1545,17 @@ class TranslatorApp:
             pass
 
     def _active_translator_is_deepl(self) -> bool:
+        return self._current_translator_model_value() == "deepl"
+
+    def _current_translator_model_value(self) -> str:
+        """Live translation model value from settings (so the picker highlight is accurate)."""
         settings = getattr(self.controller, "settings", None)
         if settings is None:
-            return False
+            return ""
         model_val = getattr(getattr(settings, "translation", None), "model", None)
-        return model_val == "deepl" or getattr(model_val, "value", None) == "deepl"
+        if model_val is None:
+            return ""
+        return getattr(model_val, "value", None) or str(model_val)
 
     def _on_request_deepl_usage_refresh(self) -> None:
         try:

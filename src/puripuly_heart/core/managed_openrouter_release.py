@@ -45,6 +45,9 @@ from puripuly_heart.core.storage.secrets import SecretStore
 from puripuly_heart.domain.models import Translation
 
 MANAGED_OPENROUTER_TRIAL_BUDGET_USD = 0.07
+# How long to stop sending real requests on a known-dead managed key after OpenRouter
+# rejects it for exceeding its total quota, so every utterance doesn't re-hit it.
+_UPSTREAM_QUOTA_EXHAUSTED_COOLDOWN_MS = 5 * 60 * 1000
 BINDING_MISMATCH_SUBCODES = {
     "device_public_key_registered",
     "installation_binding_mismatch",
@@ -351,6 +354,13 @@ class ManagedOpenRouterReleaseService:
         default=None,
         repr=False,
     )
+    # Set when OpenRouter itself rejects the cached managed key (e.g. the shared
+    # free-tier budget is exhausted). Primary and fallback translation requests
+    # both resolve to this same cached key, so this cooldown is shared between them
+    # to stop both from re-hitting a key that's already known to be dead.
+    _upstream_quota_exhausted_key: str | None = field(init=False, default=None, repr=False)
+    _upstream_quota_exhausted_until_ms: int | None = field(init=False, default=None, repr=False)
+    _upstream_quota_exhausted_message: str | None = field(init=False, default=None, repr=False)
     _legacy_hardware_hash_provider: HardwareFingerprintProvider | None = field(
         init=False,
         default=None,
@@ -977,6 +987,25 @@ class ManagedOpenRouterReleaseService:
         self._retry_after_deadline_ms = None
         self._retry_after_diagnostics = None
 
+    def note_upstream_quota_exhausted(self, *, api_key: str, message: str) -> None:
+        """Record that OpenRouter rejected `api_key` as over its total-limit quota."""
+        self._upstream_quota_exhausted_key = api_key
+        self._upstream_quota_exhausted_until_ms = (
+            self.monotonic_ms_provider() + _UPSTREAM_QUOTA_EXHAUSTED_COOLDOWN_MS
+        )
+        self._upstream_quota_exhausted_message = message
+
+    def upstream_quota_exhausted_for(self, api_key: str) -> bool:
+        """True while `api_key` is still within its post-rejection cooldown."""
+        if self._upstream_quota_exhausted_key != api_key:
+            return False
+        if self._upstream_quota_exhausted_until_ms is None:
+            return False
+        return self.monotonic_ms_provider() < self._upstream_quota_exhausted_until_ms
+
+    def upstream_quota_exhausted_message(self) -> str | None:
+        return self._upstream_quota_exhausted_message
+
     async def close(self) -> None:
         self._closed = True
         prepare_task = self._prepare_task
@@ -1101,19 +1130,47 @@ class ManagedOpenRouterLLMProvider(LLMProvider):
         context: str = "",
     ) -> Translation:
         delegate = await self._ensure_delegate()
-        return await delegate.translate(
-            utterance_id=utterance_id,
-            text=text,
-            system_prompt=system_prompt,
-            source_language=source_language,
-            target_language=target_language,
-            context=context,
-        )
+        api_key = getattr(delegate, "api_key", None)
+        if isinstance(api_key, str):
+            is_exhausted = getattr(self.release_service, "upstream_quota_exhausted_for", None)
+            if callable(is_exhausted) and is_exhausted(api_key):
+                get_message = getattr(self.release_service, "upstream_quota_exhausted_message", None)
+                message = get_message() if callable(get_message) else None
+                raise ManagedOpenRouterUserFacingError(
+                    message_key="managed_release.quota_exhausted",
+                    diagnostics=ManagedOpenRouterReleaseDiagnostics(message=message),
+                )
+        try:
+            return await delegate.translate(
+                utterance_id=utterance_id,
+                text=text,
+                system_prompt=system_prompt,
+                source_language=source_language,
+                target_language=target_language,
+                context=context,
+            )
+        except Exception as exc:
+            if isinstance(api_key, str) and _is_openrouter_quota_exhausted_error(exc):
+                note = getattr(self.release_service, "note_upstream_quota_exhausted", None)
+                if callable(note):
+                    note(api_key=api_key, message=str(exc))
+            raise
 
     async def close(self) -> None:
         if self._delegate is not None:
             await self._delegate.close()
             self._delegate = None
+
+
+def _is_openrouter_quota_exhausted_error(exc: Exception) -> bool:
+    """Matches the RuntimeError OpenRouterLLMProvider raises for a 403 quota error.
+
+    The message format (`status={code}, message={text}`) is built in
+    puripuly_heart.providers.llm.openrouter; matched by substring rather than a
+    typed exception so this stays narrow and doesn't need that module to change.
+    """
+    text = str(exc).lower()
+    return "status=403" in text and "key limit exceeded" in text
 
 
 def _normalize_optional_text(value: str | None) -> str | None:

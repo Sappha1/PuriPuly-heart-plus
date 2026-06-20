@@ -34,7 +34,7 @@ from puripuly_heart.config.llm_profiles import (
 )
 from puripuly_heart.ui.overlay_calibration import OverlayCalibration
 
-SETTINGS_SCHEMA_VERSION = 24
+SETTINGS_SCHEMA_VERSION = 25
 STT_INTERNAL_SAMPLE_RATE_HZ = 16000
 DEFAULT_DESKTOP_AUDIO_VAD_HANGOVER_MS = 500
 MAX_CUSTOM_VOCAB_TERMS = 100
@@ -520,8 +520,13 @@ class STTSettings:
     low_latency_spec_retry_max: int = 10
     custom_vocabulary_enabled: bool = True
     custom_terms: dict[str, list[str]] = field(default_factory=_default_custom_terms)
+    # Drop very low-confidence local-model transcripts (garbage from noise/silence).
+    # Turn off if it's discarding short real words like "对" / "好的".
+    local_low_confidence_filter: bool = True
 
     def validate(self) -> None:
+        if not isinstance(self.local_low_confidence_filter, bool):
+            self.local_low_confidence_filter = True
         if self.drain_timeout_s <= 0:
             raise ValueError("drain_timeout_s must be > 0")
         if not (0.0 <= self.vad_speech_threshold <= 1.0):
@@ -926,7 +931,7 @@ class DesktopFletOverlayVisualSettings:
 class DesktopFletOverlaySettings:
     size_preset: str = DESKTOP_FLET_DEFAULT_SIZE_PRESET
     position: DesktopFletOverlayPosition = field(default_factory=DesktopFletOverlayPosition)
-    locked: bool = False
+    locked: bool = True
     visual: DesktopFletOverlayVisualSettings = field(
         default_factory=DesktopFletOverlayVisualSettings
     )
@@ -965,7 +970,19 @@ class OverlaySettings:
     show_translation: bool = True
     show_peer_original: bool = True
     show_self: bool = True
-    single_turn_mode: bool = False
+    single_turn_mode: bool = True
+    # When True, the overlay auto-selects VR if SteamVR is running, otherwise the
+    # desktop overlay — overridable by explicitly choosing a mode (sets this False).
+    auto_switch: bool = True
+    # Show romanization (pinyin/romaji/latin) in the overlay. Off keeps it out of the
+    # overlay while the chat log still shows it.
+    show_romanization: bool = True
+    # When True (default), show_peer_original is ignored and the overlay instead
+    # mirrors osc.chatbox_include_source, so "send translation only" in General
+    # applies consistently to both the VRChat chatbox and the overlay. Clicking the
+    # "orig" toggle in the overlay's right-click menu sets this False, switching to
+    # the explicit show_peer_original value as a one-off override.
+    peer_original_follows_chatbox_format: bool = True
     calibration: OverlayCalibration = field(default_factory=OverlayCalibration)
     desktop_flet: DesktopFletOverlaySettings = field(default_factory=DesktopFletOverlaySettings)
 
@@ -979,10 +996,29 @@ class OverlaySettings:
             raise ValueError("overlay show_self must be a bool")
         if not isinstance(self.single_turn_mode, bool):
             raise ValueError("overlay single_turn_mode must be a bool")
+        if not isinstance(self.auto_switch, bool):
+            self.auto_switch = True
+        if not isinstance(self.show_romanization, bool):
+            self.show_romanization = True
+        if not isinstance(self.peer_original_follows_chatbox_format, bool):
+            self.peer_original_follows_chatbox_format = True
         self.calibration.validate()
         if not isinstance(self.desktop_flet, DesktopFletOverlaySettings):
             self.desktop_flet = DesktopFletOverlaySettings()
         self.desktop_flet.validate()
+
+
+def effective_show_peer_original(settings: AppSettings) -> bool:
+    """Resolve whether the overlay should show the peer's original (untranslated) text.
+
+    Defaults to mirroring General's "send original alongside translation" chatbox
+    setting, so the overlay and the VRChat chatbox agree without extra setup. The
+    overlay's right-click "orig" toggle sets peer_original_follows_chatbox_format to
+    False, switching to the explicit show_peer_original value as a one-off override.
+    """
+    if settings.overlay.peer_original_follows_chatbox_format:
+        return settings.osc.chatbox_include_source
+    return settings.overlay.show_peer_original
 
 
 @dataclass(slots=True)
@@ -1327,8 +1363,9 @@ def _parse_desktop_flet_settings(value: object) -> DesktopFletOverlaySettings:
     )
     return DesktopFletOverlaySettings(
         size_preset=size_preset,
+        # Honor the stored lock state; absent means use the default (locked).
+        locked=bool(data.get("locked", True)) if isinstance(data, dict) else True,
         position=position,
-        locked=False,
         visual=_parse_desktop_flet_visual(data.get("visual")),
     )
 
@@ -1440,6 +1477,10 @@ def to_dict(settings: AppSettings) -> dict[str, Any]:
             "show_peer_original": settings.overlay.show_peer_original,
             "show_self": settings.overlay.show_self,
             "single_turn_mode": settings.overlay.single_turn_mode,
+            "show_romanization": settings.overlay.show_romanization,
+            "peer_original_follows_chatbox_format": (
+                settings.overlay.peer_original_follows_chatbox_format
+            ),
             "calibration": settings.overlay.calibration.to_dict(),
             "desktop_flet": _desktop_flet_settings_to_dict(settings.overlay.desktop_flet),
         },
@@ -2898,6 +2939,24 @@ def _migrate_settings_dict(raw: dict[str, Any]) -> tuple[dict[str, Any], bool]:
         changed = True
         version = 24
 
+    if version < 25:
+        # Adopt the new overlay defaults for existing configs (one-time): lock the
+        # desktop overlay by default, default to single-turn, and enable auto VR/
+        # desktop switching. Users can change any of these afterward.
+        overlay_data = data.get("overlay")
+        if not isinstance(overlay_data, dict):
+            overlay_data = {}
+            data["overlay"] = overlay_data
+        desktop_flet_data = overlay_data.get("desktop_flet")
+        if not isinstance(desktop_flet_data, dict):
+            desktop_flet_data = {}
+            overlay_data["desktop_flet"] = desktop_flet_data
+        desktop_flet_data["locked"] = True
+        overlay_data["single_turn_mode"] = True
+        overlay_data["auto_switch"] = True
+        changed = True
+        version = 25
+
     if _normalize_local_llm_data(data):
         changed = True
 
@@ -3523,7 +3582,11 @@ def from_dict(data: dict[str, Any]) -> AppSettings:
                 )
             ),
             show_self=bool(overlay_data.get("show_self", True)),
-            single_turn_mode=bool(overlay_data.get("single_turn_mode", False)),
+            single_turn_mode=bool(overlay_data.get("single_turn_mode", True)),
+            show_romanization=bool(overlay_data.get("show_romanization", True)),
+            peer_original_follows_chatbox_format=bool(
+                overlay_data.get("peer_original_follows_chatbox_format", True)
+            ),
             calibration=OverlayCalibration(
                 anchor=str(
                     merged_overlay_calibration_data.get(

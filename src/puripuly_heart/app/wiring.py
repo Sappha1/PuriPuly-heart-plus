@@ -566,13 +566,21 @@ def create_stt_backend(
     if settings.provider.stt == STTProviderName.LOCAL_QWEN:
         from puripuly_heart.core.language import get_local_qwen_language_hint
         from puripuly_heart.core.local_stt_assets import default_local_stt_model_dir
-        from puripuly_heart.providers.stt.local_qwen_sherpa import LocalQwenSherpaSTTBackend
+        from puripuly_heart.providers.stt.local_qwen_sherpa import (
+            LOCAL_QWEN_MIN_AVG_LOGPROB,
+            LocalQwenSherpaSTTBackend,
+        )
 
         return LocalQwenSherpaSTTBackend(
             model_dir=default_local_stt_model_dir(),
             sample_rate_hz=STT_INTERNAL_SAMPLE_RATE_HZ,
             stream_label="self",
             language_hint=get_local_qwen_language_hint(settings.languages.source_language),
+            min_avg_logprob=(
+                LOCAL_QWEN_MIN_AVG_LOGPROB
+                if settings.stt.local_low_confidence_filter
+                else None
+            ),
             diagnostics_enabled=diagnostics_enabled,
             on_model_loading=on_model_loading,
             on_model_loaded=on_model_loaded,
@@ -792,13 +800,24 @@ def create_peer_stt_backend(
     if resolved.provider == STTProviderName.LOCAL_QWEN:
         from puripuly_heart.core.language import get_local_qwen_language_hint
         from puripuly_heart.core.local_stt_assets import default_local_stt_model_dir
-        from puripuly_heart.providers.stt.local_qwen_sherpa import LocalQwenSherpaSTTBackend
+        from puripuly_heart.providers.stt.local_qwen_sherpa import (
+            LOCAL_QWEN_MIN_AVG_LOGPROB,
+            LocalQwenSherpaSTTBackend,
+        )
 
         return LocalQwenSherpaSTTBackend(
             model_dir=default_local_stt_model_dir(),
             sample_rate_hz=resolved.sample_rate_hz,
             stream_label="peer",
-            language_hint=get_local_qwen_language_hint(resolved.source_language),
+            # Use the RAW peer source language so "Auto Detect" (empty) sends no hint
+            # and the model detects the language itself, instead of falling back to
+            # your own spoken language (which forced wrong-language transcriptions).
+            language_hint=get_local_qwen_language_hint(settings.languages.peer_source_language),
+            min_avg_logprob=(
+                LOCAL_QWEN_MIN_AVG_LOGPROB
+                if settings.stt.local_low_confidence_filter
+                else None
+            ),
             diagnostics_enabled=diagnostics_enabled,
             on_model_loading=on_model_loading,
             on_model_loaded=on_model_loaded,

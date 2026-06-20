@@ -88,7 +88,10 @@ class SettingsModal:
     def _build_option_list(self, current: str) -> ft.ListView:
         items = []
         for option in self._options:
-            is_selected = option.value == current and not option.disabled
+            # The currently-active option is highlighted even if it's temporarily
+            # disabled (e.g. its API key needs re-verifying), so the user can always
+            # see what's selected.
+            is_selected = option.value == current
 
             if self._show_description and option.description:
                 content = ft.Column(
@@ -96,8 +99,8 @@ class SettingsModal:
                         ft.Text(
                             option.label,
                             size=14,
-                            color=COLOR_NEUTRAL if option.disabled else (
-                                COLOR_PRIMARY if is_selected else COLOR_ON_BACKGROUND
+                            color=COLOR_PRIMARY if is_selected else (
+                                COLOR_NEUTRAL if option.disabled else COLOR_ON_BACKGROUND
                             ),
                             weight=ft.FontWeight.W_600 if is_selected else ft.FontWeight.NORMAL,
                         ),
@@ -115,8 +118,8 @@ class SettingsModal:
                         ft.Text(
                             option.label,
                             size=14,
-                            color=COLOR_NEUTRAL if option.disabled else (
-                                COLOR_PRIMARY if is_selected else COLOR_ON_BACKGROUND
+                            color=COLOR_PRIMARY if is_selected else (
+                                COLOR_NEUTRAL if option.disabled else COLOR_ON_BACKGROUND
                             ),
                             weight=ft.FontWeight.W_600 if is_selected else ft.FontWeight.NORMAL,
                             expand=True,

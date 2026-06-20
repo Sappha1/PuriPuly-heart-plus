@@ -1,5 +1,5 @@
 import datetime
-from typing import Callable
+from typing import Any, Callable
 
 import flet as ft
 
@@ -12,7 +12,7 @@ from puripuly_heart.ui.fonts import font_for_language
 from puripuly_heart.ui.i18n import get_locale, language_name, t
 from puripuly_heart.ui.overlay_peer_contract import OverlayPeerConsumerContract
 
-_BUILD_TAG = "r109"  #increment each build so user can confirm version
+_BUILD_TAG = "r150"  #increment each build so user can confirm version
 
 # ── VRCT-style dark palette ──────────────────────────────────────────────────
 _BG_MAIN = "#2e2f32"
@@ -265,7 +265,7 @@ class DashboardView(ft.Row):
         self.history_items = []
         self._chat_entries: list[ft.Control] = []
         self._chat_list_view: ft.ListView | None = None
-        self.single_turn_mode: bool = False
+        self._single_turn_mode_backing: bool = True
 
         self._pending_sent_col: ft.Column | None = None
         self._pending_version: int = 0
@@ -682,6 +682,7 @@ class DashboardView(ft.Row):
             expand=True,
         )
         self.on_translator_change: object = None  # callback(model_value: str)
+        self.on_request_current_translator: object = None  # callback() → live model value
         self.on_request_deepl_usage_refresh: object = None  # callback() → refresh translator usage
         self._current_translator_label: str = ""
         self._translator_usage_text: str | None = None  # API-usage line for TRANS tooltip
@@ -697,8 +698,19 @@ class DashboardView(ft.Row):
         self.on_typed_in_overlay_toggle: object = None  # callback(value: bool) — typed
         self.on_vrc_mute_sync_toggle: object = None  # callback(value: bool)
         self.on_overlay_transparency_change: object = None  # callback(alpha: float)
+        self.on_overlay_mode_select: object = None  # callback(mode: "auto"|"steamvr"|"desktop")
+        self.on_overlay_single_turn_change: object = None  # callback(value: bool)
+        self.on_overlay_display_toggle: object = None  # callback(field: str, value: bool)
+        self._overlay_show_original: bool = True
+        self._overlay_show_translation: bool = True
+        self._overlay_show_romanization: bool = True
         self._overlay_locked: bool = False
         self._overlay_background_alpha: float = 0.5
+        self._overlay_target_pref: str = "steamvr"  # stored preference (not active)
+        self._overlay_auto_switch: bool = True
+        self._overlay_single_turn: bool = True
+        self._overlay_active: bool = False  # overlay currently on
+        self._overlay_mode_value: str | None = None  # resolved target (steamvr/desktop)
 
         self._sidebar_nav_row = ft.Container(
             content=ft.Row(
@@ -941,6 +953,19 @@ class DashboardView(ft.Row):
         self._overlay_header_text = ft.Text(
             "Overlay", size=9, color=_TEXT_FAINT, weight=ft.FontWeight.W_600,
         )
+        # Small VR/Desktop indicator so it's obvious where the overlay renders — a
+        # frequent source of "why can't I see it?" when it's in VR mode on desktop.
+        self._overlay_mode_text = ft.Text(
+            "", size=8, color=_TEXT_FAINT, weight=ft.FontWeight.W_700,
+        )
+        self._overlay_mode_chip = ft.Container(
+            content=self._overlay_mode_text,
+            padding=ft.padding.symmetric(horizontal=4, vertical=1),
+            border_radius=5,
+            bgcolor="#33343a",
+            visible=False,
+            margin=ft.margin.only(left=4),
+        )
         self._overlay_lock_icon = ft.Icon(ft.Icons.LOCK_OPEN, size=11, color=_TEXT_FAINT)
         _overlay_divider = ft.Container(
             width=1, height=12,
@@ -948,7 +973,12 @@ class DashboardView(ft.Row):
         )
         _overlay_left = ft.GestureDetector(
             content=ft.Container(
-                content=self._overlay_header_text,
+                content=ft.Row(
+                    [self._overlay_header_text, self._overlay_mode_chip],
+                    spacing=0,
+                    tight=True,
+                    vertical_alignment=ft.CrossAxisAlignment.CENTER,
+                ),
                 on_click=self._on_overlay_click,
                 tooltip=t("dashboard.overlay.tooltip"),
                 padding=ft.padding.only(left=8, right=6, top=3, bottom=3),
@@ -1246,6 +1276,10 @@ class DashboardView(ft.Row):
         btn.bgcolor = bg
         btn.border = border
         self._overlay_header_text.color = color
+        # The VR/PC chip and lock state only make sense while the overlay is on.
+        self._overlay_active = bool(active)
+        self._refresh_overlay_mode_chip()
+        self._refresh_overlay_lock_icon()
         try:
             btn.update()
         except Exception:
@@ -1260,6 +1294,18 @@ class DashboardView(ft.Row):
     def trans_button(self): return self._row_trans
     @property
     def overlay_button(self): return self._row_overlay
+
+    @property
+    def single_turn_mode(self) -> bool:
+        return self._single_turn_mode_backing
+
+    @single_turn_mode.setter
+    def single_turn_mode(self, value: bool) -> None:
+        self._single_turn_mode_backing = bool(value)
+        # Keep the right-click menu button in sync so the button always reflects
+        # the persisted setting, not just the hardcoded __init__ default.
+        if hasattr(self, "_overlay_single_turn"):
+            self._overlay_single_turn = bool(value)
 
     # ── STT toggle ───────────────────────────────────────────────────────────
 
@@ -1309,154 +1355,325 @@ class DashboardView(ft.Row):
 
     def set_overlay_locked(self, locked: bool) -> None:
         self._overlay_locked = locked
-        self._overlay_lock_icon.name = ft.Icons.LOCK if locked else ft.Icons.LOCK_OPEN
-        self._overlay_lock_icon.color = _TOGGLE_ON if locked else _TEXT_FAINT
-        self._overlay_lock_side.tooltip = (
-            t("dashboard.overlay.lock.locked") if locked else t("dashboard.overlay.lock.unlocked")
-        )
+        self._refresh_overlay_lock_icon()
+
+    def _refresh_overlay_lock_icon(self) -> None:
+        icon = getattr(self, "_overlay_lock_icon", None)
+        side = getattr(self, "_overlay_lock_side", None)
+        if icon is None:
+            return
+        locked = self._overlay_locked
+        icon.name = ft.Icons.LOCK if locked else ft.Icons.LOCK_OPEN
+        # Only light the lock teal while the overlay is actually on; when it's off the
+        # whole button is dim, so a glowing lock looks out of place.
+        if locked and self._overlay_active:
+            icon.color = _TOGGLE_ON
+        else:
+            icon.color = _TEXT_FAINT
+        if side is not None:
+            side.tooltip = (
+                t("dashboard.overlay.lock.locked") if locked else t("dashboard.overlay.lock.unlocked")
+            )
         try:
-            self._overlay_lock_icon.update()
+            icon.update()
+        except Exception:
+            pass
+
+    def set_overlay_mode(self, target: str | None) -> None:
+        """Record which overlay target is resolved (steamvr/desktop) and refresh chip."""
+        self._overlay_mode_value = (target or "").strip().lower() or None
+        self._refresh_overlay_mode_chip()
+
+    def _refresh_overlay_mode_chip(self) -> None:
+        """Show the VR/PC chip only while the overlay is on."""
+        chip = getattr(self, "_overlay_mode_chip", None)
+        label = getattr(self, "_overlay_mode_text", None)
+        if chip is None or label is None:
+            return
+        normalized = self._overlay_mode_value if self._overlay_active else None
+        if normalized == "steamvr":
+            label.value = t("dashboard.overlay.mode.vr_short")
+            label.color = "#7fd4c4"
+            chip.bgcolor = "#1f3a35"
+            chip.tooltip = t("dashboard.overlay.mode.vr_tooltip")
+            chip.visible = True
+        elif normalized == "desktop":
+            label.value = t("dashboard.overlay.mode.desktop_short")
+            label.color = "#a8b0bd"
+            chip.bgcolor = "#33343a"
+            chip.tooltip = t("dashboard.overlay.mode.desktop_tooltip")
+            chip.visible = True
+        else:
+            chip.visible = False
+        try:
+            chip.update()
         except Exception:
             pass
 
     def _on_overlay_right_click(self, e) -> None:
-        alpha_label = ft.Text(
+        # ── helpers ──────────────────────────────────────────────────────────
+        def _pill(label: str, active: bool, on_click, expand: bool = False) -> ft.Container:
+            return ft.Container(
+                content=ft.Text(
+                    label, size=11,
+                    color=_TOGGLE_ON if active else _TEXT_MUTED,
+                    weight=ft.FontWeight.W_600,
+                    text_align=ft.TextAlign.CENTER,
+                    no_wrap=True,
+                ),
+                on_click=on_click,
+                padding=ft.padding.symmetric(horizontal=8, vertical=4),
+                border_radius=6,
+                expand=expand,
+                bgcolor="#1a2e2a" if active else ft.Colors.TRANSPARENT,
+                border=ft.border.all(1, _TOGGLE_ON if active else "#3a3b3f"),
+            )
+
+        def _section_row(label: str, control: Any, top: int = 4) -> ft.Container:
+            return ft.Container(
+                content=ft.Row(
+                    [ft.Text(label, size=11, color=_TEXT_MUTED, expand=True), control],
+                    spacing=8, vertical_alignment=ft.CrossAxisAlignment.CENTER,
+                ),
+                padding=ft.padding.only(left=10, right=10, top=top, bottom=2),
+            )
+
+        def _bool_pill(state_ref: list[bool], on_change) -> ft.Container:
+            lbl = ft.Text(
+                t("settings.option.on") if state_ref[0] else t("settings.option.off"),
+                size=11,
+                color=_TOGGLE_ON if state_ref[0] else _TEXT_FAINT,
+                weight=ft.FontWeight.W_600,
+            )
+            box = ft.Container(
+                content=lbl,
+                padding=ft.padding.symmetric(horizontal=8, vertical=4),
+                border_radius=6,
+                border=ft.border.all(1, _TOGGLE_ON if state_ref[0] else "#3a3b3f"),
+            )
+            def _click(_ev, _r=state_ref, _l=lbl, _b=box):
+                _r[0] = not _r[0]
+                _l.value = t("settings.option.on") if _r[0] else t("settings.option.off")
+                _l.color = _TOGGLE_ON if _r[0] else _TEXT_FAINT
+                _b.border = ft.border.all(1, _TOGGLE_ON if _r[0] else "#3a3b3f")
+                try: _l.update(); _b.update()
+                except Exception: pass
+                on_change(_r[0])
+            box.on_click = _click
+            return box
+
+        # ── opacity slider ────────────────────────────────────────────────────
+        alpha_pct = ft.Text(
             f"{int(round(self._overlay_background_alpha * 100))}%",
-            size=11,
-            color=_TEXT_MUTED,
-            text_align=ft.TextAlign.CENTER,
-            width=40,
+            size=11, color=_TEXT_MUTED, width=32, text_align=ft.TextAlign.RIGHT,
         )
         slider = ft.Slider(
-            value=self._overlay_background_alpha,
-            min=0.0,
-            max=1.0,
-            divisions=100,
-            active_color=_TOGGLE_ON,
-            inactive_color=_TOGGLE_OFF,
-            thumb_color=_TOGGLE_ON,
+            value=self._overlay_background_alpha, min=0.0, max=1.0, divisions=100,
+            active_color=_TOGGLE_ON, inactive_color=_TOGGLE_OFF, thumb_color=_TOGGLE_ON,
+            expand=True,
         )
-
-        def _on_change(ev):
+        def _on_slider(ev):
             alpha = round(float(ev.control.value), 2)
             self._overlay_background_alpha = alpha
-            alpha_label.value = f"{int(round(alpha * 100))}%"
-            try:
-                alpha_label.update()
-            except Exception:
-                pass
+            alpha_pct.value = f"{int(round(alpha * 100))}%"
+            try: alpha_pct.update()
+            except Exception: pass
             if callable(self.on_overlay_transparency_change):
                 self.on_overlay_transparency_change(alpha)
+        slider.on_change = _on_slider
 
-        slider.on_change = _on_change
+        # ── mode pills (Auto / VR / Desktop) ─────────────────────────────────
+        def _current_mode() -> str:
+            return "auto" if self._overlay_auto_switch else self._overlay_target_pref
 
-        # "Show spoken messages" toggle row
-        _spoken_label = ft.Text(
-            t("settings.option.on") if self._self_in_overlay else t("settings.option.off"),
-            size=11, color=_TOGGLE_ON if self._self_in_overlay else _TEXT_FAINT,
-            weight=ft.FontWeight.W_600,
+        mode_pills: list[Any] = []
+
+        def _make_mode_pill(mode: str, label: str):
+            pill_ref: list[Any] = [None]
+
+            def _click(_ev, _m=mode):
+                if _current_mode() == _m:
+                    return
+                if _m == "auto":
+                    self._overlay_auto_switch = True
+                else:
+                    self._overlay_auto_switch = False
+                    self._overlay_target_pref = _m
+                if callable(self.on_overlay_mode_select):
+                    self.on_overlay_mode_select(_m)
+                _close = getattr(self, "_overlay_popover_close", None)
+                if callable(_close):
+                    _close()
+
+            pil = _pill(label, _current_mode() == mode, _click, expand=True)
+            pill_ref[0] = pil
+            return pil
+
+        _mode_row = ft.Container(
+            content=ft.Column([
+                ft.Text(t("dashboard.overlay.mode.label"), size=10, color=_TEXT_FAINT),
+                ft.Row([
+                    _make_mode_pill("auto",    t("dashboard.overlay.mode.auto_option")),
+                    _make_mode_pill("steamvr", t("dashboard.overlay.mode.vr_option")),
+                    _make_mode_pill("desktop", t("dashboard.overlay.mode.desktop_option")),
+                ], spacing=4),
+            ], spacing=4, tight=True),
+            padding=ft.padding.only(left=10, right=10, top=8, bottom=4),
         )
 
-        def _on_spoken_toggle(ev):
-            self._self_in_overlay = not self._self_in_overlay
-            _spoken_label.value = t("settings.option.on") if self._self_in_overlay else t("settings.option.off")
-            _spoken_label.color = _TOGGLE_ON if self._self_in_overlay else _TEXT_FAINT
-            _spoken_border.border = ft.border.all(1, _TOGGLE_ON if self._self_in_overlay else "#3a3b3f")
-            try:
-                _spoken_label.update()
-                _spoken_border.update()
-            except Exception:
-                pass
+        # ── single-turn ───────────────────────────────────────────────────────
+        _st_ref = [self._overlay_single_turn]
+        def _on_single(val: bool):
+            self._overlay_single_turn = val
+            if callable(self.on_overlay_single_turn_change):
+                self.on_overlay_single_turn_change(val)
+        _single_row = _section_row(
+            t("dashboard.overlay.single_turn.label"),
+            _bool_pill(_st_ref, _on_single),
+        )
+
+        # ── display: button showing summary + inline checkbox expansion ─────────
+        _disp_spec = [
+            ("dashboard.overlay.show_original",     "_overlay_show_original",     "show_peer_original",  "orig"),
+            ("dashboard.overlay.show_translation",  "_overlay_show_translation",  "show_translation",    "trans"),
+            ("dashboard.overlay.show_romanization", "_overlay_show_romanization", "show_romanization",   "latin"),
+        ]
+
+        def _disp_summary() -> str:
+            parts = [short for _, attr, _, short in _disp_spec if getattr(self, attr)]
+            return " + ".join(parts) if parts else t("settings.option.off")
+
+        _disp_btn_text = ft.Text(
+            _disp_summary(), size=11, color=_TOGGLE_ON,
+            weight=ft.FontWeight.W_600, no_wrap=True, overflow=ft.TextOverflow.ELLIPSIS,
+        )
+        _disp_btn = ft.Container(
+            content=_disp_btn_text,
+            padding=ft.padding.symmetric(horizontal=8, vertical=4),
+            border_radius=6,
+            bgcolor="#1a2e2a",
+            border=ft.border.all(1, _TOGGLE_ON),
+        )
+
+        # Build inline checkbox rows (hidden until button clicked)
+        _chk_rows: list[Any] = []
+        for key, attr, field_name, _short in _disp_spec:
+            state = [getattr(self, attr)]
+            _lbl = ft.Text(t(key), size=12, color=_TEXT_PRIMARY, expand=True)
+            _chk_icon = ft.Icon(
+                ft.Icons.CHECK_BOX if state[0] else ft.Icons.CHECK_BOX_OUTLINE_BLANK,
+                size=15, color=_TOGGLE_ON if state[0] else _TEXT_FAINT,
+            )
+            def _on_row(_ev, _attr=attr, _fn=field_name, _s=state, _ic=_chk_icon):
+                _s[0] = not _s[0]
+                setattr(self, _attr, _s[0])
+                _ic.name = ft.Icons.CHECK_BOX if _s[0] else ft.Icons.CHECK_BOX_OUTLINE_BLANK
+                _ic.color = _TOGGLE_ON if _s[0] else _TEXT_FAINT
+                _disp_btn_text.value = _disp_summary()
+                _disp_btn.bgcolor = "#1a2e2a" if any(
+                    getattr(self, a) for _, a, _, _sh in _disp_spec
+                ) else ft.Colors.TRANSPARENT
+                try:
+                    _ic.update(); _disp_btn_text.update(); _disp_btn.update()
+                except Exception: pass
+                if callable(self.on_overlay_display_toggle):
+                    self.on_overlay_display_toggle(_fn, _s[0])
+            _chk_rows.append(ft.Container(
+                content=ft.Row([_chk_icon, _lbl], spacing=8,
+                               vertical_alignment=ft.CrossAxisAlignment.CENTER),
+                padding=ft.padding.only(left=18, right=10, top=6, bottom=6),
+                border_radius=5,
+                on_click=_on_row,
+                on_hover=lambda e: (
+                    setattr(e.control, "bgcolor", "#2a3040" if e.data == "true" else ft.Colors.TRANSPARENT)
+                    or (e.control.update() if e.control.page else None)
+                ),
+            ))
+
+        _disp_rows_col = ft.Column(_chk_rows, spacing=0, tight=True, visible=False)
+
+        _disp_expanded = [False]
+        def _toggle_disp(_ev):
+            _disp_expanded[0] = not _disp_expanded[0]
+            _disp_rows_col.visible = _disp_expanded[0]
+            try: _disp_rows_col.update()
+            except Exception: pass
+
+        _disp_btn.on_click = _toggle_disp
+        _disp_pill_row = ft.Column([
+            _section_row(t("dashboard.overlay.options.display"), _disp_btn),
+            _disp_rows_col,
+        ], spacing=0, tight=True)
+
+        # ── show voice / show text ────────────────────────────────────────────
+        _v_ref = [self._self_in_overlay]
+        def _on_voice(val: bool):
+            self._self_in_overlay = val
             if callable(self.on_self_in_overlay_toggle):
-                self.on_self_in_overlay_toggle(self._self_in_overlay)
+                self.on_self_in_overlay_toggle(val)
+        _voice_row = _section_row(t("dashboard.overlay.show_voice"), _bool_pill(_v_ref, _on_voice))
 
-        _spoken_border = ft.Container(content=_spoken_label, on_click=_on_spoken_toggle,
-                             padding=ft.padding.symmetric(horizontal=8, vertical=3),
-                             border_radius=6,
-                             border=ft.border.all(1, _TOGGLE_ON if self._self_in_overlay else "#3a3b3f"))
-
-        _spoken_row = ft.Container(
-            content=ft.Row(
-                [
-                    ft.Text(t("dashboard.overlay.show_voice"), size=11, color=_TEXT_MUTED, expand=True),
-                    _spoken_border,
-                ],
-                spacing=8,
-                vertical_alignment=ft.CrossAxisAlignment.CENTER,
-            ),
-            padding=ft.padding.only(left=8, right=8, top=6, bottom=2),
-        )
-
-        # "Show typed messages" toggle row
-        _typed_label = ft.Text(
-            t("settings.option.on") if self._typed_in_overlay else t("settings.option.off"),
-            size=11, color=_TOGGLE_ON if self._typed_in_overlay else _TEXT_FAINT,
-            weight=ft.FontWeight.W_600,
-        )
-
-        def _on_typed_toggle(ev):
-            self._typed_in_overlay = not self._typed_in_overlay
-            _typed_label.value = t("settings.option.on") if self._typed_in_overlay else t("settings.option.off")
-            _typed_label.color = _TOGGLE_ON if self._typed_in_overlay else _TEXT_FAINT
-            _typed_border.border = ft.border.all(1, _TOGGLE_ON if self._typed_in_overlay else "#3a3b3f")
-            try:
-                _typed_label.update()
-                _typed_border.update()
-            except Exception:
-                pass
+        _tx_ref = [self._typed_in_overlay]
+        def _on_typed(val: bool):
+            self._typed_in_overlay = val
             if callable(self.on_typed_in_overlay_toggle):
-                self.on_typed_in_overlay_toggle(self._typed_in_overlay)
+                self.on_typed_in_overlay_toggle(val)
+        _text_row = _section_row(t("dashboard.overlay.show_text"), _bool_pill(_tx_ref, _on_typed))
 
-        _typed_border = ft.Container(content=_typed_label, on_click=_on_typed_toggle,
-                             padding=ft.padding.symmetric(horizontal=8, vertical=3),
-                             border_radius=6,
-                             border=ft.border.all(1, _TOGGLE_ON if self._typed_in_overlay else "#3a3b3f"))
+        # ── divider helper ────────────────────────────────────────────────────
+        def _div() -> ft.Container:
+            return ft.Container(height=1, bgcolor="#3a3b3f",
+                                margin=ft.margin.symmetric(vertical=3, horizontal=6))
 
-        _typed_row = ft.Container(
-            content=ft.Row(
-                [
-                    ft.Text(t("dashboard.overlay.show_text"), size=11, color=_TEXT_MUTED, expand=True),
-                    _typed_border,
-                ],
-                spacing=8,
-                vertical_alignment=ft.CrossAxisAlignment.CENTER,
-            ),
-            padding=ft.padding.only(left=8, right=8, top=4, bottom=2),
-        )
-
-        x, y = self._tap_xy(e)
+        _, y = self._tap_xy(e)
         content = ft.Container(
             content=ft.Column(
                 [
-                    ft.Row(
-                        [
-                            ft.Icon(ft.Icons.OPACITY, size=13, color=_TEXT_MUTED),
-                            ft.Text(t("dashboard.overlay.options.title"), size=12, color=_TEXT_MUTED, weight=ft.FontWeight.W_600),
-                        ],
-                        spacing=6,
-                        tight=True,
+                    ft.Container(
+                        content=ft.Row([
+                            ft.Icon(ft.Icons.TUNE, size=13, color=_TEXT_MUTED),
+                            ft.Text(t("dashboard.overlay.options.title"), size=12,
+                                    color=_TEXT_MUTED, weight=ft.FontWeight.W_600),
+                        ], spacing=6, tight=True),
+                        padding=ft.padding.only(left=10, right=10, top=8, bottom=0),
                     ),
-                    slider,
-                    alpha_label,
-                    _spoken_row,
-                    _typed_row,
+                    _mode_row,
+                    _div(),
+                    ft.Container(
+                        content=ft.Row([slider, alpha_pct], spacing=6,
+                                       vertical_alignment=ft.CrossAxisAlignment.CENTER),
+                        padding=ft.padding.only(left=10, right=10, top=2, bottom=2),
+                    ),
+                    _div(),
+                    _single_row,
+                    _div(),
+                    _disp_pill_row,
+                    _div(),
+                    _voice_row,
+                    _text_row,
+                    ft.Container(height=4),
                 ],
-                spacing=2,
+                spacing=0,
                 tight=True,
-                horizontal_alignment=ft.CrossAxisAlignment.CENTER,
+                horizontal_alignment=ft.CrossAxisAlignment.STRETCH,
             ),
         )
-        self._open_popover_at(x, y, content, width=232.0)
+        self._overlay_popover_close = self._open_popover_at(
+            0.0, y, content, width=248.0, right_side=True
+        )
 
     def set_overlay_background_alpha(self, alpha: float) -> None:
         self._overlay_background_alpha = max(0.0, min(1.0, float(alpha)))
 
     def _open_popover_at(self, x: float, y: float, content: ft.Control,
-                         width: float | None = None, clamp_width: float | None = None):
+                         width: float | None = None, clamp_width: float | None = None,
+                         right_side: bool = False):
         """Show an arbitrary popover panel anchored near page coordinates (x, y).
 
         width=None lets the panel size tightly to its content (menus). The panel is
         clamped to the window so it never gets clipped at an edge. Returns close().
+        right_side=True anchors to the right edge of the page (ignores x), so the
+        popup never overflows when the window is narrow.
         """
         if not self.page:
             return lambda: None
@@ -1469,31 +1686,43 @@ class DashboardView(ft.Row):
             except Exception:
                 pass
 
-        # Keep the panel inside the window: shift it left/up if it would overflow.
         margin = 8.0
-        cw = clamp_width if clamp_width is not None else (width if width is not None else 240.0)
-        page_w = float(getattr(self.page, "width", 0) or 0)
         page_h = float(getattr(self.page, "height", 0) or 0)
-        left = x
-        if page_w and (left + cw + margin) > page_w:
-            left = page_w - cw - margin
-        left = max(margin, left)
         top = y
         if page_h:
             top = min(top, max(margin, page_h - margin - 56.0))
         top = max(margin, top)
 
-        panel = ft.Container(
-            content=content,
-            width=width,
-            bgcolor="#26272b",
-            border_radius=8,
-            border=ft.border.all(1, "#3a3b3f"),
-            padding=5,
-            left=left,
-            top=top,
-            shadow=ft.BoxShadow(blur_radius=14, spread_radius=1, color="#000000aa"),
-        )
+        if right_side:
+            panel = ft.Container(
+                content=content,
+                width=width,
+                bgcolor="#26272b",
+                border_radius=8,
+                border=ft.border.all(1, "#3a3b3f"),
+                padding=5,
+                right=margin,
+                top=top,
+                shadow=ft.BoxShadow(blur_radius=14, spread_radius=1, color="#000000aa"),
+            )
+        else:
+            cw = clamp_width if clamp_width is not None else (width if width is not None else 240.0)
+            page_w = float(getattr(self.page, "width", 0) or 0)
+            left = x
+            if page_w and (left + cw + margin) > page_w:
+                left = page_w - cw - margin
+            left = max(margin, left)
+            panel = ft.Container(
+                content=content,
+                width=width,
+                bgcolor="#26272b",
+                border_radius=8,
+                border=ft.border.all(1, "#3a3b3f"),
+                padding=5,
+                left=left,
+                top=top,
+                shadow=ft.BoxShadow(blur_radius=14, spread_radius=1, color="#000000aa"),
+            )
         backdrop = ft.GestureDetector(
             on_tap=lambda _e: _close(),
             on_secondary_tap=lambda _e: _close(),
@@ -1502,6 +1731,16 @@ class DashboardView(ft.Row):
         root = ft.Stack([backdrop, panel], expand=True)
         holder["root"] = root
         self.page.overlay.append(root)
+        # Close if the window is resized/moved so the popup doesn't get stranded.
+        _prev_resize = getattr(self.page, "on_resized", None)
+
+        def _on_resize(_ev):
+            _close()
+            self.page.on_resized = _prev_resize
+            if callable(_prev_resize):
+                _prev_resize(_ev)
+
+        self.page.on_resized = _on_resize
         self.page.update()
         return _close
 
@@ -2126,7 +2365,16 @@ class DashboardView(ft.Row):
             needs_key = m in _NEEDS_KEY and not self._translator_model_has_key.get(m.value, False)
             desc = t("settings_modal.requires_api_key") if needs_key else ""
             options.append(OptionItem(value=m.value, label=_LABELS.get(m, m.value), description=desc, disabled=needs_key))
-        current_val = getattr(self, "_current_translator_model_value", "") or ""
+        # Prefer the live model from settings so the highlight is always accurate,
+        # even if the cached label value drifted (e.g. a temporary fallback).
+        current_val = ""
+        if callable(self.on_request_current_translator):
+            try:
+                current_val = self.on_request_current_translator() or ""
+            except Exception:
+                current_val = ""
+        if not current_val:
+            current_val = getattr(self, "_current_translator_model_value", "") or ""
         SettingsModal(
             self.page,
             "Translator",

@@ -4,7 +4,12 @@ from __future__ import annotations
 
 import re
 
-_PINYIN_LETTER_RE = re.compile(r"[a-zA-Zāáǎàēéěèīíǐìōóǒòūúǔùǖǘǚǜü]", re.IGNORECASE)
+# Digits pass through lazy_pinyin unchanged (e.g. "1" in "第1回合" stays "1"). They
+# must still be treated as their own word-like token — not glued to the neighboring
+# syllable like punctuation is — so each CJK char keeps a 1:1 slot for ruby alignment.
+_PINYIN_WORDLIKE_RE = re.compile(
+    r"[a-zA-Z0-9āáǎàēéěèīíǐìōóǒòūúǔùǖǘǚǜü]", re.IGNORECASE
+)
 
 
 def _join_pinyin(syllables: list[str]) -> str:
@@ -13,9 +18,9 @@ def _join_pinyin(syllables: list[str]) -> str:
     for syl in syllables:
         if not syl:
             continue
-        is_pinyin = bool(_PINYIN_LETTER_RE.search(syl))
-        prev_is_pinyin = bool(parts and _PINYIN_LETTER_RE.search(parts[-1]))
-        if parts and is_pinyin and prev_is_pinyin:
+        is_wordlike = bool(_PINYIN_WORDLIKE_RE.search(syl))
+        prev_is_wordlike = bool(parts and _PINYIN_WORDLIKE_RE.search(parts[-1]))
+        if parts and is_wordlike and prev_is_wordlike:
             parts.append(" ")
         parts.append(syl)
     return "".join(parts).strip()

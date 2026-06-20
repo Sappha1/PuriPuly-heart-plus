@@ -83,6 +83,7 @@ _REQUIRED_MANIFEST_STRING_FIELDS = {
 _REQUIRED_MANIFEST_INT_FIELDS = {"contract_version", "parent_pid", "startup_deadline_ms"}
 _DESKTOP_CAPTION_WHITE = "#FFFFFF"
 _DESKTOP_CAPTION_GOLD = "#FFD700"
+_DESKTOP_CAPTION_PEER_SOURCE = "#c8b4ff"  # light purple for peer source/pinyin lines
 _DESKTOP_CAPTION_LATIN_FONT_FAMILY = "Noto Sans"
 _DESKTOP_CAPTION_CJK_FONT_FAMILY = "Noto Sans CJK JP"
 _DESKTOP_CAPTION_CJK_LANGUAGE_PRIMARY_SUBTAGS = frozenset(
@@ -91,9 +92,9 @@ _DESKTOP_CAPTION_CJK_LANGUAGE_PRIMARY_SUBTAGS = frozenset(
 _DESKTOP_CAPTION_BACKGROUND_RGB = "000000"
 _DESKTOP_CAPTION_TRANSPARENT = "transparent"
 _DESKTOP_CAPTION_MAX_VISIBLE_SLOTS = 2
-_DESKTOP_CAPTION_MAX_VISIBLE_LINES = 6
-_DESKTOP_CAPTION_PRIMARY_MAX_LINES = 2
-_DESKTOP_CAPTION_SECONDARY_MAX_LINES = 4
+_DESKTOP_CAPTION_MAX_VISIBLE_LINES = 16
+_DESKTOP_CAPTION_PRIMARY_MAX_LINES = 6
+_DESKTOP_CAPTION_SECONDARY_MAX_LINES = 6
 _DESKTOP_CAPTION_LINE_HEIGHT = 1.24
 _DESKTOP_CAPTION_PRIMARY_REGION_ALIGNMENT_Y = -0.5
 _DESKTOP_CAPTION_TEXT_STACK_ALIGNMENT_Y = -0.08
@@ -138,6 +139,9 @@ _DESKTOP_EMPTY_LOCK_ACTION_I18N_KEY = "settings.overlay.desktop.empty_state.acti
 _DESKTOP_EMPTY_LOCK_ACTION_DEFAULT_LABEL = "Lock"
 _DESKTOP_EMPTY_LOCK_ACTION_DEFAULT_COLOR = "#FFF8F4"
 _DESKTOP_EMPTY_LOCK_ACTION_FOCUS_COLOR = "#FF6B6B"
+# Teal accent used to make "edit mode" obvious (matches the app's primary accent).
+_DESKTOP_EDIT_ACCENT_COLOR = "#3dd7c0"
+_DESKTOP_EDIT_HINT_I18N_KEY = "settings.overlay.desktop.empty_state.hint"
 _DESKTOP_EMPTY_LOCK_ACTION_MIN_HIT_TARGET = 44
 _DESKTOP_EMPTY_LOCK_ACTION_HORIZONTAL_PADDING = 28
 _DESKTOP_EMPTY_LOCK_ACTION_VERTICAL_PADDING = 12
@@ -308,12 +312,12 @@ class DesktopCaptionSizePreset:
 
 
 _DESKTOP_CAPTION_SIZE_PRESETS: dict[str, DesktopCaptionSizePreset] = {
-    "tiny": DesktopCaptionSizePreset("tiny", 640, 160, 20, 12, 10, 2, 10, 4),
-    "xsmall": DesktopCaptionSizePreset("xsmall", 960, 240, 29, 18, 14, 6, 12, 6),
-    "small": DesktopCaptionSizePreset("small", 1152, 288, 35, 21, 18, 8, 14, 8),
-    "medium": DesktopCaptionSizePreset("medium", 1344, 336, 41, 25, 22, 10, 16, 10),
-    "large": DesktopCaptionSizePreset("large", 1600, 400, 50, 30, 26, 12, 18, 12),
-    "xlarge": DesktopCaptionSizePreset("xlarge", 1792, 448, 56, 34, 30, 14, 20, 14),
+    "tiny":   DesktopCaptionSizePreset("tiny",   640,  160, 20, 20, 10, 2,  10, 4),
+    "xsmall": DesktopCaptionSizePreset("xsmall", 960,  240, 29, 29, 14, 6,  12, 6),
+    "small":  DesktopCaptionSizePreset("small",  1152, 288, 35, 35, 18, 8,  14, 8),
+    "medium": DesktopCaptionSizePreset("medium", 1344, 336, 41, 41, 22, 10, 16, 10),
+    "large":  DesktopCaptionSizePreset("large",  1600, 400, 50, 50, 26, 12, 18, 12),
+    "xlarge": DesktopCaptionSizePreset("xlarge", 1792, 448, 56, 56, 30, 14, 20, 14),
 }
 
 
@@ -322,6 +326,14 @@ class DesktopCaptionVisualState:
     text_scale: float = DESKTOP_FLET_DEFAULT_TEXT_SCALE
     background_alpha: float = DESKTOP_FLET_DEFAULT_BACKGROUND_ALPHA
     outline_width: float | None = None
+    # Whether romanization (pinyin/romaji) is shown — used so the edit-mode SAMPLE
+    # matches the user's actual overlay romanization setting.
+    show_romanization: bool = True
+    # Whether single-turn mode is active — controls how many slots the sample shows.
+    single_turn_mode: bool = True
+    # Display toggles mirrored from presenter — used to make the sample match live output.
+    show_translation: bool = True
+    show_peer_original: bool = True
 
 
 @dataclass(frozen=True, slots=True)
@@ -480,13 +492,14 @@ def build_desktop_caption_plan(
         primary_font_size=primary_font_size,
         secondary_font_size=secondary_font_size,
     )
+    max_slots = 1 if visual.single_turn_mode else _DESKTOP_CAPTION_MAX_VISIBLE_SLOTS
     slots = tuple(
         _caption_slot_with_dynamic_width(
             slot,
             padding_horizontal=preset.padding_horizontal,
             max_card_width=width,
         )
-        for slot in candidate_slots[:_DESKTOP_CAPTION_MAX_VISIBLE_SLOTS]
+        for slot in candidate_slots[:max_slots]
     )
     lines = tuple(line for slot in slots for line in slot.lines)
 
@@ -1046,6 +1059,9 @@ def _caption_lines_for_block(
     secondary_text = block.secondary_text.strip()
     if not primary_text and not secondary_text:
         return ()
+    # If translation equals original (e.g. "." → "."), suppress duplicate secondary line.
+    if primary_text and secondary_text and primary_text == secondary_text:
+        secondary_text = ""
 
     if block.block_variant == "active_self":
         return _self_active_lines(
@@ -1156,9 +1172,38 @@ def _peer_finalized_lines(
     primary_font_size: int,
     secondary_font_size: int,
 ) -> tuple[DesktopCaptionLine, ...]:
-    lines: list[DesktopCaptionLine] = []
+    # Layout: source (Chinese + pinyin) on TOP, translation (English) on BOTTOM.
+    # The "secondary" slot renders after "primary" in _slot_lines_with_reserved_regions,
+    # so we flip the slot assignments: source → primary (top), translation → secondary (bottom).
+    if secondary_text and block.secondary_enabled and primary_text:
+        # Both source and translation available: source on top (primary slot, purple),
+        # translation below (secondary slot, gold).
+        return (
+            _caption_line(
+                block,
+                text=secondary_text,
+                role="peer_source_original",
+                slot="primary",
+                priority=90,
+                max_lines=_DESKTOP_CAPTION_PRIMARY_MAX_LINES,
+                font_size=primary_font_size,
+                language=block.secondary_language,
+                color=_DESKTOP_CAPTION_PEER_SOURCE,
+            ),
+            _caption_line(
+                block,
+                text=primary_text,
+                role="peer_translation",
+                slot="secondary",
+                priority=70,
+                max_lines=_DESKTOP_CAPTION_SECONDARY_MAX_LINES,
+                font_size=secondary_font_size,
+                language=block.primary_language,
+                color=_DESKTOP_CAPTION_GOLD,
+            ),
+        )
     if primary_text:
-        lines.append(
+        return (
             _caption_line(
                 block,
                 text=primary_text,
@@ -1168,22 +1213,9 @@ def _peer_finalized_lines(
                 max_lines=_DESKTOP_CAPTION_PRIMARY_MAX_LINES,
                 font_size=primary_font_size,
                 language=block.primary_language,
-            )
+                color=_DESKTOP_CAPTION_GOLD,
+            ),
         )
-        if secondary_text and block.secondary_enabled:
-            lines.append(
-                _caption_line(
-                    block,
-                    text=secondary_text,
-                    role="peer_source_original",
-                    slot="secondary",
-                    priority=70,
-                    max_lines=_DESKTOP_CAPTION_SECONDARY_MAX_LINES,
-                    font_size=secondary_font_size,
-                    language=block.secondary_language,
-                )
-            )
-        return tuple(lines)
     if secondary_text and block.secondary_enabled:
         return (
             _caption_line(
@@ -1196,6 +1228,7 @@ def _peer_finalized_lines(
                 font_size=primary_font_size,
                 language=block.secondary_language,
                 promoted=True,
+                color=_DESKTOP_CAPTION_PEER_SOURCE,
             ),
         )
     return ()
@@ -1266,13 +1299,14 @@ def _caption_line(
     language: str | None = None,
     promoted: bool = False,
     active: bool = False,
+    color: str | None = None,
 ) -> DesktopCaptionLine:
     uses_cjk_font_policy = _desktop_caption_uses_cjk_font_policy(text, language)
     return DesktopCaptionLine(
         text=text,
         role=role,
         slot=slot,
-        color=_desktop_caption_color_for_channel(block.channel),
+        color=color if color is not None else _desktop_caption_color_for_channel(block.channel),
         priority=priority,
         block_id=block.id,
         channel=block.channel,
@@ -1461,6 +1495,10 @@ def _validated_visual_state(
         text_scale=settings.text_scale,
         background_alpha=settings.background_alpha,
         outline_width=settings.outline_width,
+        show_romanization=source.show_romanization,
+        single_turn_mode=source.single_turn_mode,
+        show_translation=source.show_translation,
+        show_peer_original=source.show_peer_original,
     )
 
 
@@ -1468,12 +1506,16 @@ def _desktop_caption_size_preset_for_dimensions(
     width: int,
     height: int,
 ) -> DesktopCaptionSizePreset:
+    # Matched on width only: two-turn mode doubles the actual window height (two
+    # stacked slots) while keeping the same font/padding metrics as single-turn,
+    # so height no longer uniquely identifies the preset.
+    _ = height
     for preset_id in DESKTOP_FLET_SIZE_PRESET_ORDER:
         preset = _DESKTOP_CAPTION_SIZE_PRESETS[preset_id]
         settings_dimensions = DESKTOP_FLET_SIZE_PRESETS[preset_id]
         if (preset.window_width, preset.window_height) != settings_dimensions:
             raise RuntimeError("desktop caption preset dimensions diverged from settings")
-        if width == preset.window_width and height == preset.window_height:
+        if width == preset.window_width:
             return preset
     return _DESKTOP_CAPTION_SIZE_PRESETS[DESKTOP_FLET_DEFAULT_SIZE_PRESET]
 
@@ -1555,6 +1597,7 @@ def _build_flet_caption_slot(ft: Any, plan: DesktopCaptionPlan, slot: DesktopCap
         height=plan.slot_height,
         bgcolor=ft.Colors.TRANSPARENT,
         alignment=ft.alignment.center,
+        clip_behavior=ft.ClipBehavior.HARD_EDGE,
     )
 
 
@@ -1566,11 +1609,153 @@ def _build_flet_caption_line(
     text_width: float,
     center_primary_region: bool = False,
 ) -> Any:
+    if _is_ruby_line(line):
+        content = _build_ruby_content(ft, line, text_width)
+    else:
+        content = _build_flet_text(ft, line, text_width)
     return ft.Container(
-        content=_build_flet_text(ft, line, text_width),
+        content=content,
         width=text_width,
         bgcolor=ft.Colors.TRANSPARENT,
     )
+
+
+def _is_ruby_line(line: DesktopCaptionLine) -> bool:
+    """True when line.text is 'romanization\\nCJK_text' — suitable for per-char ruby layout."""
+    if "\n" not in line.text:
+        return False
+    roman, cjk = line.text.split("\n", 1)
+    roman = roman.strip()
+    cjk = cjk.strip()
+    if not roman or not cjk:
+        return False
+    if _desktop_caption_text_contains_cjk(roman):
+        return False
+    return _desktop_caption_text_contains_cjk(cjk)
+
+
+def _build_ruby_content(ft: Any, line: DesktopCaptionLine, text_width: float) -> Any:
+    """Render 'romanization\\nCJK' as ruby text.
+
+    Chinese: pinyin has exactly 1 syllable per CJK char, so we stack each syllable
+    above its character. Non-CJK chars (digits, punctuation) are rendered without
+    a ruby syllable but share the same vertical alignment.
+
+    Japanese / other (romaji doesn't map 1:1): render romaji as a block above the
+    full text at a readable size (not tiny), since fitting it per-char isn't possible.
+    """
+    roman, cjk = line.text.split("\n", 1)
+    roman = roman.strip()
+    cjk = cjk.strip()
+
+    ruby_size = max(9, int(line.font_size * 0.50))
+    syllables = roman.split()
+    cjk_chars = list(cjk)
+    cjk_only = [c for c in cjk_chars if _desktop_caption_char_is_cjk(c)]
+    # Only count letter-bearing tokens as pinyin syllables so that trailing
+    # digits/punctuation (e.g. "3" in "cè shì 3") don't break the alignment.
+    alpha_syllables = [s for s in syllables if any(c.isalpha() for c in s)]
+
+    if len(alpha_syllables) == len(cjk_only):
+        # Per-character stacking (Chinese and similar scripts)
+        char_cols: list[Any] = []
+        syl_idx = 0
+        for char in cjk_chars:
+            if _desktop_caption_char_is_cjk(char):
+                syl = alpha_syllables[syl_idx]
+                syl_idx += 1
+            else:
+                syl = " "  # non-breaking space placeholder keeps column height uniform
+            char_cols.append(
+                ft.Column(
+                    controls=[
+                        ft.Text(
+                            syl,
+                            size=ruby_size,
+                            color=line.color,
+                            font_family=_DESKTOP_CAPTION_LATIN_FONT_FAMILY,
+                            text_align=ft.TextAlign.CENTER,
+                            style=ft.TextStyle(
+                                size=ruby_size,
+                                height=1.1,
+                                shadow=_caption_text_shadow(ft),
+                            ),
+                        ),
+                        ft.Text(
+                            char,
+                            size=line.font_size,
+                            color=line.color,
+                            font_family=(
+                                _DESKTOP_CAPTION_CJK_FONT_FAMILY
+                                if _desktop_caption_char_is_cjk(char)
+                                else _DESKTOP_CAPTION_LATIN_FONT_FAMILY
+                            ),
+                            text_align=ft.TextAlign.CENTER,
+                            style=ft.TextStyle(
+                                size=line.font_size,
+                                height=line.line_height,
+                                weight=_flet_font_weight(ft, line.weight),
+                                shadow=_caption_text_shadow(ft),
+                            ),
+                        ),
+                    ],
+                    horizontal_alignment=ft.CrossAxisAlignment.CENTER,
+                    spacing=0,
+                    tight=True,
+                )
+            )
+        return ft.Container(
+            content=ft.Row(
+                char_cols,
+                wrap=True,
+                alignment=ft.MainAxisAlignment.CENTER,
+                spacing=2,
+                run_spacing=2,
+            ),
+            width=text_width,
+            alignment=ft.alignment.center,
+        )
+    else:
+        # Per-word fallback (Japanese romaji etc.): use a readable size — the romaji
+        # is shown as a full block above the text, not squeezed over individual chars.
+        block_roman_size = max(int(line.font_size * 0.75), 14)
+        return ft.Column(
+            controls=[
+                ft.Text(
+                    roman,
+                    size=block_roman_size,
+                    color=line.color,
+                    font_family=_DESKTOP_CAPTION_LATIN_FONT_FAMILY,
+                    text_align=ft.TextAlign.CENTER,
+                    width=text_width,
+                    style=ft.TextStyle(
+                        size=block_roman_size,
+                        height=1.15,
+                        shadow=_caption_text_shadow(ft),
+                    ),
+                ),
+                ft.Text(
+                    cjk,
+                    size=line.font_size,
+                    color=line.color,
+                    font_family=line.font_family,
+                    text_align=ft.TextAlign.CENTER,
+                    width=text_width,
+                    max_lines=line.max_lines,
+                    overflow=ft.TextOverflow.ELLIPSIS,
+                    style=ft.TextStyle(
+                        size=line.font_size,
+                        height=line.line_height,
+                        weight=_flet_font_weight(ft, line.weight),
+                        font_family=line.font_family,
+                        shadow=_caption_text_shadow(ft),
+                    ),
+                ),
+            ],
+            horizontal_alignment=ft.CrossAxisAlignment.CENTER,
+            spacing=0,
+            tight=True,
+        )
 
 
 def _caption_line_region_alignment(
@@ -1855,6 +2040,10 @@ class FletDesktopRendererWindow:
         self._interaction_mode = _DESKTOP_INTERACTION_MODE_EDIT
         self._startup_visual_state: DesktopCaptionVisualState | None = None
         self._startup_window_bounds: dict[str, int | float] | None = None
+        # Authoritative current window size (from the bounds we set), used to size the
+        # edit chrome — page.window.width/height lag at first render, which made the
+        # chrome use the wrong (default) size for small presets until a manual resize.
+        self._current_window_bounds: dict[str, int | float] | None = None
         self._page: Any | None = None
         self._page_ready = asyncio.Event()
         self._closed = asyncio.Event()
@@ -1879,6 +2068,7 @@ class FletDesktopRendererWindow:
 
         self._startup_visual_state = None
         self._startup_window_bounds = None
+        self._startup_interaction_mode = None
         residual: list[dict[str, object]] = []
         for payload in payloads:
             command = payload.get("command")
@@ -1888,6 +2078,12 @@ class FletDesktopRendererWindow:
                 residual.append(payload)
                 continue
             if command == "set_interaction_mode":
+                # Capture (don't drop) the launch interaction mode so the overlay
+                # honors locked-at-startup instead of always starting in edit mode,
+                # and so an early lock toggle isn't lost during startup drain.
+                mode = payload.get("mode")
+                if mode in _DESKTOP_INTERACTION_MODES:
+                    self._startup_interaction_mode = mode
                 continue
             if command == "apply_visual_config":
                 visual_state = _parse_runtime_visual_state(payload)
@@ -1900,8 +2096,12 @@ class FletDesktopRendererWindow:
                 bounds = _parse_runtime_window_bounds(payload)
                 if bounds is not None:
                     self._startup_window_bounds = bounds
-                else:
-                    residual.append(payload)
+                # Keep the bounds in the residual so they are ALSO re-applied after the
+                # Flet page exists. Setting window.width/height during initial page
+                # config is timing-unreliable (Flet may keep its unpredictable default
+                # window size) — which is why a manual resize/toggle "fixed" small
+                # presets. Re-dispatching guarantees the configured size sticks.
+                residual.append(payload)
                 continue
             residual.append(payload)
         return tuple(residual)
@@ -1916,7 +2116,9 @@ class FletDesktopRendererWindow:
         self._page_ready.clear()
         self._closed.clear()
         self._page_start_error = None
-        self._interaction_mode = _DESKTOP_INTERACTION_MODE_EDIT
+        self._interaction_mode = (
+            self._startup_interaction_mode or _DESKTOP_INTERACTION_MODE_EDIT
+        )
         if self._app_task is None or self._app_task.done():
             self._app_task = asyncio.create_task(self._app_runner(self._handle_page))
 
@@ -1939,6 +2141,51 @@ class FletDesktopRendererWindow:
             if not ready_task.done():
                 ready_task.cancel()
             await asyncio.gather(ready_task, return_exceptions=True)
+
+        # Re-assert the configured window size shortly AFTER the page settles. Setting
+        # window.width/height during initial config is unreliable (Flet can keep its
+        # default, oversized window) — this delayed re-apply is what reliably makes a
+        # small preset stick on first launch, the same effect as changing the size
+        # later in settings.
+        if self._startup_window_bounds is not None:
+            self._run_page_task(self._reassert_startup_bounds)
+
+    async def _reassert_startup_bounds(self) -> None:
+        bounds = self._startup_window_bounds
+        if not bounds:
+            return
+        # The native window opens oversized; Flet's model already holds the configured
+        # size, so re-setting the SAME value is a no-op and the native window never
+        # resizes (only switching to a DIFFERENT preset did). We jiggle to a slightly
+        # different size to force a real native resize, then set the real bounds. A
+        # single attempt is timing-flaky (the native view may not be ready), so we
+        # retry several times at increasing delays until the page reports the size.
+        for attempt_delay in (0.12, 0.25, 0.5, 1.0, 1.6):
+            try:
+                await asyncio.sleep(attempt_delay)
+            except asyncio.CancelledError:
+                return
+            if self._closed.is_set() or self._page is None:
+                return
+            page = self._page
+            window = getattr(page, "window", None)
+            if window is None:
+                return
+            try:
+                window.width = float(bounds["width"]) + 16
+                window.height = float(bounds["height"]) + 16
+                update = getattr(page, "update", None)
+                if callable(update):
+                    update()
+            except Exception:
+                pass
+            try:
+                await asyncio.sleep(0.08)
+            except asyncio.CancelledError:
+                return
+            if self._closed.is_set() or self._page is None:
+                return
+            self._apply_window_bounds(dict(bounds))
 
     async def run_until_closed(self) -> None:
         task = self._app_task
@@ -2085,15 +2332,30 @@ class FletDesktopRendererWindow:
             window.top = bounds["y"]
             window.width = bounds["width"]
             window.height = bounds["height"]
+            self._current_window_bounds = dict(bounds)
             self._programmatic_bounds_echo_suppression = _ProgrammaticBoundsEchoSuppression(
                 signature=_bounds_signature(bounds),
                 expires_at=time.monotonic() + _PROGRAMMATIC_BOUNDS_ECHO_SUPPRESSION_S,
+            )
+            logger.info(
+                "[DesktopOverlay][WindowConfig] startup_bounds width=%s height=%s x=%s y=%s",
+                bounds["width"], bounds["height"], bounds["x"], bounds["y"],
             )
         else:
             # Always set explicit dimensions when no saved bounds — Flet's
             # default window size is unpredictable and can match the main window.
             window.width = DESKTOP_FLET_DEFAULT_WIDTH
             window.height = DESKTOP_FLET_DEFAULT_HEIGHT
+            self._current_window_bounds = {
+                "x": getattr(window, "left", 0) or 0,
+                "y": getattr(window, "top", 0) or 0,
+                "width": DESKTOP_FLET_DEFAULT_WIDTH,
+                "height": DESKTOP_FLET_DEFAULT_HEIGHT,
+            }
+            logger.info(
+                "[DesktopOverlay][WindowConfig] NO startup_bounds -> default width=%s height=%s",
+                DESKTOP_FLET_DEFAULT_WIDTH, DESKTOP_FLET_DEFAULT_HEIGHT,
+            )
         window.on_event = self._on_window_event
         if hasattr(window, "min_width"):
             window.min_width = DESKTOP_FLET_MIN_WIDTH
@@ -2120,6 +2382,77 @@ class FletDesktopRendererWindow:
     def _on_empty_lock_action_click(self, _event: object | None = None) -> None:
         self._run_page_task(self._lock_from_empty_action)
 
+    def _build_sample_overlay_snapshot(self) -> OverlayPresentationSnapshot:
+        """A representative caption snapshot for edit mode. Reflects the user's
+        current display settings (show_translation, show_peer_original, show_romanization,
+        single_turn_mode) so the band accurately represents what live captions look like."""
+
+        vs = self._visual_state
+        show_romanization = bool(getattr(vs, "show_romanization", True))
+        single_turn = bool(getattr(vs, "single_turn_mode", True))
+        show_translation = bool(getattr(vs, "show_translation", True))
+        show_peer_original = bool(getattr(vs, "show_peer_original", True))
+
+        zh_original = "这是一条示例消息"
+        zh_pinyin = "zhè shì yī tiáo shì lì xiāo xī"
+        # English translation matches the Chinese meaning ("sample message", not just "sample")
+
+        # Build peer secondary (source + optional pinyin)
+        if show_peer_original:
+            peer_secondary = (
+                f"{zh_pinyin}\n{zh_original}" if show_romanization else zh_original
+            )
+        else:
+            peer_secondary = ""
+
+        peer_block = OverlayPresentationBlock(
+            id="__edit_sample_peer__",
+            occupant_key="__edit_sample_peer__",
+            appearance_seq=0,
+            channel="peer",
+            block_variant="finalized",
+            primary_text="This is a sample message" if show_translation else "",
+            secondary_text=peer_secondary,
+            secondary_enabled=show_peer_original,
+            primary_language="en",
+            secondary_language="zh",
+        )
+        if single_turn:
+            return OverlayPresentationSnapshot(revision=0, blocks=[peer_block])
+
+        # Two-turn: self block. primary_text = what user said (Japanese source + optional romaji),
+        # secondary_text = English translation shown to peer.
+        ja_original = "これはサンプルメッセージです"
+        ja_romaji = "kore wa sanpuru messēji desu"
+        self_primary = f"{ja_romaji}\n{ja_original}" if show_romanization else ja_original
+        self_secondary = "This is a sample message" if show_translation else ""
+
+        self_block = OverlayPresentationBlock(
+            id="__edit_sample_self__",
+            occupant_key="__edit_sample_self__",
+            appearance_seq=1,
+            channel="self",
+            block_variant="finalized",
+            primary_text=self_primary,
+            secondary_text=self_secondary,
+            secondary_enabled=show_translation,
+            primary_language="ja",
+            secondary_language="en",
+        )
+        return OverlayPresentationSnapshot(revision=0, blocks=[peer_block, self_block])
+
+    def _build_desktop_edit_hint(self, ft: Any, plan: Any) -> Any:
+        """The move instructions shown pinned in edit mode."""
+
+        return ft.Text(
+            t_for_locale(self._locale, _DESKTOP_EDIT_HINT_I18N_KEY),
+            size=max(11, int(plan.secondary_font_size * 0.9)),
+            color=_DESKTOP_EDIT_ACCENT_COLOR,
+            weight=ft.FontWeight.W_600,
+            text_align=ft.TextAlign.CENTER,
+            no_wrap=False,
+        )
+
     async def _lock_from_empty_action(self) -> None:
         await self._set_interaction_mode(
             _DESKTOP_INTERACTION_MODE_PASS_THROUGH,
@@ -2144,10 +2477,17 @@ class FletDesktopRendererWindow:
             page.update()
             return
 
+        _cur = self._current_window_bounds
+        plan_window_width = (
+            _cur["width"] if _cur else _page_window_number(page, "width", DESKTOP_FLET_DEFAULT_WIDTH)
+        )
+        plan_window_height = (
+            _cur["height"] if _cur else _page_window_number(page, "height", DESKTOP_FLET_DEFAULT_HEIGHT)
+        )
         raw_plan = build_desktop_caption_plan(
             self._snapshot,
-            window_width=_page_window_number(page, "width", DESKTOP_FLET_DEFAULT_WIDTH),
-            window_height=_page_window_number(page, "height", DESKTOP_FLET_DEFAULT_HEIGHT),
+            window_width=plan_window_width,
+            window_height=plan_window_height,
             visual_state=self._visual_state,
             interaction_mode=self._interaction_mode,
             locale=self._locale,
@@ -2157,8 +2497,88 @@ class FletDesktopRendererWindow:
         self._emit_caption_width_diagnostics(raw_plan, plan, previous_width_floors)
         caption_surface = build_desktop_caption_surface(plan)
         if self._interaction_mode == _DESKTOP_INTERACTION_MODE_EDIT:
+            # Size the chrome EXPLICITLY to the real window (cur_bounds is correct at
+            # startup; page.window.width/height lag the first render and made small
+            # presets render as a thin strip until a manual resize).
+            cur_bounds = self._current_window_bounds
+            if cur_bounds:
+                win_w = cur_bounds["width"]
+                win_h = cur_bounds["height"]
+            else:
+                win_w = _page_window_number(page, "width", plan.window_width)
+                win_h = _page_window_number(page, "height", plan.window_height)
+
+            # Render the body through the REAL caption path so text sits exactly where
+            # live subtitles land. When there's no live caption, substitute a sample
+            # snapshot (same layout) so the user positions against real placement.
+            if plan.lines:
+                body_surface = caption_surface
+                body_plan = plan
+            else:
+                sample_plan = self._plan_with_grow_only_caption_card_widths(
+                    build_desktop_caption_plan(
+                        self._build_sample_overlay_snapshot(),
+                        window_width=win_w,
+                        window_height=win_h,
+                        visual_state=self._visual_state,
+                        interaction_mode=self._interaction_mode,
+                        locale=self._locale,
+                    )
+                )
+                body_surface = build_desktop_caption_surface(sample_plan)
+                body_plan = sample_plan
+
+            logger.info(
+                "[DesktopOverlay][EditChrome] plan_window=%sx%s chrome=%sx%s "
+                "page_window=%sx%s slots=%s lines=%s",
+                plan.window_width, plan.window_height, win_w, win_h,
+                _page_window_number(page, "width", -1),
+                _page_window_number(page, "height", -1),
+                len(plan.slots), len(plan.lines),
+            )
+
+            # Band always covers the full overlay window so the teal border never
+            # shrinks to hug content — it always shows the complete caption zone.
+            band_h = int(win_h)
+            band_top = 0.0
+
+            lock_label = desktop_empty_lock_action_label(self._locale)
+            lock_action = ft.Container(
+                content=ft.Icon(ft.Icons.LOCK_OPEN, size=20, color=_DESKTOP_EDIT_ACCENT_COLOR),
+                on_click=self._on_empty_lock_action_click,
+                tooltip=lock_label,
+                padding=6,
+                border_radius=6,
+                bgcolor="#1d1f24c0",
+            )
+            stack_children = [
+                ft.Container(left=0, top=0, right=0, bottom=0, bgcolor=ft.Colors.TRANSPARENT),
+                ft.Container(
+                    left=0, right=0, top=band_top, height=band_h,
+                    bgcolor="#1d1f24d8",
+                    border_radius=plan.border_radius,
+                    clip_behavior=ft.ClipBehavior.HARD_EDGE,
+                ),
+                ft.Container(
+                    left=0, top=0, right=0, bottom=0,
+                    alignment=ft.alignment.center,
+                    content=body_surface,
+                ),
+                ft.Container(
+                    left=0, right=0, top=band_top, height=band_h,
+                    bgcolor=ft.Colors.TRANSPARENT,
+                    border=ft.border.all(2, _DESKTOP_EDIT_ACCENT_COLOR),
+                    border_radius=plan.border_radius,
+                ),
+                ft.Container(top=band_top + 6, right=8, content=lock_action),
+            ]
+            chrome = ft.Container(
+                width=win_w,
+                height=win_h,
+                content=ft.Stack(stack_children, width=win_w, height=win_h),
+            )
             drag_area = ft.WindowDragArea(
-                content=caption_surface,
+                content=chrome,
                 maximizable=False,
             )
             content_kind = "drag_area"
@@ -2192,11 +2612,16 @@ class FletDesktopRendererWindow:
                 background_alpha=plan.background_alpha,
             )
         )
+        _edit = self._interaction_mode == _DESKTOP_INTERACTION_MODE_EDIT
         root = ft.Container(
             content=content,
             padding=0,
             bgcolor=ft.Colors.TRANSPARENT,
-            alignment=ft.alignment.center,
+            # Edit chrome is explicitly window-sized, so pin it to the top-left origin
+            # rather than centering (centering a window-sized box is a no-op but can
+            # interact badly with expand); captions keep centering.
+            alignment=ft.alignment.top_left if _edit else ft.alignment.center,
+            expand=_edit,
         )
 
         if hasattr(page, "clean"):
@@ -2615,6 +3040,22 @@ class FletDesktopRendererWindow:
             signature=_bounds_signature(bounds),
             expires_at=time.monotonic() + _PROGRAMMATIC_BOUNDS_ECHO_SUPPRESSION_S,
         )
+        logger.info(
+            "[DesktopOverlay][ApplyBounds] width=%s height=%s x=%s y=%s",
+            bounds["width"], bounds["height"], bounds["x"], bounds["y"],
+        )
+        # Force the window size change to commit immediately. Just setting
+        # window.width/height + page.update() can fail to take until the next
+        # content change (e.g. a caption) — explicitly pushing the window object
+        # makes the resize stick without waiting for subtitles.
+        page = self._page
+        if page is not None:
+            window_update = getattr(getattr(page, "window", None), "update", None)
+            if callable(window_update):
+                try:
+                    window_update()
+                except Exception:
+                    pass
         self._render_page()
 
     def _apply_window_bounds_without_rerender(self, bounds: dict[str, int | float]) -> None:
@@ -2622,10 +3063,24 @@ class FletDesktopRendererWindow:
         if page is None:
             return
         window = page.window
+        # Non-resizable frameless windows can ignore a programmatic resize until some
+        # other frame (a caption) forces it. Briefly allowing resize while applying
+        # the size makes the native window accept it immediately.
+        had_resizable = getattr(window, "resizable", None)
+        try:
+            window.resizable = True
+        except Exception:
+            pass
         window.left = bounds["x"]
         window.top = bounds["y"]
         window.width = bounds["width"]
         window.height = bounds["height"]
+        if had_resizable is not None:
+            try:
+                window.resizable = had_resizable
+            except Exception:
+                pass
+        self._current_window_bounds = dict(bounds)
 
     def _on_window_event(self, event: object) -> None:
         if self._closed.is_set():
@@ -2835,10 +3290,18 @@ def _parse_runtime_visual_state(payload: dict[str, object]) -> DesktopCaptionVis
         if not DESKTOP_FLET_MIN_OUTLINE_WIDTH <= outline_number <= DESKTOP_FLET_MAX_OUTLINE_WIDTH:
             return None
         outline_width = float(outline_number)
+    show_romanization_raw = payload.get("show_romanization", True)
+    single_turn_raw = payload.get("single_turn_mode", True)
+    show_translation_raw = payload.get("show_translation", True)
+    show_peer_original_raw = payload.get("show_peer_original", True)
     return DesktopCaptionVisualState(
         text_scale=float(text_scale),
         background_alpha=float(background_alpha),
         outline_width=outline_width,
+        show_romanization=bool(show_romanization_raw),
+        single_turn_mode=bool(single_turn_raw),
+        show_translation=bool(show_translation_raw),
+        show_peer_original=bool(show_peer_original_raw),
     )
 
 

@@ -3574,6 +3574,11 @@ class GuiController:
             self._show_short_stt_message("error.local_stt_model_invalid")
             return False
         try:
+            # Warm the romaji/pinyin backends off-thread so the first Japanese/Chinese
+            # utterance doesn't eat the ~150ms one-time MeCab dictionary load.
+            with contextlib.suppress(Exception):
+                from puripuly_heart.core.transliteration import warmup as _warm_translit
+                asyncio.get_running_loop().run_in_executor(None, _warm_translit)
             await self.hub.stt.warmup()
             self._local_stt_install_state = LocalSTTInstallState(status="ready")
             if self._local_stt_runtime_status != "downloading":

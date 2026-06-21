@@ -923,7 +923,11 @@ class ClientHub:
         )
         await self._handle_transcript(transcript, is_final=True, source=source)
 
-        if self.llm is None or not self.translation_enabled:
+        if (
+            self.llm is None
+            or not self.translation_enabled
+            or self._translation_is_noop_for(text, self.self_runtime)
+        ):
             await self._enqueue_osc(utterance_id, transcript_text=text, translation_text=None)
         else:
             await self._ensure_translation(transcript)
@@ -1062,9 +1066,7 @@ class ClientHub:
             if (
                 self.llm is None
                 or not self._translation_enabled_for_runtime(runtime)
-                or self._text_already_in_language(
-                    event.transcript.text, self._target_language_for(runtime)
-                )
+                or self._translation_is_noop_for(event.transcript.text, runtime)
             ):
                 self._log_translation_skipped(
                     stage="final",
@@ -1181,7 +1183,7 @@ class ClientHub:
         if (
             self.llm is None
             or not self._translation_enabled_for_runtime(runtime)
-            or self._text_already_in_language(transcript.text, self._target_language_for(runtime))
+            or self._translation_is_noop_for(transcript.text, runtime)
         ):
             self._log_translation_skipped(
                 stage="final",
@@ -1199,6 +1201,16 @@ class ClientHub:
                     transcript.utterance_id,
                     transcript_text=transcript.text,
                     translation_text=None,
+                )
+            else:
+                # Translation was skipped (no-op / same language), but loopback may
+                # still be on — mirror the peer's own text to the chatbox so it isn't
+                # silently dropped while subtitles show it.
+                self._enqueue_peer_loopback_chatbox(
+                    transcript.utterance_id,
+                    source_text=transcript.text,
+                    translation_text=transcript.text,
+                    romanization=None,
                 )
             return
         await self._ensure_translation(transcript)
@@ -1834,6 +1846,42 @@ class ClientHub:
         if not allowed_scripts:
             return True
         return detected in allowed_scripts
+
+    @staticmethod
+    def _languages_are_same_for_translation(src: str, tgt: str) -> bool:
+        """True when translating from `src` to `tgt` is a guaranteed no-op because they
+        are the same language. Cheap config-level check (no text inspection), so it also
+        catches short utterances the content detector can't judge. Region variants of the
+        same base (en-US/en-GB, ja) count as identical, EXCEPT Chinese: zh-CN<->zh-TW is a
+        real simplified/traditional conversion, so those are NOT treated as the same."""
+        src = (src or "").strip().lower()
+        tgt = (tgt or "").strip().lower()
+        if not src or not tgt:
+            return False
+        if src == tgt:
+            return True
+        src_base = src.split("-")[0]
+        tgt_base = tgt.split("-")[0]
+        if src_base != tgt_base:
+            return False
+        return src_base not in ("zh", "cmn", "yue")
+
+    def _translation_is_noop_for(self, text: str, runtime: ChannelRuntime) -> bool:
+        """Skip translation when it would produce the source unchanged — either because
+        the configured source/target are the same language, or because the transcript is
+        already confidently in the target language (e.g. peer set to Chinese but actually
+        speaking English). Both cases otherwise burn translator quota for nothing."""
+        # The cheap config-level equality is only trustworthy when the source language is
+        # explicitly chosen. For peer "Auto Detect" (empty peer_source_language),
+        # _source_language_for falls back to the target language as an ASSUMPTION — that
+        # does not mean the speech is actually in the target language, so skipping on it
+        # would wrongly defeat peer translation. In that case rely on content detection.
+        source_is_explicit = runtime.channel != "peer" or bool(self.peer_source_language)
+        if source_is_explicit and self._languages_are_same_for_translation(
+            self._source_language_for(runtime), self._target_language_for(runtime)
+        ):
+            return True
+        return self._text_already_in_language(text, self._target_language_for(runtime))
 
     def _text_already_in_language(self, text: str, target_lang: str) -> bool:
         """True when `text` is confidently already in `target_lang`, so translating it
@@ -3390,41 +3438,57 @@ class ClientHub:
             )
         else:
             self._finalize_latency_timeline(channel=runtime.channel, utterance_id=utterance_id)
-        if (
-            runtime.channel == "peer"
-            and self.chatbox_send_peer
-            and (
-                not self.loopback_selected_languages_only
-                or self._loopback_language_allowed(text)
+        if runtime.channel == "peer":
+            self._enqueue_peer_loopback_chatbox(
+                utterance_id,
+                source_text=text,
+                translation_text=translation.text,
+                romanization=translation.romanization,
             )
-        ):
-            # Send peer text to VRChat chatbox: source first, then transliteration (if enabled), then translation
-            peer_translit = translation.romanization or ""
-            if not peer_translit and (self.send_pinyin or self.send_romaji or self.send_latin):
-                try:
-                    from puripuly_heart.core.transliteration import transliterate_for_language as _tfl
-                    peer_translit = _tfl(
-                        translation.text, self.target_language,
-                        show_pinyin=self.send_pinyin, show_romaji=self.send_romaji, show_latin=self.send_latin,
-                    )
-                except Exception:
-                    pass
-            if self.chatbox_send_peer_translation_only:
-                peer_osc_text = (
-                    f"{peer_translit}\n{translation.text}" if peer_translit else translation.text
-                )
-            elif text.strip() == translation.text.strip():
-                peer_osc_text = (
-                    f"{peer_translit}\n{translation.text}" if peer_translit else translation.text
-                )
-            elif peer_translit:
-                peer_osc_text = f"{text}\n{peer_translit}\n{translation.text}"
-            else:
-                peer_osc_text = f"{text}\n{translation.text}"
-            peer_msg = OSCMessage(utterance_id=utterance_id, text=peer_osc_text, created_at=self.clock.now())
-            self.osc.enqueue(peer_msg)
         if runtime.channel == "peer":
             self._complete_peer_logical_turn(utterance_id)
+
+    def _enqueue_peer_loopback_chatbox(
+        self,
+        utterance_id: UUID,
+        *,
+        source_text: str,
+        translation_text: str,
+        romanization: str | None,
+    ) -> None:
+        """Mirror a peer utterance into the user's own VRChat chatbox (the "loopback"
+        feature). Runs for BOTH translated and skipped (same-language/no-op) peer
+        utterances, so a peer message the user sees in subtitles always reaches the
+        chatbox when loopback is on — previously skipped utterances silently never sent.
+
+        Sends source first, then transliteration (if enabled), then translation. When
+        translation-only is requested, or the translation is identical to the source
+        (a no-op skip), only the single line is sent to avoid duplicate text."""
+        if not self.chatbox_send_peer:
+            return
+        if self.loopback_selected_languages_only and not self._loopback_language_allowed(source_text):
+            return
+        peer_translit = romanization or ""
+        if not peer_translit and (self.send_pinyin or self.send_romaji or self.send_latin):
+            try:
+                from puripuly_heart.core.transliteration import transliterate_for_language as _tfl
+                peer_translit = _tfl(
+                    translation_text, self.target_language,
+                    show_pinyin=self.send_pinyin, show_romaji=self.send_romaji, show_latin=self.send_latin,
+                )
+            except Exception:
+                pass
+        if self.chatbox_send_peer_translation_only or source_text.strip() == translation_text.strip():
+            peer_osc_text = (
+                f"{peer_translit}\n{translation_text}" if peer_translit else translation_text
+            )
+        elif peer_translit:
+            peer_osc_text = f"{source_text}\n{peer_translit}\n{translation_text}"
+        else:
+            peer_osc_text = f"{source_text}\n{translation_text}"
+        self.osc.enqueue(
+            OSCMessage(utterance_id=utterance_id, text=peer_osc_text, created_at=self.clock.now())
+        )
 
     async def handle_peer_transcript_final_for_test(
         self,

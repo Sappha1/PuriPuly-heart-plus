@@ -157,17 +157,37 @@ class _AsyncioOverlayProcess:
     def _log_passthrough_line(self, line: str, stream_name: str) -> None:
         if not line:
             return
-        if stream_name == "stderr" or "[ERROR]" in line:
+        # The overlay subprocess (and flet) write ordinary INFO logs to stderr, so we
+        # CANNOT treat the whole stderr stream as errors — that floods the parent log
+        # with [ERROR]-tagged lines for normal startup output. Classify by the line's
+        # own level marker first; only fall back to the stream when there's no marker.
+        if "[ERROR]" in line or "[CRITICAL]" in line:
             logger.error(line)
             return
         if "[WARN]" in line:
             logger.warning(line)
             return
-        if self._logging_mode == "detailed":
+        if "[INFO]" in line or "[DEBUG]" in line:
+            if self._logging_mode == "detailed":
+                logger.info(line)
+            return
+        # No recognized level marker. An unmarked stderr line may be a real failure
+        # (e.g. a raw Python traceback), so keep it visible at warning; unmarked stdout
+        # is only surfaced in detailed mode.
+        if stream_name == "stderr":
+            logger.warning(line)
+        elif self._logging_mode == "detailed":
             logger.info(line)
 
     def _should_capture_failure_line(self, line: str, stream_name: str) -> bool:
-        return stream_name == "stderr" or "[WARN]" in line or "[ERROR]" in line
+        # Only capture genuine problem lines for the failure summary. Normal INFO/DEBUG
+        # output on stderr is not a failure signal, so exclude it to keep the captured
+        # diagnostics (and the stderr/stdout line counts) meaningful.
+        if "[ERROR]" in line or "[CRITICAL]" in line or "[WARN]" in line:
+            return True
+        if "[INFO]" in line or "[DEBUG]" in line:
+            return False
+        return stream_name == "stderr"
 
     async def _finish_readers(self) -> None:
         tasks = self._reader_tasks

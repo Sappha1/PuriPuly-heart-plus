@@ -76,6 +76,22 @@ def _get_cutlet():
     return _CUTLET_INSTANCE
 
 
+def warmup() -> None:
+    """Pre-load the heavy transliteration backends so the FIRST live utterance doesn't
+    pay their one-time init cost. cutlet/MeCab dictionary loading is ~150ms on the first
+    Japanese romaji call (afterwards it's ~0.05ms); pypinyin lazy-loads its dictionary on
+    the first Chinese call. Safe to call from a background thread; failures are ignored."""
+    try:
+        _get_cutlet().romaji("日本")
+    except Exception:
+        pass
+    try:
+        from pypinyin import lazy_pinyin
+        lazy_pinyin("你好")
+    except Exception:
+        pass
+
+
 def to_romaji(text: str) -> str:
     """Convert Japanese text to Hepburn romaji with proper word spacing via MeCab/cutlet."""
     try:

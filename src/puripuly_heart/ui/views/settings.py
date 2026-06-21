@@ -1314,7 +1314,7 @@ class SettingsView(ft.Column):
         show_pinyin_card = self._wrap_unit_card(
             title=self._info_title(
                 ft.Text(t("settings.show_pinyin"), size=13, weight=ft.FontWeight.BOLD, color=COLOR_NEUTRAL),
-                "Show pinyin (romanised Mandarin pronunciation) beneath Chinese characters in the chat log."),
+                t("settings.show_pinyin.tooltip")),
             value=self._show_pinyin_text,
         )
         self._show_romaji_text = self._build_clickable_text(
@@ -1324,7 +1324,7 @@ class SettingsView(ft.Column):
         show_romaji_card = self._wrap_unit_card(
             title=self._info_title(
                 ft.Text(t("settings.show_romaji"), size=13, weight=ft.FontWeight.BOLD, color=COLOR_NEUTRAL),
-                "Show romaji (romanised Japanese pronunciation) beneath Japanese characters in the chat log."),
+                t("settings.show_romaji.tooltip")),
             value=self._show_romaji_text,
         )
         self._send_pinyin_text = self._build_clickable_text(
@@ -1334,7 +1334,7 @@ class SettingsView(ft.Column):
         send_pinyin_card = self._wrap_unit_card(
             title=self._info_title(
                 ft.Text(t("settings.send_pinyin"), size=13, weight=ft.FontWeight.BOLD, color=COLOR_NEUTRAL),
-                "Include pinyin in the text sent to the VRChat chatbox alongside the Chinese translation."),
+                t("settings.send_pinyin.tooltip")),
             value=self._send_pinyin_text,
         )
         self._send_romaji_text = self._build_clickable_text(
@@ -1344,7 +1344,7 @@ class SettingsView(ft.Column):
         send_romaji_card = self._wrap_unit_card(
             title=self._info_title(
                 ft.Text(t("settings.send_romaji"), size=13, weight=ft.FontWeight.BOLD, color=COLOR_NEUTRAL),
-                "Include romaji in the text sent to the VRChat chatbox alongside the Japanese translation."),
+                t("settings.send_romaji.tooltip")),
             value=self._send_romaji_text,
         )
         self._show_latin_text = self._build_clickable_text(
@@ -1354,8 +1354,7 @@ class SettingsView(ft.Column):
         show_latin_card = self._wrap_unit_card(
             title=self._info_title(
                 ft.Text(t("settings.show_latin"), size=13, weight=ft.FontWeight.BOLD, color=COLOR_NEUTRAL),
-                "Show Latin-script transliteration for other scripts (e.g. Arabic, Korean, Thai) "
-                "beneath the text in the chat log."),
+                t("settings.show_latin.tooltip")),
             value=self._show_latin_text,
         )
         self._send_latin_text = self._build_clickable_text(
@@ -1365,7 +1364,7 @@ class SettingsView(ft.Column):
         send_latin_card = self._wrap_unit_card(
             title=self._info_title(
                 ft.Text(t("settings.send_latin"), size=13, weight=ft.FontWeight.BOLD, color=COLOR_NEUTRAL),
-                "Include Latin transliteration in the text sent to the VRChat chatbox."),
+                t("settings.send_latin.tooltip")),
             value=self._send_latin_text,
         )
         self._self_in_overlay_text = self._build_clickable_text(
@@ -1375,8 +1374,7 @@ class SettingsView(ft.Column):
         self_in_overlay_card = self._wrap_unit_card(
             title=self._info_title(
                 ft.Text(t("settings.self_in_overlay"), size=13, weight=ft.FontWeight.BOLD, color=COLOR_NEUTRAL),
-                "When ON, your own translated messages also appear in the overlay caption window, "
-                "not just the other person's."),
+                t("settings.self_in_overlay.tooltip")),
             value=self._self_in_overlay_text,
         )
         self._filter_peer_lang_text = self._build_clickable_text(
@@ -1386,8 +1384,7 @@ class SettingsView(ft.Column):
         filter_peer_lang_card = self._wrap_unit_card(
             title=self._info_title(
                 ft.Text(t("settings.filter_peer_by_target_languages"), size=13, weight=ft.FontWeight.BOLD, color=COLOR_NEUTRAL),
-                "When ON, only processes peer audio that matches your configured language pair. "
-                "Filters out speech in unrecognised or unexpected languages."),
+                t("settings.filter_peer_by_target_languages.tooltip")),
             value=self._filter_peer_lang_text,
         )
 
@@ -1397,9 +1394,8 @@ class SettingsView(ft.Column):
         )
         live_preview_card = self._wrap_unit_card(
             title=self._info_title(
-                ft.Text("Live preview", size=13, weight=ft.FontWeight.BOLD, color=COLOR_NEUTRAL),
-                "When ON, your typed or spoken text appears in the chat immediately "
-                "while waiting for the translation to arrive."),
+                ft.Text(t("settings.live_preview"), size=13, weight=ft.FontWeight.BOLD, color=COLOR_NEUTRAL),
+                t("settings.live_preview.tooltip")),
             value=self._live_preview_text,
         )
 
@@ -1409,9 +1405,8 @@ class SettingsView(ft.Column):
         )
         chatbox_send_peer_card = self._wrap_unit_card(
             title=self._info_title(
-                ft.Text("Peer voice to chatbox", size=13, weight=ft.FontWeight.BOLD, color=COLOR_NEUTRAL),
-                "When ON, incoming peer speech is sent to the VRChat chatbox — "
-                "original text first, then the translation, so your peer can verify accuracy."),
+                ft.Text(t("settings.chatbox_send_peer"), size=13, weight=ft.FontWeight.BOLD, color=COLOR_NEUTRAL),
+                t("settings.chatbox_send_peer.tooltip")),
             value=self._chatbox_send_peer_text,
         )
 

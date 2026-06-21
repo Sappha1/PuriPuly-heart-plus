@@ -141,7 +141,7 @@ class _LangRow(ft.Container):
         self._swap_btn = ft.Container(
             content=ft.Icon(ft.Icons.SWAP_HORIZ, size=14, color=_TEXT_FAINT),
             on_click=on_swap,
-            tooltip="Swap languages",
+            tooltip=t("dashboard.tooltip.swap_languages"),
             padding=ft.padding.symmetric(horizontal=2, vertical=0),
             border_radius=3,
         )
@@ -335,6 +335,10 @@ class DashboardView(ft.Row):
         self._row_trans = _ToggleRow(ft.Icons.TRANSLATE, t("dashboard.trans_label"), on_click=self._on_trans_click)
         self._row_overlay = _ToggleRow(ft.Icons.SUBTITLES, t("dashboard.overlay_label"), on_click=self._on_overlay_click)
         self._overlay_header_btn: ft.Container | None = None  # built later in chat header
+        # (control, i18n_key) pairs for tooltips set once at construction. apply_locale
+        # re-applies them so a runtime UI-language change updates the hover text too
+        # (Flet tooltips don't re-evaluate t() on their own).
+        self._static_tooltip_registry: list[tuple[Any, str]] = []
 
         self._sync_stt_button_state()
         self._sync_translation_button_state()
@@ -415,7 +419,7 @@ class DashboardView(ft.Row):
         self._plus_btn = ft.Container(
             content=ft.Icon(ft.Icons.ADD_CIRCLE_OUTLINE, size=14, color=_TEXT_FAINT),
             on_click=self._on_add_extra_target,
-            tooltip="Add target language",
+            tooltip=t("dashboard.tooltip.add_target"),
             padding=ft.padding.only(left=4),
         )
 
@@ -447,16 +451,14 @@ class DashboardView(ft.Row):
 
         _your_lang_info = ft.Container(
             content=ft.Icon(ft.Icons.INFO_OUTLINE, size=11, color="#5a5b60"),
-            tooltip=(
-                "Your spoken language (top card) — what you say.\n"
-                "Your translation target (bottom card) — what it gets translated into.\n"
-                "Tap either card to change. Use + to add a second target language."
-            ),
+            tooltip=t("dashboard.tooltip.your_language_info"),
             padding=ft.padding.only(left=4),
         )
+        self._static_tooltip_registry.append((_your_lang_info, "dashboard.tooltip.your_language_info"))
+        self._lbl_your_language = ft.Text(t("dashboard.your_language"), size=10, color="#c8c9cc")
         _your_lang_label_row = ft.Row(
             [
-                ft.Text("Your Language", size=10, color="#c8c9cc"),
+                self._lbl_your_language,
                 _your_lang_info,
             ],
             spacing=0,
@@ -485,14 +487,14 @@ class DashboardView(ft.Row):
         self._src_plus_btn = ft.Container(
             content=ft.Icon(ft.Icons.ADD_CIRCLE_OUTLINE, size=14, color=_TEXT_FAINT),
             on_click=self._on_add_alt_source,
-            tooltip="Add second spoken language (bilingual quick-switch)",
+            tooltip=t("dashboard.tooltip.add_second_spoken"),
             visible=self._alt_source_lang_code is None,
             padding=ft.padding.only(left=4),
         )
         self._src_minus_btn = ft.Container(
             content=ft.Icon(ft.Icons.REMOVE_CIRCLE_OUTLINE, size=14, color=_TEXT_FAINT),
             on_click=self._on_remove_alt_source,
-            tooltip="Remove second spoken language",
+            tooltip=t("dashboard.tooltip.remove_second_spoken"),
             padding=ft.padding.only(left=4),
         )
         self._src_lang_card.expand = True
@@ -525,7 +527,8 @@ class DashboardView(ft.Row):
             spacing=6,
             alignment=ft.MainAxisAlignment.CENTER,
         )
-        _translate_to_label = ft.Text("Translate to", size=10, color="#c8c9cc")
+        self._lbl_translate_to = ft.Text(t("dashboard.translate_to"), size=10, color="#c8c9cc")
+        _translate_to_label = self._lbl_translate_to
         lang_panel = ft.Container(
             content=ft.Column(
                 [
@@ -554,7 +557,7 @@ class DashboardView(ft.Row):
         self._peer_plus_btn = ft.Container(
             content=ft.Icon(ft.Icons.ADD_CIRCLE_OUTLINE, size=14, color=_TEXT_FAINT),
             on_click=self._on_add_extra_peer_target,
-            tooltip="Add peer target language",
+            tooltip=t("dashboard.tooltip.add_peer_target"),
             padding=ft.padding.only(left=4),
         )
         self._peer_src_card.expand = True
@@ -562,7 +565,7 @@ class DashboardView(ft.Row):
         self._peer_src_plus_btn = ft.Container(
             content=ft.Icon(ft.Icons.ADD_CIRCLE_OUTLINE, size=14, color=_TEXT_FAINT),
             on_click=self._on_add_extra_peer_source,
-            tooltip="Listen to another peer language",
+            tooltip=t("dashboard.tooltip.listen_another_peer"),
             padding=ft.padding.only(left=4),
         )
         self._peer_src_plus_slot = ft.Container(
@@ -591,21 +594,24 @@ class DashboardView(ft.Row):
             spacing=3,
             horizontal_alignment=ft.CrossAxisAlignment.STRETCH,
         )
+        self._lbl_you_speak = ft.Text(t("dashboard.you_speak"), size=10, color="#c8c9cc")
         _you_speak_info = ft.Container(
             content=ft.Icon(ft.Icons.INFO_OUTLINE, size=11, color=_TEXT_FAINT),
-            tooltip="Your spoken language — sets the microphone (STT) recognition language.\nAlso used as source for text translation.\nClick to change; select Auto Detect to let it guess.",
+            tooltip=t("dashboard.tooltip.your_spoken_lang"),
             padding=ft.padding.only(left=2),
         )
+        self._static_tooltip_registry.append((_you_speak_info, "dashboard.tooltip.your_spoken_lang"))
         _peer_speaks_info = ft.Container(
             content=ft.Icon(ft.Icons.INFO_OUTLINE, size=11, color=_TEXT_FAINT),
-            tooltip="The language your peer speaks.\nSet this so incoming audio translates correctly.\nAuto Detect works if you're unsure.",
+            tooltip=t("dashboard.tooltip.peer_spoken_lang"),
             padding=ft.padding.only(left=2),
         )
+        self._static_tooltip_registry.append((_peer_speaks_info, "dashboard.tooltip.peer_spoken_lang"))
         self._peer_panel = ft.Container(
             content=ft.Column(
                 [
                     ft.Row(
-                        [ft.Text("You Speak", size=10, color="#c8c9cc"), _you_speak_info],
+                        [self._lbl_you_speak, _you_speak_info],
                         spacing=0,
                         vertical_alignment=ft.CrossAxisAlignment.CENTER,
                     ),
@@ -679,7 +685,7 @@ class DashboardView(ft.Row):
                 or setattr(e.control, "border", ft.border.all(1, _TOGGLE_ON if e.data == "true" else "#4a4b4f"))
                 or (e.control.update() if e.control.page else None)
             ),
-            tooltip="Change translation AI model (not microphone)",
+            tooltip=t("dashboard.tooltip.change_model"),
             expand=True,
         )
         self.on_translator_change: object = None  # callback(model_value: str)
@@ -732,7 +738,7 @@ class DashboardView(ft.Row):
         self._mini_lang_text = ft.Text(
             "—", size=9, color=_TEXT_FAINT, text_align=ft.TextAlign.CENTER,
             no_wrap=True, overflow=ft.TextOverflow.ELLIPSIS,
-            tooltip="Language settings — click to expand sidebar",
+            tooltip=t("dashboard.tooltip.language_settings_expand"),
         )
         _mini_lang_tap = ft.GestureDetector(
             content=ft.Container(
@@ -771,7 +777,7 @@ class DashboardView(ft.Row):
         self._collapse_btn_ctrl = ft.Container(
             content=self._collapse_icon,
             on_click=self._on_sidebar_collapse_click,
-            tooltip="Collapse sidebar",
+            tooltip=t("dashboard.tooltip.collapse_sidebar"),
             padding=ft.padding.all(4),
             border_radius=4,
             on_hover=lambda e: (
@@ -804,14 +810,18 @@ class DashboardView(ft.Row):
         _CARD_BORDER = "#454648"
         _CARD_ICON_COLOR = "#c8c9cc"
 
-        def _section_card(icon: str, label: str, content: ft.Control) -> ft.Container:
+        self._section_header_labels: list[tuple[ft.Text, str]] = []
+
+        def _section_card(icon: str, label_key: str, content: ft.Control) -> ft.Container:
+            _lbl = ft.Text(t(label_key), size=11, color=_TOGGLE_ON, weight=ft.FontWeight.W_700)
+            self._section_header_labels.append((_lbl, label_key))
             return ft.Container(
                 content=ft.Column(
                     [
                         ft.Row(
                             [
                                 ft.Icon(icon, size=15, color=_CARD_ICON_COLOR),
-                                ft.Text(label, size=11, color=_TOGGLE_ON, weight=ft.FontWeight.W_700),
+                                _lbl,
                             ],
                             spacing=6,
                             vertical_alignment=ft.CrossAxisAlignment.CENTER,
@@ -834,8 +844,8 @@ class DashboardView(ft.Row):
                     content=self._preset_tabs_row,
                     padding=ft.padding.symmetric(horizontal=10, vertical=4),
                 ),
-                _section_card(ft.Icons.CHAT_BUBBLE_OUTLINE, "TEXT TRANSLATION", self._lang_panel),
-                _section_card(ft.Icons.GRAPHIC_EQ, "VOICE TRANSLATION", self._peer_panel),
+                _section_card(ft.Icons.CHAT_BUBBLE_OUTLINE, "dashboard.section.text_translation", self._lang_panel),
+                _section_card(ft.Icons.GRAPHIC_EQ, "dashboard.section.voice_translation", self._peer_panel),
             ],
             scroll=ft.ScrollMode.AUTO,
             expand=True,
@@ -889,7 +899,7 @@ class DashboardView(ft.Row):
             content=ft.Row(
                 [
                     ft.Icon(ft.Icons.DOWNLOAD, size=12, color="#ffffff"),
-                    ft.Text("Download", size=11, color="#ffffff", weight=ft.FontWeight.W_600),
+                    ft.Text(t("dashboard.download"), size=11, color="#ffffff", weight=ft.FontWeight.W_600),
                 ],
                 spacing=3,
                 tight=True,
@@ -899,7 +909,7 @@ class DashboardView(ft.Row):
             padding=ft.padding.symmetric(horizontal=7, vertical=3),
             on_click=lambda _: self.on_request_stt_download() if callable(self.on_request_stt_download) else None,
             visible=False,
-            tooltip="Download the Qwen ASR local model (~980 MB)",
+            tooltip=t("dashboard.tooltip.download_qwen"),
         )
         self._notice_strip = ft.Container(
             content=ft.Row(
@@ -946,7 +956,7 @@ class DashboardView(ft.Row):
                 weight=ft.FontWeight.W_600,
             ),
             on_click=self._on_chat_filter_peer_click,
-            tooltip="When on: only shows received messages from your configured Peer voice language(s)",
+            tooltip=t("dashboard.tooltip.filter_peer"),
             padding=ft.padding.symmetric(horizontal=7, vertical=3),
             border_radius=10,
             bgcolor="#2d1f33",
@@ -973,18 +983,20 @@ class DashboardView(ft.Row):
             width=1, height=12,
             bgcolor="#4a4b4f",
         )
-        _overlay_left = ft.GestureDetector(
-            content=ft.Container(
-                content=ft.Row(
-                    [self._overlay_header_text, self._overlay_mode_chip],
-                    spacing=0,
-                    tight=True,
-                    vertical_alignment=ft.CrossAxisAlignment.CENTER,
-                ),
-                on_click=self._on_overlay_click,
-                tooltip=t("dashboard.overlay.tooltip"),
-                padding=ft.padding.only(left=8, right=6, top=3, bottom=3),
+        self._overlay_main_tip_box = ft.Container(
+            content=ft.Row(
+                [self._overlay_header_text, self._overlay_mode_chip],
+                spacing=0,
+                tight=True,
+                vertical_alignment=ft.CrossAxisAlignment.CENTER,
             ),
+            on_click=self._on_overlay_click,
+            tooltip=t("dashboard.overlay.tooltip"),
+            padding=ft.padding.only(left=8, right=6, top=3, bottom=3),
+        )
+        self._static_tooltip_registry.append((self._overlay_main_tip_box, "dashboard.overlay.tooltip"))
+        _overlay_left = ft.GestureDetector(
+            content=self._overlay_main_tip_box,
             on_secondary_tap_down=self._on_overlay_right_click,
         )
         self._overlay_lock_side = ft.Container(
@@ -1019,6 +1031,7 @@ class DashboardView(ft.Row):
             bgcolor=ft.Colors.TRANSPARENT,
             border=_pill_border_off,
         )
+        self._static_tooltip_registry.append((self._chatbox_peer_btn, "dashboard.loopback.tooltip"))
         self._vrc_mute_sync_btn = ft.Container(
             content=ft.Text(
                 "Mute Sync",
@@ -1033,9 +1046,10 @@ class DashboardView(ft.Row):
             bgcolor=ft.Colors.TRANSPARENT,
             border=_pill_border_off,
         )
+        self._chat_header_label = ft.Text(t("dashboard.chat"), size=11, color=_TEXT_FAINT, weight=ft.FontWeight.W_500)
         chat_header = ft.Row(
             [
-                ft.Text("Chat", size=11, color=_TEXT_FAINT, weight=ft.FontWeight.W_500),
+                self._chat_header_label,
                 ft.Container(expand=True),
                 self._vrc_mute_sync_btn,
                 ft.Container(width=4),
@@ -2154,7 +2168,7 @@ class DashboardView(ft.Row):
             minus = ft.Container(
                 content=ft.Icon(ft.Icons.REMOVE_CIRCLE_OUTLINE, size=14, color=_TEXT_FAINT),
                 on_click=lambda _, idx=i: self._on_remove_extra_target(idx),
-                tooltip="Remove target language", width=_BTN_SLOT,
+                tooltip=t("dashboard.tooltip.remove_target"), width=_BTN_SLOT,
             )
             card_row = ft.Row([card, minus], spacing=4, vertical_alignment=ft.CrossAxisAlignment.CENTER)
             translit_col = self._build_translit_col(lang_code)
@@ -2192,7 +2206,7 @@ class DashboardView(ft.Row):
             minus = ft.Container(
                 content=ft.Icon(ft.Icons.REMOVE_CIRCLE_OUTLINE, size=14, color=_TEXT_FAINT),
                 on_click=lambda _, idx=i: self._on_remove_extra_peer_target(idx),
-                tooltip="Remove peer target language", width=_BTN_SLOT,
+                tooltip=t("dashboard.tooltip.remove_peer_target"), width=_BTN_SLOT,
             )
             card_row = ft.Row([card, minus], spacing=4, vertical_alignment=ft.CrossAxisAlignment.CENTER)
             translit_col = self._build_translit_col(lang_code)
@@ -2460,6 +2474,13 @@ class DashboardView(ft.Row):
     def set_peer_stt_provider_label(self, label: str, provider_value: str = "") -> None:
         if provider_value:
             self._current_peer_stt_provider_value = provider_value
+        self._refresh_peer_tooltip(label)
+
+    def _refresh_peer_tooltip(self, label: str | None = None) -> None:
+        if label is None:
+            label = getattr(self, "_current_peer_stt_label", "")
+        else:
+            self._current_peer_stt_label = label
         self._row_peer.set_tooltip(
             t("dashboard.peer.tooltip")
             + "\n" + t("dashboard.tooltip.model", model=label)
@@ -2549,7 +2570,7 @@ class DashboardView(ft.Row):
         )
 
         return ft.Column(
-            [ft.Row([show_chip, send_chip], spacing=6, alignment=ft.MainAxisAlignment.START)],
+            [ft.Row([show_chip, send_chip], spacing=6, alignment=ft.MainAxisAlignment.START, wrap=True)],
             visible=script is not None,
             horizontal_alignment=ft.CrossAxisAlignment.START,
             spacing=0,
@@ -2883,7 +2904,7 @@ class DashboardView(ft.Row):
             minus = ft.Container(
                 content=ft.Icon(ft.Icons.REMOVE_CIRCLE_OUTLINE, size=14, color=_TEXT_FAINT),
                 on_click=lambda _, idx=i: self._on_remove_extra_peer_source(idx),
-                tooltip="Remove peer language", width=_BTN_SLOT,
+                tooltip=t("dashboard.tooltip.remove_peer_lang"), width=_BTN_SLOT,
             )
             rows.append(ft.Row([card, minus], spacing=4, vertical_alignment=ft.CrossAxisAlignment.CENTER))
         self._extra_peer_src_rows_col.controls = rows
@@ -3348,7 +3369,48 @@ class DashboardView(ft.Row):
                 self._msg_input.update()
             except Exception:
                 pass
+        for _attr, _key in (
+            ("_lbl_your_language", "dashboard.your_language"),
+            ("_lbl_translate_to", "dashboard.translate_to"),
+            ("_lbl_you_speak", "dashboard.you_speak"),
+            ("_chat_header_label", "dashboard.chat"),
+        ):
+            _lbl = getattr(self, _attr, None)
+            if _lbl is not None:
+                _lbl.value = t(_key)
+                try:
+                    _lbl.update()
+                except Exception:
+                    pass
+        for _hdr, _key in getattr(self, "_section_header_labels", []):
+            _hdr.value = t(_key)
+            try:
+                _hdr.update()
+            except Exception:
+                pass
+        # Re-localize tooltips that were set once at construction. Flet tooltips don't
+        # re-evaluate t() on a runtime UI-language change, so the MIC/PEER/TRANS rows and
+        # the Loopback/Overlay buttons kept their startup-language hover text until now.
+        # (Mute Sync, the overlay lock, and the VR/PC chip refresh via the _sync_* calls
+        # above, which rebuild their state-dependent tooltips.)
+        try:
+            self._refresh_stt_tooltip()
+            self._refresh_trans_tooltip()
+            self._refresh_peer_tooltip()
+        except Exception:
+            pass
+        for _ctrl, _key in getattr(self, "_static_tooltip_registry", []):
+            try:
+                _ctrl.tooltip = t(_key)
+                _ctrl.update()
+            except Exception:
+                pass
         if hasattr(self, "_peer_src_card"):
+            # Re-localize BOTH the self language cards/tabs (favorites panel) and the
+            # peer row. Previously only the peer row refreshed on a UI-language change,
+            # so the favorites' self source/target names stayed in the old language
+            # until the user switched preset tabs and back (which calls both).
+            self._refresh_language_panel()
             self._refresh_language_rows()
         if self._stt_showing_warning:
             self.set_display_text(t("dashboard.warn_stt_key"))

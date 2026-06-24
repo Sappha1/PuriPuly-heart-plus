@@ -2663,7 +2663,7 @@ class DashboardView(ft.Row):
         )
 
         return ft.Column(
-            [ft.Row([show_chip, send_chip], spacing=6, alignment=ft.MainAxisAlignment.START, wrap=True)],
+            [ft.Row([show_chip, send_chip], spacing=6, alignment=ft.MainAxisAlignment.START, wrap=False)],
             visible=script is not None,
             horizontal_alignment=ft.CrossAxisAlignment.START,
             spacing=0,
@@ -2930,7 +2930,10 @@ class DashboardView(ft.Row):
         self._notify_language_change()
 
     def _on_peer_target_select(self, lang_code: str):
-        self._peer_target_lang_code = "" if lang_code == self._target_lang_code else lang_code
+        # Empty = "follow my language": the peer voice translates into the source
+        # ("You Speak") language. Picking your own source language collapses back to
+        # that default rather than pinning an explicit (redundant) override.
+        self._peer_target_lang_code = "" if lang_code == self._source_lang_code else lang_code
         self._add_to_recent(lang_code, is_source=False)
         self._refresh_language_rows()
         self._notify_language_change()
@@ -3145,7 +3148,12 @@ class DashboardView(ft.Row):
                 self._source_lang_code,
                 self._target_lang_code,
                 self._peer_source_lang_code,
-                self._effective_peer_target_lang_code(),
+                # Persist the RAW peer target — empty means "follow my language"
+                # (the hub falls back to source). Persisting the *effective* value
+                # would bake the current source in as a concrete pin, so e.g. being
+                # on an English preset once would permanently pin peer→English even
+                # after switching to a Chinese preset. See Hub._target_language_for.
+                self._peer_target_lang_code,
                 self._active_preset,
                 list(self._extra_target_lang_codes),
                 list(self._extra_peer_source_lang_codes),

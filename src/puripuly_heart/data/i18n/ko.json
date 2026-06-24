@@ -552,6 +552,7 @@
   "dashboard.your_language": "내 언어",
   "dashboard.translate_to": "번역 대상",
   "dashboard.you_speak": "내가 말하는 언어",
+  "dashboard.peer_translate_to": "번역할 언어",
   "dashboard.download": "다운로드",
   "dashboard.chat": "채팅",
   "dashboard.tooltip.swap_languages": "언어 바꾸기",

@@ -34,7 +34,7 @@ from puripuly_heart.config.llm_profiles import (
 )
 from puripuly_heart.ui.overlay_calibration import OverlayCalibration
 
-SETTINGS_SCHEMA_VERSION = 25
+SETTINGS_SCHEMA_VERSION = 27
 STT_INTERNAL_SAMPLE_RATE_HZ = 16000
 DEFAULT_DESKTOP_AUDIO_VAD_HANGOVER_MS = 500
 MAX_CUSTOM_VOCAB_TERMS = 100
@@ -468,7 +468,9 @@ class LanguageSettings:
 
     @property
     def effective_peer_target(self) -> str:
-        return self.peer_target_language or self.target_language
+        # Peer voice translates into YOUR language (source / "You Speak") by default,
+        # not your outbound target. See Hub._target_language_for.
+        return self.peer_target_language or self.source_language
 
 
 @dataclass(slots=True)
@@ -2960,6 +2962,45 @@ def _migrate_settings_dict(raw: dict[str, Any]) -> tuple[dict[str, Any], bool]:
         overlay_data["auto_switch"] = True
         changed = True
         version = 25
+
+    if version < 26:
+        # Peer voice now translates into the user's own ("You Speak"/source)
+        # language by default. The separate peer-target control was never actually
+        # shown in the UI, so any stored peer_target_language is a stale default
+        # (typically "en"), not a deliberate choice — clear it so the peer target
+        # follows the source language. Users can set an explicit peer target via the
+        # now-visible control afterward.
+        languages_data = data.get("languages")
+        if isinstance(languages_data, dict):
+            if languages_data.get("peer_target_language"):
+                languages_data["peer_target_language"] = ""
+                changed = True
+            presets_data = languages_data.get("presets")
+            if isinstance(presets_data, list):
+                for preset_data in presets_data:
+                    if isinstance(preset_data, dict) and preset_data.get("peer_target_language"):
+                        preset_data["peer_target_language"] = ""
+                        changed = True
+        version = 26
+
+    if version < 27:
+        # v26 cleared the stale peer_target pins, but the dashboard was still
+        # persisting the *effective* peer target (peer_target or source), which
+        # re-pinned it (e.g. to "en" after ever touching an English-source preset).
+        # That persistence is now fixed to store the raw value; re-clear the pins
+        # one more time so existing configs actually follow the source language.
+        languages_data = data.get("languages")
+        if isinstance(languages_data, dict):
+            if languages_data.get("peer_target_language"):
+                languages_data["peer_target_language"] = ""
+                changed = True
+            presets_data = languages_data.get("presets")
+            if isinstance(presets_data, list):
+                for preset_data in presets_data:
+                    if isinstance(preset_data, dict) and preset_data.get("peer_target_language"):
+                        preset_data["peer_target_language"] = ""
+                        changed = True
+        version = 27
 
     if _normalize_local_llm_data(data):
         changed = True

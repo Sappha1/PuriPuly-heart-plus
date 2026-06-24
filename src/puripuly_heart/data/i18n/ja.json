@@ -552,6 +552,7 @@
   "dashboard.your_language": "あなたの言語",
   "dashboard.translate_to": "翻訳先",
   "dashboard.you_speak": "あなたの発話",
+  "dashboard.peer_translate_to": "翻訳先",
   "dashboard.download": "ダウンロード",
   "dashboard.chat": "チャット",
   "dashboard.tooltip.swap_languages": "言語を入れ替え",

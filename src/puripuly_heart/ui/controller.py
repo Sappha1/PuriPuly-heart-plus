@@ -123,7 +123,11 @@ from puripuly_heart.core.overlay.process import (
     OverlayProcessManager,
     OverlayProcessRunner,
 )
-from puripuly_heart.core.runtime.peer_channel import PeerChannelRuntime, PeerRuntimeConfig
+from puripuly_heart.core.runtime.peer_channel import (
+    PeerChannelRuntime,
+    PeerChannelRuntimeState,
+    PeerRuntimeConfig,
+)
 from puripuly_heart.core.runtime_logging import SessionLoggingMode, SessionRuntimeLoggingService
 from puripuly_heart.core.stt.controller import (
     FinalTranscriptSuppressedNotification,
@@ -2647,11 +2651,16 @@ class GuiController:
         # pin the signature's language slot to a stable sentinel instead of the
         # self-language-derived hint, avoiding an unnecessary reload.
         signature_language = backend.source_language
-        if (
-            settings.provider.peer_stt == STTProviderName.LOCAL_QWEN
-            and not settings.languages.peer_source_language
-        ):
-            signature_language = "__auto__"
+        if settings.provider.peer_stt == STTProviderName.LOCAL_QWEN:
+            # Local Qwen is a single multilingual model: the source language is only a
+            # per-utterance soft hint (set on each decode stream), NOT a model
+            # parameter, and the model auto-detects language anyway. Switching favorite
+            # tabs that use the same model but a different peer language should NOT
+            # reload it — but the language was part of the signature, so every tab
+            # switch tore the model down and showed the "loading model" popup. Pin the
+            # signature's language slot to a stable sentinel so only real model/device
+            # changes reload it.
+            signature_language = "__local_qwen_multilingual__"
         return PeerRuntimeConfig(
             backend=backend,
             output_device=settings.desktop_audio.output_device,
@@ -4674,8 +4683,19 @@ class GuiController:
 
         config = self._build_peer_runtime_config(self.settings)
         desired_active = self._peer_runtime_should_be_active(self.settings)
-        if desired_active and not await self._ensure_peer_local_stt_ready():
-            desired_active = False
+        # If the peer STT is already running with this exact config, the runtime's
+        # apply_policy below is a no-op — so DON'T run the readiness probe, which
+        # loads a fresh peer STT backend just to confirm it can load. That probe is
+        # what made unrelated events (most visibly toggling the overlay on/off, which
+        # calls _refresh_overlay_runtime_dependencies) reload the speech model every
+        # time. Only probe when something actually needs to (re)start.
+        already_running_same_config = (
+            self._peer_runtime.state == PeerChannelRuntimeState.RUNNING
+            and self._peer_runtime.current_signature == config.runtime_signature
+        )
+        if desired_active and not already_running_same_config:
+            if not await self._ensure_peer_local_stt_ready():
+                desired_active = False
         await self._peer_runtime.apply_policy(config=config, desired_active=desired_active)
         self._last_peer_stt_runtime_signature = config.runtime_signature
         self._sync_effective_hub_flags(self.settings)

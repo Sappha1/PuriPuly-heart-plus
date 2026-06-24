@@ -341,6 +341,11 @@ class ResolvedPeerSTTConfig:
     soniox_endpoint: str | None = None
     soniox_keepalive_interval_s: float | None = None
     soniox_trailing_silence_ms: int | None = None
+    # Resolved per-utterance language hint for backends (local Qwen) that apply the
+    # language as a soft hint rather than a model parameter. Carried here so a running
+    # backend can have its hint refreshed live when the language changes — without
+    # reloading the (large, multilingual) model. None = no hint / auto-detect.
+    language_hint: str | None = None
 
 
 def create_secret_store(
@@ -696,11 +701,15 @@ def resolve_peer_stt_config(settings: AppSettings) -> ResolvedPeerSTTConfig:
         )
 
     if provider == STTProviderName.LOCAL_QWEN:
+        from puripuly_heart.core.language import get_local_qwen_language_hint
+
         return ResolvedPeerSTTConfig(
             provider=provider,
             source_language=peer_source_language,
             sample_rate_hz=STT_INTERNAL_SAMPLE_RATE_HZ,
             keyterms=(),
+            # RAW peer source language so "Auto Detect" (empty) yields no hint.
+            language_hint=get_local_qwen_language_hint(settings.languages.peer_source_language),
         )
 
     if provider in (STTProviderName.GOOGLE_STT, STTProviderName.WHISPER):
@@ -810,7 +819,6 @@ def create_peer_stt_backend(
         )
 
     if resolved.provider == STTProviderName.LOCAL_QWEN:
-        from puripuly_heart.core.language import get_local_qwen_language_hint
         from puripuly_heart.core.local_stt_assets import default_local_stt_model_dir
         from puripuly_heart.providers.stt.local_qwen_sherpa import (
             LOCAL_QWEN_MIN_AVG_LOGPROB,
@@ -821,10 +829,9 @@ def create_peer_stt_backend(
             model_dir=default_local_stt_model_dir(),
             sample_rate_hz=resolved.sample_rate_hz,
             stream_label="peer",
-            # Use the RAW peer source language so "Auto Detect" (empty) sends no hint
-            # and the model detects the language itself, instead of falling back to
-            # your own spoken language (which forced wrong-language transcriptions).
-            language_hint=get_local_qwen_language_hint(settings.languages.peer_source_language),
+            # Resolved hint (RAW peer source language; "Auto Detect" → no hint so the
+            # model self-detects). Same value the runtime refreshes live on changes.
+            language_hint=resolved.language_hint,
             min_avg_logprob=(
                 LOCAL_QWEN_MIN_AVG_LOGPROB
                 if settings.stt.local_low_confidence_filter

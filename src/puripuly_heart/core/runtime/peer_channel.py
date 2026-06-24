@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import asyncio
+import contextlib
 import inspect
 from dataclasses import dataclass
 from enum import Enum
@@ -102,6 +103,15 @@ class PeerChannelRuntime:
                 and self._signature == config.runtime_signature
             ):
                 self._config = config
+                # Signature unchanged (e.g. only the peer language differs for the
+                # multilingual local model, whose language is a soft per-utterance
+                # hint) — keep the loaded model, but refresh the live backend's hint
+                # so transcription still tracks the selected language without an
+                # expensive reload. Guarded: only backends that expose language_hint.
+                stt = self._stt
+                if stt is not None and hasattr(stt, "language_hint"):
+                    with contextlib.suppress(Exception):
+                        stt.language_hint = getattr(config.backend, "language_hint", None)
                 return
             self._generation += 1
             generation = self._generation

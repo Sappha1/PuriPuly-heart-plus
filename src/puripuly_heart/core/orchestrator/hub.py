@@ -2980,8 +2980,14 @@ class ClientHub:
         return self.source_language
 
     def _target_language_for(self, runtime: ChannelRuntime) -> str:
-        if runtime.channel == "peer" and self.peer_target_language:
-            return self.peer_target_language
+        if runtime.channel == "peer":
+            # The peer's voice is translated into the language YOU read (your
+            # "You Speak"/source language), not your outbound target. Falling back
+            # to target_language was wrong whenever source != target (it would
+            # translate the peer into the language you translate yourself INTO,
+            # i.e. the peer's own language). Use an explicit peer target if set,
+            # else follow the source language.
+            return self.peer_target_language or self.source_language
         return self.target_language
 
     def _format_system_prompt(self, runtime: ChannelRuntime | None = None) -> str:

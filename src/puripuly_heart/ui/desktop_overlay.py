@@ -2430,6 +2430,11 @@ class FletDesktopRendererWindow:
             # native OS window has actually been resized to this size. Revealing
             # immediately would show the wrong-sized native frame for a beat.
             self._pending_startup_reveal = True
+            # The startup resize can silently fail to commit to the native frame on
+            # some machines (Flet reports the right size but the OS window stays
+            # wrong). Arm a forced re-assert for the first time the user enters edit
+            # mode so it self-corrects instead of needing a manual preset change.
+            self._needs_bounds_reassert_on_edit = True
             if hasattr(window, "visible"):
                 window.visible = False
             logger.info(
@@ -3195,7 +3200,11 @@ class FletDesktopRendererWindow:
         if bounds is None:
             return
         try:
-            await self._apply_window_bounds_with_retries(dict(bounds))
+            # force_resize: we're re-applying the SAME size Flet already holds, so a
+            # plain set would be a no-op. Force a real native resize so a startup
+            # resize that never actually committed gets corrected on first edit entry
+            # (otherwise the window stays the wrong size until a manual preset change).
+            await self._apply_window_bounds_with_retries(dict(bounds), force_resize=True)
         except Exception:
             logger.warning(
                 "[DesktopOverlay][Resize] re-assert after unlock failed; "
@@ -3242,14 +3251,14 @@ class FletDesktopRendererWindow:
                     pass
         self._render_page()
 
-    async def _apply_window_bounds_with_retries(self, bounds: dict[str, int | float]) -> None:
+    async def _apply_window_bounds_with_retries(
+        self, bounds: dict[str, int | float], *, force_resize: bool = False
+    ) -> None:
         # Apply the new bounds, then re-apply once more after a short delay. The
-        # resize is now a clean DIRECT set (no jiggle — see
-        # _apply_window_bounds_without_rerender), so there is no transient wrong-size
-        # frame; the single re-apply only guards against Flet occasionally deferring
-        # the very first programmatic resize of a frameless window until the next
-        # frame. Each re-apply is the same target size, so a stray render landing
-        # between them sees the correct size either way.
+        # single re-apply guards against Flet occasionally deferring the very first
+        # programmatic resize of a frameless window until the next frame. Each
+        # re-apply is the same target size, so a stray render landing between them
+        # sees the correct size either way.
         #
         # Claim this loop's generation so it supersedes any in-flight startup resize
         # loop (_reassert_startup_bounds): the user changed the size, so the startup
@@ -3257,6 +3266,28 @@ class FletDesktopRendererWindow:
         # the two loops race and interleave their writes.
         self._bounds_apply_generation += 1
         my_generation = self._bounds_apply_generation
+        # force_resize=True: we're re-applying a size Flet already believes it has
+        # (recovering from a startup resize that never committed natively). A plain
+        # re-apply is a no-op, and a 1px nudge gets coalesced away by the OS. So first
+        # resize to a CLEARLY different size and let it land, then settle to the real
+        # target — the final apply is then a genuine change the native window honors.
+        # This is exactly why the user's manual "pick another preset, then back" fixes
+        # it; we just do it automatically.
+        if force_resize and not (self._closed.is_set() or self._page is None):
+            perturbed = dict(bounds)
+            perturbed["width"] = max(1.0, float(bounds["width"]) + 48)
+            perturbed["height"] = max(1.0, float(bounds["height"]) + 48)
+            self._apply_window_bounds(perturbed)
+            logger.info(
+                "[DesktopOverlay][Resize] force-resize perturb width=%s height=%s",
+                perturbed["width"], perturbed["height"],
+            )
+            try:
+                await asyncio.sleep(0.12)
+            except asyncio.CancelledError:
+                return
+            if self._bounds_apply_generation != my_generation:
+                return
         for attempt_index, attempt_delay in enumerate((0.0, 0.2), start=1):
             if attempt_delay:
                 try:
@@ -3274,8 +3305,9 @@ class FletDesktopRendererWindow:
                 return
             self._apply_window_bounds(dict(bounds))
             logger.info(
-                "[DesktopOverlay][Resize] live resize attempt=%s applied width=%s height=%s",
-                attempt_index, bounds["width"], bounds["height"],
+                "[DesktopOverlay][Resize] live resize attempt=%s applied width=%s height=%s "
+                "force_resize=%s",
+                attempt_index, bounds["width"], bounds["height"], force_resize,
             )
 
     def _apply_window_bounds_without_rerender(self, bounds: dict[str, int | float]) -> None:
@@ -3291,16 +3323,11 @@ class FletDesktopRendererWindow:
             window.resizable = True
         except Exception:
             pass
-        # Set the target size DIRECTLY — no intermediate jiggle. A live preset change
-        # is always a genuine size change, so the native window accepts it on the
-        # first set (the resizable=True nudge above is what actually unsticks frameless
-        # windows). The old "+16 then back" jiggle created a transient OVERSIZED native
-        # frame; any render that fired in that gap (a concurrent lock toggle, a caption
-        # update) captured the wrong size and laid content out for it — that is what
-        # produced the "improperly rescaled / sample text gone" breakage on live size
-        # changes. Startup is different (Flet's model already equals the target, so a
-        # plain set is a no-op) and keeps its own jiggle in _reassert_startup_bounds,
-        # where the window is held hidden so the transient is never visible.
+        # Set the target size DIRECTLY. A live preset change is a genuine size change,
+        # so the native window accepts it. Forcing a native resize when re-applying a
+        # size Flet already holds is handled one level up in
+        # _apply_window_bounds_with_retries (it perturbs through a clearly different
+        # size first) — NOT with a tiny jiggle here, which the OS coalesces away.
         window.left = bounds["x"]
         window.top = bounds["y"]
         window.width = bounds["width"]

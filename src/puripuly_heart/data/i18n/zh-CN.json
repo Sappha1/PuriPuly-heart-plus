@@ -478,6 +478,7 @@
   "dashboard.translit.latin": "拉丁字母",
   "dashboard.overlay.options.title": "叠加层选项",
   "dashboard.overlay.options.display": "显示",
+  "dashboard.overlay.options.size": "尺寸",
   "dashboard.overlay.show_voice": "显示我的语音消息",
   "dashboard.overlay.show_text": "显示我的文本消息",
   "dashboard.overlay.tooltip": "字幕叠加层 — 在屏幕上（桌面或 VR）显示翻译。\n点击开启／关闭。右键单击可设置不透明度和消息选项。\n放好位置后请锁定，以免遮挡你的鼠标点击。",

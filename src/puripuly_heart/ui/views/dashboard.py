@@ -709,6 +709,8 @@ class DashboardView(ft.Row):
         self.on_overlay_mode_select: object = None  # callback(mode: "auto"|"steamvr"|"desktop")
         self.on_overlay_single_turn_change: object = None  # callback(value: bool)
         self.on_overlay_display_toggle: object = None  # callback(field: str, value: bool)
+        self.on_overlay_size_select: object = None  # callback(size_preset: str)
+        self._overlay_size_preset: str = "small"  # current desktop size preset; synced from settings
         self._overlay_show_original: bool = True
         self._overlay_show_translation: bool = True
         self._overlay_show_romanization: bool = True
@@ -1621,6 +1623,85 @@ class DashboardView(ft.Row):
             _disp_rows_col,
         ], spacing=0, tight=True)
 
+        # ── size: button showing current preset + inline radio expansion ────────
+        from puripuly_heart.config.settings import DESKTOP_FLET_SIZE_PRESET_DISPLAY_ORDER
+
+        def _size_label(preset: str) -> str:
+            return t(f"settings.overlay.desktop.size.option.{preset}", default=preset)
+
+        _size_btn_text = ft.Text(
+            _size_label(self._overlay_size_preset), size=11, color=_TOGGLE_ON,
+            weight=ft.FontWeight.W_600, no_wrap=True, overflow=ft.TextOverflow.ELLIPSIS,
+        )
+        _size_btn = ft.Container(
+            content=_size_btn_text,
+            padding=ft.padding.symmetric(horizontal=8, vertical=4),
+            border_radius=6,
+            bgcolor="#1a2e2a",
+            border=ft.border.all(1, _TOGGLE_ON),
+        )
+
+        _size_state = [self._overlay_size_preset]
+        _size_icons: dict[str, Any] = {}
+        _size_rows: list[Any] = []
+        for _preset in DESKTOP_FLET_SIZE_PRESET_DISPLAY_ORDER:
+            _active = _preset == _size_state[0]
+            _radio_icon = ft.Icon(
+                ft.Icons.RADIO_BUTTON_CHECKED if _active else ft.Icons.RADIO_BUTTON_UNCHECKED,
+                size=15, color=_TOGGLE_ON if _active else _TEXT_FAINT,
+            )
+            _size_icons[_preset] = _radio_icon
+            _row_lbl = ft.Text(_size_label(_preset), size=12, color=_TEXT_PRIMARY, expand=True)
+
+            def _on_size_row(_ev, _p=_preset):
+                if _size_state[0] == _p:
+                    return
+                _size_state[0] = _p
+                self._overlay_size_preset = _p
+                for _k, _ic in _size_icons.items():
+                    _sel = _k == _p
+                    _ic.name = (
+                        ft.Icons.RADIO_BUTTON_CHECKED if _sel
+                        else ft.Icons.RADIO_BUTTON_UNCHECKED
+                    )
+                    _ic.color = _TOGGLE_ON if _sel else _TEXT_FAINT
+                _size_btn_text.value = _size_label(_p)
+                try:
+                    _size_btn_text.update()
+                    for _ic in _size_icons.values():
+                        _ic.update()
+                except Exception:
+                    pass
+                if callable(self.on_overlay_size_select):
+                    self.on_overlay_size_select(_p)
+
+            _size_rows.append(ft.Container(
+                content=ft.Row([_radio_icon, _row_lbl], spacing=8,
+                               vertical_alignment=ft.CrossAxisAlignment.CENTER),
+                padding=ft.padding.only(left=18, right=10, top=6, bottom=6),
+                border_radius=5,
+                on_click=_on_size_row,
+                on_hover=lambda e: (
+                    setattr(e.control, "bgcolor", "#2a3040" if e.data == "true" else ft.Colors.TRANSPARENT)
+                    or (e.control.update() if e.control.page else None)
+                ),
+            ))
+
+        _size_rows_col = ft.Column(_size_rows, spacing=0, tight=True, visible=False)
+        _size_expanded = [False]
+
+        def _toggle_size(_ev):
+            _size_expanded[0] = not _size_expanded[0]
+            _size_rows_col.visible = _size_expanded[0]
+            try: _size_rows_col.update()
+            except Exception: pass
+
+        _size_btn.on_click = _toggle_size
+        _size_pill_row = ft.Column([
+            _section_row(t("dashboard.overlay.options.size"), _size_btn),
+            _size_rows_col,
+        ], spacing=0, tight=True)
+
         # ── show voice / show text ────────────────────────────────────────────
         _v_ref = [self._self_in_overlay]
         def _on_voice(val: bool):
@@ -1660,10 +1741,13 @@ class DashboardView(ft.Row):
                                        vertical_alignment=ft.CrossAxisAlignment.CENTER),
                         padding=ft.padding.only(left=10, right=10, top=2, bottom=2),
                     ),
-                    _div(),
-                    _single_row,
+                    # Two-turn mode disabled — the single/two-turn toggle is hidden.
+                    # _div(),
+                    # _single_row,
                     _div(),
                     _disp_pill_row,
+                    _div(),
+                    _size_pill_row,
                     _div(),
                     _voice_row,
                     _text_row,
@@ -1680,6 +1764,15 @@ class DashboardView(ft.Row):
 
     def set_overlay_background_alpha(self, alpha: float) -> None:
         self._overlay_background_alpha = max(0.0, min(1.0, float(alpha)))
+
+    def set_overlay_size_preset(self, size_preset: str) -> None:
+        """Keep the dashboard's Size submenu in sync with the active preset.
+
+        Called when the size changes from Settings (or anywhere else) so the
+        right-click menu always opens showing the real current size.
+        """
+        if isinstance(size_preset, str) and size_preset:
+            self._overlay_size_preset = size_preset
 
     def _open_popover_at(self, x: float, y: float, content: ft.Control,
                          width: float | None = None, clamp_width: float | None = None,

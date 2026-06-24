@@ -183,10 +183,19 @@ class _WhisperSTTSession:
             segments, _ = model.transcribe(
                 samples,
                 language=self.language,
-                beam_size=5,
+                # Greedy decoding (beam_size=1) instead of 5-beam search: the heavy
+                # cost on CPU is the decoder, and beam search multiplies it. For short
+                # conversational clips the accuracy difference is negligible, but this
+                # is ~3-5x faster — the difference between keeping up with live speech
+                # and falling 10s behind.
+                beam_size=1,
                 temperature=0.0,
                 without_timestamps=True,
                 task="transcribe",
+                # Don't feed the previous transcript back in as a prompt: it both adds
+                # decoder work and causes runaway repetition loops (e.g. "走走走走走走")
+                # when the model latches onto its own prior output.
+                condition_on_previous_text=False,
             )
             text = " ".join(seg.text for seg in segments).strip()
             logger.info("[Whisper] %r -> %r", self.language, text)

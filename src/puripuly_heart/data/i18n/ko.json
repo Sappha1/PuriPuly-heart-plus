@@ -478,6 +478,7 @@
   "dashboard.translit.latin": "라틴 문자",
   "dashboard.overlay.options.title": "오버레이 옵션",
   "dashboard.overlay.options.display": "표시",
+  "dashboard.overlay.options.size": "크기",
   "dashboard.overlay.show_voice": "내 음성 메시지 표시",
   "dashboard.overlay.show_text": "내 텍스트 메시지 표시",
   "dashboard.overlay.tooltip": "자막 오버레이 — 번역을 화면(데스크톱 또는 VR)에 표시합니다.\n클릭하여 켜기/끄기. 마우스 오른쪽 버튼으로 불투명도 및 메시지 옵션.\n위치를 정한 뒤에는 잠가서 마우스 클릭을 방해하지 않도록 하세요.",

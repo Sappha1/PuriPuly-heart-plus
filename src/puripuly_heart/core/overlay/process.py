@@ -703,8 +703,14 @@ class OverlayProcessManager:
                     exit_code = exit_task.result()
                     self._last_exit_code = exit_code
                     self._record_process("process_exit", phase="connected", exit_code=exit_code)
-                    if self.state == "connected" and exit_code is not None:
-                        await self._fail("runtime_crashed", terminate_process=False)
+                    if self.state == "connected":
+                        if exit_code:
+                            await self._fail("runtime_crashed", terminate_process=False)
+                        else:
+                            # exit_code == 0 means the renderer exited cleanly (e.g.
+                            # the user closed the overlay window directly) — not a
+                            # crash. Tear down quietly instead of reporting a failure.
+                            await self._fail("window_closed", terminate_process=False)
                     return
         finally:
             for task in (event_task, bridge_task, exit_task):

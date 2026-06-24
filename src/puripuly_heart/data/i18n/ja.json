@@ -479,6 +479,7 @@
   "dashboard.translit.latin": "ラテン文字",
   "dashboard.overlay.options.title": "オーバーレイ設定",
   "dashboard.overlay.options.display": "表示",
+  "dashboard.overlay.options.size": "サイズ",
   "dashboard.overlay.show_voice": "自分の音声メッセージを表示",
   "dashboard.overlay.show_text": "自分のテキストメッセージを表示",
   "dashboard.overlay.tooltip": "字幕オーバーレイ — 翻訳を画面上（デスクトップまたはVR）に表示します。\nクリックでオン／オフ。右クリックで不透明度や表示メッセージの設定。\n配置したらロックして、マウス操作を妨げないようにしてください。",

@@ -1864,8 +1864,8 @@ class SettingsView(ft.Column):
             )
         overlay_row1b = ft.Column(
                 [
-                    self._overlay_single_turn_card,
-
+                    # Two-turn mode disabled — the single/two-turn setting is hidden.
+                    # self._overlay_single_turn_card,
                 ],
                 spacing=0,
             )

@@ -525,6 +525,7 @@
   "dashboard.translit.latin": "Latin",
   "dashboard.overlay.options.title": "Overlay Options",
   "dashboard.overlay.options.display": "Display",
+  "dashboard.overlay.options.size": "Size",
   "dashboard.overlay.show_voice": "Show my voice messages",
   "dashboard.overlay.show_text": "Show my text messages",
   "dashboard.overlay.tooltip": "Subtitles overlay — shows translations on your screen (desktop or VR).\nClick to toggle on/off. Right-click for opacity and message options.\nLock it once positioned so it doesn't block your mouse clicks.",

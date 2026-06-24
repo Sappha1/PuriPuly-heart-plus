@@ -492,7 +492,8 @@ def build_desktop_caption_plan(
         primary_font_size=primary_font_size,
         secondary_font_size=secondary_font_size,
     )
-    max_slots = 1 if visual.single_turn_mode else _DESKTOP_CAPTION_MAX_VISIBLE_SLOTS
+    # Two-turn disabled — always one caption slot (single-turn).
+    max_slots = 1  # was: 1 if visual.single_turn_mode else _DESKTOP_CAPTION_MAX_VISIBLE_SLOTS
     slots = tuple(
         _caption_slot_with_dynamic_width(
             slot,
@@ -2055,6 +2056,30 @@ class FletDesktopRendererWindow:
         self._last_reported_bounds: tuple[float, float, float, float] | None = None
         self._caption_card_width_floor_by_block: dict[tuple[str, str, int], float] = {}
         self._last_render_trace: _DesktopRenderTrace | None = None
+        # When we have a startup size to apply, the window stays hidden until the
+        # native OS window has actually been resized to that size (see
+        # _reassert_startup_bounds). Without this, the window is shown immediately
+        # at Flet's unrelated native default size while the content inside is laid
+        # out for the configured preset, which looks like a "squished and cut in
+        # half" window for the brief window before the resize lands.
+        self._pending_startup_reveal: bool = False
+        # Bumped every time a new bounds-apply retry loop starts (startup or live
+        # runtime control). A running loop checks this before each window mutation
+        # and bails out if a newer request has superseded it — without this, the
+        # startup retry loop and a live size-preset-change retry loop can race and
+        # interleave their jiggle/settle writes, leaving the native window stuck
+        # mid-jiggle (oversized) while content is laid out for the real size.
+        self._bounds_apply_generation: int = 0
+        # Set when a live resize is applied while the overlay is LOCKED (pass-through).
+        # A pass-through window is layered/click-through, and when it's also in the
+        # background (e.g. the Settings tab is focused) Windows does not reliably
+        # commit a programmatic native resize — Flet's window.width/height model
+        # updates but the real OS frame keeps its old size. So when we return to EDIT
+        # mode (leaving Settings auto-unlocks), we re-assert the bounds to force the
+        # native window to actually adopt the size the content is now laid out for.
+        # Without this, changing the size in Settings looks broken until a full
+        # overlay restart — even though every logged dimension reads "correct".
+        self._needs_bounds_reassert_on_edit: bool = False
 
     def prime_startup_runtime_controls(
         self,
@@ -2096,11 +2121,16 @@ class FletDesktopRendererWindow:
                 bounds = _parse_runtime_window_bounds(payload)
                 if bounds is not None:
                     self._startup_window_bounds = bounds
-                # Keep the bounds in the residual so they are ALSO re-applied after the
-                # Flet page exists. Setting window.width/height during initial page
-                # config is timing-unreliable (Flet may keep its unpredictable default
-                # window size) — which is why a manual resize/toggle "fixed" small
-                # presets. Re-dispatching guarantees the configured size sticks.
+                    # Consume it: _reassert_startup_bounds owns the startup resize and
+                    # retries it robustly (the native window opens oversized and Flet's
+                    # model already holds the target, so it jiggles to force a real
+                    # native resize). Do NOT also leave it in residual — that spawns a
+                    # SECOND, concurrent live-resize loop that interleaves its jiggle
+                    # writes with the startup loop's, leaving the native window stuck
+                    # mid-jiggle while content renders at the real size (the "squished /
+                    # sample text gone / improperly rescaled" bug).
+                    continue
+                # Unparseable bounds: fall through and let normal dispatch log+reject it.
                 residual.append(payload)
                 continue
             residual.append(payload)
@@ -2154,22 +2184,52 @@ class FletDesktopRendererWindow:
         bounds = self._startup_window_bounds
         if not bounds:
             return
+        # Claim this retry loop's generation. If a live runtime-control resize
+        # (_apply_window_bounds_with_retries) starts while we're still retrying,
+        # it bumps the counter and we bail at the next checkpoint instead of
+        # racing it — see the comment on _bounds_apply_generation in __init__.
+        self._bounds_apply_generation += 1
+        my_generation = self._bounds_apply_generation
         # The native window opens oversized; Flet's model already holds the configured
         # size, so re-setting the SAME value is a no-op and the native window never
-        # resizes (only switching to a DIFFERENT preset did). We jiggle to a slightly
-        # different size to force a real native resize, then set the real bounds. A
-        # single attempt is timing-flaky (the native view may not be ready), so we
-        # retry several times at increasing delays until the page reports the size.
-        for attempt_delay in (0.12, 0.25, 0.5, 1.0, 1.6):
+        # resizes. We jiggle to a slightly different size to force a real native resize,
+        # then set the real bounds. A single attempt is timing-flaky (the native view
+        # may not be ready) — on this machine the resize only reliably lands on the
+        # LATER attempts (~1s+), so the full schedule below is load-bearing. Do NOT
+        # shorten it: a brief 3-attempt/~0.85s version left the window revealed at the
+        # wrong (small) height because the resize hadn't committed yet. Flet's
+        # window.width/height is its own model value, not a real OS readback, so we
+        # cannot detect "already correct" and must just retry on the proven cadence.
+        for attempt_index, attempt_delay in enumerate((0.12, 0.25, 0.5, 1.0, 1.6), start=1):
             try:
                 await asyncio.sleep(attempt_delay)
             except asyncio.CancelledError:
                 return
             if self._closed.is_set() or self._page is None:
+                if self._pending_startup_reveal:
+                    logger.warning(
+                        "[DesktopOverlay][Startup] overlay closed before startup resize "
+                        "could be confirmed (attempt=%s)",
+                        attempt_index,
+                    )
+                return
+            if self._bounds_apply_generation != my_generation:
+                logger.info(
+                    "[DesktopOverlay][Startup] startup resize superseded by a newer "
+                    "bounds request (attempt=%s)",
+                    attempt_index,
+                )
+                if self._pending_startup_reveal:
+                    self._reveal_window_if_supported(force=True)
                 return
             page = self._page
             window = getattr(page, "window", None)
             if window is None:
+                logger.warning(
+                    "[DesktopOverlay][Startup] page.window unavailable during startup "
+                    "resize attempt=%s",
+                    attempt_index,
+                )
                 return
             try:
                 window.width = float(bounds["width"]) + 16
@@ -2178,14 +2238,43 @@ class FletDesktopRendererWindow:
                 if callable(update):
                     update()
             except Exception:
-                pass
+                logger.warning(
+                    "[DesktopOverlay][Startup] jiggle resize raised on attempt=%s",
+                    attempt_index, exc_info=True,
+                )
             try:
                 await asyncio.sleep(0.08)
             except asyncio.CancelledError:
                 return
             if self._closed.is_set() or self._page is None:
                 return
+            if self._bounds_apply_generation != my_generation:
+                logger.info(
+                    "[DesktopOverlay][Startup] startup resize superseded by a newer "
+                    "bounds request before settle (attempt=%s)",
+                    attempt_index,
+                )
+                if self._pending_startup_reveal:
+                    self._reveal_window_if_supported(force=True)
+                return
             self._apply_window_bounds(dict(bounds))
+            logger.info(
+                "[DesktopOverlay][Startup] startup resize attempt=%s applied "
+                "width=%s height=%s native_width=%s native_height=%s",
+                attempt_index, bounds["width"], bounds["height"],
+                getattr(window, "width", None), getattr(window, "height", None),
+            )
+            if self._pending_startup_reveal:
+                self._reveal_window_if_supported(force=True)
+        if self._pending_startup_reveal:
+            # Defensive fallback: every attempt above raised/was skipped without
+            # ever clearing the flag. Reveal anyway rather than leaving the
+            # overlay invisible forever (the user reported exactly this symptom).
+            logger.warning(
+                "[DesktopOverlay][Startup] startup resize never confirmed after all "
+                "retries; revealing window anyway to avoid a permanently invisible overlay"
+            )
+            self._reveal_window_if_supported(force=True)
 
     async def run_until_closed(self) -> None:
         task = self._app_task
@@ -2266,7 +2355,7 @@ class FletDesktopRendererWindow:
                 f"height={bounds['height']}"
             )
             await self._cancel_bounds_sample()
-            self._apply_window_bounds(bounds)
+            await self._apply_window_bounds_with_retries(bounds)
             return
         if command == "apply_visual_config":
             visual_state = _parse_runtime_visual_state(payload)
@@ -2337,8 +2426,15 @@ class FletDesktopRendererWindow:
                 signature=_bounds_signature(bounds),
                 expires_at=time.monotonic() + _PROGRAMMATIC_BOUNDS_ECHO_SUPPRESSION_S,
             )
+            # Keep the window hidden until _reassert_startup_bounds confirms the
+            # native OS window has actually been resized to this size. Revealing
+            # immediately would show the wrong-sized native frame for a beat.
+            self._pending_startup_reveal = True
+            if hasattr(window, "visible"):
+                window.visible = False
             logger.info(
-                "[DesktopOverlay][WindowConfig] startup_bounds width=%s height=%s x=%s y=%s",
+                "[DesktopOverlay][WindowConfig] startup_bounds width=%s height=%s x=%s y=%s "
+                "(window hidden until resize confirmed)",
                 bounds["width"], bounds["height"], bounds["x"], bounds["y"],
             )
         else:
@@ -2641,13 +2737,46 @@ class FletDesktopRendererWindow:
         window = page.window
         window.ignore_mouse_events = locked
 
-    def _reveal_window_if_supported(self) -> None:
+    def _reveal_window_if_supported(self, *, force: bool = False) -> None:
+        if self._pending_startup_reveal and not force:
+            # Held hidden until the startup resize lands; see _reassert_startup_bounds.
+            return
         page = self._page
         if page is None:
             return
         window = page.window
         if hasattr(window, "visible"):
             window.visible = True
+        if self._pending_startup_reveal:
+            self._pending_startup_reveal = False
+            logger.info(
+                "[DesktopOverlay][Startup] window revealed after confirmed resize "
+                "width=%s height=%s",
+                getattr(window, "width", None), getattr(window, "height", None),
+            )
+
+    def hide_window_safely(self) -> None:
+        """Best-effort hide of the native window.
+
+        Used when the overlay runtime is failing so a broken/half-rendered window
+        isn't left stuck on screen (the user reported a "black bar I couldn't get
+        rid of" after a crash). Fully guarded — never raises.
+        """
+        page = self._page
+        if page is None:
+            return
+        try:
+            window = page.window
+            if hasattr(window, "visible"):
+                window.visible = False
+            window_update = getattr(window, "update", None)
+            if callable(window_update):
+                window_update()
+            page_update = getattr(page, "update", None)
+            if callable(page_update):
+                page_update()
+        except Exception:
+            pass
 
     def _build_preview_root(self, ft: Any) -> Any:
         preview_plan = self._current_preview_caption_plan()
@@ -3019,15 +3148,70 @@ class FletDesktopRendererWindow:
             return
         previous_mode = self._interaction_mode
         self._interaction_mode = mode
-        self._emit_detailed_log(f"interaction_mode {previous_mode}->{mode}")
+        render_started_at = time.monotonic()
         self._render_page()
+        render_elapsed_ms = (time.monotonic() - render_started_at) * 1000.0
+        logger.info(
+            "[DesktopOverlay][Lock] interaction_mode %s->%s render_elapsed_ms=%.1f",
+            previous_mode, mode, render_elapsed_ms,
+        )
+        if (
+            mode == _DESKTOP_INTERACTION_MODE_EDIT
+            and self._needs_bounds_reassert_on_edit
+            and self._current_window_bounds is not None
+        ):
+            # A size change landed while we were locked (e.g. in Settings); the
+            # native window may still be the old size. Now that the window is
+            # interactive again (the render above cleared ignore_mouse_events),
+            # force the size to actually commit so the edit chrome isn't laid out
+            # for a size the OS frame never adopted.
+            #
+            # Schedule the SAME retried apply the dashboard resize uses
+            # (_apply_window_bounds_with_retries) — a single apply isn't always
+            # enough to make the frame stick; the dashboard does two and that's the
+            # combination known to work. Schedule it as a proper coroutine METHOD
+            # (never a lambda — Flet's page.run_task rejects non-coroutine-functions,
+            # which is what crashed the overlay last time).
+            self._needs_bounds_reassert_on_edit = False
+            logger.info(
+                "[DesktopOverlay][Resize] scheduling bounds re-assert on edit entry "
+                "width=%s height=%s (resize had landed while locked)",
+                self._current_window_bounds["width"],
+                self._current_window_bounds["height"],
+            )
+            self._run_page_task(self._reassert_bounds_after_unlock)
         if emit_event:
             await self._emit_overlay_event({"event": "interaction_mode_changed", "mode": mode})
+
+    async def _reassert_bounds_after_unlock(self) -> None:
+        """Re-commit the window size after returning to edit mode.
+
+        Runs in its own page task (decoupled from the lock-toggle dispatch) and is
+        fully guarded, so a failure here can never tear the overlay down. Uses the
+        retried apply path — the same one the live dashboard resize uses, which is
+        the combination that actually makes the native frame adopt the new size.
+        """
+        bounds = self._current_window_bounds
+        if bounds is None:
+            return
+        try:
+            await self._apply_window_bounds_with_retries(dict(bounds))
+        except Exception:
+            logger.warning(
+                "[DesktopOverlay][Resize] re-assert after unlock failed; "
+                "overlay kept alive",
+                exc_info=True,
+            )
 
     def _apply_window_bounds(self, bounds: dict[str, int | float]) -> None:
         page = self._page
         if page is None:
             return
+        if self._interaction_mode == _DESKTOP_INTERACTION_MODE_PASS_THROUGH:
+            # Resizing a backgrounded pass-through window may not commit natively;
+            # remember to re-assert once we're interactive again. See the flag's
+            # definition in __init__.
+            self._needs_bounds_reassert_on_edit = True
         if _page_window_size_differs_from_bounds(page, bounds):
             self._caption_card_width_floor_by_block.clear()
         self._emit_detailed_log(
@@ -3058,6 +3242,42 @@ class FletDesktopRendererWindow:
                     pass
         self._render_page()
 
+    async def _apply_window_bounds_with_retries(self, bounds: dict[str, int | float]) -> None:
+        # Apply the new bounds, then re-apply once more after a short delay. The
+        # resize is now a clean DIRECT set (no jiggle — see
+        # _apply_window_bounds_without_rerender), so there is no transient wrong-size
+        # frame; the single re-apply only guards against Flet occasionally deferring
+        # the very first programmatic resize of a frameless window until the next
+        # frame. Each re-apply is the same target size, so a stray render landing
+        # between them sees the correct size either way.
+        #
+        # Claim this loop's generation so it supersedes any in-flight startup resize
+        # loop (_reassert_startup_bounds): the user changed the size, so the startup
+        # target is stale and that loop must stop touching the window. Without this,
+        # the two loops race and interleave their writes.
+        self._bounds_apply_generation += 1
+        my_generation = self._bounds_apply_generation
+        for attempt_index, attempt_delay in enumerate((0.0, 0.2), start=1):
+            if attempt_delay:
+                try:
+                    await asyncio.sleep(attempt_delay)
+                except asyncio.CancelledError:
+                    return
+            if self._closed.is_set() or self._page is None:
+                return
+            if self._bounds_apply_generation != my_generation:
+                logger.info(
+                    "[DesktopOverlay][Resize] live resize superseded by a newer "
+                    "bounds request (attempt=%s)",
+                    attempt_index,
+                )
+                return
+            self._apply_window_bounds(dict(bounds))
+            logger.info(
+                "[DesktopOverlay][Resize] live resize attempt=%s applied width=%s height=%s",
+                attempt_index, bounds["width"], bounds["height"],
+            )
+
     def _apply_window_bounds_without_rerender(self, bounds: dict[str, int | float]) -> None:
         page = self._page
         if page is None:
@@ -3071,6 +3291,16 @@ class FletDesktopRendererWindow:
             window.resizable = True
         except Exception:
             pass
+        # Set the target size DIRECTLY — no intermediate jiggle. A live preset change
+        # is always a genuine size change, so the native window accepts it on the
+        # first set (the resizable=True nudge above is what actually unsticks frameless
+        # windows). The old "+16 then back" jiggle created a transient OVERSIZED native
+        # frame; any render that fired in that gap (a concurrent lock toggle, a caption
+        # update) captured the wrong size and laid content out for it — that is what
+        # produced the "improperly rescaled / sample text gone" breakage on live size
+        # changes. Startup is different (Flet's model already equals the target, so a
+        # plain set is a no-op) and keeps its own jiggle in _reassert_startup_bounds,
+        # where the window is held hidden so the transient is never visible.
         window.left = bounds["x"]
         window.top = bounds["y"]
         window.width = bounds["width"]
@@ -3153,6 +3383,11 @@ class FletDesktopRendererWindow:
             return
         self._programmatic_bounds_echo_suppression = None
         self._last_reported_bounds = signature
+        # The user just moved/resized the window themselves. If the startup
+        # re-assert loop is still running (it re-applies the saved position for a
+        # few seconds after launch), bump the generation so it bails — otherwise it
+        # keeps snapping the window back to its origin while the user is dragging it.
+        self._bounds_apply_generation += 1
         self._emit_detailed_log(
             "bounds_sample emitted source=user persist=True "
             f"x={bounds['x']} y={bounds['y']} width={bounds['width']} "
@@ -3862,6 +4097,11 @@ class DesktopOverlayRenderer:
                 elif kind == "runtime_control" and isinstance(payload, dict):
                     await self.window.dispatch_runtime_control(payload)
             except Exception:
+                # Hide the window before reporting failure so a half-rendered
+                # overlay can't sit on screen until the user notices and toggles
+                # it off.
+                with contextlib.suppress(Exception):
+                    self.window.hide_window_safely()
                 await self._emit_runtime_error("window_configuration_failed")
                 return _RuntimeOutcome(_RUNTIME_FAILURE_EXIT_CODE)
         return None

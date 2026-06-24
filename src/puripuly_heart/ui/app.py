@@ -167,6 +167,7 @@ class TranslatorApp:
         self.view_dashboard.on_overlay_mode_select = self._on_dashboard_overlay_mode_select
         self.view_dashboard.on_overlay_single_turn_change = self._on_dashboard_overlay_single_turn_change
         self.view_dashboard.on_overlay_display_toggle = self._on_dashboard_overlay_display_toggle
+        self.view_dashboard.on_overlay_size_select = self._on_dashboard_overlay_size_change
 
         self.view_settings.on_settings_changed = self._on_settings_changed
         self.view_settings.on_prompt_apply_settings = self._on_prompt_apply_settings
@@ -1058,6 +1059,16 @@ class TranslatorApp:
 
         self.page.run_task(_task)
 
+    def _on_dashboard_overlay_size_change(self, size_preset: str) -> None:
+        # Dashboard right-click "Size" submenu — same path as the Settings size
+        # control so the two stay in sync (the controller persists the preset and
+        # live-resizes the overlay; _refresh pushes the new value back to both views).
+        async def _task():
+            await self.controller.set_desktop_overlay_size_preset(size_preset)
+            self._refresh_settings_desktop_overlay_state()
+
+        self.page.run_task(_task)
+
     def _on_desktop_overlay_recovery_action(self, action: str) -> None:
         if action not in {"retry", "reopen"}:
             return
@@ -1082,7 +1093,7 @@ class TranslatorApp:
         if settings is not None and callable(sync_settings):
             sync_settings(settings)
         self._sync_settings_overlay_runtime_state()
-        # Sync lock button on dashboard
+        # Sync lock button + size submenu on dashboard
         try:
             locked = bool(getattr(controller, "desktop_overlay_captions_locked", False))
             dash = getattr(self, "view_dashboard", None)
@@ -1090,6 +1101,14 @@ class TranslatorApp:
                 set_locked = getattr(dash, "set_overlay_locked", None)
                 if callable(set_locked):
                     set_locked(locked)
+                set_size = getattr(dash, "set_overlay_size_preset", None)
+                if callable(set_size) and settings is not None:
+                    try:
+                        preset = settings.overlay.desktop_flet.size_preset
+                    except Exception:
+                        preset = None
+                    if preset:
+                        set_size(preset)
         except Exception:
             pass
 
@@ -1504,6 +1523,13 @@ class TranslatorApp:
             dash._loopback_translation_only = bool(
                 getattr(getattr(s, "ui", None), "chatbox_send_peer_translation_only", False)
             )
+        except Exception:
+            pass
+        try:
+            preset = getattr(getattr(getattr(s, "overlay", None), "desktop_flet", None), "size_preset", None)
+            set_size = getattr(dash, "set_overlay_size_preset", None)
+            if preset and callable(set_size):
+                set_size(preset)
         except Exception:
             pass
         try:

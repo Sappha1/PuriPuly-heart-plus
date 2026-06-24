@@ -11,6 +11,7 @@ import os
 import secrets
 import sys
 import threading
+import time
 import traceback
 from collections.abc import Callable
 from dataclasses import dataclass, field
@@ -184,6 +185,7 @@ _OVERLAY_FAILURE_REASONS = frozenset(
         "window_configuration_failed",
         "runtime_control_invalid",
         "runtime_crashed",
+        "window_closed",
         "unknown",
     }
 )
@@ -1968,7 +1970,8 @@ class GuiController:
                 "text_scale": visual.text_scale,
                 "background_alpha": visual.background_alpha,
                 "outline_width": visual.outline_width,
-                "single_turn_mode": self.settings.overlay.single_turn_mode,
+                # Two-turn disabled — always render single-turn.
+                "single_turn_mode": True,  # was: self.settings.overlay.single_turn_mode
                 "show_romanization": getattr(self.settings.overlay, "show_romanization", True),
                 "show_translation": getattr(self.settings.overlay, "show_translation", True),
                 "show_peer_original": effective_show_peer_original(self.settings),
@@ -1982,14 +1985,19 @@ class GuiController:
         *,
         single_turn_mode: bool = True,
     ) -> tuple[int, int]:
+        # Two-turn mode is disabled — the overlay is always single-turn now, so the
+        # window height is simply the preset height (never doubled). This is the single
+        # chokepoint that decides overlay size; forcing single-turn here means the
+        # window can never flip between the 240/480 heights, which removes the bounds
+        # oscillation. (single_turn_mode kept in the signature for when two-turn returns.)
+        _ = single_turn_mode
         if isinstance(size_preset, str) and size_preset in DESKTOP_FLET_SIZE_PRESETS:
             width, height = DESKTOP_FLET_SIZE_PRESETS[size_preset]
         else:
             width, height = DESKTOP_FLET_SIZE_PRESETS["medium"]
-        if not single_turn_mode:
-            # Two-turn mode stacks two slots; double the height so each slot keeps
-            # the same usable space a single-turn slot would get.
-            height *= 2
+        # Two-turn (disabled):
+        # if not single_turn_mode:
+        #     height *= 2
         return width, height
 
     def _desktop_launch_bounds_for_current_launch(
@@ -2172,12 +2180,19 @@ class GuiController:
             return
 
         mode = DESKTOP_INTERACTION_MODE_PASS_THROUGH if locked else DESKTOP_INTERACTION_MODE_EDIT
-        if not await self._broadcast_desktop_runtime_control(
+        started_at = time.monotonic()
+        broadcast_ok = await self._broadcast_desktop_runtime_control(
             {
                 "command": "set_interaction_mode",
                 "mode": mode,
             }
-        ):
+        )
+        elapsed_ms = (time.monotonic() - started_at) * 1000.0
+        self.log_basic(
+            f"[Overlay] Lock toggle round-trip: mode={mode} elapsed_ms={elapsed_ms:.1f} "
+            f"broadcast_ok={broadcast_ok}"
+        )
+        if not broadcast_ok:
             return
         self._set_desktop_overlay_interaction_mode(mode)
 
@@ -2527,8 +2542,12 @@ class GuiController:
         next_desktop = next_settings.overlay.desktop_flet
         next_desktop.validate()
 
-        previous_single_turn = getattr(previous_settings.overlay, "single_turn_mode", False)
-        next_single_turn = next_settings.overlay.single_turn_mode
+        # Two-turn disabled: the overlay is always single-turn, so the turn mode can
+        # never change. Pinning both to True means a turn-mode flip is never detected
+        # (no recenter, no bounds re-apply for it) and the visual config always reports
+        # single-turn — this is what removes the 240<->480 bounds oscillation.
+        previous_single_turn = True  # was: getattr(previous_settings.overlay, "single_turn_mode", False)
+        next_single_turn = True  # was: next_settings.overlay.single_turn_mode
         runtime_is_running = self._desktop_runtime_is_running_for_settings_update(next_settings)
         size_or_mode_changed = (
             previous_desktop.size_preset != next_desktop.size_preset
@@ -2770,8 +2789,47 @@ class GuiController:
     def on_overlay_runtime_disconnected(self) -> None:
         self.on_overlay_start_failed("runtime_disconnected")
 
+    @staticmethod
+    def _steamvr_running_safe() -> bool:
+        try:
+            from puripuly_heart.core.overlay.steamvr_detect import is_steamvr_running
+
+            return bool(is_steamvr_running())
+        except Exception:
+            # On any detection error, assume SteamVR is up so we don't mask a real crash.
+            return True
+
+    def _shut_down_overlay_cleanly(self, log_message: str) -> None:
+        previous_state = self.overlay_state
+        self.overlay_state = "off"
+        self.failure_reason = None
+        self.auto_restart_scheduled = False
+        if self.settings is not None:
+            self.settings.ui.overlay_enabled = False
+        self.log_basic(log_message)
+        self._log_overlay_state_transition(previous_state, self.overlay_state)
+        self._sync_effective_hub_flags()
+        self._notify_overlay_state()
+
     def on_overlay_runtime_crashed(self) -> None:
+        # When the user closes SteamVR, the SteamVR overlay process exits as a side
+        # effect (it loses its OpenVR connection). That's a normal "SteamVR closed"
+        # event, not a crash — surfacing it as a failure showed the user a scary error.
+        # Detect that case (VR overlay was active and SteamVR is no longer running) and
+        # bring the overlay down cleanly with no error instead.
+        if self._active_overlay_target == OVERLAY_TARGET_STEAMVR and not self._steamvr_running_safe():
+            self._shut_down_overlay_cleanly(
+                "[Overlay] SteamVR closed; overlay stopped cleanly (not an error)"
+            )
+            return
         self.on_overlay_start_failed("runtime_crashed")
+
+    def on_overlay_window_closed(self) -> None:
+        # The renderer process exited with code 0, meaning the user closed the
+        # overlay window directly — a normal shutdown, not a crash.
+        self._shut_down_overlay_cleanly(
+            "[Overlay] Overlay window closed by user; overlay stopped cleanly (not an error)"
+        )
 
     async def _begin_overlay_start(self) -> None:
         if self._overlay_lock is None:
@@ -2934,6 +2992,8 @@ class GuiController:
                 self.on_overlay_runtime_disconnected()
             elif reason == "runtime_crashed":
                 self.on_overlay_runtime_crashed()
+            elif reason == "window_closed":
+                self.on_overlay_window_closed()
             else:
                 self.on_overlay_start_failed(reason)
             await self._teardown_overlay_runtime(preserve_presenter_state=True)

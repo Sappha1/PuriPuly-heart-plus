@@ -621,6 +621,14 @@ class GuiController:
 
     async def start(self) -> None:
         self.settings = self._load_or_init_settings(self.config_path)
+        # Capture the saved on/off states, then start clean. We restore them at the
+        # very end of start() (once the pipeline + UI bridge are live) so the app
+        # resumes the way the user left it — peer translation auto-starts and the
+        # desktop overlay re-opens (honoring its saved locked state) — instead of
+        # always launching with both off. Kept as locals (the controller uses
+        # __slots__, so new instance attributes can't be assigned).
+        restore_overlay_enabled = bool(self.settings.ui.overlay_enabled)
+        restore_peer_enabled = bool(self.settings.ui.peer_translation_enabled)
         self.settings.ui.overlay_enabled = False
         self.settings.ui.peer_translation_enabled = False
         self._sync_overlay_calibration_cache(self.settings)
@@ -697,6 +705,24 @@ class GuiController:
         self._ui_event_bridge = bridge
         self._bridge_task = asyncio.create_task(bridge.run())
         await self._sync_clipboard_watcher()
+
+        await self._restore_saved_runtime_toggles(
+            overlay_enabled=restore_overlay_enabled,
+            peer_enabled=restore_peer_enabled,
+        )
+
+    async def _restore_saved_runtime_toggles(
+        self, *, overlay_enabled: bool, peer_enabled: bool
+    ) -> None:
+        """Re-enable peer translation and/or the desktop overlay if they were on when
+        the app last ran. Called at the end of start(); the toggle methods emit the
+        usual state events so the dashboard buttons reflect the restored state."""
+        if peer_enabled:
+            with contextlib.suppress(Exception):
+                await self.set_peer_translation_enabled(True)
+        if overlay_enabled:
+            with contextlib.suppress(Exception):
+                await self.set_overlay_enabled(True)
 
     def _get_alibaba_verified_key(self) -> str:
         """Get the api_key_verified field name based on Qwen region."""
@@ -1979,6 +2005,10 @@ class GuiController:
                 "show_romanization": getattr(self.settings.overlay, "show_romanization", True),
                 "show_translation": getattr(self.settings.overlay, "show_translation", True),
                 "show_peer_original": effective_show_peer_original(self.settings),
+                # Languages drive the edit-mode sample caption (peer speaks source,
+                # translated into the user's reading language).
+                "peer_source_language": self.settings.languages.effective_peer_source,
+                "peer_target_language": self.settings.languages.effective_peer_target,
             },
             {"command": "set_interaction_mode", "mode": interaction_mode},
         ]
@@ -2598,6 +2628,11 @@ class GuiController:
             != getattr(next_settings.overlay, "show_translation", True)
             or effective_show_peer_original(previous_settings)
             != effective_show_peer_original(next_settings)
+            # Re-send on a language change so the edit-mode sample caption updates live.
+            or previous_settings.languages.effective_peer_source
+            != next_settings.languages.effective_peer_source
+            or previous_settings.languages.effective_peer_target
+            != next_settings.languages.effective_peer_target
         ):
             controls.append(
                 {
@@ -2609,6 +2644,8 @@ class GuiController:
                     "show_romanization": getattr(next_settings.overlay, "show_romanization", True),
                     "show_translation": getattr(next_settings.overlay, "show_translation", True),
                     "show_peer_original": effective_show_peer_original(next_settings),
+                    "peer_source_language": next_settings.languages.effective_peer_source,
+                    "peer_target_language": next_settings.languages.effective_peer_target,
                 }
             )
         return controls
@@ -2725,6 +2762,12 @@ class GuiController:
             f"has_manager={self._overlay_manager is not None}"
         )
         self.settings.ui.overlay_enabled = bool(enabled)
+        # Persist immediately so the toggle survives a restart. The toggle was otherwise
+        # only held in memory, so closing the app with the overlay ON came back up OFF.
+        try:
+            await asyncio.to_thread(save_settings, self.config_path, self.settings)
+        except Exception:
+            self.log_basic("[Overlay] Failed to persist overlay_enabled toggle")
         if enabled:
             self._overlay_user_enabled_this_session = True
         else:
@@ -2761,6 +2804,11 @@ class GuiController:
             return
 
         self.settings.ui.peer_translation_enabled = enabled
+        # Persist so the peer toggle is restored on next launch (see set_overlay_enabled).
+        try:
+            await asyncio.to_thread(save_settings, self.config_path, self.settings)
+        except Exception:
+            self.log_basic("[Peer] Failed to persist peer_translation_enabled toggle")
         self._last_peer_translation_enabled = enabled
         self._last_peer_translation_activation_requested = (
             self._peer_translation_activation_requested_for(self.settings)
@@ -4847,6 +4895,11 @@ class GuiController:
             show_romaji=bool(getattr(self.settings.ui, "show_romaji", False)),
             show_latin=bool(getattr(self.settings.ui, "show_latin", False)),
             self_in_overlay=bool(getattr(self.settings.ui, "self_in_overlay", True)),
+            # typed_in_overlay was missing here, so the hub kept its default (True)
+            # at startup while the dashboard/settings said otherwise — typed messages
+            # then didn't appear (or appeared wrongly) on the overlay until the user
+            # toggled "show my text messages" off/on to re-sync the hub. Pass it too.
+            typed_in_overlay=bool(getattr(self.settings.ui, "typed_in_overlay", True)),
             chatbox_send_peer=bool(getattr(self.settings.ui, "chatbox_send_peer", False)),
             chatbox_send_peer_translation_only=bool(
                 getattr(self.settings.ui, "chatbox_send_peer_translation_only", False)

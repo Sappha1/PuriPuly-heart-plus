@@ -71,6 +71,7 @@ from puripuly_heart.ui.overlay_calibration import (
     OVERLAY_CALIBRATION_ANCHORS,
     OverlayCalibration,
 )
+from puripuly_heart.ui.views._tooltip_i18n import translate_tooltip
 from puripuly_heart.ui.overlay_peer_contract import OverlayPeerConsumerContract
 from puripuly_heart.ui.theme import (
     COLOR_DIVIDER,
@@ -564,18 +565,43 @@ class SettingsView(ft.Column):
             animation_duration=0,
         )
 
-    @staticmethod
-    def _info_title(text_ctrl: ft.Text, tip: str) -> ft.Row:
-        """Wrap a title Text with a hoverable ⓘ icon that shows a tooltip."""
+    def _info_title_keyed(self, title_key: str, tip_key: str) -> ft.Row:
+        """Build a title row from i18n KEYS and remember them so apply_locale() can
+        re-translate the title AND its tooltip at runtime (no app restart). Use this
+        instead of _info_title() wherever the title is otherwise created inline (and
+        thus unreachable by apply_locale)."""
+        text_ctrl = ft.Text(t(title_key), size=13, weight=ft.FontWeight.BOLD, color=COLOR_NEUTRAL)
+        # _register=False: keyed rows manage their own tooltip re-translation below via
+        # _i18n_keyed_rows, so they must not also be registered for literal re-translation.
+        row = self._info_title(text_ctrl, t(tip_key), _register=False)
+        registry = getattr(self, "_i18n_keyed_rows", None)
+        if registry is None:
+            registry = []
+            self._i18n_keyed_rows = registry
+        # row.controls = [title_text, info_icon_container]
+        registry.append((text_ctrl, title_key, row.controls[1], tip_key))
+        return row
+
+    def _info_title(self, text_ctrl: ft.Text, tip: str, *, _register: bool = True) -> ft.Row:
+        """Wrap a title Text with a hoverable ⓘ icon that shows a tooltip.
+
+        The ``tip`` is passed through translate_tooltip() so the many hardcoded
+        English tooltip literals get localized, and (when _register) the icon is
+        remembered so apply_locale() can re-translate it on a runtime language
+        change without an app restart."""
+        info_icon = ft.Container(
+            content=ft.Icon(ft.Icons.INFO_OUTLINE, size=11, color="#5a5b60"),
+            tooltip=translate_tooltip(tip, get_locale()),
+            padding=ft.padding.only(left=4),
+        )
+        if _register:
+            rows = getattr(self, "_tooltip_literal_rows", None)
+            if rows is None:
+                rows = []
+                self._tooltip_literal_rows = rows
+            rows.append((info_icon, tip))
         return ft.Row(
-            [
-                text_ctrl,
-                ft.Container(
-                    content=ft.Icon(ft.Icons.INFO_OUTLINE, size=11, color="#5a5b60"),
-                    tooltip=tip,
-                    padding=ft.padding.only(left=4),
-                ),
-            ],
+            [text_ctrl, info_icon],
             spacing=0,
             vertical_alignment=ft.CrossAxisAlignment.CENTER,
             tight=True,
@@ -1372,9 +1398,7 @@ class SettingsView(ft.Column):
             self._on_self_in_overlay_click,
         )
         self_in_overlay_card = self._wrap_unit_card(
-            title=self._info_title(
-                ft.Text(t("settings.self_in_overlay"), size=13, weight=ft.FontWeight.BOLD, color=COLOR_NEUTRAL),
-                t("settings.self_in_overlay.tooltip")),
+            title=self._info_title_keyed("settings.self_in_overlay", "settings.self_in_overlay.tooltip"),
             value=self._self_in_overlay_text,
         )
         self._filter_peer_lang_text = self._build_clickable_text(
@@ -1382,9 +1406,9 @@ class SettingsView(ft.Column):
             self._on_filter_peer_lang_click,
         )
         filter_peer_lang_card = self._wrap_unit_card(
-            title=self._info_title(
-                ft.Text(t("settings.filter_peer_by_target_languages"), size=13, weight=ft.FontWeight.BOLD, color=COLOR_NEUTRAL),
-                t("settings.filter_peer_by_target_languages.tooltip")),
+            title=self._info_title_keyed(
+                "settings.filter_peer_by_target_languages",
+                "settings.filter_peer_by_target_languages.tooltip"),
             value=self._filter_peer_lang_text,
         )
 
@@ -1393,9 +1417,7 @@ class SettingsView(ft.Column):
             self._on_live_preview_click,
         )
         live_preview_card = self._wrap_unit_card(
-            title=self._info_title(
-                ft.Text(t("settings.live_preview"), size=13, weight=ft.FontWeight.BOLD, color=COLOR_NEUTRAL),
-                t("settings.live_preview.tooltip")),
+            title=self._info_title_keyed("settings.live_preview", "settings.live_preview.tooltip"),
             value=self._live_preview_text,
         )
 
@@ -1404,9 +1426,7 @@ class SettingsView(ft.Column):
             self._on_chatbox_send_peer_click,
         )
         chatbox_send_peer_card = self._wrap_unit_card(
-            title=self._info_title(
-                ft.Text(t("settings.chatbox_send_peer"), size=13, weight=ft.FontWeight.BOLD, color=COLOR_NEUTRAL),
-                t("settings.chatbox_send_peer.tooltip")),
+            title=self._info_title_keyed("settings.chatbox_send_peer", "settings.chatbox_send_peer.tooltip"),
             value=self._chatbox_send_peer_text,
         )
 
@@ -5136,6 +5156,51 @@ class SettingsView(ft.Column):
         self._settings_subtab_shell.set_font_family(font_for_language(get_locale()))
         for key in _SETTINGS_SUBTAB_ORDER:
             self._settings_subtab_shell.set_tab_label(key, self._settings_subtab_label(key))
+
+        # Re-translate every row built via _info_title_keyed (title + its tooltip) so
+        # a runtime UI-language change updates them without an app restart.
+        for _txt, _title_key, _icon, _tip_key in getattr(self, "_i18n_keyed_rows", []):
+            with contextlib.suppress(Exception):
+                _txt.value = t(_title_key)
+                _icon.tooltip = t(_tip_key)
+
+        # Re-translate the ⓘ tooltips that were built from hardcoded English literals
+        # (every _info_title row) so a runtime UI-language change localizes them too.
+        _loc = get_locale()
+        for _info_icon, _literal in getattr(self, "_tooltip_literal_rows", []):
+            with contextlib.suppress(Exception):
+                _info_icon.tooltip = translate_tooltip(_literal, _loc)
+
+        # Re-translate the On/Off *value* labels (e.g. "On"/"Off"/"开启"/"关闭"). These
+        # are set from settings in load_from_settings, which doesn't re-run on a locale
+        # change, so without this they stay in the language they were first built in.
+        _s = self._settings
+        if _s is not None:
+            _ui, _stt, _osc = _s.ui, _s.stt, _s.osc
+            _onoff_labels = [
+                (getattr(self, "_low_latency_text", None), "toggle.on" if _stt.low_latency_mode else "toggle.off"),
+                (getattr(self, "_vrc_mic_text", None), "settings.vrc_mic.on" if _osc.vrc_mic_intercept else "settings.vrc_mic.off"),
+                (getattr(self, "_chatbox_source_text", None), "settings.chatbox_source.on" if _osc.chatbox_include_source else "settings.chatbox_source.off"),
+                (getattr(self, "_clipboard_auto_translate_text", None), "settings.clipboard_auto_translate.on" if _ui.clipboard_auto_translate_enabled else "settings.clipboard_auto_translate.off"),
+                (getattr(self, "_show_pinyin_text", None), "settings.show_pinyin.on" if _ui.show_pinyin else "settings.show_pinyin.off"),
+                (getattr(self, "_show_romaji_text", None), "settings.show_romaji.on" if _ui.show_romaji else "settings.show_romaji.off"),
+                (getattr(self, "_send_pinyin_text", None), "settings.send_pinyin.on" if _ui.send_pinyin else "settings.send_pinyin.off"),
+                (getattr(self, "_send_romaji_text", None), "settings.send_romaji.on" if _ui.send_romaji else "settings.send_romaji.off"),
+                (getattr(self, "_show_latin_text", None), "settings.show_latin.on" if getattr(_ui, "show_latin", False) else "settings.show_latin.off"),
+                (getattr(self, "_send_latin_text", None), "settings.send_latin.on" if getattr(_ui, "send_latin", False) else "settings.send_latin.off"),
+                (getattr(self, "_self_in_overlay_text", None), "settings.self_in_overlay.on" if bool(getattr(_ui, "self_in_overlay", True)) else "settings.self_in_overlay.off"),
+                (getattr(self, "_filter_peer_lang_text", None), "settings.filter_peer_by_target_languages.on" if bool(getattr(_ui, "filter_peer_by_target_languages", False)) else "settings.filter_peer_by_target_languages.off"),
+                (getattr(self, "_live_preview_text", None), "settings.option.on" if bool(getattr(_ui, "show_pending_echo", True)) else "settings.option.off"),
+                (getattr(self, "_chatbox_send_peer_text", None), "settings.option.on" if bool(getattr(_ui, "chatbox_send_peer", False)) else "settings.option.off"),
+            ]
+            for _ctrl, _key in _onoff_labels:
+                _content = getattr(_ctrl, "content", None)
+                if _content is not None and hasattr(_content, "value"):
+                    with contextlib.suppress(Exception):
+                        _content.value = t(_key)
+            # Overlay-tab On/Off values + provider labels.
+            with contextlib.suppress(Exception):
+                self._sync_overlay_controls()
 
         # Section titles
         self._stt_title.value = t("settings.section.stt")

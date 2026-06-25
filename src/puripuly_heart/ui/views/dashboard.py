@@ -12,7 +12,7 @@ from puripuly_heart.ui.fonts import font_for_language
 from puripuly_heart.ui.i18n import get_locale, language_name, t
 from puripuly_heart.ui.overlay_peer_contract import OverlayPeerConsumerContract
 
-_BUILD_TAG = "r150"  #increment each build so user can confirm version
+_BUILD_TAG = "r166"  #increment each build so user can confirm version
 
 # ── VRCT-style dark palette ──────────────────────────────────────────────────
 _BG_MAIN = "#2e2f32"
@@ -607,6 +607,7 @@ class DashboardView(ft.Row):
             padding=ft.padding.only(left=2),
         )
         self._static_tooltip_registry.append((_peer_speaks_info, "dashboard.tooltip.peer_spoken_lang"))
+        self._lbl_peer_voice = ft.Text(t("dashboard.language.peer"), size=10, color="#c8c9cc")
         self._peer_panel = ft.Container(
             content=ft.Column(
                 [
@@ -619,7 +620,7 @@ class DashboardView(ft.Row):
                     self._alt_src_row,
                     ft.Divider(height=5, color=_DIVIDER, thickness=1),
                     ft.Row(
-                        [ft.Text(t("dashboard.language.peer"), size=10, color="#c8c9cc"), _peer_speaks_info],
+                        [self._lbl_peer_voice, _peer_speaks_info],
                         spacing=0,
                         vertical_alignment=ft.CrossAxisAlignment.CENTER,
                     ),
@@ -930,12 +931,27 @@ class DashboardView(ft.Row):
         )
 
         # ── Chat log ─────────────────────────────────────────────────────────
-        self._auto_scroll_enabled = True
-        self._chat_list_view = ft.ListView(
+        # A Column (NOT a virtualized ListView) so the wrapping SelectionArea can
+        # drag-select text across multiple messages — ListView only realizes the
+        # visible rows, which breaks cross-message selection. Capped by
+        # CHAT_MAX_ENTRIES so the un-virtualized list stays small.
+        # _chat_following: when True, new messages auto-scroll to the bottom. Set False
+        # the moment the user scrolls up (see _on_chat_scroll) so a new message never
+        # yanks them away from what they're reading; the floating jump button resumes it.
+        self._chat_following = True
+        self._chat_list_view = ft.Column(
             controls=self._chat_entries,
             expand=True,
             spacing=2,
-            auto_scroll=True,
+            scroll=ft.ScrollMode.AUTO,
+            # auto_scroll=False: following is controlled manually based on scroll position
+            # (auto_scroll=True would force every new message to the bottom, interrupting
+            # the user mid-read).
+            auto_scroll=False,
+            on_scroll=self._on_chat_scroll,
+            # Stretch entries to full width (a plain Column otherwise shrinks each row to
+            # its content — the narrow-box "bad theme" regression vs the old ListView).
+            horizontal_alignment=ft.CrossAxisAlignment.STRETCH,
         )
         self._chat_clear_button = ft.TextButton(
             t("dashboard.clear") if t("dashboard.clear") != "dashboard.clear" else "Clear",
@@ -952,7 +968,7 @@ class DashboardView(ft.Row):
         # Filter button — default ON (matches _filter_peer_lang_active = True)
         self._filter_peer_btn = ft.Container(
             content=ft.Text(
-                "Target langs only",
+                t("dashboard.button.target_langs_only"),
                 size=9,
                 color=_RECV_COLOR,
                 weight=ft.FontWeight.W_600,
@@ -965,7 +981,7 @@ class DashboardView(ft.Row):
             border=_pill_border_peer,
         )
         self._overlay_header_text = ft.Text(
-            "Overlay", size=9, color=_TEXT_FAINT, weight=ft.FontWeight.W_600,
+            t("dashboard.button.overlay"), size=9, color=_TEXT_FAINT, weight=ft.FontWeight.W_600,
         )
         # Small VR/Desktop indicator so it's obvious where the overlay renders — a
         # frequent source of "why can't I see it?" when it's in VR mode on desktop.
@@ -1021,7 +1037,7 @@ class DashboardView(ft.Row):
         )
         self._chatbox_peer_btn = ft.Container(
             content=ft.Text(
-                "Loopback",
+                t("dashboard.button.loopback"),
                 size=9,
                 color=_TEXT_FAINT,
                 weight=ft.FontWeight.W_600,
@@ -1036,7 +1052,7 @@ class DashboardView(ft.Row):
         self._static_tooltip_registry.append((self._chatbox_peer_btn, "dashboard.loopback.tooltip"))
         self._vrc_mute_sync_btn = ft.Container(
             content=ft.Text(
-                "Mute Sync",
+                t("dashboard.button.mute_sync"),
                 size=9,
                 color=_TEXT_FAINT,
                 weight=ft.FontWeight.W_600,
@@ -1067,17 +1083,41 @@ class DashboardView(ft.Row):
             vertical_alignment=ft.CrossAxisAlignment.CENTER,
             spacing=0,
         )
-        # Right-click the chat/log area for a context menu (auto-scroll toggle).
-        chat_box = ft.GestureDetector(
-            content=ft.Container(
-                content=self._chat_list_view,
+        # Floating "jump to latest" button (Discord-style), shown only when the user has
+        # scrolled up. Clicking it returns to the newest message and resumes following.
+        self._chat_jump_btn = ft.Container(
+            content=ft.Icon(ft.Icons.KEYBOARD_DOUBLE_ARROW_DOWN_ROUNDED, size=18, color="#e8e8e8"),
+            width=32,
+            height=32,
+            border_radius=16,
+            bgcolor="#3a3b3e",
+            border=ft.border.all(1, "#55565a"),
+            alignment=ft.alignment.center,
+            on_click=self._on_jump_to_latest,
+            tooltip=t("dashboard.jump_latest") if t("dashboard.jump_latest") != "dashboard.jump_latest" else "Jump to latest",
+            visible=False,
+        )
+        # The message list (SelectionArea enables free Copy/Select-all of log text) plus
+        # the floating jump button, stacked so the button overlays the bottom-center.
+        chat_box = ft.Container(
+            content=ft.Stack(
+                [
+                    ft.Container(
+                        left=0, top=0, right=0, bottom=0,
+                        content=ft.SelectionArea(content=self._chat_list_view),
+                    ),
+                    ft.Container(
+                        left=0, right=0, bottom=6,
+                        alignment=ft.alignment.center,
+                        content=self._chat_jump_btn,
+                    ),
+                ],
                 expand=True,
-                bgcolor=_BG_CHAT,
-                border_radius=6,
-                padding=ft.padding.all(8),
             ),
-            on_secondary_tap_down=self._on_chat_right_click,
             expand=True,
+            bgcolor=_BG_CHAT,
+            border_radius=6,
+            padding=ft.padding.all(8),
         )
 
         # ── Message input at bottom (VRCT style) ─────────────────────────────
@@ -1135,6 +1175,12 @@ class DashboardView(ft.Row):
                 ],
                 spacing=4,
                 expand=True,
+                # STRETCH so the chat box fills the FULL width even when empty. Without
+                # it the column left-aligns children at their content width, so the empty
+                # chat box collapsed to a narrow left strip (the "black bar") and only
+                # widened once a message made its content wide — which also meant
+                # right-click/selection only worked inside that strip.
+                horizontal_alignment=ft.CrossAxisAlignment.STRETCH,
             ),
             expand=True,
             bgcolor=_BG_MAIN,
@@ -1884,9 +1930,14 @@ class DashboardView(ft.Row):
     def _open_context_menu(self, x: float, y: float, options: list[tuple]) -> None:
         """Open a compact context menu at (x, y). options: list of (label, checked|None, callback)."""
         # Fixed width sized to the longest label (a single short item stays compact).
-        longest = max((len(lbl) for (lbl, *_rest) in options), default=10)
+        # CJK glyphs are ~2x the width of Latin, so measure per-character instead of
+        # len()*constant — otherwise Chinese/Japanese/Korean labels get cut off.
+        def _label_px(lbl: str) -> float:
+            return sum(13.5 if ord(ch) > 0x2E7F else 6.6 for ch in lbl)
+
+        longest_px = max((_label_px(lbl) for (lbl, *_rest) in options), default=66.0)
         has_check = any(checked is not None for (_l, checked, _cb) in options)
-        width = min(340.0, max(132.0, longest * 6.6 + (22.0 if has_check else 0.0) + 26.0))
+        width = min(420.0, max(132.0, longest_px + (22.0 if has_check else 0.0) + 30.0))
         holder: dict = {}
         rows = [
             self._menu_item(lbl, checked, cb, lambda: holder.get("close", lambda: None)())
@@ -1903,17 +1954,50 @@ class DashboardView(ft.Row):
         )
 
 
-    def _on_chat_right_click(self, e=None) -> None:
-        x, y = self._tap_xy(e)
-        self._open_context_menu(x, y, [
-            (t("dashboard.autoscroll.menu"), self._auto_scroll_enabled, self._toggle_autoscroll),
-        ])
-
-    def _toggle_autoscroll(self) -> None:
-        self._auto_scroll_enabled = not self._auto_scroll_enabled
-        self._chat_list_view.auto_scroll = self._auto_scroll_enabled
+    def _on_chat_scroll(self, e) -> None:
+        """Track whether the user is at the bottom of the log. While they're scrolled
+        up, stop following new messages and show the jump-to-latest button."""
         try:
-            self._chat_list_view.update()
+            max_ext = float(getattr(e, "max_scroll_extent", 0) or 0)
+            pixels = float(getattr(e, "pixels", 0) or 0)
+        except Exception:
+            return
+        at_bottom = max_ext <= 0 or (max_ext - pixels) <= 48
+        self._chat_following = at_bottom
+        self._set_chat_jump_visible(not at_bottom)
+
+    def _follow_chat_if_following(self) -> None:
+        """Called after appending a message: scroll to the newest only if the user is
+        still at the bottom; otherwise surface the jump button so they can catch up."""
+        lv = self._chat_list_view
+        if lv is None or not lv.page:
+            return
+        if self._chat_following:
+            try:
+                lv.scroll_to(offset=-1, duration=120)
+            except Exception:
+                pass
+        else:
+            self._set_chat_jump_visible(True)
+
+    def _on_jump_to_latest(self, e=None) -> None:
+        self._chat_following = True
+        self._set_chat_jump_visible(False)
+        lv = self._chat_list_view
+        if lv is not None and lv.page:
+            try:
+                lv.scroll_to(offset=-1, duration=200)
+            except Exception:
+                pass
+
+    def _set_chat_jump_visible(self, visible: bool) -> None:
+        btn = getattr(self, "_chat_jump_btn", None)
+        if btn is None or btn.visible == visible:
+            return
+        btn.visible = visible
+        try:
+            if btn.page:
+                btn.update()
         except Exception:
             pass
 
@@ -1986,27 +2070,27 @@ class DashboardView(ft.Row):
             )
             # Source text with optional transliteration (if source is CJK)
             if translit_src:
-                content_rows.append(ft.Text(translit_src, size=11, color=_TRANSLIT_COLOR, selectable=True, italic=True))
-            content_rows.append(ft.Text(source_text.strip(), size=12, color=_TEXT_FAINT, selectable=True))
+                content_rows.append(ft.Text(translit_src, size=11, color=_TRANSLIT_COLOR, italic=True))
+            content_rows.append(ft.Text(source_text.strip(), size=12, color=_TEXT_FAINT))
             # Translation block: pinyin/romaji above, then translation text
             if translit_tgt and translit_tgt != translit_src:
-                content_rows.append(ft.Text(translit_tgt, size=11, color=_TRANSLIT_COLOR, selectable=True, italic=True))
-            content_rows.append(ft.Text(translated_text.strip(), size=13, color=_TEXT_PRIMARY, selectable=True, weight=ft.FontWeight.W_500))
+                content_rows.append(ft.Text(translit_tgt, size=11, color=_TRANSLIT_COLOR, italic=True))
+            content_rows.append(ft.Text(translated_text.strip(), size=13, color=_TEXT_PRIMARY, weight=ft.FontWeight.W_500))
         elif translated_text:
             translit = transliterate_for_language(
                 translated_text, tgt_lang, show_pinyin=_want_pinyin, show_romaji=_want_romaji, show_latin=_want_latin
             )
             if translit:
-                content_rows.append(ft.Text(translit, size=11, color=_TRANSLIT_COLOR, selectable=True, italic=True))
-            content_rows.append(ft.Text(translated_text.strip(), size=13, color=_TEXT_PRIMARY, selectable=True, weight=ft.FontWeight.W_500))
+                content_rows.append(ft.Text(translit, size=11, color=_TRANSLIT_COLOR, italic=True))
+            content_rows.append(ft.Text(translated_text.strip(), size=13, color=_TEXT_PRIMARY, weight=ft.FontWeight.W_500))
         else:
-            content_rows.append(ft.Text(source_text.strip(), size=13, color=_TEXT_PRIMARY, selectable=True))
+            content_rows.append(ft.Text(source_text.strip(), size=13, color=_TEXT_PRIMARY))
 
         # Header: just "Sent 16:37" — clean timestamp label
         header = ft.Row(
             [
-                ft.Text(direction, size=11, color=label_color, weight=ft.FontWeight.W_700, selectable=True),
-                ft.Text(f" {timestamp}", size=11, color=_TEXT_FAINT, selectable=True),
+                ft.Text(direction, size=11, color=label_color, weight=ft.FontWeight.W_700),
+                ft.Text(f" {timestamp}", size=11, color=_TEXT_FAINT),
             ],
             spacing=0,
             tight=True,
@@ -2023,8 +2107,7 @@ class DashboardView(ft.Row):
             try:
                 if self._chat_list_view.page:
                     self._chat_list_view.update()
-                    if self._auto_scroll_enabled:
-                        self._chat_list_view.scroll_to(offset=-1, duration=150)
+                    self._follow_chat_if_following()
             except Exception:
                 pass
             return
@@ -2036,9 +2119,11 @@ class DashboardView(ft.Row):
                 tight=True,
             ),
             padding=ft.padding.only(left=10, top=6, bottom=6, right=8),
+            # NOTE: no border_radius — a non-uniform border (left only) combined with a
+            # border_radius makes Flutter flash the rounded-rect bounds of every entry
+            # during scroll repaints (the faint boxes). Square entries avoid that.
             border=ft.border.only(left=ft.BorderSide(2, label_color)),
             margin=ft.margin.only(top=4),
-            border_radius=ft.border_radius.only(top_right=4, bottom_right=4),
         )
         self._last_chat_content_col = entry.content  # track for extra-language appends
         self._chat_list_view.controls.append(entry)
@@ -2046,6 +2131,7 @@ class DashboardView(ft.Row):
             del self._chat_list_view.controls[:20]
         try:
             self._chat_list_view.update()
+            self._follow_chat_if_following()
         except Exception:
             pass
 
@@ -2065,10 +2151,11 @@ class DashboardView(ft.Row):
                 text, lang_code, show_pinyin=_want_pinyin, show_romaji=_want_romaji, show_latin=_want_latin
             )
             if translit:
-                col.controls.append(ft.Text(translit, size=11, color=_TRANSLIT_COLOR, selectable=True, italic=True))
-            col.controls.append(ft.Text(text.strip(), size=13, color=_TEXT_PRIMARY, selectable=True, weight=ft.FontWeight.W_500))
+                col.controls.append(ft.Text(translit, size=11, color=_TRANSLIT_COLOR, italic=True))
+            col.controls.append(ft.Text(text.strip(), size=13, color=_TEXT_PRIMARY, weight=ft.FontWeight.W_500))
         try:
             self._chat_list_view.update()
+            self._follow_chat_if_following()
         except Exception:
             pass
 
@@ -2090,13 +2177,13 @@ class DashboardView(ft.Row):
         if self._chat_list_view is not None and self._show_pending_echo:
             import datetime as _dt
             timestamp = _dt.datetime.now().strftime("%H:%M")
-            pending_text = ft.Text(text.strip(), size=13, color=_TEXT_FAINT, selectable=True, italic=True)
+            pending_text = ft.Text(text.strip(), size=13, color=_TEXT_FAINT, italic=True)
             pending_col = ft.Column(
                 [
                     ft.Row(
                         [
-                            ft.Text(t("dashboard.chat.sent"), size=11, color=_SENT_COLOR, weight=ft.FontWeight.W_700, selectable=True),
-                            ft.Text(f" {timestamp}", size=11, color=_TEXT_FAINT, selectable=True),
+                            ft.Text(t("dashboard.chat.sent"), size=11, color=_SENT_COLOR, weight=ft.FontWeight.W_700),
+                            ft.Text(f" {timestamp}", size=11, color=_TEXT_FAINT),
                         ],
                         spacing=0, tight=True,
                     ),
@@ -2107,16 +2194,22 @@ class DashboardView(ft.Row):
             entry = ft.Container(
                 content=pending_col,
                 padding=ft.padding.only(left=10, top=6, bottom=6, right=8),
+                # No border_radius — see the note on the finalized entry above (avoids
+                # the faint per-entry boxes flashing during scroll).
                 border=ft.border.only(left=ft.BorderSide(2, _SENT_COLOR)),
                 margin=ft.margin.only(top=4),
-                border_radius=ft.border_radius.only(top_right=4, bottom_right=4),
             )
             self._last_chat_content_col = pending_col
             self._chat_list_view.controls.append(entry)
             if len(self._chat_list_view.controls) > CHAT_MAX_ENTRIES:
                 del self._chat_list_view.controls[:20]
+            # The user just sent a message — always jump to the bottom and resume
+            # following, even if they were scrolled up reading history.
+            self._chat_following = True
+            self._set_chat_jump_visible(False)
             try:
                 self._chat_list_view.update()
+                self._follow_chat_if_following()
             except Exception:
                 pass
             self._pending_sent_col = pending_col
@@ -2132,7 +2225,7 @@ class DashboardView(ft.Row):
                 pending_col.controls.append(
                     ft.Text(
                         t("dashboard.chat.translation_failed"),
-                        color="#e05050", size=11, italic=True, selectable=True,
+                        color="#e05050", size=11, italic=True,
                     )
                 )
                 pending_text.color = "#888888"
@@ -3483,6 +3576,44 @@ class DashboardView(ft.Row):
                     _lbl.update()
                 except Exception:
                     pass
+        # Chat-header pill buttons are built once with t(); re-translate them here so a
+        # runtime UI-language change updates them too (their refresh methods only touch
+        # color/state, not the text).
+        for _btn_attr, _btn_key in (
+            ("_vrc_mute_sync_btn", "dashboard.button.mute_sync"),
+            ("_chatbox_peer_btn", "dashboard.button.loopback"),
+            ("_filter_peer_btn", "dashboard.button.target_langs_only"),
+        ):
+            _btn = getattr(self, _btn_attr, None)
+            _content = getattr(_btn, "content", None)
+            if _content is not None and hasattr(_content, "value"):
+                _content.value = t(_btn_key)
+                try:
+                    _content.update()
+                except Exception:
+                    pass
+        _ov_hdr = getattr(self, "_overlay_header_text", None)
+        if _ov_hdr is not None:
+            _ov_hdr.value = t("dashboard.button.overlay")
+            try:
+                _ov_hdr.update()
+            except Exception:
+                pass
+        # "Peer voice" panel label + "Clear" chat button (both built inline / once).
+        _peer_lbl = getattr(self, "_lbl_peer_voice", None)
+        if _peer_lbl is not None:
+            _peer_lbl.value = t("dashboard.language.peer")
+            try:
+                _peer_lbl.update()
+            except Exception:
+                pass
+        _clear_btn = getattr(self, "_chat_clear_button", None)
+        if _clear_btn is not None:
+            _clear_btn.text = t("dashboard.clear")
+            try:
+                _clear_btn.update()
+            except Exception:
+                pass
         for _hdr, _key in getattr(self, "_section_header_labels", []):
             _hdr.value = t(_key)
             try:

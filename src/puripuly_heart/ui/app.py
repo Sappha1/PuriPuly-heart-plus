@@ -2277,6 +2277,18 @@ class TranslatorApp:
 
 
 async def main_gui(page: ft.Page, *, config_path, debug_ui_preview: bool = False):
+    # Apply the saved UI locale BEFORE building the views, so every t() call at
+    # construction renders in the right language. The controller only set the locale
+    # later (during start()), which left many construction-time labels, tooltips, and
+    # buttons in English because apply_locale() only re-translates some of them.
+    with contextlib.suppress(Exception):
+        from puripuly_heart.config.settings import load_settings
+        from puripuly_heart.ui.i18n import set_locale as _set_locale_early
+
+        _early_locale = load_settings(config_path).ui.locale
+        if _early_locale:
+            _set_locale_early(_early_locale)
+
     app = TranslatorApp(
         page,
         config_path=config_path,

@@ -1566,6 +1566,9 @@ def to_dict(settings: AppSettings) -> dict[str, Any]:
             "send_latin": settings.ui.send_latin,
             "self_in_overlay": settings.ui.self_in_overlay,
             "typed_in_overlay": settings.ui.typed_in_overlay,
+            # Persisted so the overlay/peer toggles are restored on next launch.
+            "overlay_enabled": settings.ui.overlay_enabled,
+            "peer_translation_enabled": settings.ui.peer_translation_enabled,
             "filter_peer_by_target_languages": settings.ui.filter_peer_by_target_languages,
             "show_pending_echo": settings.ui.show_pending_echo,
             "chatbox_send_peer": settings.ui.chatbox_send_peer,
@@ -3304,13 +3307,8 @@ def _migrate_settings_dict(raw: dict[str, Any]) -> tuple[dict[str, Any], bool]:
         del ui_data["show_overlay_peer_original"]
         changed = True
 
-    if "overlay_enabled" in ui_data:
-        del ui_data["overlay_enabled"]
-        changed = True
-
-    if "peer_translation_enabled" in ui_data:
-        del ui_data["peer_translation_enabled"]
-        changed = True
+    # overlay_enabled / peer_translation_enabled are now persisted (see to_dict) and
+    # restored on launch, so they are intentionally NOT stripped here anymore.
 
     raw_github_star_prompt_clicked = ui_data.get("github_star_prompt_clicked")
     normalized_github_star_prompt_clicked = _parse_bool(raw_github_star_prompt_clicked)
@@ -3777,8 +3775,9 @@ def from_dict(data: dict[str, Any]) -> AppSettings:
         ),
         ui=UiSettings(
             locale=str(ui_data.get("locale", "en")),
-            overlay_enabled=False,
-            peer_translation_enabled=False,
+            # Restored from the saved value so the toggles persist across launches.
+            overlay_enabled=bool(ui_data.get("overlay_enabled", False)),
+            peer_translation_enabled=bool(ui_data.get("peer_translation_enabled", False)),
             peer_translation_eula_accepted=bool(
                 ui_data.get("peer_translation_eula_accepted", False)
             ),

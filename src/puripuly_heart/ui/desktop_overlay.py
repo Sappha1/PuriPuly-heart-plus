@@ -84,6 +84,11 @@ _REQUIRED_MANIFEST_INT_FIELDS = {"contract_version", "parent_pid", "startup_dead
 _DESKTOP_CAPTION_WHITE = "#FFFFFF"
 _DESKTOP_CAPTION_GOLD = "#FFD700"
 _DESKTOP_CAPTION_PEER_SOURCE = "#c8b4ff"  # light purple for peer source/pinyin lines
+# Your own (self/typed) lines get their own colored scheme so they read like the
+# peer captions instead of plain white: a light blue source + mint translation,
+# distinct from the peer's purple/gold so you can still tell who said what.
+_DESKTOP_CAPTION_SELF_SOURCE = "#a9d6ff"  # light blue for self source/typed lines
+_DESKTOP_CAPTION_SELF_TRANSLATION = "#6fe9cf"  # mint for self translation lines
 _DESKTOP_CAPTION_LATIN_FONT_FAMILY = "Noto Sans"
 _DESKTOP_CAPTION_CJK_FONT_FAMILY = "Noto Sans CJK JP"
 _DESKTOP_CAPTION_CJK_LANGUAGE_PRIMARY_SUBTAGS = frozenset(
@@ -142,6 +147,12 @@ _DESKTOP_EMPTY_LOCK_ACTION_FOCUS_COLOR = "#FF6B6B"
 # Teal accent used to make "edit mode" obvious (matches the app's primary accent).
 _DESKTOP_EDIT_ACCENT_COLOR = "#3dd7c0"
 _DESKTOP_EDIT_HINT_I18N_KEY = "settings.overlay.desktop.empty_state.hint"
+_DESKTOP_OVERLAY_ACTIVE_BANNER_I18N_KEY = "settings.overlay.desktop.active_banner"
+# Timed from when the window is REVEALED (not app start), so the visible duration is
+# consistent regardless of how long startup took. Held at full opacity, then faded out
+# via Flet's native opacity animation (smooth ~60fps, not a stepped re-render).
+_DESKTOP_ACTIVE_BANNER_VISIBLE_SECONDS = 0.8
+_DESKTOP_ACTIVE_BANNER_FADE_SECONDS = 0.45
 _DESKTOP_EMPTY_LOCK_ACTION_MIN_HIT_TARGET = 44
 _DESKTOP_EMPTY_LOCK_ACTION_HORIZONTAL_PADDING = 28
 _DESKTOP_EMPTY_LOCK_ACTION_VERTICAL_PADDING = 12
@@ -334,6 +345,11 @@ class DesktopCaptionVisualState:
     # Display toggles mirrored from presenter — used to make the sample match live output.
     show_translation: bool = True
     show_peer_original: bool = True
+    # The peer's spoken language and the language their speech is translated INTO
+    # (the user's reading language). Used only so the edit-mode SAMPLE caption reflects
+    # the user's actual dashboard language choices instead of a fixed zh→en string.
+    peer_source_language: str = ""
+    peer_target_language: str = ""
 
 
 @dataclass(frozen=True, slots=True)
@@ -1117,6 +1133,7 @@ def _self_active_lines(
                 max_lines=_DESKTOP_CAPTION_PRIMARY_MAX_LINES,
                 font_size=primary_font_size,
                 language=block.primary_language,
+                color=_DESKTOP_CAPTION_SELF_SOURCE,
                 active=True,
             )
         )
@@ -1131,6 +1148,7 @@ def _self_active_lines(
                 max_lines=_DESKTOP_CAPTION_SECONDARY_MAX_LINES,
                 font_size=secondary_font_size,
                 language=block.secondary_language,
+                color=_DESKTOP_CAPTION_SELF_TRANSLATION,
                 active=True,
             )
         )
@@ -1255,6 +1273,7 @@ def _self_finalized_lines(
                 max_lines=_DESKTOP_CAPTION_PRIMARY_MAX_LINES,
                 font_size=primary_font_size,
                 language=block.primary_language,
+                color=_DESKTOP_CAPTION_SELF_SOURCE,
             )
         )
         if secondary_text and block.secondary_enabled:
@@ -1268,6 +1287,7 @@ def _self_finalized_lines(
                     max_lines=_DESKTOP_CAPTION_SECONDARY_MAX_LINES,
                     font_size=secondary_font_size,
                     language=block.secondary_language,
+                    color=_DESKTOP_CAPTION_SELF_TRANSLATION,
                 )
             )
         return tuple(lines)
@@ -1282,6 +1302,7 @@ def _self_finalized_lines(
                 max_lines=_DESKTOP_CAPTION_PRIMARY_MAX_LINES,
                 font_size=primary_font_size,
                 language=block.secondary_language,
+                color=_DESKTOP_CAPTION_SELF_TRANSLATION,
                 promoted=True,
             ),
         )
@@ -1500,7 +1521,40 @@ def _validated_visual_state(
         single_turn_mode=source.single_turn_mode,
         show_translation=source.show_translation,
         show_peer_original=source.show_peer_original,
+        peer_source_language=source.peer_source_language,
+        peer_target_language=source.peer_target_language,
     )
+
+
+# Representative one-line sample messages per language, used so the edit-mode SAMPLE
+# caption reflects the user's actual language choices ("as if I would hear it in game").
+# Each entry: (text, romanization_or_None). Keyed by the app's language codes.
+_DESKTOP_SAMPLE_SENTENCES: dict[str, tuple[str, str | None]] = {
+    "en": ("This is a sample message", None),
+    "zh-CN": ("这是一条示例消息", "zhè shì yī tiáo shìlì xiāoxī"),
+    "zh-TW": ("這是一條範例訊息", "zhè shì yī tiáo fànlì xùnxí"),
+    "ja": ("これはサンプルメッセージです", "kore wa sanpuru messēji desu"),
+    "ko": ("이것은 샘플 메시지입니다", "igeoseun saempeul mesijiimnida"),
+    "es": ("Este es un mensaje de ejemplo", None),
+    "fr": ("Ceci est un message d'exemple", None),
+    "de": ("Dies ist eine Beispielnachricht", None),
+    "ru": ("Это пример сообщения", "Eto primer soobshcheniya"),
+    "pt": ("Esta é uma mensagem de exemplo", None),
+    "it": ("Questo è un messaggio di esempio", None),
+}
+
+
+def _desktop_sample_sentence_for(language: str | None) -> tuple[str, str | None]:
+    """Return (text, romanization) for a sample caption in ``language``, falling back
+    to the base language (e.g. zh for zh-XX) and finally English."""
+    if language:
+        if language in _DESKTOP_SAMPLE_SENTENCES:
+            return _DESKTOP_SAMPLE_SENTENCES[language]
+        base = language.split("-")[0]
+        for code, value in _DESKTOP_SAMPLE_SENTENCES.items():
+            if code.split("-")[0] == base:
+                return value
+    return _DESKTOP_SAMPLE_SENTENCES["en"]
 
 
 def _desktop_caption_size_preset_for_dimensions(
@@ -2080,6 +2134,15 @@ class FletDesktopRendererWindow:
         # Without this, changing the size in Settings looks broken until a full
         # overlay restart — even though every logged dimension reads "correct".
         self._needs_bounds_reassert_on_edit: bool = False
+        # One-time "overlay active" banner shown when the overlay first turns on WHILE
+        # LOCKED — so the user can confirm it's alive even with background transparency
+        # at 0. Rendered through the caption path (not page.overlay, which didn't
+        # paint) and ONLY in pass-through mode, so it never sits on top of edit-mode
+        # sample text. _active_banner_until is a monotonic deadline.
+        self._startup_active_banner_shown: bool = False
+        self._active_banner_until: float | None = None
+        self._active_banner_opacity: float = 1.0
+        self._active_banner_ctrl: Any = None
 
     def prime_startup_runtime_controls(
         self,
@@ -2149,6 +2212,12 @@ class FletDesktopRendererWindow:
         self._interaction_mode = (
             self._startup_interaction_mode or _DESKTOP_INTERACTION_MODE_EDIT
         )
+        # The one-time "overlay active" banner is armed when the window is REVEALED
+        # (see _reveal_window_if_supported), not here, so its short visible duration is
+        # measured from when it actually appears rather than from app start.
+        self._startup_active_banner_shown = False
+        self._active_banner_until = None
+        self._active_banner_opacity = 1.0
         if self._app_task is None or self._app_task.done():
             self._app_task = asyncio.create_task(self._app_runner(self._handle_page))
 
@@ -2494,14 +2563,20 @@ class FletDesktopRendererWindow:
         show_translation = bool(getattr(vs, "show_translation", True))
         show_peer_original = bool(getattr(vs, "show_peer_original", True))
 
-        zh_original = "这是一条示例消息"
-        zh_pinyin = "zhè shì yī tiáo shì lì xiāo xī"
-        # English translation matches the Chinese meaning ("sample message", not just "sample")
+        # Reflect the user's actual dashboard language choices: the peer speaks
+        # `peer_source_language` and we translate INTO `peer_target_language` (their
+        # reading language). Falls back to a zh→en sample when languages aren't known.
+        source_lang = getattr(vs, "peer_source_language", "") or "zh-CN"
+        reading_lang = getattr(vs, "peer_target_language", "") or "en"
+        source_text, source_roman = _desktop_sample_sentence_for(source_lang)
+        reading_text, _reading_roman = _desktop_sample_sentence_for(reading_lang)
 
-        # Build peer secondary (source + optional pinyin)
+        # Build peer secondary (source + optional romanization)
         if show_peer_original:
             peer_secondary = (
-                f"{zh_pinyin}\n{zh_original}" if show_romanization else zh_original
+                f"{source_roman}\n{source_text}"
+                if (show_romanization and source_roman)
+                else source_text
             )
         else:
             peer_secondary = ""
@@ -2512,11 +2587,11 @@ class FletDesktopRendererWindow:
             appearance_seq=0,
             channel="peer",
             block_variant="finalized",
-            primary_text="This is a sample message" if show_translation else "",
+            primary_text=reading_text if show_translation else "",
             secondary_text=peer_secondary,
             secondary_enabled=show_peer_original,
-            primary_language="en",
-            secondary_language="zh",
+            primary_language=reading_lang,
+            secondary_language=source_lang,
         )
         if single_turn:
             return OverlayPresentationSnapshot(revision=0, blocks=[peer_block])
@@ -2684,6 +2759,13 @@ class FletDesktopRendererWindow:
             )
             content_kind = "drag_area"
             content = drag_area
+        elif self._active_banner_visible():
+            # One-time "overlay active" confirmation while locked (armed in start()).
+            # Drawn over whatever the locked content would be so it's visible even at
+            # 0 background transparency.
+            content_kind = "active_banner"
+            content = self._build_active_banner_control(ft, plan)
+            logger.info("[DesktopOverlay][Banner] rendering active banner (locked)")
         else:
             if plan.surface_visible:
                 content_kind = "caption_surface"
@@ -2714,6 +2796,9 @@ class FletDesktopRendererWindow:
             )
         )
         _edit = self._interaction_mode == _DESKTOP_INTERACTION_MODE_EDIT
+        # The active banner uses the same window-filling layout as the edit chrome
+        # (expand + top-left) so it reliably gets real bounds and paints.
+        _window_filling = _edit or content_kind == "active_banner"
         root = ft.Container(
             content=content,
             padding=0,
@@ -2721,8 +2806,8 @@ class FletDesktopRendererWindow:
             # Edit chrome is explicitly window-sized, so pin it to the top-left origin
             # rather than centering (centering a window-sized box is a no-op but can
             # interact badly with expand); captions keep centering.
-            alignment=ft.alignment.top_left if _edit else ft.alignment.center,
-            expand=_edit,
+            alignment=ft.alignment.top_left if _window_filling else ft.alignment.center,
+            expand=_window_filling,
         )
 
         if hasattr(page, "clean"):
@@ -2740,7 +2825,13 @@ class FletDesktopRendererWindow:
             return
         locked = self._interaction_mode == _DESKTOP_INTERACTION_MODE_PASS_THROUGH
         window = page.window
-        window.ignore_mouse_events = locked
+        # While the one-time "overlay active" banner is showing, keep the window
+        # interactive (NOT click-through). A fully click-through transparent layered
+        # window (WS_EX_TRANSPARENT) does not reliably composite freshly-rendered
+        # content on Windows — which is why the banner rendered (per logs) but stayed
+        # invisible while locked, yet the edit chrome (interactive) shows fine. The
+        # banner is brief and only at startup, so dropping click-through is harmless.
+        window.ignore_mouse_events = locked and not self._active_banner_visible()
 
     def _reveal_window_if_supported(self, *, force: bool = False) -> None:
         if self._pending_startup_reveal and not force:
@@ -2759,6 +2850,90 @@ class FletDesktopRendererWindow:
                 "width=%s height=%s",
                 getattr(window, "width", None), getattr(window, "height", None),
             )
+            self._arm_active_banner_on_reveal()
+
+    def _arm_active_banner_on_reveal(self) -> None:
+        """Arm the one-time "overlay active" banner now that the window is actually
+        visible. Only while LOCKED (pass-through) — in edit mode the chrome already
+        shows it's active. Timed from here so the visible duration is short and
+        consistent. The fade task drives opacity down and restores click-through."""
+        if self._startup_active_banner_shown:
+            return
+        if self._interaction_mode != _DESKTOP_INTERACTION_MODE_PASS_THROUGH:
+            return
+        self._startup_active_banner_shown = True
+        self._active_banner_opacity = 1.0
+        total = _DESKTOP_ACTIVE_BANNER_VISIBLE_SECONDS + _DESKTOP_ACTIVE_BANNER_FADE_SECONDS
+        self._active_banner_until = time.monotonic() + total
+        logger.info("[DesktopOverlay][Banner] armed on reveal total=%.1fs", total)
+        self._render_page()
+        self._run_page_task(self._run_active_banner_fade)
+
+    async def _run_active_banner_fade(self) -> None:
+        try:
+            await asyncio.sleep(_DESKTOP_ACTIVE_BANNER_VISIBLE_SECONDS)
+            if self._closed.is_set() or self._page is None:
+                return
+            # Trigger Flet's native opacity animation by flipping the banner control's
+            # opacity to 0 and updating just that control (smooth, GPU-driven) rather
+            # than re-rendering the page per step.
+            self._active_banner_opacity = 0.0
+            ctrl = self._active_banner_ctrl
+            if ctrl is not None:
+                try:
+                    ctrl.opacity = 0.0
+                    if getattr(ctrl, "page", None) is not None:
+                        ctrl.update()
+                except Exception:
+                    pass
+            await asyncio.sleep(_DESKTOP_ACTIVE_BANNER_FADE_SECONDS + 0.1)
+        except asyncio.CancelledError:
+            return
+        if self._closed.is_set() or self._page is None:
+            return
+        # Done: drop the banner and restore click-through (via _render_page chrome).
+        self._active_banner_until = None
+        self._active_banner_opacity = 1.0
+        self._active_banner_ctrl = None
+        self._render_page()
+
+    def _active_banner_visible(self) -> bool:
+        deadline = self._active_banner_until
+        return (
+            deadline is not None
+            and time.monotonic() < deadline
+            and self._interaction_mode == _DESKTOP_INTERACTION_MODE_PASS_THROUGH
+        )
+
+    def _build_active_banner_control(self, ft: Any, plan: Any) -> Any:
+        # One full-window band: the dim background is bounded by the teal outline (the
+        # outline hugs the whole caption zone, same bounds as the edit-mode sample), with
+        # the confirmation text centered inside it.
+        win_w = float(getattr(plan, "window_width", 0) or 0)
+        win_h = float(getattr(plan, "window_height", 0) or 0)
+        border_radius = getattr(plan, "border_radius", 12)
+        ctrl = ft.Container(
+            width=win_w or None,
+            height=win_h or None,
+            opacity=max(0.0, min(1.0, self._active_banner_opacity)),
+            # Native opacity animation so the fade-out is smooth; _run_active_banner_fade
+            # just flips opacity to 0 and Flutter animates it over this duration.
+            animate_opacity=int(_DESKTOP_ACTIVE_BANNER_FADE_SECONDS * 1000),
+            bgcolor="#0b0d10e0",
+            border=ft.border.all(2, _DESKTOP_EDIT_ACCENT_COLOR),
+            border_radius=border_radius,
+            alignment=ft.alignment.center,
+            content=ft.Text(
+                t_for_locale(self._locale, _DESKTOP_OVERLAY_ACTIVE_BANNER_I18N_KEY),
+                size=max(18, int(getattr(plan, "primary_font_size", 24) * 0.95)),
+                weight=ft.FontWeight.W_700,
+                color=_DESKTOP_EDIT_ACCENT_COLOR,
+                text_align=ft.TextAlign.CENTER,
+                no_wrap=True,
+            ),
+        )
+        self._active_banner_ctrl = ctrl
+        return ctrl
 
     def hide_window_safely(self) -> None:
         """Best-effort hide of the native window.
@@ -3556,6 +3731,8 @@ def _parse_runtime_visual_state(payload: dict[str, object]) -> DesktopCaptionVis
     single_turn_raw = payload.get("single_turn_mode", True)
     show_translation_raw = payload.get("show_translation", True)
     show_peer_original_raw = payload.get("show_peer_original", True)
+    peer_source_language_raw = payload.get("peer_source_language", "")
+    peer_target_language_raw = payload.get("peer_target_language", "")
     return DesktopCaptionVisualState(
         text_scale=float(text_scale),
         background_alpha=float(background_alpha),
@@ -3564,6 +3741,8 @@ def _parse_runtime_visual_state(payload: dict[str, object]) -> DesktopCaptionVis
         single_turn_mode=bool(single_turn_raw),
         show_translation=bool(show_translation_raw),
         show_peer_original=bool(show_peer_original_raw),
+        peer_source_language=str(peer_source_language_raw or ""),
+        peer_target_language=str(peer_target_language_raw or ""),
     )
 
 

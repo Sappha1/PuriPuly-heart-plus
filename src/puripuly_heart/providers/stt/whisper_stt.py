@@ -23,6 +23,46 @@ WHISPER_MODELS = (
     "large-v3-turbo",
 )
 
+# faster-whisper repo ids for our model names (HuggingFace Hub).
+WHISPER_MODEL_REPO_IDS = {
+    "large-v3-turbo-int8": "Zoont/faster-whisper-large-v3-turbo-int8-ct2",
+    "large-v3-turbo": "deepdml/faster-whisper-large-v3-turbo-ct2",
+}
+
+
+def whisper_repo_id_for(model_name: str) -> str:
+    return WHISPER_MODEL_REPO_IDS.get(model_name, model_name)
+
+
+def whisper_model_locally_available(model_name: str) -> bool:
+    """True if the Whisper model is already in the HuggingFace cache, so it can load
+    fully offline (no Hub access needed)."""
+    try:
+        from huggingface_hub import try_to_load_from_cache  # type: ignore
+    except Exception:
+        return False
+    repo_id = whisper_repo_id_for(model_name)
+    for filename in ("model.bin", "config.json"):
+        try:
+            if isinstance(try_to_load_from_cache(repo_id, filename), str):
+                return True
+        except Exception:
+            pass
+    return False
+
+
+def is_huggingface_reachable(timeout: float = 3.0) -> bool:
+    """Quick reachability probe for huggingface.co — Whisper's model host, which is
+    commonly blocked (e.g. behind the Great Firewall). False means a download would
+    fail, so Whisper can't load unless the model is already cached."""
+    try:
+        import httpx  # type: ignore
+
+        httpx.head("https://huggingface.co", timeout=timeout, follow_redirects=True)
+        return True
+    except Exception:
+        return False
+
 WHISPER_MODEL_SIZES = {
     "tiny": "74.5 MB",
     "base": "141 MB",

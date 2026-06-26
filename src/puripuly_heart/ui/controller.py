@@ -4954,6 +4954,7 @@ class GuiController:
             peer_target_language=self.settings.languages.peer_target_language,
             system_prompt=self.settings.system_prompt,
             chatbox_include_source=self.settings.osc.chatbox_include_source,
+            chatbox_reading_only=bool(getattr(self.settings.ui, "chatbox_reading_only", False)),
             send_pinyin=bool(getattr(self.settings.ui, "send_pinyin", False)),
             send_romaji=bool(getattr(self.settings.ui, "send_romaji", False)),
             send_latin=bool(getattr(self.settings.ui, "send_latin", False)),

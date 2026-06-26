@@ -2143,6 +2143,15 @@ class FletDesktopRendererWindow:
         self._active_banner_until: float | None = None
         self._active_banner_opacity: float = 1.0
         self._active_banner_ctrl: Any = None
+        # While True, keep the window interactive (not click-through) even when locked,
+        # so a programmatic resize actually commits to the native frame. A click-through
+        # pass-through window ignores resizes, which left startup captions "smashed"
+        # until a lock toggle (edit mode) forced the resize.
+        self._relayout_in_progress: bool = False
+        # Set on start; cleared after the FIRST real caption triggers a one-time relayout.
+        # The smush is a Flutter content-relayout timing bug that only shows once a caption
+        # exists, so the corrective resize must fire then — not at a fixed startup moment.
+        self._startup_relayout_pending: bool = False
 
     def prime_startup_runtime_controls(
         self,
@@ -2218,6 +2227,7 @@ class FletDesktopRendererWindow:
         self._startup_active_banner_shown = False
         self._active_banner_until = None
         self._active_banner_opacity = 1.0
+        self._startup_relayout_pending = True
         if self._app_task is None or self._app_task.done():
             self._app_task = asyncio.create_task(self._app_runner(self._handle_page))
 
@@ -2344,6 +2354,55 @@ class FletDesktopRendererWindow:
                 "retries; revealing window anyway to avoid a permanently invisible overlay"
             )
             self._reveal_window_if_supported(force=True)
+        # NOTE: the corrective relayout is NOT scheduled here. The "smashed" caption is a
+        # Flutter content-relayout bug that only manifests once a caption exists, so the
+        # relayout is triggered from _render_page on the FIRST caption instead.
+
+    async def _startup_relayout_after_settle(self) -> None:
+        try:
+            await asyncio.sleep(0.12)
+        except asyncio.CancelledError:
+            return
+        if self._closed.is_set() or self._page is None:
+            return
+        bounds = self._current_window_bounds
+        if bounds is None:
+            return
+        logger.info("[DesktopOverlay][Startup] post-settle relayout re-asserting bounds")
+        # Make the window interactive for the duration of the resize so the native frame
+        # actually adopts the size (a click-through pass-through window ignores it). The
+        # interaction MODE stays put, so captions keep rendering — no edit chrome flashes.
+        self._relayout_in_progress = True
+        page = self._page
+        window = getattr(page, "window", None) if page is not None else None
+        if window is not None:
+            try:
+                window.ignore_mouse_events = False
+                window_update = getattr(window, "update", None)
+                if callable(window_update):
+                    window_update()
+            except Exception:
+                pass
+        try:
+            await self._apply_window_bounds_with_retries(dict(bounds), force_resize=True)
+        except Exception:
+            logger.warning(
+                "[DesktopOverlay][Startup] post-settle relayout failed; overlay kept alive",
+                exc_info=True,
+            )
+        finally:
+            self._relayout_in_progress = False
+            # Restore click-through (if still locked) via the normal chrome path.
+            if not self._closed.is_set() and self._page is not None:
+                try:
+                    self._apply_interaction_window_chrome()
+                    page2 = self._page
+                    window2 = getattr(page2, "window", None) if page2 is not None else None
+                    window_update2 = getattr(window2, "update", None) if window2 is not None else None
+                    if callable(window_update2):
+                        window_update2()
+                except Exception:
+                    pass
 
     async def run_until_closed(self) -> None:
         task = self._app_task
@@ -2770,6 +2829,13 @@ class FletDesktopRendererWindow:
             if plan.surface_visible:
                 content_kind = "caption_surface"
                 content = caption_surface
+                # First real caption while locked: Flutter laid it out compressed
+                # ("smashed") and only a forced resize re-lays-it-out. Trigger the
+                # one-time corrective relayout now that a caption actually exists.
+                if self._startup_relayout_pending and plan.slots:
+                    self._startup_relayout_pending = False
+                    logger.info("[DesktopOverlay][Startup] first caption — scheduling relayout")
+                    self._run_page_task(self._startup_relayout_after_settle)
             else:
                 content_kind = "transparent_host"
                 content = build_desktop_transparent_sizing_host(plan)
@@ -2831,7 +2897,11 @@ class FletDesktopRendererWindow:
         # content on Windows — which is why the banner rendered (per logs) but stayed
         # invisible while locked, yet the edit chrome (interactive) shows fine. The
         # banner is brief and only at startup, so dropping click-through is harmless.
-        window.ignore_mouse_events = locked and not self._active_banner_visible()
+        window.ignore_mouse_events = (
+            locked
+            and not self._active_banner_visible()
+            and not self._relayout_in_progress
+        )
 
     def _reveal_window_if_supported(self, *, force: bool = False) -> None:
         if self._pending_startup_reveal and not force:

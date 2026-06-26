@@ -27,6 +27,7 @@ from puripuly_heart.core.stt.backend import (
 )
 from puripuly_heart.core.stt.local_qwen_hallucination import (
     is_known_local_qwen_hallucination,
+    is_repetition_loop,
 )
 from puripuly_heart.core.vad.gating import SpeechChunk, SpeechEnd, SpeechStart, VadEvent
 from puripuly_heart.domain.events import (
@@ -636,6 +637,10 @@ class ManagedSTTProvider:
             )
 
     def _should_suppress_final_transcript(self, text: str) -> bool:
+        # Degenerate repetition loops ("什么?什么?..." x dozens) are a universal STT
+        # failure, not Qwen-specific, so suppress them for any provider.
+        if is_repetition_loop(text):
+            return True
         return (
             self.stt_provider_name is STTProviderName.LOCAL_QWEN
             and is_known_local_qwen_hallucination(text)

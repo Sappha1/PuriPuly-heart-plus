@@ -3474,24 +3474,40 @@ class ClientHub:
             return
         if self.loopback_selected_languages_only and not self._loopback_language_allowed(source_text):
             return
-        peer_translit = romanization or ""
-        if not peer_translit and (self.send_pinyin or self.send_romaji or self.send_latin):
-            try:
-                from puripuly_heart.core.transliteration import transliterate_for_language as _tfl
-                peer_translit = _tfl(
-                    translation_text, self.target_language,
-                    show_pinyin=self.send_pinyin, show_romaji=self.send_romaji, show_latin=self.send_latin,
-                )
-            except Exception:
-                pass
+        from puripuly_heart.core.transliteration import transliterate_for_language as _tfl
+
+        want_translit = self.send_pinyin or self.send_romaji or self.send_latin
         if self.chatbox_send_peer_translation_only or source_text.strip() == translation_text.strip():
+            # Only the translation line is sent — transliterate the translation (target lang).
+            trans_translit = romanization or ""
+            if not trans_translit and want_translit:
+                try:
+                    trans_translit = _tfl(
+                        translation_text, self.target_language,
+                        show_pinyin=self.send_pinyin, show_romaji=self.send_romaji, show_latin=self.send_latin,
+                    )
+                except Exception:
+                    trans_translit = ""
             peer_osc_text = (
-                f"{peer_translit}\n{translation_text}" if peer_translit else translation_text
+                f"{trans_translit}\n{translation_text}" if trans_translit else translation_text
             )
-        elif peer_translit:
-            peer_osc_text = f"{source_text}\n{peer_translit}\n{translation_text}"
         else:
-            peer_osc_text = f"{source_text}\n{translation_text}"
+            # Source + translation. The pinyin/romaji belongs to the SOURCE (the peer's
+            # spoken text), matching the dashboard log — not the translated text. This is
+            # what makes the global "send pinyin/romaji" option apply to loopback.
+            source_translit = ""
+            if want_translit:
+                try:
+                    source_translit = _tfl(
+                        source_text, self.peer_source_language,
+                        show_pinyin=self.send_pinyin, show_romaji=self.send_romaji, show_latin=self.send_latin,
+                    )
+                except Exception:
+                    source_translit = ""
+            if source_translit:
+                peer_osc_text = f"{source_text}\n{source_translit}\n{translation_text}"
+            else:
+                peer_osc_text = f"{source_text}\n{translation_text}"
         self.osc.enqueue(
             OSCMessage(utterance_id=utterance_id, text=peer_osc_text, created_at=self.clock.now())
         )

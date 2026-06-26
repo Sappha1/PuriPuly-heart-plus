@@ -827,6 +827,13 @@ class UiSettings:
     send_romaji: bool = False
     show_latin: bool = False
     send_latin: bool = False
+    # When True, pinyin is grouped into words (péngyǒu) via jieba segmentation; when
+    # False it's per-syllable (péng yǒu). Applies to shown AND sent pinyin.
+    pinyin_word_grouping: bool = True
+    # Chatbox "reading only" format: send just the romanization (pinyin/romaji), no
+    # original characters and no translation. The other combos are expressed by
+    # chatbox_include_source (osc) × send_pinyin/romaji/latin; this adds the last one.
+    chatbox_reading_only: bool = False
     self_in_overlay: bool = True
     typed_in_overlay: bool = True
     filter_peer_by_target_languages: bool = False
@@ -1564,6 +1571,8 @@ def to_dict(settings: AppSettings) -> dict[str, Any]:
             "send_romaji": settings.ui.send_romaji,
             "show_latin": settings.ui.show_latin,
             "send_latin": settings.ui.send_latin,
+            "pinyin_word_grouping": settings.ui.pinyin_word_grouping,
+            "chatbox_reading_only": settings.ui.chatbox_reading_only,
             "self_in_overlay": settings.ui.self_in_overlay,
             "typed_in_overlay": settings.ui.typed_in_overlay,
             # Persisted so the overlay/peer toggles are restored on next launch.
@@ -3794,6 +3803,8 @@ def from_dict(data: dict[str, Any]) -> AppSettings:
             send_romaji=bool(ui_data.get("send_romaji", False)),
             show_latin=bool(ui_data.get("show_latin", False)),
             send_latin=bool(ui_data.get("send_latin", False)),
+            pinyin_word_grouping=bool(ui_data.get("pinyin_word_grouping", True)),
+            chatbox_reading_only=bool(ui_data.get("chatbox_reading_only", False)),
             self_in_overlay=bool(ui_data.get("self_in_overlay", True)),
             typed_in_overlay=bool(ui_data.get("typed_in_overlay", True)),
             filter_peer_by_target_languages=bool(ui_data.get("filter_peer_by_target_languages", False)),

@@ -4193,6 +4193,7 @@ class GuiController:
             )
             self.hub.peer_hangover_s = settings.desktop_audio.vad_hangover_ms / 1000.0
             self.hub.chatbox_include_source = settings.osc.chatbox_include_source
+            self.hub.chatbox_reading_only = bool(getattr(settings.ui, "chatbox_reading_only", False))
             self.hub.send_pinyin = bool(getattr(settings.ui, "send_pinyin", False))
             self.hub.send_romaji = bool(getattr(settings.ui, "send_romaji", False))
             self.hub.send_latin = bool(getattr(settings.ui, "send_latin", False))
@@ -4431,6 +4432,7 @@ class GuiController:
             )
             self.hub.peer_hangover_s = next_settings.desktop_audio.vad_hangover_ms / 1000.0
             self.hub.chatbox_include_source = next_settings.osc.chatbox_include_source
+            self.hub.chatbox_reading_only = bool(getattr(next_settings.ui, "chatbox_reading_only", False))
             self.hub.send_pinyin = bool(getattr(next_settings.ui, "send_pinyin", False))
             self.hub.send_romaji = bool(getattr(next_settings.ui, "send_romaji", False))
             self.hub.send_latin = bool(getattr(next_settings.ui, "send_latin", False))
@@ -6009,6 +6011,20 @@ class GuiController:
                     dash.show_pinyin = bool(getattr(settings.ui, "show_pinyin", False))
                     dash.show_romaji = bool(getattr(settings.ui, "show_romaji", False))
                     dash.show_latin = bool(getattr(settings.ui, "show_latin", False))
+                # Pinyin word-grouping is an app-wide transliteration mode (shown + sent).
+                _grp = bool(getattr(settings.ui, "pinyin_word_grouping", True))
+                with contextlib.suppress(Exception):
+                    from puripuly_heart.core.transliteration import set_pinyin_word_grouping
+                    set_pinyin_word_grouping(_grp)
+                with contextlib.suppress(Exception):
+                    set_grp = getattr(dash, "set_pinyin_word_grouping_state", None)
+                    if callable(set_grp):
+                        set_grp(_grp)
+                with contextlib.suppress(Exception):
+                    set_cf = getattr(dash, "set_chatbox_format_state", None)
+                    if callable(set_cf):
+                        set_cf(bool(getattr(settings.osc, "chatbox_include_source", True)),
+                               bool(getattr(settings.ui, "chatbox_reading_only", False)))
 
         with contextlib.suppress(Exception):
             dash = getattr(self.app, "view_dashboard", None)

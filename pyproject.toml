@@ -41,6 +41,7 @@ dependencies = [
   "fugashi>=1.5.2",
   "unidic-lite>=1.0.8",
   "langdetect>=1.0.9",
+  "jieba>=0.42.1",
 ]
 
 [project.optional-dependencies]

@@ -120,6 +120,8 @@ class ClientHub:
     peer_target_language: str = ""
     system_prompt: str = ""
     chatbox_include_source: bool = True
+    # "Reading only" chatbox format: send just the romanization (no original, no translation).
+    chatbox_reading_only: bool = False
     send_pinyin: bool = False
     send_romaji: bool = False
     send_latin: bool = False
@@ -1675,9 +1677,12 @@ class ClientHub:
         """Prepend pinyin/romaji/latin above non-Roman text for overlay display."""
         if not self.overlay_show_romanization:
             return text
-        _want_pinyin = self.show_pinyin or self.send_pinyin
-        _want_romaji = self.show_romaji or self.send_romaji
-        _want_latin = self.show_latin or self.send_latin
+        # Overlay romanization follows the DISPLAY toggle (show_*) only — never the
+        # chatbox send_* flags. The chatbox "Output Format" must not alter the overlay;
+        # it only shapes the VRChat-printed message.
+        _want_pinyin = self.show_pinyin
+        _want_romaji = self.show_romaji
+        _want_latin = self.show_latin
         if not text.strip() or not (_want_pinyin or _want_romaji or _want_latin):
             return text
         if precomputed:
@@ -3593,6 +3598,9 @@ class ClientHub:
         _translit_sep = "\n\n" if translit and _rtl_lang else "\n"
         if translation_text is None:
             merged = transcript_text
+        elif self.chatbox_reading_only and translit:
+            # "Reading only": send just the romanization, dropping characters + translation.
+            merged = translit
         elif self.chatbox_include_source and transcript_text.strip() == translation_text.strip():
             # Original and translation are identical (e.g. "." -> "."); sending the
             # source line would just duplicate the translation line under it.

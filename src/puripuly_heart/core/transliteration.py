@@ -27,13 +27,69 @@ def _join_pinyin(syllables: list[str]) -> str:
 
 
 def to_pinyin(text: str) -> str:
-    """Convert Chinese text to pinyin with tone marks."""
+    """Convert Chinese text to pinyin with tone marks (one syllable per character,
+    space-separated: 朋友 -> "péng yǒu")."""
     try:
         from pypinyin import lazy_pinyin, Style
         syllables = lazy_pinyin(text, style=Style.TONE)
         return _join_pinyin(syllables)
     except Exception:
         return ""
+
+
+# Syllables starting with these (after the first in a word) need a leading apostrophe
+# to stay unambiguous when glued together — standard pinyin rule (西安 -> "Xī'ān").
+_PINYIN_VOWEL_START = "aoeāáǎàēéěèōóǒò"
+
+
+def _join_word_syllables(syllables: list[str]) -> str:
+    """Glue the pinyin syllables of ONE word into a single token (no inner spaces),
+    inserting an apostrophe before a vowel-initial syllable for readability."""
+    out = ""
+    for syl in syllables:
+        if not syl:
+            continue
+        if out and out[-1].isalpha() and syl[0].lower() in _PINYIN_VOWEL_START:
+            out += "'"
+        out += syl
+    return out
+
+
+def to_pinyin_grouped(text: str) -> str:
+    """Pinyin with syllables grouped into WORDS (朋友 -> "péngyǒu"), using jieba word
+    segmentation. Falls back to per-syllable pinyin if jieba/pypinyin is unavailable."""
+    try:
+        import jieba
+        from pypinyin import lazy_pinyin, Style
+
+        tokens: list[str] = []
+        for word in jieba.cut(text):
+            if not word:
+                continue
+            joined = _join_word_syllables(lazy_pinyin(word, style=Style.TONE))
+            if joined:
+                tokens.append(joined)
+        return _join_pinyin(tokens)
+    except Exception:
+        return to_pinyin(text)
+
+
+# App-wide toggle (set from settings) controlling whether pinyin shown in-app/overlay
+# and sent to the chatbox is grouped into words (péngyǒu) or per-syllable (péng yǒu).
+_PINYIN_WORD_GROUPING = True
+
+
+def set_pinyin_word_grouping(enabled: bool) -> None:
+    global _PINYIN_WORD_GROUPING
+    _PINYIN_WORD_GROUPING = bool(enabled)
+
+
+def pinyin_word_grouping_enabled() -> bool:
+    return _PINYIN_WORD_GROUPING
+
+
+def _pinyin_for_setting(text: str) -> str:
+    return to_pinyin_grouped(text) if _PINYIN_WORD_GROUPING else to_pinyin(text)
 
 
 _CUTLET_INSTANCE = None
@@ -90,6 +146,19 @@ def warmup() -> None:
         lazy_pinyin("你好")
     except Exception:
         pass
+    try:
+        # jieba lazy-loads its ~5MB dictionary on the first cut (~1s); warm it so the
+        # first word-grouped pinyin line isn't slow.
+        import jieba
+        list(jieba.cut("你好世界"))
+    except Exception:
+        pass
+    try:
+        # pykakasi backs per-character romaji; warm its dictionary on the first convert.
+        from pykakasi import kakasi
+        kakasi().convert("日本")
+    except Exception:
+        pass
 
 
 def to_romaji(text: str) -> str:
@@ -117,6 +186,98 @@ def to_romaji(text: str) -> str:
         return " ".join(parts).strip()
     except Exception:
         return ""
+
+
+# Hepburn romaji for each hiragana mora — the PHONETIC value (は -> "ha", not the
+# particle "wa"), used for the per-character romaji mode (ungrouped), analogous to
+# per-syllable pinyin. Katakana is normalized to hiragana first; kanji is resolved to
+# its in-context kana reading by pykakasi before this table is applied.
+_HIRA_ROMAJI = {
+    "あ": "a", "い": "i", "う": "u", "え": "e", "お": "o",
+    "か": "ka", "き": "ki", "く": "ku", "け": "ke", "こ": "ko",
+    "が": "ga", "ぎ": "gi", "ぐ": "gu", "げ": "ge", "ご": "go",
+    "さ": "sa", "し": "shi", "す": "su", "せ": "se", "そ": "so",
+    "ざ": "za", "じ": "ji", "ず": "zu", "ぜ": "ze", "ぞ": "zo",
+    "た": "ta", "ち": "chi", "つ": "tsu", "て": "te", "と": "to",
+    "だ": "da", "ぢ": "ji", "づ": "zu", "で": "de", "ど": "do",
+    "な": "na", "に": "ni", "ぬ": "nu", "ね": "ne", "の": "no",
+    "は": "ha", "ひ": "hi", "ふ": "fu", "へ": "he", "ほ": "ho",
+    "ば": "ba", "び": "bi", "ぶ": "bu", "べ": "be", "ぼ": "bo",
+    "ぱ": "pa", "ぴ": "pi", "ぷ": "pu", "ぺ": "pe", "ぽ": "po",
+    "ま": "ma", "み": "mi", "む": "mu", "め": "me", "も": "mo",
+    "や": "ya", "ゆ": "yu", "よ": "yo",
+    "ら": "ra", "り": "ri", "る": "ru", "れ": "re", "ろ": "ro",
+    "わ": "wa", "ゐ": "i", "ゑ": "e", "を": "o", "ん": "n", "ゔ": "vu",
+    "ぁ": "a", "ぃ": "i", "ぅ": "u", "ぇ": "e", "ぉ": "o",
+    "ゃ": "ya", "ゅ": "yu", "ょ": "yo", "ゎ": "wa",
+    "きゃ": "kya", "きゅ": "kyu", "きょ": "kyo", "ぎゃ": "gya", "ぎゅ": "gyu", "ぎょ": "gyo",
+    "しゃ": "sha", "しゅ": "shu", "しょ": "sho", "じゃ": "ja", "じゅ": "ju", "じょ": "jo",
+    "ちゃ": "cha", "ちゅ": "chu", "ちょ": "cho", "ぢゃ": "ja", "ぢゅ": "ju", "ぢょ": "jo",
+    "にゃ": "nya", "にゅ": "nyu", "にょ": "nyo", "ひゃ": "hya", "ひゅ": "hyu", "ひょ": "hyo",
+    "びゃ": "bya", "びゅ": "byu", "びょ": "byo", "ぴゃ": "pya", "ぴゅ": "pyu", "ぴょ": "pyo",
+    "みゃ": "mya", "みゅ": "myu", "みょ": "myo", "りゃ": "rya", "りゅ": "ryu", "りょ": "ryo",
+}
+_HIRA_SMALL_Y = frozenset("ゃゅょ")
+
+
+def _katakana_to_hiragana(text: str) -> str:
+    out = []
+    for c in text:
+        o = ord(c)
+        out.append(chr(o - 0x60) if 0x30A1 <= o <= 0x30F6 else c)
+    return "".join(out)
+
+
+def _hira_to_mora_romaji(hira: str) -> list[str]:
+    out: list[str] = []
+    i, n = 0, len(hira)
+    pending_sokuon = False
+    while i < n:
+        ch = hira[i]
+        # youon (きょ etc.) is one mora
+        if i + 1 < n and hira[i + 1] in _HIRA_SMALL_Y and (ch + hira[i + 1]) in _HIRA_ROMAJI:
+            rom, i = _HIRA_ROMAJI[ch + hira[i + 1]], i + 2
+        elif ch in ("っ", "ッ"):  # sokuon — doubles the next consonant
+            pending_sokuon, i = True, i + 1
+            continue
+        elif ch in ("ー", "～") and out:  # long-vowel mark extends the previous mora
+            if out[-1] and out[-1][-1] in "aiueo":
+                out[-1] += out[-1][-1]
+            i += 1
+            continue
+        elif ch in _HIRA_ROMAJI:
+            rom, i = _HIRA_ROMAJI[ch], i + 1
+        else:  # punctuation / latin / digit — pass through as its own token
+            out.append(ch)
+            i += 1
+            continue
+        if pending_sokuon:
+            pending_sokuon = False
+            if rom.startswith("ch"):
+                rom = "t" + rom
+            elif rom[:1].isalpha():
+                rom = rom[0] + rom
+        out.append(rom)
+    return out
+
+
+def to_romaji_per_char(text: str) -> str:
+    """Romaji split per kana/mora (UNGROUPED): 東京に行きます -> "to u kyo u ni i ki ma su".
+    pykakasi resolves kanji to their in-context kana reading, then a Hepburn mora table
+    romanizes each mora. Falls back to grouped romaji if pykakasi is unavailable."""
+    try:
+        from pykakasi import kakasi
+        hira = "".join(it.get("hira", "") for it in kakasi().convert(text))
+        if not hira.strip():
+            return to_romaji(text)
+        mora = _hira_to_mora_romaji(_katakana_to_hiragana(hira))
+        return " ".join(m for m in mora if m).strip()
+    except Exception:
+        return to_romaji(text)
+
+
+def _romaji_for_setting(text: str) -> str:
+    return to_romaji(text) if _PINYIN_WORD_GROUPING else to_romaji_per_char(text)
 
 
 _KO_BASE = 0xAC00
@@ -577,9 +738,9 @@ def transliterate_for_language(
     # Auto-detect script from text content when language is unknown ("" = Auto Detect)
     if not lang:
         if show_pinyin and _is_mostly_cjk(text) and not _is_mostly_japanese(text):
-            return to_pinyin(text)
+            return _pinyin_for_setting(text)
         if show_romaji and _is_mostly_japanese(text):
-            return to_romaji(text)
+            return _romaji_for_setting(text)
         if show_romaji and _is_mostly_korean(text):
             return to_romaja(text)
         if show_latin:
@@ -596,9 +757,9 @@ def transliterate_for_language(
         return ""
 
     if show_pinyin and lang in ("zh", "zh_cn", "zh_tw", "cmn") and _is_mostly_cjk(text):
-        return to_pinyin(text)
+        return _pinyin_for_setting(text)
     if show_romaji and lang in ("ja", "jpn") and _is_mostly_japanese(text):
-        return to_romaji(text)
+        return _romaji_for_setting(text)
     if show_romaji and lang in ("ko", "kor") and _is_mostly_korean(text):
         return to_romaja(text)
     if show_latin:

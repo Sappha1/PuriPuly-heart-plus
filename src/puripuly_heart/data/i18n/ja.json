@@ -485,6 +485,8 @@
   "dashboard.deepl.usage.capped": "DeepL: {used} / {limit} 文字（残り {remaining}）",
   "dashboard.translit.show": "{system}を表示",
   "dashboard.translit.send": "{system}を送信",
+  "dashboard.translit.words": "{system}の分かち書き",
+  "dashboard.translit.words.tooltip": "ピンインを音節ごと（péng yǒu）ではなく単語ごと（péngyǒu）にまとめます。表示・送信の両方に適用。",
   "dashboard.translit.pinyin": "ピンイン",
   "dashboard.translit.romaji": "ローマ字",
   "dashboard.translit.romaja": "ローマ字",
@@ -597,5 +599,18 @@
   "settings.send_latin.tooltip": "VRChat チャットボックスに送るテキストにラテン文字転写を含めます。",
   "settings.self_in_overlay.tooltip": "オンの場合、相手のメッセージだけでなく、自分の翻訳済みメッセージもオーバーレイ字幕ウィンドウに表示されます。",
   "settings.filter_peer_by_target_languages.tooltip": "オンの場合、設定した言語ペアに一致する相手の音声のみを処理します。\n認識できない、または想定外の言語の発話を除外します。",
-  "dashboard.tooltip.your_language_info": "あなたの発話言語（上のカード）— あなたが話す言語。\n翻訳先（下のカード）— 翻訳される言語。\nどちらのカードもタップで変更できます。＋で 2 つ目の対象言語を追加できます。"
+  "dashboard.tooltip.your_language_info": "あなたの発話言語（上のカード）— あなたが話す言語。\n翻訳先（下のカード）— 翻訳される言語。\nどちらのカードもタップで変更できます。＋で 2 つ目の対象言語を追加できます。",
+  "dashboard.translit.options": "オプション",
+  "dashboard.translit.options.tooltip": "ピンイン / ローマ字の出力オプション",
+  "dashboard.translit.romanization": "ローマ字",
+  "dashboard.translit.menu.chatbox": "チャットボックス（ゲーム内送信）",
+  "dashboard.translit.menu.overlay": "オーバーレイとログ",
+  "dashboard.translit.menu.show_reading": "{system}を表示",
+  "dashboard.translit.fmt.orig_trans": "原文 + 翻訳",
+  "dashboard.translit.fmt.orig_read_trans": "原文 + {system} + 翻訳",
+  "dashboard.translit.fmt.read_trans": "{system} + 翻訳",
+  "dashboard.translit.fmt.read_only": "{system}のみ",
+  "dashboard.translit.fmt.trans_only": "翻訳のみ",
+  "dashboard.translit.menu.title": "出力形式",
+  "dashboard.translit.menu.chatbox_short": "チャットボックス"
 }

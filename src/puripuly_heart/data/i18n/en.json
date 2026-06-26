@@ -531,6 +531,8 @@
   "dashboard.deepl.usage.capped": "DeepL: {used} / {limit} characters ({remaining} remaining)",
   "dashboard.translit.show": "Show {system}",
   "dashboard.translit.send": "Send {system}",
+  "dashboard.translit.words": "Grouped {system}",
+  "dashboard.translit.words.tooltip": "Group pinyin into words (péngyǒu) instead of per-syllable (péng yǒu). Applies to shown and sent pinyin.",
   "dashboard.translit.pinyin": "Pinyin",
   "dashboard.translit.romaji": "Romaji",
   "dashboard.translit.romaja": "Romaja",
@@ -597,5 +599,18 @@
   "settings.send_latin.tooltip": "Include Latin transliteration in the text sent to the VRChat chatbox.",
   "settings.self_in_overlay.tooltip": "When ON, your own translated messages also appear in the overlay caption window, not just the other person's.",
   "settings.filter_peer_by_target_languages.tooltip": "When ON, only processes peer audio that matches your configured language pair.\nFilters out speech in unrecognised or unexpected languages.",
-  "dashboard.tooltip.your_language_info": "Your spoken language (top card) — what you say.\nYour translation target (bottom card) — what it gets translated into.\nTap either card to change. Use + to add a second target language."
+  "dashboard.tooltip.your_language_info": "Your spoken language (top card) — what you say.\nYour translation target (bottom card) — what it gets translated into.\nTap either card to change. Use + to add a second target language.",
+  "dashboard.translit.options": "Options",
+  "dashboard.translit.options.tooltip": "Pinyin / romaji output options",
+  "dashboard.translit.romanization": "Romanization",
+  "dashboard.translit.menu.chatbox": "Chatbox (sent in-game)",
+  "dashboard.translit.menu.overlay": "Overlay & Log",
+  "dashboard.translit.menu.show_reading": "Show {system}",
+  "dashboard.translit.fmt.orig_trans": "Original + Translation",
+  "dashboard.translit.fmt.orig_read_trans": "Original + {system} + Translation",
+  "dashboard.translit.fmt.read_trans": "{system} + Translation",
+  "dashboard.translit.fmt.read_only": "{system} Only",
+  "dashboard.translit.fmt.trans_only": "Translation Only",
+  "dashboard.translit.menu.title": "Output Format",
+  "dashboard.translit.menu.chatbox_short": "Chatbox"
 }

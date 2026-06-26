@@ -149,6 +149,8 @@ class TranslatorApp:
         self.view_dashboard.on_filter_peer_by_target_languages_change = self._on_filter_peer_change
         self.view_dashboard.on_translator_change = self._on_translator_change
         self.view_dashboard.on_transliteration_change = self._on_transliteration_change
+        self.view_dashboard.on_pinyin_word_grouping_change = self._on_pinyin_word_grouping_change
+        self.view_dashboard.on_chatbox_format_change = self._on_chatbox_format_change
         self.view_dashboard.on_request_current_translator = self._current_translator_model_value
         self.view_dashboard.on_request_deepl_usage_refresh = self._on_request_deepl_usage_refresh
         self.view_dashboard.on_request_stt_download = self._on_request_stt_download
@@ -1662,6 +1664,50 @@ class TranslatorApp:
             updated.ui.send_romaji = send_romaji
             updated.ui.show_latin = show_latin
             updated.ui.send_latin = send_latin
+            await self.controller.apply_settings(updated)
+        self._queue_settings_mutation_task(_task)
+
+    def _on_pinyin_word_grouping_change(self, value: bool) -> None:
+        import copy
+        # Apply immediately so the very next transliteration uses the new mode.
+        with contextlib.suppress(Exception):
+            from puripuly_heart.core.transliteration import set_pinyin_word_grouping
+            set_pinyin_word_grouping(bool(value))
+        async def _task():
+            settings = self.controller.settings
+            if settings is None:
+                return
+            updated = copy.deepcopy(settings)
+            updated.ui.pinyin_word_grouping = bool(value)
+            await self.controller.apply_settings(updated)
+        self._queue_settings_mutation_task(_task)
+
+    # fmt id -> (include_source, send_reading, reading_only)
+    _CHATBOX_FMT_FLAGS = {
+        "orig_trans":      (True,  False, False),
+        "orig_read_trans": (True,  True,  False),
+        "read_trans":      (False, True,  False),
+        "read_only":       (False, True,  True),
+        "trans_only":      (False, False, False),
+    }
+
+    def _on_chatbox_format_change(self, fmt: str) -> None:
+        import copy
+        inc, read, ronly = self._CHATBOX_FMT_FLAGS.get(fmt, (True, False, False))
+        # Apply to the live hub immediately so the next message uses the new format.
+        with contextlib.suppress(Exception):
+            hub = self.controller.hub
+            hub.chatbox_include_source = inc
+            hub.chatbox_reading_only = ronly
+            hub.send_pinyin = hub.send_romaji = hub.send_latin = read
+        async def _task():
+            settings = self.controller.settings
+            if settings is None:
+                return
+            updated = copy.deepcopy(settings)
+            updated.osc.chatbox_include_source = inc
+            updated.ui.send_pinyin = updated.ui.send_romaji = updated.ui.send_latin = read
+            updated.ui.chatbox_reading_only = ronly
             await self.controller.apply_settings(updated)
         self._queue_settings_mutation_task(_task)
 

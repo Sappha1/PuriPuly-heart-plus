@@ -484,6 +484,8 @@
   "dashboard.deepl.usage.capped": "DeepL：{used} / {limit} 个字符（剩余 {remaining}）",
   "dashboard.translit.show": "显示{system}",
   "dashboard.translit.send": "发送{system}",
+  "dashboard.translit.words": "{system}分词",
+  "dashboard.translit.words.tooltip": "将拼音组合成词（péngyǒu），而非逐字（péng yǒu）。适用于显示和发送的拼音。",
   "dashboard.translit.pinyin": "拼音",
   "dashboard.translit.romaji": "罗马音",
   "dashboard.translit.romaja": "罗马字",
@@ -597,5 +599,18 @@
   "settings.send_latin.tooltip": "在发送到 VRChat 聊天框的文本中包含拉丁字母转写。",
   "settings.self_in_overlay.tooltip": "开启时，不仅显示对方的消息，你自己的译文消息也会出现在叠加层字幕窗口中。",
   "settings.filter_peer_by_target_languages.tooltip": "开启时，仅处理与你所配置的语言对相匹配的对方音频。\n会过滤掉无法识别或非预期语言的语音。",
-  "dashboard.tooltip.your_language_info": "你说的语言（上方卡片）— 你所说的内容。\n你的翻译目标（下方卡片）— 翻译成的语言。\n点击任一卡片即可更改。用 ＋ 添加第二个目标语言。"
+  "dashboard.tooltip.your_language_info": "你说的语言（上方卡片）— 你所说的内容。\n你的翻译目标（下方卡片）— 翻译成的语言。\n点击任一卡片即可更改。用 ＋ 添加第二个目标语言。",
+  "dashboard.translit.options": "选项",
+  "dashboard.translit.options.tooltip": "拼音 / 罗马音输出选项",
+  "dashboard.translit.romanization": "音译",
+  "dashboard.translit.menu.chatbox": "聊天框（游戏内发送）",
+  "dashboard.translit.menu.overlay": "叠加层和日志",
+  "dashboard.translit.menu.show_reading": "显示{system}",
+  "dashboard.translit.fmt.orig_trans": "原文 + 翻译",
+  "dashboard.translit.fmt.orig_read_trans": "原文 + {system} + 翻译",
+  "dashboard.translit.fmt.read_trans": "{system} + 翻译",
+  "dashboard.translit.fmt.read_only": "仅{system}",
+  "dashboard.translit.fmt.trans_only": "仅翻译",
+  "dashboard.translit.menu.title": "输出格式",
+  "dashboard.translit.menu.chatbox_short": "聊天框"
 }

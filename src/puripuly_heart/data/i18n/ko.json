@@ -484,6 +484,8 @@
   "dashboard.deepl.usage.capped": "DeepL: {used} / {limit}자 (남은 {remaining})",
   "dashboard.translit.show": "{system} 표시",
   "dashboard.translit.send": "{system} 전송",
+  "dashboard.translit.words": "{system} 단어 묶기",
+  "dashboard.translit.words.tooltip": "병음을 음절 단위(péng yǒu)가 아닌 단어 단위(péngyǒu)로 묶습니다. 표시 및 전송에 적용.",
   "dashboard.translit.pinyin": "병음",
   "dashboard.translit.romaji": "로마자",
   "dashboard.translit.romaja": "로마자",
@@ -597,5 +599,18 @@
   "settings.send_latin.tooltip": "VRChat 채팅창으로 보내는 텍스트에 라틴 문자 표기를 포함합니다.",
   "settings.self_in_overlay.tooltip": "켜짐일 때, 상대의 메시지뿐 아니라 자신의 번역된 메시지도 오버레이 자막 창에 표시됩니다.",
   "settings.filter_peer_by_target_languages.tooltip": "켜짐일 때, 설정한 언어 쌍과 일치하는 상대 오디오만 처리합니다.\n인식되지 않거나 예상치 못한 언어의 발화는 걸러냅니다.",
-  "dashboard.tooltip.your_language_info": "내가 말하는 언어(위 카드) — 당신이 말하는 언어.\n번역 대상(아래 카드) — 번역될 언어.\n두 카드 중 아무거나 탭하여 변경하세요. ＋로 두 번째 대상 언어를 추가할 수 있습니다."
+  "dashboard.tooltip.your_language_info": "내가 말하는 언어(위 카드) — 당신이 말하는 언어.\n번역 대상(아래 카드) — 번역될 언어.\n두 카드 중 아무거나 탭하여 변경하세요. ＋로 두 번째 대상 언어를 추가할 수 있습니다.",
+  "dashboard.translit.options": "옵션",
+  "dashboard.translit.options.tooltip": "병음 / 로마자 출력 옵션",
+  "dashboard.translit.romanization": "로마자",
+  "dashboard.translit.menu.chatbox": "채팅박스 (게임 내 전송)",
+  "dashboard.translit.menu.overlay": "오버레이 및 로그",
+  "dashboard.translit.menu.show_reading": "{system} 표시",
+  "dashboard.translit.fmt.orig_trans": "원문 + 번역",
+  "dashboard.translit.fmt.orig_read_trans": "원문 + {system} + 번역",
+  "dashboard.translit.fmt.read_trans": "{system} + 번역",
+  "dashboard.translit.fmt.read_only": "{system}만",
+  "dashboard.translit.fmt.trans_only": "번역만",
+  "dashboard.translit.menu.title": "출력 형식",
+  "dashboard.translit.menu.chatbox_short": "채팅박스"
 }

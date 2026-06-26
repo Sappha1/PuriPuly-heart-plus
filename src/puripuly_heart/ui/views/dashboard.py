@@ -1,3 +1,4 @@
+import contextlib
 import datetime
 from typing import Any, Callable
 
@@ -12,7 +13,7 @@ from puripuly_heart.ui.fonts import font_for_language
 from puripuly_heart.ui.i18n import get_locale, language_name, t
 from puripuly_heart.ui.overlay_peer_contract import OverlayPeerConsumerContract
 
-_BUILD_TAG = "r177"  #increment each build so user can confirm version
+_BUILD_TAG = "r183"  #increment each build so user can confirm version
 
 # ── VRCT-style dark palette ──────────────────────────────────────────────────
 _BG_MAIN = "#2e2f32"
@@ -276,6 +277,13 @@ class DashboardView(ft.Row):
         self.send_pinyin = False
         self.show_latin = False
         self.send_latin = False
+        # Pinyin grouped into words (péngyǒu) vs per-syllable (péng yǒu). Default grouped.
+        self._pinyin_word_grouping = True
+        self.on_pinyin_word_grouping_change: object = None  # callback(value: bool)
+        # Chatbox text format state (mirrors osc.chatbox_include_source + ui.chatbox_reading_only).
+        self._chatbox_include_source = True
+        self._chatbox_reading_only = False
+        self.on_chatbox_format_change: object = None  # callback(fmt_id: str)
         self.translation_needs_key = False
         self.stt_needs_key = False
         self.last_sent_text = t("dashboard.ready")
@@ -837,17 +845,19 @@ class DashboardView(ft.Row):
 
         self._section_header_labels: list[tuple[ft.Text, str]] = []
 
-        def _section_card(icon: str, label_key: str, content: ft.Control) -> ft.Container:
+        def _section_card(icon: str, label_key: str, content: ft.Control,
+                          trailing: ft.Control | None = None) -> ft.Container:
             _lbl = ft.Text(t(label_key), size=11, color=_TOGGLE_ON, weight=ft.FontWeight.W_700)
             self._section_header_labels.append((_lbl, label_key))
+            header_controls: list[ft.Control] = [ft.Icon(icon, size=15, color=_CARD_ICON_COLOR), _lbl]
+            if trailing is not None:
+                header_controls.append(ft.Container(expand=True))
+                header_controls.append(trailing)
             return ft.Container(
                 content=ft.Column(
                     [
                         ft.Row(
-                            [
-                                ft.Icon(icon, size=15, color=_CARD_ICON_COLOR),
-                                _lbl,
-                            ],
+                            header_controls,
                             spacing=6,
                             vertical_alignment=ft.CrossAxisAlignment.CENTER,
                         ),
@@ -869,7 +879,8 @@ class DashboardView(ft.Row):
                     content=self._preset_tabs_row,
                     padding=ft.padding.symmetric(horizontal=10, vertical=4),
                 ),
-                _section_card(ft.Icons.CHAT_BUBBLE_OUTLINE, "dashboard.section.text_translation", self._lang_panel),
+                _section_card(ft.Icons.CHAT_BUBBLE_OUTLINE, "dashboard.section.text_translation",
+                              self._lang_panel, trailing=self._build_translit_gear()),
                 _section_card(ft.Icons.GRAPHIC_EQ, "dashboard.section.voice_translation", self._peer_panel),
             ],
             scroll=ft.ScrollMode.AUTO,
@@ -2080,9 +2091,11 @@ class DashboardView(ft.Row):
         content_rows: list[ft.Control] = []
         has_translation = bool(source_text and translated_text and source_text.strip() != translated_text.strip())
 
-        _want_romaji = self.show_romaji or self.send_romaji
-        _want_pinyin = self.show_pinyin or self.send_pinyin
-        _want_latin = self.show_latin or self.send_latin
+        # Log romanization follows the display toggle (show_*) only — the chatbox
+        # "Output Format" (send_*) shapes the VRChat message, not the in-app log.
+        _want_romaji = self.show_romaji
+        _want_pinyin = self.show_pinyin
+        _want_latin = self.show_latin
         if has_translation:
             translit_src = transliterate_for_language(
                 source_text, src_lang, show_pinyin=_want_pinyin, show_romaji=_want_romaji, show_latin=_want_latin
@@ -2163,9 +2176,11 @@ class DashboardView(ft.Row):
         if col is None or self._chat_list_view is None:
             return
         _TRANSLIT_COLOR = "#5ba8a0"
-        _want_romaji = self.show_romaji or self.send_romaji
-        _want_pinyin = self.show_pinyin or self.send_pinyin
-        _want_latin = self.show_latin or self.send_latin
+        # Log romanization follows the display toggle (show_*) only — the chatbox
+        # "Output Format" (send_*) shapes the VRChat message, not the in-app log.
+        _want_romaji = self.show_romaji
+        _want_pinyin = self.show_pinyin
+        _want_latin = self.show_latin
         for lang_code, text in extra_pairs:
             if not text.strip():
                 continue
@@ -2757,48 +2772,246 @@ class DashboardView(ft.Row):
             return "latin"
         return None
 
+    # fmt id -> (include_source, send_reading, reading_only)
+    _CHATBOX_FMT_FLAGS = {
+        "orig_trans":      (True,  False, False),
+        "orig_read_trans": (True,  True,  False),
+        "read_trans":      (False, True,  False),
+        "read_only":       (False, True,  True),
+        "trans_only":      (False, False, False),
+    }
+
+    def _build_translit_gear(self) -> ft.Control:
+        """A single cog on the TEXT TRANSLATION header that opens the format menu."""
+        icon = ft.Container(
+            content=ft.Icon(ft.Icons.TUNE, size=14, color=_TEXT_MUTED),
+            padding=ft.padding.all(3), border_radius=4,
+            tooltip=t("dashboard.translit.options.tooltip"),
+            on_hover=lambda e: (
+                setattr(e.control, "bgcolor", "#33343a" if e.data == "true" else ft.Colors.TRANSPARENT)
+                or (e.control.update() if e.control.page else None)
+            ),
+        )
+        self._translit_gear = ft.GestureDetector(content=icon, on_tap_down=self._open_translit_menu)
+        return self._translit_gear
+
     def _build_translit_col(self, lang_code: str) -> ft.Column:
-        script = self._translit_script(lang_code)
-        label = self._translit_label(script)
-        show_val, send_val = self._translit_vals(script)
+        # Per-row transliteration chips were replaced by a single cog on the TEXT
+        # TRANSLATION header. Keep an invisible placeholder so the row-building code that
+        # references these columns keeps working without per-language controls.
+        return ft.Column([], visible=False, height=0, spacing=0, data={"script": None})
 
-        def _chip(text: str, is_on: bool, cb, tooltip: str | None = None) -> ft.Container:
-            icon = ft.Icon(
-                ft.Icons.CHECK_BOX if is_on else ft.Icons.CHECK_BOX_OUTLINE_BLANK,
-                size=11,
-                color=_TOGGLE_ON if is_on else _TEXT_FAINT,
-            )
-            lbl = ft.Text(text, size=10, color=_TEXT_MUTED if is_on else _TEXT_FAINT, no_wrap=True)
-            c = ft.Container(
-                content=ft.Row([icon, lbl], spacing=3, tight=True,
-                               vertical_alignment=ft.CrossAxisAlignment.CENTER),
-                padding=ft.padding.symmetric(horizontal=6, vertical=3),
-                border_radius=4,
-                bgcolor="#2a2b2e",
-                border=ft.border.all(1, _TOGGLE_ON if is_on else "#3a3b3e"),
-                tooltip=tooltip,
-                on_click=lambda e, _cb=cb, _icon=icon, _lbl=lbl, _c=None: self._on_inline_chip_click(
-                    e, _cb, icon, lbl
+    def _active_reading_script(self) -> str | None:
+        """The script (pinyin/romaji/romaja/latin) of the first romanizable language in
+        play — target, extra targets, or peer — so the cog menu shows the right reading
+        word. Returns None when nothing in play is romanizable."""
+        codes = [self._target_lang_code] + list(self._extra_target_lang_codes)
+        with contextlib.suppress(Exception):
+            codes.append(self._effective_peer_source_lang_code())
+            codes.append(self._effective_peer_target_lang_code())
+        for code in codes:
+            sc = self._translit_script(code)
+            if sc in ("pinyin", "romaji", "romaja", "latin"):
+                return sc
+        with contextlib.suppress(Exception):
+            if self._auto_translit_should_show():
+                return "auto"
+        return None
+
+    def _reading_word(self, script: str | None) -> str:
+        return {
+            "pinyin": t("dashboard.translit.pinyin"),
+            "romaji": t("dashboard.translit.romaji"),
+            "romaja": t("dashboard.translit.romaja"),
+        }.get(script or "", t("dashboard.translit.romanization"))
+
+    def _current_chatbox_fmt(self) -> str:
+        if self._chatbox_reading_only:
+            return "read_only"
+        send_reading = self.send_pinyin or self.send_romaji or self.send_latin
+        if self._chatbox_include_source and send_reading:
+            return "orig_read_trans"
+        if self._chatbox_include_source:
+            return "orig_trans"
+        if send_reading:
+            return "read_trans"
+        return "trans_only"
+
+    def _pick_chatbox_fmt(self, fmt: str) -> None:
+        inc, read, ronly = self._CHATBOX_FMT_FLAGS.get(fmt, (True, False, False))
+        self._chatbox_include_source = inc
+        self.send_pinyin = self.send_romaji = self.send_latin = read
+        self._chatbox_reading_only = ronly
+        if callable(self.on_chatbox_format_change):
+            self.on_chatbox_format_change(fmt)
+
+    def _toggle_overlay_reading(self) -> None:
+        new = not (self.show_pinyin or self.show_romaji or self.show_latin)
+        self.show_pinyin = self.show_romaji = self.show_latin = new
+        self._emit_transliteration_change()
+
+    def _open_translit_menu(self, e) -> None:
+        """Rich popover matching the overlay right-click menu: a section header, a Chatbox
+        'format' button that expands to a radio list (like Display/Size), and On/Off pills
+        for the overlay reading + grouped pinyin."""
+        x, y = self._tap_xy(e)
+        script = self._active_reading_script()
+        rw = self._reading_word(script)
+
+        # ── shared styling helpers (mirror _on_overlay_right_click) ──────────────
+        def _section_row(label: str, control: Any, top: int = 4) -> ft.Container:
+            return ft.Container(
+                content=ft.Row(
+                    [ft.Text(label, size=11, color=_TEXT_MUTED, expand=True), control],
+                    spacing=8, vertical_alignment=ft.CrossAxisAlignment.CENTER,
                 ),
+                padding=ft.padding.only(left=10, right=10, top=top, bottom=2),
             )
-            return c
 
-        show_chip = _chip(
-            t("dashboard.translit.show", system=label), show_val, self._translit_show_cb(script),
-            tooltip=t("dashboard.translit.show.tooltip", system=label),
+        def _bool_pill(state_ref: list[bool], on_change) -> ft.Container:
+            lbl = ft.Text(
+                t("settings.option.on") if state_ref[0] else t("settings.option.off"),
+                size=11, color=_TOGGLE_ON if state_ref[0] else _TEXT_FAINT,
+                weight=ft.FontWeight.W_600,
+            )
+            box = ft.Container(
+                content=lbl, padding=ft.padding.symmetric(horizontal=8, vertical=4),
+                border_radius=6, border=ft.border.all(1, _TOGGLE_ON if state_ref[0] else "#3a3b3f"),
+            )
+            def _click(_ev, _r=state_ref, _l=lbl, _b=box):
+                _r[0] = not _r[0]
+                _l.value = t("settings.option.on") if _r[0] else t("settings.option.off")
+                _l.color = _TOGGLE_ON if _r[0] else _TEXT_FAINT
+                _b.border = ft.border.all(1, _TOGGLE_ON if _r[0] else "#3a3b3f")
+                try: _l.update(); _b.update()
+                except Exception: pass
+                on_change(_r[0])
+            box.on_click = _click
+            return box
+
+        def _div() -> ft.Container:
+            return ft.Container(height=1, bgcolor="#3a3b3f",
+                                margin=ft.margin.symmetric(vertical=3, horizontal=6))
+
+        # ── chatbox format: summary button that expands to a radio list ──────────
+        fmt_ids = ["orig_trans"]
+        if script is not None:
+            fmt_ids += ["orig_read_trans", "read_trans", "read_only"]
+        fmt_ids.append("trans_only")
+
+        def _fmt_label(fid: str) -> str:
+            return t(f"dashboard.translit.fmt.{fid}", system=rw)
+
+        cur = [self._current_chatbox_fmt()]
+        _fmt_btn_text = ft.Text(
+            _fmt_label(cur[0]), size=11, color=_TOGGLE_ON, weight=ft.FontWeight.W_600,
+            no_wrap=True, overflow=ft.TextOverflow.ELLIPSIS,
         )
-        send_chip = _chip(
-            t("dashboard.translit.send", system=label), send_val, self._translit_send_cb(script),
-            tooltip=t("dashboard.translit.send.tooltip", system=label),
+        _fmt_btn = ft.Container(
+            content=_fmt_btn_text, padding=ft.padding.symmetric(horizontal=8, vertical=4),
+            border_radius=6, bgcolor="#1a2e2a", border=ft.border.all(1, _TOGGLE_ON),
+        )
+        _fmt_icons: dict[str, Any] = {}
+        _fmt_rows: list[Any] = []
+        for fid in fmt_ids:
+            _active = fid == cur[0]
+            _ic = ft.Icon(
+                ft.Icons.RADIO_BUTTON_CHECKED if _active else ft.Icons.RADIO_BUTTON_UNCHECKED,
+                size=15, color=_TOGGLE_ON if _active else _TEXT_FAINT,
+            )
+            _fmt_icons[fid] = _ic
+            _row_lbl = ft.Text(_fmt_label(fid), size=12, color=_TEXT_PRIMARY, expand=True)
+            def _on_fmt_row(_ev, _f=fid):
+                if cur[0] == _f:
+                    return
+                cur[0] = _f
+                self._pick_chatbox_fmt(_f)
+                for _k, _i in _fmt_icons.items():
+                    _sel = _k == _f
+                    _i.name = ft.Icons.RADIO_BUTTON_CHECKED if _sel else ft.Icons.RADIO_BUTTON_UNCHECKED
+                    _i.color = _TOGGLE_ON if _sel else _TEXT_FAINT
+                _fmt_btn_text.value = _fmt_label(_f)
+                try:
+                    _fmt_btn_text.update()
+                    for _i in _fmt_icons.values():
+                        _i.update()
+                except Exception: pass
+            _fmt_rows.append(ft.Container(
+                content=ft.Row([_ic, _row_lbl], spacing=8,
+                               vertical_alignment=ft.CrossAxisAlignment.CENTER),
+                padding=ft.padding.only(left=18, right=10, top=6, bottom=6),
+                border_radius=5, on_click=_on_fmt_row,
+                on_hover=lambda e2: (
+                    setattr(e2.control, "bgcolor", "#2a3040" if e2.data == "true" else ft.Colors.TRANSPARENT)
+                    or (e2.control.update() if e2.control.page else None)
+                ),
+            ))
+        _fmt_rows_col = ft.Column(_fmt_rows, spacing=0, tight=True, visible=False)
+        _fmt_expanded = [False]
+        def _toggle_fmt(_ev):
+            _fmt_expanded[0] = not _fmt_expanded[0]
+            _fmt_rows_col.visible = _fmt_expanded[0]
+            try: _fmt_rows_col.update()
+            except Exception: pass
+        _fmt_btn.on_click = _toggle_fmt
+        _fmt_section = ft.Column(
+            [_section_row(t("dashboard.translit.menu.chatbox_short"), _fmt_btn), _fmt_rows_col],
+            spacing=0, tight=True,
         )
 
-        return ft.Column(
-            [ft.Row([show_chip, send_chip], spacing=6, alignment=ft.MainAxisAlignment.START, wrap=False)],
-            visible=script is not None,
-            horizontal_alignment=ft.CrossAxisAlignment.START,
-            spacing=0,
-            data={"script": script, "show_chip": show_chip, "send_chip": send_chip},
-        )
+        # ── overlay reading + grouped pinyin (On/Off pills), reading langs only ──
+        extra_rows: list[Any] = []
+        if script is not None:
+            _sr_ref = [self.show_pinyin or self.show_romaji or self.show_latin]
+            def _on_show(val: bool):
+                self.show_pinyin = self.show_romaji = self.show_latin = val
+                self._emit_transliteration_change()
+            extra_rows.append(_section_row(
+                t("dashboard.translit.menu.show_reading", system=rw), _bool_pill(_sr_ref, _on_show)))
+            # Grouped vs per-syllable(pinyin)/per-mora(romaji). Romaji is grouped by default;
+            # turning this off gives the per-character reading.
+            if script in ("pinyin", "romaji"):
+                _gp_ref = [self._pinyin_word_grouping]
+                extra_rows.append(_section_row(
+                    t("dashboard.translit.words", system=rw),
+                    _bool_pill(_gp_ref, self._on_pinyin_grouping_toggle)))
+
+        # ── assemble ─────────────────────────────────────────────────────────────
+        children: list[Any] = [
+            ft.Container(
+                content=ft.Row([
+                    ft.Icon(ft.Icons.TUNE, size=13, color=_TEXT_MUTED),
+                    ft.Text(t("dashboard.translit.menu.title"), size=12,
+                            color=_TEXT_MUTED, weight=ft.FontWeight.W_600),
+                ], spacing=6, tight=True),
+                padding=ft.padding.only(left=10, right=10, top=8, bottom=2),
+            ),
+            _fmt_section,
+        ]
+        if extra_rows:
+            children.append(_div())
+            children += extra_rows
+        children.append(ft.Container(height=4))
+        content = ft.Container(content=ft.Column(
+            children, spacing=0, tight=True, horizontal_alignment=ft.CrossAxisAlignment.STRETCH))
+        self._translit_popover_close = self._open_popover_at(x, y, content, width=280.0)
+
+    def set_chatbox_format_state(self, include_source: bool, reading_only: bool) -> None:
+        self._chatbox_include_source = bool(include_source)
+        self._chatbox_reading_only = bool(reading_only)
+
+    def _on_pinyin_grouping_toggle(self, value: bool) -> None:
+        self._pinyin_word_grouping = value
+        if callable(self.on_pinyin_word_grouping_change):
+            self.on_pinyin_word_grouping_change(value)
+        self._sync_translit_cols()
+
+    def set_pinyin_word_grouping_state(self, value: bool) -> None:
+        self._pinyin_word_grouping = bool(value)
+        try:
+            self._sync_translit_cols()
+        except Exception:
+            pass
 
     def _on_inline_chip_click(self, e, callback, icon: ft.Icon, lbl: ft.Text) -> None:
         chip = e.control
@@ -2851,51 +3064,9 @@ class DashboardView(ft.Row):
         return self._on_send_latin_toggle
 
     def _refresh_translit_col(self, col: ft.Column, lang_code: str) -> None:
-        script = self._translit_script(lang_code)
-        col.visible = script is not None
-        if script is None:
-            return
-        label = self._translit_label(script)
-        show_val, send_val = self._translit_vals(script)
-        d = col.data
-        # Update script + callbacks if language type changed
-        old_script = d.get("script")
-        if old_script != script:
-            show_cb = self._translit_show_cb(script)
-            send_cb = self._translit_send_cb(script)
-            d["script"] = script
-            # Rewire callbacks via closure — update chip on_click
-            show_chip: ft.Container = d["show_chip"]
-            send_chip: ft.Container = d["send_chip"]
-            show_icon = show_chip.content.controls[0]
-            show_lbl = show_chip.content.controls[1]
-            send_icon = send_chip.content.controls[0]
-            send_lbl = send_chip.content.controls[1]
-            show_chip.on_click = lambda e, _cb=show_cb, _i=show_icon, _l=show_lbl: \
-                self._on_inline_chip_click(e, _cb, _i, _l)
-            send_chip.on_click = lambda e, _cb=send_cb, _i=send_icon, _l=send_lbl: \
-                self._on_inline_chip_click(e, _cb, _i, _l)
-        else:
-            show_chip = d["show_chip"]
-            send_chip = d["send_chip"]
-            show_icon = show_chip.content.controls[0]
-            show_lbl = show_chip.content.controls[1]
-            send_icon = send_chip.content.controls[0]
-            send_lbl = send_chip.content.controls[1]
-        # Sync chip labels + tooltips
-        show_lbl.value = t("dashboard.translit.show", system=label)
-        send_lbl.value = t("dashboard.translit.send", system=label)
-        show_chip.tooltip = t("dashboard.translit.show.tooltip", system=label)
-        send_chip.tooltip = t("dashboard.translit.send.tooltip", system=label)
-        # Sync chip states
-        for chip, icon, lbl, val in [
-            (show_chip, show_icon, show_lbl, show_val),
-            (send_chip, send_icon, send_lbl, send_val),
-        ]:
-            icon.name = ft.Icons.CHECK_BOX if val else ft.Icons.CHECK_BOX_OUTLINE_BLANK
-            icon.color = _TOGGLE_ON if val else _TEXT_FAINT
-            lbl.color = _TEXT_MUTED if val else _TEXT_FAINT
-            chip.border = ft.border.all(1, _TOGGLE_ON if val else "#3a3b3e")
+        # Per-row transliteration controls now live on the header cog; keep the placeholder
+        # hidden. The cog reads live state (incl. the active reading word) when opened.
+        col.visible = False
 
     def _emit_transliteration_change(self) -> None:
         if callable(self.on_transliteration_change):
@@ -2990,7 +3161,7 @@ class DashboardView(ft.Row):
         # Refresh the "auto" chip states, then override visibility (the generic toggle
         # only appears when a spoken/peer language is Auto Detect).
         self._refresh_translit_col(col, "")
-        col.visible = self._auto_translit_should_show()
+        col.visible = False  # auto romanization now lives in the header cog menu
         try:
             if col.page:
                 col.update()

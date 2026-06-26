@@ -12,7 +12,7 @@ from puripuly_heart.ui.fonts import font_for_language
 from puripuly_heart.ui.i18n import get_locale, language_name, t
 from puripuly_heart.ui.overlay_peer_contract import OverlayPeerConsumerContract
 
-_BUILD_TAG = "r170"  #increment each build so user can confirm version
+_BUILD_TAG = "r177"  #increment each build so user can confirm version
 
 # ── VRCT-style dark palette ──────────────────────────────────────────────────
 _BG_MAIN = "#2e2f32"
@@ -43,7 +43,16 @@ class _ToggleRow(ft.Container):
     """VRCT-style horizontal toggle row: icon + label + pill indicator."""
 
     def __init__(self, icon: str, label: str, *, on_click):
-        self._label_text = ft.Text(label, size=14, color=_TEXT_PRIMARY, expand=True)
+        self._label_text = ft.Text(label, size=14, color=_TEXT_PRIMARY)
+        # Small caption under the label showing the active model (e.g. "Qwen ASR 0.6B"),
+        # so it's obvious at a glance which STT model is in use without right-clicking.
+        self._sublabel_text = ft.Text("", size=9, color=_TEXT_FAINT, visible=False, no_wrap=True)
+        label_col = ft.Column(
+            [self._label_text, self._sublabel_text],
+            spacing=0,
+            tight=True,
+            expand=True,
+        )
         self._dot = ft.Container(width=10, height=10, border_radius=5, bgcolor=_TOGGLE_OFF)
         self._spinner = ft.ProgressRing(
             width=12, height=12, stroke_width=1.5, color=_TOGGLE_WARNING, visible=False
@@ -58,7 +67,7 @@ class _ToggleRow(ft.Container):
             content=ft.Row(
                 [
                     ft.Icon(icon, size=18, color=_TEXT_MUTED),
-                    self._label_text,
+                    label_col,
                     self._indicator,
                 ],
                 spacing=12,
@@ -114,6 +123,14 @@ class _ToggleRow(ft.Container):
         self._label_text.value = label
         try:
             self._label_text.update()
+        except Exception:
+            pass
+
+    def set_sublabel(self, text: str):
+        self._sublabel_text.value = text or ""
+        self._sublabel_text.visible = bool(text)
+        try:
+            self._sublabel_text.update()
         except Exception:
             pass
 
@@ -691,6 +708,11 @@ class DashboardView(ft.Row):
         )
         self.on_translator_change: object = None  # callback(model_value: str)
         self.on_request_current_translator: object = None  # callback() → live model value
+        # Whisper availability (its model downloads from HuggingFace, which can be blocked).
+        # When unavailable, the STT picker greys Whisper out with this reason instead of
+        # letting the user pick a model that can't load.
+        self._whisper_available: bool = True
+        self._whisper_unavailable_reason: str = ""
         self.on_request_deepl_usage_refresh: object = None  # callback() → refresh translator usage
         self._current_translator_label: str = ""
         self._translator_usage_text: str | None = None  # API-usage line for TRANS tooltip
@@ -2491,6 +2513,8 @@ class DashboardView(ft.Row):
             self._current_translator_model_value = model_value
         self._current_translator_label = label
         self._refresh_trans_tooltip()
+        # Show the active translation model under the TRANS row, like MIC/PEER do.
+        self._row_trans.set_sublabel(label)
         try:
             if self._translator_value_text.page:
                 self._translator_value_text.update()
@@ -2592,6 +2616,10 @@ class DashboardView(ft.Row):
     def _on_trans_right_click(self, _=None) -> None:
         self._on_translator_btn_click()
 
+    def set_whisper_availability(self, available: bool, reason_key: str = "") -> None:
+        self._whisper_available = bool(available)
+        self._whisper_unavailable_reason = reason_key or ""
+
     def _build_stt_options(self) -> list:
         from puripuly_heart.config.settings import STTProviderName
         from puripuly_heart.ui.i18n import provider_label
@@ -2603,8 +2631,15 @@ class DashboardView(ft.Row):
                 needs_key = False
             else:
                 needs_key = not self._stt_provider_has_key.get(p.value, False)
+            disabled = needs_key
             desc = t("settings_modal.requires_api_key") if needs_key else ""
-            options.append(OptionItem(value=p.value, label=provider_label(p.value), description=desc, disabled=needs_key))
+            # Whisper's model downloads from HuggingFace; only when that's unreachable (and
+            # the model isn't cached) do we grey it out with a clear reason. When it's fine,
+            # no description — don't nag about a download the user may already have.
+            if p == STTProviderName.WHISPER and not self._whisper_available:
+                disabled = True
+                desc = t(self._whisper_unavailable_reason or "dashboard.whisper_hub_unreachable")
+            options.append(OptionItem(value=p.value, label=provider_label(p.value), description=desc, disabled=disabled))
         return options
 
     def set_stt_key_flags(self, flags: dict) -> None:
@@ -2641,6 +2676,7 @@ class DashboardView(ft.Row):
         if provider_value:
             self._current_stt_provider_value = provider_value
         self._refresh_stt_tooltip(label)
+        self._row_stt.set_sublabel(label)
 
     def set_stt_input_device(self, device_name: str) -> None:
         self._stt_input_device = device_name or ""
@@ -2661,6 +2697,7 @@ class DashboardView(ft.Row):
         if provider_value:
             self._current_peer_stt_provider_value = provider_value
         self._refresh_peer_tooltip(label)
+        self._row_peer.set_sublabel(label)
 
     def _refresh_peer_tooltip(self, label: str | None = None) -> None:
         if label is None:
@@ -3116,9 +3153,44 @@ class DashboardView(ft.Row):
         self._vrc_mute_sync = not self._vrc_mute_sync
         if self._vrc_mute_sync:
             self._vrc_mute_sync_osc_state = None  # reset synced state; wait for VRChat to re-send
+            # Surface the relay risk up front (not just on hover): until VRChat sends the
+            # mute state, the mic is transcribed and sent to chat even while muted.
+            self._show_mute_sync_relay_warning()
         self._refresh_vrc_mute_sync_btn()
         if callable(self.on_vrc_mute_sync_toggle):
             self.on_vrc_mute_sync_toggle(self._vrc_mute_sync)
+
+    def _show_mute_sync_relay_warning(self) -> None:
+        # Defer slightly: enabling Mic Sync often coincides with the mic turning on and
+        # the speech-model loading notice, and a snackbar fired in that busy moment can be
+        # dropped or immediately overwritten. A short delay (re-checking it's still on)
+        # makes the warning reliably appear.
+        try:
+            if self.page:
+                self.page.run_task(self._delayed_mute_sync_warning)
+        except Exception:
+            pass
+
+    async def _delayed_mute_sync_warning(self) -> None:
+        import asyncio
+        try:
+            await asyncio.sleep(0.8)
+        except Exception:
+            return
+        if not self._vrc_mute_sync or self._vrc_mute_sync_osc_state is not None:
+            return  # disabled or already synced in the meantime
+        try:
+            if self.page:
+                self.page.open(ft.SnackBar(
+                    ft.Text(t("dashboard.mute_sync.warn_relay"), color=ft.Colors.WHITE),
+                    bgcolor="#c47f1a",
+                    duration=7000,
+                    behavior=ft.SnackBarBehavior.FLOATING,
+                    margin=ft.margin.only(bottom=90),
+                    padding=20,
+                ))
+        except Exception:
+            pass
 
     def _refresh_vrc_mute_sync_btn(self) -> None:
         active = self._vrc_mute_sync and self.is_stt_on

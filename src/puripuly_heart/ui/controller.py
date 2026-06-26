@@ -639,6 +639,13 @@ class GuiController:
             apply_locale = getattr(self.app, "apply_locale", None)
             if callable(apply_locale):
                 apply_locale()
+        # Show the MIC/PEER/TRANS model labels immediately from the saved selection —
+        # before the (slow) STT/LLM model loading below — so they're not blank until
+        # everything has connected. They don't depend on the mic being enabled.
+        with contextlib.suppress(Exception):
+            self.app._sync_stt_label(self.settings)
+        with contextlib.suppress(Exception):
+            self.app._sync_translator_label(self.settings)
 
         runtime_logging = self.runtime_logging
         runtime_logging.set_mode(SessionLoggingMode.BASIC)
@@ -647,6 +654,11 @@ class GuiController:
         logs_view = getattr(self.app, "view_logs", None)
         if logs_view is not None:
             runtime_logging.attach_realtime_sink(logs_view)
+
+        # If the mic model is Whisper but its host (HuggingFace) is unreachable and the
+        # model isn't cached, fall back to the local Qwen model so the mic still works
+        # (e.g. behind the Great Firewall). Done before the pipeline is built.
+        await self._maybe_fallback_whisper_to_local_qwen()
 
         await self._init_pipeline()
         self._refresh_local_stt_runtime_state()
@@ -926,14 +938,66 @@ class GuiController:
             return False
         return resolution.api_key is not None
 
+    async def _maybe_fallback_whisper_to_local_qwen(self) -> None:
+        """Probe whether Whisper can actually load (its model is cached, or its HuggingFace
+        host is reachable to download it). If not, (a) tell the dashboard to grey out the
+        Whisper option with a 'can't connect' note, and (b) if Whisper is the SELECTED mic
+        model, fall back to the local Qwen model (ModelScope) so the mic still works — e.g.
+        behind the Great Firewall — and notify the user."""
+        if self.settings is None:
+            return
+        from puripuly_heart.providers.stt.whisper_stt import (
+            is_huggingface_reachable,
+            whisper_model_locally_available,
+        )
+
+        model_name = getattr(self.settings.whisper_stt, "model", "")
+        available = True
+        try:
+            if not await asyncio.to_thread(whisper_model_locally_available, model_name):
+                # Not cached — it would need to download from HuggingFace.
+                available = await asyncio.to_thread(is_huggingface_reachable, 2.5)
+        except Exception:
+            available = True  # never let the probe itself disrupt startup
+
+        # Tell the dashboard so the STT picker can grey Whisper out when unavailable.
+        dash = getattr(self.app, "view_dashboard", None)
+        set_avail = getattr(dash, "set_whisper_availability", None)
+        if callable(set_avail):
+            with contextlib.suppress(Exception):
+                set_avail(available, "dashboard.whisper_hub_unreachable")
+
+        if available:
+            return
+        # Whisper can't load → fall back any channel using it to local Qwen.
+        fell_back = False
+        if self.settings.provider.stt == STTProviderName.WHISPER:
+            self.settings.provider.stt = STTProviderName.LOCAL_QWEN
+            fell_back = True
+        if self.settings.provider.peer_stt == STTProviderName.WHISPER:
+            self.settings.provider.peer_stt = STTProviderName.LOCAL_QWEN
+            fell_back = True
+        if not fell_back:
+            return
+        with contextlib.suppress(Exception):
+            await asyncio.to_thread(save_settings, self.config_path, self.settings)
+        self.log_basic(
+            "[STT] Whisper host (HuggingFace) unreachable and model not cached; "
+            "fell back to local Qwen so the mic still works"
+        )
+        self._show_short_message("stt.whisper_hub_unreachable_fallback")
+        sync = getattr(self.app, "_sync_stt_label", None)
+        if callable(sync):
+            with contextlib.suppress(Exception):
+                sync(self.settings)
+
     def dashboard_managed_auth_action(self) -> str:
-        if not self._managed_openrouter_selected():
-            return "continue"
-        if self._discord_managed_auth_in_progress or self._managed_trial_pending_auth:
-            return "in_progress"
-        if self._managed_openrouter_local_key_available():
-            return "continue"
-        return "prompt"
+        # The managed-OpenRouter free-trial / Discord-OAuth onboarding popup is disabled:
+        # enabling translation always proceeds with the configured provider (the default
+        # is free Google/Bing web translation, which needs no account). Users who want the
+        # managed LLM can still authenticate from Settings; this only kills the forced
+        # popup on the translation toggle.
+        return "continue"
 
     def _discord_auth_message_key(self, result) -> str:  # noqa: ANN001
         diagnostics = getattr(result, "diagnostics", None)

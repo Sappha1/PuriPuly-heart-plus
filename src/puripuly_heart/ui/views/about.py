@@ -50,6 +50,7 @@ class AboutView(ft.Column):
     def _build_ui(self):
         self.controls = [
             self._build_header(),
+            self._build_providers_card(),
             self._build_licenses_card(),
         ]
 
@@ -211,11 +212,112 @@ class AboutView(ft.Column):
             padding=ft.padding.all(16),
         )
 
-    def _build_credits_card(self) -> ft.Control:
-        return ft.Container()
+    # ── Provider reference (speech recognition + translation back-ends) ──────
+    # Rows match the in-app dropdowns exactly. Accuracy is a coarse relative guide
+    # (Good < High < Very high).
+    _STT_PROVIDER_ROWS = [
+        ("Qwen ASR 0.6B", "High", "Local — no key"),
+        ("Whisper", "High–Very high", "Local — no key"),
+        ("Google", "High", "Free web — no key"),
+        ("Deepgram", "Very high", "API key"),
+        ("Qwen ASR (cloud)", "Very high", "API key"),
+        ("Soniox", "Very high", "API key"),
+    ]
+    _TRANSLATION_PROVIDER_ROWS = [
+        ("Google Translate", "Good", "Free web — no key"),
+        ("Bing Translator", "Good", "Free web — no key"),
+        ("Papago", "Good (KO/JA)", "Free web — no key"),
+        ("Local LLMs", "High–Very high", "Local — no key"),
+        ("DeepL", "Very high", "API key"),
+        ("Gemini 3 Flash", "Very high", "API key"),
+        ("Gemini 3.1 Flash-Lite", "High", "API key"),
+        ("Qwen 3.5 Plus", "Very high", "API key"),
+        ("DeepSeek V4 Flash", "High", "API key"),
+        ("DeepSeek V4 Pro", "Very high", "API key"),
+        ("Gemma 4 26B A4B", "High", "API key"),
+    ]
+    def _styled_table(self, headers: list[str], rows: list[tuple]) -> ft.DataTable:
+        """A compact themed table. First cell of each row is emphasized, last is muted."""
+        def _col(label: str) -> ft.DataColumn:
+            return ft.DataColumn(
+                ft.Text(label, size=11, weight=ft.FontWeight.W_600, color=COLOR_NEUTRAL)
+            )
 
-    def _build_inspired_by_card(self) -> ft.Control:
-        return ft.Container()
+        def _cell(text: str, *, primary: bool = False, muted: bool = False) -> ft.DataCell:
+            return ft.DataCell(ft.Text(
+                text, size=11, no_wrap=False,
+                weight=ft.FontWeight.W_600 if primary else ft.FontWeight.NORMAL,
+                color=COLOR_PRIMARY if primary else (COLOR_NEUTRAL if muted else COLOR_ON_BACKGROUND),
+            ))
+
+        data_rows = []
+        for row in rows:
+            last = len(row) - 1
+            data_rows.append(ft.DataRow(cells=[
+                _cell(val, primary=(i == 0), muted=(i == last)) for i, val in enumerate(row)
+            ]))
+        return ft.DataTable(
+            columns=[_col(h) for h in headers],
+            rows=data_rows,
+            heading_row_height=30,
+            data_row_min_height=30,
+            data_row_max_height=46,
+            column_spacing=18,
+            horizontal_lines=ft.BorderSide(0.5, COLOR_DIVIDER),
+            heading_row_color=COLOR_DIVIDER,
+        )
+
+    def _build_providers_card(self) -> ft.Control:
+        """Factual reference of the speech-recognition and translation back-ends."""
+        def _subhead(icon: str, label: str) -> ft.Control:
+            return ft.Row(
+                [ft.Icon(icon, size=15, color=COLOR_NEUTRAL),
+                 ft.Text(label, size=12, weight=ft.FontWeight.W_600, color=COLOR_ON_BACKGROUND)],
+                spacing=6, vertical_alignment=ft.CrossAxisAlignment.CENTER,
+            )
+
+        content = ft.Column(
+            [
+                ft.Row(
+                    [
+                        ft.Icon(ft.Icons.TUNE, size=18, color=COLOR_PRIMARY),
+                        ft.Text("Speech & translation providers", size=16,
+                                weight=ft.FontWeight.BOLD, color=COLOR_PRIMARY),
+                    ],
+                    spacing=8, vertical_alignment=ft.CrossAxisAlignment.CENTER,
+                ),
+                ft.Text(
+                    "Every speech and translation back-end available in the app. Local options run on "
+                    "your machine with no key or cost; free-web options need no key; cloud options need "
+                    "an API key. Accuracy is a rough relative guide.",
+                    size=12, color=COLOR_ON_BACKGROUND, no_wrap=False,
+                ),
+                ft.Container(height=4),
+                _subhead(ft.Icons.MIC, "Speech recognition"),
+                ft.Row([self._styled_table(
+                    ["Provider", "Accuracy", "API"], self._STT_PROVIDER_ROWS)],
+                    scroll=ft.ScrollMode.AUTO),
+                ft.Container(height=8),
+                _subhead(ft.Icons.TRANSLATE, "Translation"),
+                ft.Row([self._styled_table(
+                    ["Provider", "Accuracy", "API"], self._TRANSLATION_PROVIDER_ROWS)],
+                    scroll=ft.ScrollMode.AUTO),
+                ft.Container(height=4),
+                ft.Text(
+                    "“Local LLMs” connects to a model you run yourself with Ollama or any "
+                    "OpenAI-compatible server — no key, no cost.",
+                    size=11, color=COLOR_NEUTRAL, no_wrap=False,
+                ),
+            ],
+            spacing=8,
+        )
+
+        return ft.Container(
+            content=content,
+            bgcolor=COLOR_SURFACE,
+            border_radius=12,
+            padding=ft.padding.all(16),
+        )
 
     # Special thanks name keys - add new names here and update locale bundles
     _SPECIAL_THANKS_NAME_KEYS = [
@@ -231,26 +333,29 @@ class AboutView(ft.Column):
         "about.special_thanks.name.ephedrine",
     ]
 
-    def _build_special_thanks_card(self) -> ft.Control:
-        return ft.Container()
-
     def _build_licenses_card(self) -> ft.Control:
         """Build Open Source Licenses section."""
         licenses_text = _load_third_party_notices()
 
         card_content = ft.Column(
             controls=[
-                ft.Text(
-                    t("about.licenses"),
-                    size=24,
-                    weight=ft.FontWeight.BOLD,
-                    color=COLOR_NEUTRAL,
+                ft.Row(
+                    [
+                        ft.Icon(ft.Icons.GAVEL, size=18, color=COLOR_PRIMARY),
+                        ft.Text(
+                            t("about.licenses"),
+                            size=16,
+                            weight=ft.FontWeight.BOLD,
+                            color=COLOR_PRIMARY,
+                        ),
+                    ],
+                    spacing=8, vertical_alignment=ft.CrossAxisAlignment.CENTER,
                 ),
-                ft.Container(height=16),
+                ft.Container(height=10),
                 ft.Container(
                     content=ft.Text(
                         licenses_text,
-                        size=16,
+                        size=12,
                         color=COLOR_ON_BACKGROUND,
                         selectable=True,
                     ),

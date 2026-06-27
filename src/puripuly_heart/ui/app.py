@@ -1329,18 +1329,36 @@ class TranslatorApp:
             self._mark_launch_high_priority_feedback_shown("stt_compatibility", snackbar)
             self.page.open(snackbar)
 
-        async def _task():
-            await self.controller.on_dashboard_language_change(
-                source_code=source_code,
-                target_code=target_code,
-                peer_source_code=peer_source_code,
-                peer_target_code=peer_target_code,
-                preset_index=preset_index,
-                extra_target_codes=extra_target_codes,
-                extra_peer_source_codes=extra_peer_source_codes,
-            )
+        # Coalesce rapid language switches (e.g. cycling favorites) into a single apply.
+        # Each switch otherwise fires a full peer-pipeline rebuild, and a fast burst of
+        # rebuilds can leave the peer STT re-initializing in a ~5s loop. We debounce so
+        # only the final selection (after a short quiet period) actually applies.
+        self._language_change_gen = getattr(self, "_language_change_gen", 0) + 1
+        _params = dict(
+            source_code=source_code,
+            target_code=target_code,
+            peer_source_code=peer_source_code,
+            peer_target_code=peer_target_code,
+            preset_index=preset_index,
+            extra_target_codes=extra_target_codes,
+            extra_peer_source_codes=extra_peer_source_codes,
+        )
 
-        self._queue_settings_mutation_task(_task)
+        async def _debounced_apply(_gen=self._language_change_gen, _p=_params):
+            import asyncio
+            try:
+                await asyncio.sleep(0.5)
+            except asyncio.CancelledError:
+                return
+            if _gen != self._language_change_gen:
+                return  # superseded by a newer switch
+
+            async def _task():
+                await self.controller.on_dashboard_language_change(**_p)
+
+            self._queue_settings_mutation_task(_task)
+
+        self.page.run_task(_debounced_apply)
 
     def _on_filter_peer_change(self, enabled: bool) -> None:
         async def _task():

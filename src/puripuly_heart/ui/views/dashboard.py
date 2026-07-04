@@ -15,7 +15,7 @@ from puripuly_heart.ui.fonts import font_for_language
 from puripuly_heart.ui.i18n import get_locale, language_name, t
 from puripuly_heart.ui.overlay_peer_contract import OverlayPeerConsumerContract
 
-_BUILD_TAG = "r210"  #increment each build so user can confirm version
+_BUILD_TAG = "r211"  #increment each build so user can confirm version
 
 # ── VRCT-style dark palette ──────────────────────────────────────────────────
 _BG_MAIN = "#2e2f32"
@@ -3802,6 +3802,30 @@ class DashboardView(ft.Row):
         self._stt_load_resume_deadline = 0.0
         if row is not None and row.is_loading:
             row.set_loading(True, 1.0)
+            # The full ring may only hold BRIEFLY: peer state syncs fire on changes
+            # only, so if the peer sits in its idle/warning state, no set_state ever
+            # arrives and the ring stays on screen forever (observed: stuck full
+            # orange ring for 20+ minutes). Release to the real dot state shortly.
+            self._peer_ring_release_gen = getattr(self, "_peer_ring_release_gen", 0) + 1
+            if self.page is not None:
+                with contextlib.suppress(Exception):
+                    self.page.run_task(self._release_peer_ring_after_hold)
+
+    async def _release_peer_ring_after_hold(self) -> None:
+        generation = getattr(self, "_peer_ring_release_gen", 0)
+        await asyncio.sleep(6.0)
+        if generation != getattr(self, "_peer_ring_release_gen", 0):
+            return  # a newer load pass owns the ring now
+        if self._local_stt_notice_status == "loading":
+            return
+        row = getattr(self, "_row_peer", None)
+        if row is None or not row.is_loading:
+            return
+        row.set_loading(False)
+        # Restore the true contract-driven dot color (green when ready, orange while
+        # becoming-ready/idle) instead of leaving the completed ring on screen.
+        with contextlib.suppress(Exception):
+            self._sync_overlay_peer_buttons()
 
     async def _animate_peer_load_ring(self) -> None:
         row = getattr(self, "_row_peer", None)
@@ -3828,6 +3852,13 @@ class DashboardView(ft.Row):
                 await asyncio.sleep(0.05)
         finally:
             self._peer_ring_anim_running = False
+            # Belt-and-braces: however the animator exits (including toggle races that
+            # bypass the grace/snap path), make sure the ring is eventually released
+            # back to the contract-driven dot instead of sticking forever.
+            self._peer_ring_release_gen = getattr(self, "_peer_ring_release_gen", 0) + 1
+            if self.page is not None:
+                with contextlib.suppress(Exception):
+                    self.page.run_task(self._release_peer_ring_after_hold)
 
     def _current_local_stt_notice(self) -> tuple[str | None, str | None]:
         status = self._local_stt_notice_status

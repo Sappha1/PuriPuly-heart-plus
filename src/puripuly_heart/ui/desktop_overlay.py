@@ -2526,6 +2526,7 @@ class FletDesktopRendererWindow:
             self._suppress_content = False
             self._active_banner_until = None
             self._active_banner_opacity = 1.0
+            self._restore_if_minimized()
             # Re-arm the first-caption settle relayout (the r176 startup mechanism):
             # after an idle click-through spell, the first caption's one-shot render
             # doesn't reliably composite — the settle (interactive + forced resize,
@@ -2587,9 +2588,13 @@ class FletDesktopRendererWindow:
         window.frameless = True
         window.always_on_top = True
         window.shadow = False
-        window.skip_task_bar = False
+        # Tool window (not on the taskbar): a regular taskbar window gets MINIMIZED by
+        # Win+D / "show desktop" — the overlay then sits parked at (-16000,-16000) and
+        # looks completely dead (observed live). Tool windows are immune.
+        window.skip_task_bar = True
         window.resizable = False
         window.maximizable = False
+        window.minimizable = False
         window.bgcolor = ft.Colors.TRANSPARENT
         window.ignore_mouse_events = (
             self._interaction_mode == _DESKTOP_INTERACTION_MODE_PASS_THROUGH
@@ -2752,11 +2757,36 @@ class FletDesktopRendererWindow:
             emit_event=True,
         )
 
+    def _restore_if_minimized(self) -> None:
+        """Heal a minimized overlay window (Win+D / show-desktop / fullscreen games
+        park it off-screen at -16000,-16000 and it looks dead). Un-minimize, re-assert
+        the bounds, and re-arm the first-caption settle so content paints again."""
+        page = self._page
+        if page is None:
+            return
+        window = getattr(page, "window", None)
+        if window is None or not getattr(window, "minimized", False):
+            return
+        logger.info("[DesktopOverlay] window was minimized — restoring")
+        with contextlib.suppress(Exception):
+            window.minimized = False
+            bounds = self._current_window_bounds
+            if bounds is not None:
+                window.left = bounds["x"]
+                window.top = bounds["y"]
+                window.width = bounds["width"]
+                window.height = bounds["height"]
+            window_update = getattr(window, "update", None)
+            if callable(window_update):
+                window_update()
+        self._startup_relayout_pending = True
+
     def _render_page(self) -> None:
         page = self._page
         if page is None:
             return
         import flet as ft
+        self._restore_if_minimized()
 
         if self._preview_catalog is not None:
             root = self._build_preview_root(ft)

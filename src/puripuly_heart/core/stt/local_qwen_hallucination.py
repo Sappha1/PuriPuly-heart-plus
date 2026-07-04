@@ -8,7 +8,9 @@ KNOWN_LOCAL_QWEN_HALLUCINATIONS = frozenset({"leşme", "acia", "system"})
 # A "stuck" STT loop repeats a short unit many times ("什么?什么?什么?..."). Require a
 # high repeat count + dominance so ordinary repetition ("no no no") is NOT suppressed.
 _REPETITION_MIN_UNITS = 8
-_REPETITION_SPLIT_RE = re.compile(r"[\s,.。、!！?？;；:：…·]+")
+# NOTE: ，(U+FF0C, the standard Chinese comma) was originally missing here, which let
+# "等等，等等，等等，…" walls parse as ONE unit and evade detection entirely.
+_REPETITION_SPLIT_RE = re.compile(r"[\s,，.。、!！?？;；:：…·]+")
 
 
 def is_repetition_loop(text: str) -> bool:

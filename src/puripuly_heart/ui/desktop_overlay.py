@@ -2526,6 +2526,11 @@ class FletDesktopRendererWindow:
             self._suppress_content = False
             self._active_banner_until = None
             self._active_banner_opacity = 1.0
+            # Re-arm the first-caption settle relayout (the r176 startup mechanism):
+            # after an idle click-through spell, the first caption's one-shot render
+            # doesn't reliably composite — the settle (interactive + forced resize,
+            # WITH content present) makes it paint, exactly like on every app boot.
+            self._startup_relayout_pending = True
             # NOTE: the "overlay active" banner is deliberately NOT re-armed on soft
             # reveals. A one-shot static render into an idle transparent click-through
             # window is silently dropped by the Windows compositor, and every kick

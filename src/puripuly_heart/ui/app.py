@@ -244,6 +244,7 @@ class TranslatorApp:
         self._nav_selected = 0
         # Wire dashboard sidebar nav → app navigation
         self.view_dashboard.on_nav_change = self._on_nav_change
+        self._wire_update_flow()
 
         # Top nav bar for non-dashboard views (back + tab icons)
         _NAV_ICONS = [
@@ -331,6 +332,36 @@ class TranslatorApp:
             )
         else:
             self.page.add(root_content)
+
+    def _wire_update_flow(self) -> None:
+        """Feed the shared self-update flow into the dashboard sidebar button and
+        route its clicks (About's Updates card observes the same flow directly)."""
+        from puripuly_heart.ui.update_flow import get_update_flow
+
+        flow = get_update_flow()
+
+        def _sync() -> None:
+            self.view_dashboard.set_update_flow_state(
+                flow.state, flow.progress, flow.sidebar_visible(), flow.sidebar_tooltip()
+            )
+
+        flow.add_listener(_sync)
+        _sync()
+
+        def _on_update_click() -> None:
+            if flow.state == "available":
+                self.page.run_task(flow.download)
+            elif flow.state == "ready":
+                if flow.launch_restart():
+                    window = self.page.window
+                    try:
+                        window.close()
+                    except Exception:
+                        destroy = getattr(window, "destroy", None)
+                        if callable(destroy):
+                            destroy()
+
+        self.view_dashboard.on_update_click = _on_update_click
 
     def _build_debug_preview_panel(self) -> DebugPreviewPanel:
         return DebugPreviewPanel(
@@ -2408,6 +2439,15 @@ async def main_gui(page: ft.Page, *, config_path, debug_ui_preview: bool = False
             lambda snackbar: app._mark_launch_high_priority_feedback_shown("update", snackbar)
         )
     await _check_and_notify_update(page, **update_kwargs)
+
+    # Silent build-number check → sidebar update button (shared flow with the
+    # About card; no-op in source runs, quiet on network failure).
+    try:
+        from puripuly_heart.ui.update_flow import get_update_flow
+
+        page.run_task(get_update_flow().check_silently)
+    except Exception:
+        pass
 
     # GitHub star prompt disabled
 

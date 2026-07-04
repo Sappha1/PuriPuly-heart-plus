@@ -15,7 +15,7 @@ from puripuly_heart.ui.fonts import font_for_language
 from puripuly_heart.ui.i18n import get_locale, language_name, t
 from puripuly_heart.ui.overlay_peer_contract import OverlayPeerConsumerContract
 
-_BUILD_TAG = "r217"  #increment each build so user can confirm version
+_BUILD_TAG = "r218"  #increment each build so user can confirm version
 
 # ── VRCT-style dark palette ──────────────────────────────────────────────────
 _BG_MAIN = "#2e2f32"
@@ -280,6 +280,78 @@ class _MiniIconBtn(ft.Container):
         self.tooltip = text
         try:
             self.update()
+        except Exception:
+            pass
+
+
+class _UpdateNavBtn(ft.Container):
+    """Sidebar self-update button. Not rendered at all while up to date; morphs
+    in place through the whole flow: teal download icon (available) → filling
+    ring (downloading) → solid teal restart icon (staged, ready)."""
+
+    def __init__(self, *, on_click):
+        self._icon = ft.Icon(ft.Icons.DOWNLOAD, size=17, color=_TOGGLE_ON)
+        self._ring = ft.ProgressRing(
+            value=0, width=30, height=30, stroke_width=2.5,
+            color=_TOGGLE_WARNING, bgcolor="#3f4044", visible=False,
+        )
+        self._inner = ft.Container(
+            content=self._icon, width=30, height=30, border_radius=7,
+            alignment=ft.alignment.center,
+            bgcolor="#2e4a45", border=ft.border.all(1, _TOGGLE_ON),
+        )
+        super().__init__(
+            content=ft.Stack(
+                [
+                    ft.Container(content=self._ring, alignment=ft.alignment.center, expand=True),
+                    ft.Container(content=self._inner, alignment=ft.alignment.center, expand=True),
+                ],
+                width=36, height=40,
+            ),
+            width=36, height=40,
+            border_radius=6,
+            bgcolor=ft.Colors.TRANSPARENT,
+            visible=False,
+            on_click=on_click,
+            on_hover=self._on_hover,
+        )
+
+    def _on_hover(self, e):
+        self.bgcolor = _BG_ROW_HOVER if e.data == "true" else ft.Colors.TRANSPARENT
+        try:
+            self.update()
+        except Exception:
+            pass
+
+    def set_flow(self, state: str, progress: float, visible: bool, tooltip: str) -> None:
+        self.visible = visible
+        self.tooltip = tooltip or None
+        if state == "downloading":
+            self._ring.visible = True
+            # Floor keeps the arc visible from the first pixel of progress.
+            self._ring.value = max(0.02, min(1.0, progress))
+            self._inner.bgcolor = ft.Colors.TRANSPARENT
+            self._inner.border = None
+            self._icon.name = ft.Icons.ARROW_DOWNWARD
+            self._icon.size = 13
+            self._icon.color = _TOGGLE_WARNING
+        elif state in ("ready", "restarting"):
+            self._ring.visible = False
+            self._inner.bgcolor = _TOGGLE_ON
+            self._inner.border = None
+            self._icon.name = ft.Icons.RESTART_ALT
+            self._icon.size = 17
+            self._icon.color = "#10322d"
+        else:  # available (any hidden state renders the same defaults)
+            self._ring.visible = False
+            self._inner.bgcolor = "#2e4a45"
+            self._inner.border = ft.border.all(1, _TOGGLE_ON)
+            self._icon.name = ft.Icons.DOWNLOAD
+            self._icon.size = 17
+            self._icon.color = _TOGGLE_ON
+        try:
+            if self.page:
+                self.update()
         except Exception:
             pass
 
@@ -708,6 +780,10 @@ class DashboardView(ft.Row):
             on_click=lambda _: self._on_sidebar_nav_click(1),
             on_hover=lambda e: self._on_sidebar_nav_hover(e, 1),
         )
+        # ── Self-update button (hidden unless an update exists) ──────────────
+        self.on_update_click: object = None  # callback() — download / restart per flow state
+        self._update_btn = _UpdateNavBtn(on_click=self._on_update_btn_click)
+        self._mini_update_btn = _UpdateNavBtn(on_click=self._on_update_btn_click)
         # ── Translator selector button ────────────────────────────────────────
         self._translator_label_text = ft.Text(
             "Translator", size=10, color=_TEXT_FAINT, weight=ft.FontWeight.W_600,
@@ -782,7 +858,7 @@ class DashboardView(ft.Row):
 
         self._sidebar_nav_row = ft.Container(
             content=ft.Row(
-                [gear_btn],
+                [gear_btn, self._update_btn],
                 spacing=6,
                 alignment=ft.MainAxisAlignment.CENTER,
                 vertical_alignment=ft.CrossAxisAlignment.CENTER,
@@ -823,6 +899,7 @@ class DashboardView(ft.Row):
                 _mini_lang_tap,
                 ft.Divider(height=1, color=_DIVIDER, thickness=1),
                 self._mini_gear_btn,
+                self._mini_update_btn,
             ],
             spacing=4,
             horizontal_alignment=ft.CrossAxisAlignment.CENTER,
@@ -1316,6 +1393,17 @@ class DashboardView(ft.Row):
                 ic.update()
             except Exception:
                 pass
+
+    # ── Self-update button ───────────────────────────────────────────────────
+
+    def _on_update_btn_click(self, _e) -> None:
+        if self.on_update_click:
+            self.on_update_click()
+
+    def set_update_flow_state(self, state: str, progress: float, visible: bool,
+                              tooltip: str) -> None:
+        self._update_btn.set_flow(state, progress, visible, tooltip)
+        self._mini_update_btn.set_flow(state, progress, visible, tooltip)
 
     # ── Toggle click handlers ────────────────────────────────────────────────
 

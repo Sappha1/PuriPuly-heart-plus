@@ -63,17 +63,14 @@ class AboutView(ft.Column):
             is_self_update_supported,
             sweep_leftover_update_files,
         )
+        from puripuly_heart.ui.update_flow import dev_fake_update_enabled, get_update_flow
 
         sweep_leftover_update_files()
-        self._upd_state = "idle"
-        self._upd_remote = None
-        self._upd_staged_root = None
+        self._upd_flow = get_update_flow()
+        self._upd_supported = is_self_update_supported() or dev_fake_update_enabled()
         build = current_build_number()
-        self._upd_status = ft.Text(
-            f"Current build: r{build}" if build else "Current build: unknown",
-            size=12,
-            color=COLOR_NEUTRAL,
-        )
+        self._upd_default_status = f"Current build: r{build}" if build else "Current build: unknown"
+        self._upd_status = ft.Text(self._upd_default_status, size=12, color=COLOR_NEUTRAL)
         self._upd_bar = ft.ProgressBar(value=0, visible=False, color=COLOR_PRIMARY, bgcolor=COLOR_DIVIDER)
         self._upd_btn_label = ft.Text("Check for updates", size=13, color=COLOR_PRIMARY, weight=ft.FontWeight.W_600)
         self._upd_btn = ft.Container(
@@ -82,9 +79,11 @@ class AboutView(ft.Column):
             border_radius=8,
             padding=ft.padding.symmetric(horizontal=14, vertical=8),
             on_click=self._on_update_button,
-            disabled=not is_self_update_supported(),
-            tooltip=None if is_self_update_supported() else "Available in the packaged app only",
+            disabled=not self._upd_supported,
+            tooltip=None if self._upd_supported else "Available in the packaged app only",
         )
+        self._upd_flow.add_listener(self._upd_render)
+        self._upd_render()
         content = ft.Column(
             [
                 ft.Row(
@@ -109,19 +108,30 @@ class AboutView(ft.Column):
             content=content, bgcolor=COLOR_SURFACE, border_radius=12, padding=ft.padding.all(16)
         )
 
-    def _upd_set(self, *, status: str | None = None, button: str | None = None,
-                 bar: float | None = None, bar_visible: bool | None = None,
-                 button_disabled: bool | None = None) -> None:
-        if status is not None:
-            self._upd_status.value = status
-        if button is not None:
-            self._upd_btn_label.value = button
-        if bar is not None:
-            self._upd_bar.value = bar
-        if bar_visible is not None:
-            self._upd_bar.visible = bar_visible
-        if button_disabled is not None:
-            self._upd_btn.disabled = button_disabled
+    _UPD_BUTTON_LABELS = {
+        "idle": "Check for updates",
+        "checking": "Checking…",
+        "uptodate": "Check for updates",
+        "downloading": "Downloading…",
+        "ready": "Restart & update",
+        "restarting": "Restarting…",
+        "error": "Retry",
+    }
+
+    def _upd_render(self) -> None:
+        flow = self._upd_flow
+        state = flow.state
+        if state == "available":
+            label = "Download update" if flow.comparable else "Download latest"
+        else:
+            label = self._UPD_BUTTON_LABELS.get(state, "Check for updates")
+        self._upd_btn_label.value = label
+        self._upd_status.value = flow.status_text or self._upd_default_status
+        self._upd_bar.visible = state == "downloading"
+        self._upd_bar.value = flow.progress
+        self._upd_btn.disabled = (
+            not self._upd_supported or state in ("checking", "downloading", "restarting")
+        )
         try:
             if self.page:
                 self._upd_status.update()
@@ -133,100 +143,17 @@ class AboutView(ft.Column):
     def _on_update_button(self, _e) -> None:
         if not self.page:
             return
-        if self._upd_state in ("idle", "uptodate", "error"):
-            self.page.run_task(self._upd_check)
-        elif self._upd_state == "available":
-            self.page.run_task(self._upd_download)
-        elif self._upd_state == "ready":
+        flow = self._upd_flow
+        if flow.state in ("idle", "uptodate", "error"):
+            self.page.run_task(flow.check)
+        elif flow.state == "available":
+            self.page.run_task(flow.download)
+        elif flow.state == "ready":
             self._upd_restart()
 
-    async def _upd_check(self) -> None:
-        from puripuly_heart.core.updater import current_build_number, fetch_remote_build
-
-        self._upd_state = "checking"
-        self._upd_set(status="Checking for updates…", button="Checking…", button_disabled=True)
-        remote = await fetch_remote_build()
-        local = current_build_number()
-        if remote is None:
-            self._upd_state = "error"
-            self._upd_set(status="Couldn't reach GitHub — check your connection and try again.",
-                          button="Check for updates", button_disabled=False)
-            return
-        self._upd_remote = remote
-        if remote.build <= 0:
-            # Release predates version.json — can't compare builds reliably.
-            self._upd_state = "available"
-            self._upd_set(
-                status="Latest build number unknown — you can re-download the newest package.",
-                button="Download latest", button_disabled=False)
-            return
-        if remote.build <= local:
-            self._upd_state = "uptodate"
-            self._upd_set(status=f"Up to date (r{local}).",
-                          button="Check for updates", button_disabled=False)
-            return
-        size_mb = remote.zip_size / (1024 * 1024) if remote.zip_size else 0
-        self._upd_state = "available"
-        self._upd_set(
-            status=f"Update available: {remote.tag or 'r' + str(remote.build)} "
-                   f"({size_mb:.0f} MB download).",
-            button="Download update", button_disabled=False)
-
-    async def _upd_download(self) -> None:
-        import asyncio as _asyncio
-
-        from puripuly_heart.core.updater import (
-            download_update_zip, extract_update_zip, update_staging_dir,
-        )
-
-        remote = self._upd_remote
-        if remote is None:
-            return
-        self._upd_state = "downloading"
-        self._upd_set(status="Downloading update…", button="Downloading…",
-                      button_disabled=True, bar=0, bar_visible=True)
-        zip_path = update_staging_dir() / "PuriPulyHeart.zip"
-        loop = _asyncio.get_running_loop()
-        last = {"t": 0.0}
-
-        def _progress(frac: float) -> None:
-            import time as _time
-            now = _time.monotonic()
-            if now - last["t"] >= 0.15 or frac >= 1.0:
-                last["t"] = now
-                self._upd_set(bar=frac, status=f"Downloading update… {int(frac * 100)}%")
-
-        try:
-            await download_update_zip(remote.zip_url, zip_path, remote.zip_size, _progress)
-            self._upd_set(status="Unpacking…", bar=1.0)
-            staged = await _asyncio.to_thread(
-                extract_update_zip, zip_path, update_staging_dir() / "stage"
-            )
-        except Exception as exc:
-            self._upd_state = "error"
-            self._upd_set(status=f"Update failed: {exc}", button="Retry",
-                          button_disabled=False, bar_visible=False)
-            return
-        _ = loop
-        self._upd_staged_root = staged
-        self._upd_state = "ready"
-        self._upd_set(status="Update downloaded. The app will close, apply the update, "
-                             "and reopen automatically.",
-                      button="Restart & update", button_disabled=False, bar_visible=False)
-
     def _upd_restart(self) -> None:
-        from puripuly_heart.core.updater import launch_swap_helper
-
-        staged = self._upd_staged_root
-        if staged is None or not self.page:
+        if not self._upd_flow.launch_restart() or not self.page:
             return
-        try:
-            launch_swap_helper(staged)
-        except Exception as exc:
-            self._upd_state = "error"
-            self._upd_set(status=f"Couldn't start the updater: {exc}", button="Retry")
-            return
-        self._upd_set(status="Restarting…", button="Restarting…", button_disabled=True)
         window = self.page.window
         try:
             window.close()

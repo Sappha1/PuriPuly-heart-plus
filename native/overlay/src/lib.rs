@@ -1,3 +1,4 @@
+pub mod autolaunch;
 pub mod bridge;
 pub mod logging;
 pub mod manifest;

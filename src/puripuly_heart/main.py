@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import argparse
 import asyncio
+import sys
 from pathlib import Path
 from typing import TYPE_CHECKING, Any
 
@@ -202,6 +203,64 @@ def _run_gui(config_path: Path, *, debug_ui_preview: bool) -> int:
     return 0
 
 
+_SINGLE_INSTANCE_MUTEX_HANDLE = None
+
+
+def _acquire_single_instance_lock() -> bool:
+    """True if this is the only GUI instance. Uses a named Windows mutex so that
+    auto-launch (SteamVR / VRChat launch options) can't spawn a duplicate app that
+    would fight over the OSC port and settings file. The handle is intentionally
+    kept for the process lifetime."""
+    if sys.platform != "win32":
+        return True
+    global _SINGLE_INSTANCE_MUTEX_HANDLE
+    try:
+        import ctypes
+
+        handle = ctypes.windll.kernel32.CreateMutexW(
+            None, False, "PuriPulyHeartPlus.SingleInstance"
+        )
+        if not handle:
+            return True  # can't tell — don't block startup
+        _SINGLE_INSTANCE_MUTEX_HANDLE = handle
+        error_already_exists = 183
+        return ctypes.windll.kernel32.GetLastError() != error_already_exists
+    except Exception:
+        return True
+
+
+def _run_launch_wrapper(game_argv: list[str]) -> int:
+    """VRChat launch-options wrapper mode: `PuriPulyHeart.exe --launch %command%`.
+
+    Starts the translator as a detached process (single-instance guarded, so an
+    already-running translator is reused), then runs the wrapped game command in the
+    foreground and mirrors its exit code — keeping Steam's "game running" tracking
+    accurate while the translator outlives the game.
+    """
+    import subprocess
+
+    if getattr(sys, "frozen", False):
+        translator_cmd = [sys.executable]
+    else:
+        translator_cmd = [sys.executable, "-m", "puripuly_heart.main"]
+
+    detached_flags = 0x00000008 | 0x00000200  # DETACHED_PROCESS | CREATE_NEW_PROCESS_GROUP
+    breakaway = 0x01000000  # CREATE_BREAKAWAY_FROM_JOB — escape Steam's job object
+    try:
+        subprocess.Popen(translator_cmd, creationflags=detached_flags | breakaway, close_fds=True)
+    except OSError:
+        with_suppress = None
+        try:
+            subprocess.Popen(translator_cmd, creationflags=detached_flags, close_fds=True)
+        except OSError as exc:  # translator failed to start — still launch the game
+            with_suppress = exc
+        if with_suppress is not None:
+            print(f"Warning: failed to start translator: {with_suppress}", flush=True)
+
+    completed = subprocess.run(game_argv)
+    return int(completed.returncode or 0)
+
+
 def _run_desktop_overlay(config_path: Path) -> int:
     from puripuly_heart.ui.desktop_overlay import main as desktop_overlay_main
 
@@ -215,6 +274,18 @@ def _run_desktop_overlay_preview() -> int:
 
 
 def main(argv: list[str] | None = None) -> int:
+    # `--launch <command...>` (Steam launch options wrapper: PuriPulyHeart.exe --launch
+    # %command%) must be handled before argparse — the wrapped game command is an
+    # arbitrary argv tail that argparse would reject.
+    raw_argv = list(sys.argv[1:]) if argv is None else list(argv)
+    if "--launch" in raw_argv:
+        launch_index = raw_argv.index("--launch")
+        wrapped_command = raw_argv[launch_index + 1 :]
+        if wrapped_command:
+            return _run_launch_wrapper(wrapped_command)
+        raw_argv = raw_argv[:launch_index]
+    argv = raw_argv
+
     logging_sinks = configure_main_logging()
     try:
         parser = build_parser()
@@ -231,6 +302,14 @@ def main(argv: list[str] | None = None) -> int:
                 ensure_soxr_runtime_available_for_startup()
         except _soxr_runtime_availability_error_type() as exc:
             return _print_runtime_error("packaged soxr runtime", exc)
+
+        # GUI paths only: refuse to start a second app instance (e.g. SteamVR
+        # auto-launch firing while the app is already open). The desktop-overlay
+        # renderer subcommand is a legitimate second process of this exe and is
+        # exempt.
+        if args.command in (None, "run-gui") and not _acquire_single_instance_lock():
+            print("PuriPulyHeart is already running.", flush=True)
+            return 0
 
         if args.command == "run-desktop-overlay":
             return _run_desktop_overlay(args.config)

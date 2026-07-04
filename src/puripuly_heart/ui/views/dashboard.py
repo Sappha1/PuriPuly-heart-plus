@@ -1,5 +1,7 @@
+import asyncio
 import contextlib
 import datetime
+import time
 from typing import Any, Callable
 
 import flet as ft
@@ -13,7 +15,7 @@ from puripuly_heart.ui.fonts import font_for_language
 from puripuly_heart.ui.i18n import get_locale, language_name, t
 from puripuly_heart.ui.overlay_peer_contract import OverlayPeerConsumerContract
 
-_BUILD_TAG = "r191"  #increment each build so user can confirm version
+_BUILD_TAG = "r209"  #increment each build so user can confirm version
 
 # ── VRCT-style dark palette ──────────────────────────────────────────────────
 _BG_MAIN = "#2e2f32"
@@ -84,13 +86,21 @@ class _ToggleRow(ft.Container):
         self._state = False
         self._warning = False
         self._loading = False
+        self._loading_since = 0.0
 
     def _on_hover(self, e):
         self.bgcolor = _BG_ROW_HOVER if e.data == "true" else _BG_SIDEBAR
         self.update()
 
-    def set_loading(self, loading: bool) -> None:
+    def set_loading(self, loading: bool, progress: float | None = None) -> None:
+        """Show the loading ring. progress=None spins indeterminately; 0.0-1.0 renders a
+        determinate ring that fills up (used while the speech model downloads/loads)."""
+        if loading and not self._loading:
+            self._loading_since = time.monotonic()
         self._loading = loading
+        self._spinner.value = (
+            None if progress is None else max(0.02, min(1.0, float(progress)))
+        )
         self._spinner.visible = loading
         self._dot.visible = not loading
         try:
@@ -98,7 +108,24 @@ class _ToggleRow(ft.Container):
         except Exception:
             pass
 
+    @property
+    def is_loading(self) -> bool:
+        return bool(self._loading)
+
     def set_state(self, on: bool, *, warning: bool = False, error: bool = False):
+        # While the row is mid-load and only a WARNING (becoming-ready) state lands,
+        # keep the progress ring on screen instead of flashing an orange dot between
+        # the filled ring and the green light. Failsafe: after 20s of loading, fall
+        # back to the normal dot so a stuck warning is still visible.
+        if (
+            warning
+            and not error
+            and self._loading
+            and (time.monotonic() - getattr(self, "_loading_since", 0.0)) < 20.0
+        ):
+            self._state = on
+            self._warning = True
+            return
         self._state = on
         self._warning = warning
         self._loading = False
@@ -3597,6 +3624,16 @@ class DashboardView(ft.Row):
     def set_overlay_peer_contract(self, contract: OverlayPeerConsumerContract) -> None:
         self._overlay_peer_contract = contract
         self._sync_overlay_peer_buttons()
+        # At launch the model-loading notice can arrive BEFORE this contract does, so
+        # the peer intent wasn't known yet and the loading ring stayed a grey dot.
+        # Now that the intent is known, start the ring if a load is underway.
+        row = getattr(self, "_row_peer", None)
+        if (
+            row is not None
+            and not row.is_loading
+            and self._local_stt_notice_status == "loading"
+        ):
+            self._drive_peer_loading_ring(None, "loading", None)
 
     def set_translation_needs_key(self, needs_key: bool, *, update_ui: bool = True) -> None:
         self.translation_needs_key = bool(needs_key)
@@ -3690,9 +3727,107 @@ class DashboardView(ft.Row):
         self._sync_notice()
 
     def set_local_stt_notice(self, status: str | None, percent: int | None = None) -> None:
+        previous_status = self._local_stt_notice_status
         self._local_stt_notice_status = status
         self._local_stt_notice_percent = percent if status == "downloading" else None
         self._sync_notice()
+        self._drive_peer_loading_ring(previous_status, status, percent)
+
+    # ── Determinate loading ring for the PEER row ────────────────────────────
+    # Downloads report a real percent; the in-memory model LOAD is a single native
+    # call with no progress signal, so we animate a time-based estimate (measured
+    # from the previous load) that approaches ~95% and snaps to full when ready.
+
+    def _peer_intent_enabled(self) -> bool:
+        with contextlib.suppress(Exception):
+            contract = self._overlay_peer_contract
+            if contract is not None:
+                return bool(contract.peer.intent_enabled)
+        return False
+
+    def _drive_peer_loading_ring(
+        self, previous_status: str | None, status: str | None, percent: int | None
+    ) -> None:
+        row = getattr(self, "_row_peer", None)
+        if row is None:
+            return
+        if status == "downloading":
+            if row.is_loading and percent is not None:
+                row.set_loading(True, max(1, min(100, percent)) / 100.0)
+            return
+        if status == "loading":
+            if previous_status == "loading":
+                return
+            ring_was_visible = row.is_loading
+            # Auto-show the ring when the model loads without a click (e.g. peer was
+            # restored ON at launch). Optimistic when the contract hasn't arrived yet
+            # (startup ordering): show the ring now rather than a second late; if peer
+            # turns out to be off, the first contract sync flips it to the normal dot.
+            intent_known = self._overlay_peer_contract is not None
+            if not ring_was_visible and (not intent_known or self._peer_intent_enabled()):
+                row.set_loading(True, 0.02)
+            now = time.monotonic()
+            resume_deadline = getattr(self, "_stt_load_resume_deadline", 0.0)
+            started = getattr(self, "_stt_load_started_at", None)
+            # Continue the previous fill only if the ring was actually ON SCREEN for
+            # it — otherwise (e.g. it just auto-showed) start the clock fresh so the
+            # ring rises from empty instead of popping in half-filled.
+            if not ring_was_visible or not (started is not None and now < resume_deadline):
+                self._stt_load_started_at = now
+            self._stt_load_resume_deadline = 0.0
+            if self.page is not None and row.is_loading:
+                with contextlib.suppress(Exception):
+                    self.page.run_task(self._animate_peer_load_ring)
+            return
+        if previous_status == "loading":
+            # Don't snap/reset immediately: the self + peer models load back-to-back
+            # and each fires its own loading cycle — a short grace window fuses them
+            # into ONE continuous fill instead of the ring visibly restarting.
+            self._stt_load_resume_deadline = time.monotonic() + 1.5
+            if self.page is not None:
+                with contextlib.suppress(Exception):
+                    self.page.run_task(self._finish_peer_load_ring_after_grace)
+
+    async def _finish_peer_load_ring_after_grace(self) -> None:
+        await asyncio.sleep(1.5)
+        if self._local_stt_notice_status == "loading":
+            return  # another load resumed the pass — it will finish it
+        row = getattr(self, "_row_peer", None)
+        started = getattr(self, "_stt_load_started_at", None)
+        if started is not None:
+            self._last_stt_load_duration_s = max(
+                0.5, min(30.0, time.monotonic() - started)
+            )
+            self._stt_load_started_at = None
+        self._stt_load_resume_deadline = 0.0
+        if row is not None and row.is_loading:
+            row.set_loading(True, 1.0)
+
+    async def _animate_peer_load_ring(self) -> None:
+        row = getattr(self, "_row_peer", None)
+        if row is None or getattr(self, "_peer_ring_anim_running", False):
+            return
+        self._peer_ring_anim_running = True
+        try:
+            estimate = max(1.0, float(getattr(self, "_last_stt_load_duration_s", 4.0)))
+            # Asymptotic fill: halves the remaining distance roughly every 45% of the
+            # estimated duration — smooth, never stalls at a hard cap. The loop also
+            # spans the grace window between back-to-back loads so the fill never dips.
+            half_life = estimate * 0.45
+            # 20 updates/s so the fill reads as continuous motion rather than stepping.
+            while row.is_loading and (
+                self._local_stt_notice_status == "loading"
+                or time.monotonic() < getattr(self, "_stt_load_resume_deadline", 0.0)
+            ):
+                started = getattr(self, "_stt_load_started_at", None)
+                if started is None:
+                    break
+                elapsed = time.monotonic() - started
+                fraction = 1.0 - (0.5 ** (elapsed / half_life))
+                row.set_loading(True, min(0.95, fraction))
+                await asyncio.sleep(0.05)
+        finally:
+            self._peer_ring_anim_running = False
 
     def _current_local_stt_notice(self) -> tuple[str | None, str | None]:
         status = self._local_stt_notice_status

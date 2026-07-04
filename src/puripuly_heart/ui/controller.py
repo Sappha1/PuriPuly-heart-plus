@@ -454,6 +454,11 @@ class GuiController:
     _overlay_start_task: asyncio.Task[None] | None = None
     _overlay_monitor_task: asyncio.Task[None] | None = None
     _overlay_lock: asyncio.Lock | None = None
+    # Persistent-overlay toggle: the desktop renderer is hidden (window invisible,
+    # runtime kept warm) instead of torn down, so re-enabling is instant.
+    _desktop_overlay_soft_hidden: bool = field(init=False, default=False)
+    # Serializes rapid overlay button presses so hide/reveal/start/stop never interleave.
+    _overlay_toggle_serialize_lock: asyncio.Lock | None = field(init=False, default=None)
     _active_overlay_target: str | None = field(init=False, default=None)
     _desktop_renderer_events: asyncio.Queue[dict[str, object]] | None = field(
         init=False,
@@ -646,6 +651,14 @@ class GuiController:
             self.app._sync_stt_label(self.settings)
         with contextlib.suppress(Exception):
             self.app._sync_translator_label(self.settings)
+
+        # Silently re-assert the SteamVR auto-launch registration (fixes moved installs;
+        # no-op/no error toast when SteamVR isn't running yet).
+        if bool(getattr(self.settings.ui, "autolaunch_with_steamvr", False)):
+            with contextlib.suppress(Exception):
+                asyncio.create_task(
+                    self._apply_steamvr_autolaunch_setting(True, notify=False)
+                )
 
         runtime_logging = self.runtime_logging
         runtime_logging.set_mode(SessionLoggingMode.BASIC)
@@ -2817,7 +2830,15 @@ class GuiController:
     async def set_overlay_enabled(self, enabled: bool) -> None:
         if self.settings is None:
             return
+        if self._overlay_toggle_serialize_lock is None:
+            self._overlay_toggle_serialize_lock = asyncio.Lock()
+        # Serialize: spamming the overlay button otherwise interleaves hide/reveal
+        # broadcasts with full start/stop sequences and corrupts the window bounds.
+        async with self._overlay_toggle_serialize_lock:
+            await self._set_overlay_enabled_locked(enabled)
 
+    async def _set_overlay_enabled_locked(self, enabled: bool) -> None:
+        assert self.settings is not None
         self.log_basic(f"[Overlay] Toggle request: enabled={enabled}")
         self.log_detailed(
             "[Overlay] Toggle detail: "
@@ -2838,11 +2859,68 @@ class GuiController:
             self._overlay_user_enabled_this_session = False
         self._refresh_overlay_peer_consumers()
 
+        # Idempotence: with spam-clicks serialized, drop requests that match the
+        # current effective state instead of re-running start/stop machinery.
+        if (
+            enabled
+            and self.overlay_state == "connected"
+            and not self._desktop_overlay_soft_hidden
+        ):
+            return
+        if (
+            not enabled
+            and self.overlay_state == "off"
+            and not self._desktop_overlay_soft_hidden
+        ):
+            return
+
         if enabled:
+            # Persistent-overlay fast path: if the desktop renderer was soft-hidden by a
+            # previous toggle-off and is still healthy, just reveal it — instant, no
+            # process boot.
+            if self._desktop_overlay_soft_hidden and self._soft_toggle_runtime_healthy():
+                # Re-assert bounds / interaction mode / visual config BEFORE revealing
+                # so the window can never appear at a stale or half-applied size.
+                with contextlib.suppress(Exception):
+                    await self._broadcast_desktop_runtime_control_payloads(
+                        self._build_initial_desktop_runtime_controls(self.settings)
+                    )
+                if await self._broadcast_desktop_runtime_control(
+                    {"command": "set_window_visible", "visible": True}
+                ):
+                    self._desktop_overlay_soft_hidden = False
+                    self.log_basic("[Overlay] Revealed soft-hidden desktop overlay (instant toggle)")
+                    return
+            # Stale/hidden runtime that can't be revealed — tear down before a clean start.
+            if self._desktop_overlay_soft_hidden:
+                self._desktop_overlay_soft_hidden = False
+                await self._shutdown_overlay_runtime(preserve_failure_reason=False)
             await self._begin_overlay_start()
             return
 
+        # Persistent-overlay: for the DESKTOP renderer, hide the window and keep the
+        # runtime alive so the next toggle-on is instant. Real teardown still happens on
+        # app exit (controller.stop), target switches, and runtime failures.
+        if (
+            self._active_overlay_target == OVERLAY_TARGET_DESKTOP
+            and self._soft_toggle_runtime_healthy()
+        ):
+            if await self._broadcast_desktop_runtime_control(
+                {"command": "set_window_visible", "visible": False}
+            ):
+                self._desktop_overlay_soft_hidden = True
+                self.log_basic("[Overlay] Soft-hid desktop overlay (runtime kept warm)")
+                return
+
         await self._shutdown_overlay_runtime(preserve_failure_reason=True)
+
+    def _soft_toggle_runtime_healthy(self) -> bool:
+        """True when the desktop overlay runtime is alive enough to hide/reveal in place."""
+        return (
+            self._overlay_manager is not None
+            and self._overlay_bridge is not None
+            and self.overlay_state == "connected"
+        )
 
     async def set_peer_translation_enabled(self, enabled: bool) -> None:
         if self.settings is None:
@@ -3134,6 +3212,8 @@ class GuiController:
         if self._overlay_lock is None:
             self._overlay_lock = asyncio.Lock()
 
+        # Any real teardown invalidates a soft-hidden (kept-warm) desktop renderer.
+        self._desktop_overlay_soft_hidden = False
         self.log_basic("[Overlay] Shutdown requested")
         self.log_detailed(
             "[Overlay] Shutdown detail: "
@@ -3490,6 +3570,25 @@ class GuiController:
                 )
                 return
         self._log_error(message)
+
+    async def _apply_steamvr_autolaunch_setting(self, enabled: bool, *, notify: bool) -> None:
+        """Register/unregister the app with SteamVR ("start with SteamVR"). Runs in the
+        background on setting change (notify=True) and silently at startup to re-assert
+        an enabled registration (notify=False)."""
+        try:
+            from puripuly_heart.core.steamvr_autolaunch import apply_steamvr_autolaunch
+
+            ok, reason = await apply_steamvr_autolaunch(enabled)
+        except Exception as exc:
+            ok, reason = False, str(exc)
+        if ok or not notify:
+            return
+        if reason == "steamvr_not_running":
+            self._show_short_message("settings.steamvr_autolaunch.steamvr_not_running")
+        elif reason == "dev_build":
+            self._show_short_message("settings.steamvr_autolaunch.dev_build")
+        else:
+            self._show_short_message("settings.steamvr_autolaunch.failed")
 
     async def _handle_managed_translation_enable(self, request_generation: int) -> bool:
         if self.settings is None or self.hub is None:
@@ -4055,6 +4154,11 @@ class GuiController:
         prev_overlay_enabled = (
             self.settings.ui.overlay_enabled if self.settings is not None else False
         )
+        prev_steamvr_autolaunch = (
+            bool(getattr(self.settings.ui, "autolaunch_with_steamvr", False))
+            if self.settings is not None
+            else False
+        )
         previous_settings_for_desktop = (
             copy.deepcopy(self.settings) if self.settings is not None else None
         )
@@ -4064,6 +4168,11 @@ class GuiController:
         # the desktop overlay via SteamVR auto-fallback looks like a target change
         # (active="desktop" vs stored="steamvr") and force-stops the overlay.
         next_overlay_target = self._effective_overlay_target_for_launch(settings)
+        overlay_restart_after_target_switch = False
+        if prev_overlay_target != next_overlay_target and self._desktop_overlay_soft_hidden:
+            # A kept-warm hidden desktop renderer belongs to the OLD target; a target
+            # change makes it stale — tear it down so nothing lingers.
+            await self._shutdown_overlay_runtime(preserve_failure_reason=False)
         if (
             prev_overlay_target != next_overlay_target
             and prev_overlay_enabled
@@ -4075,6 +4184,11 @@ class GuiController:
             )
             settings = copy.deepcopy(settings)
             settings.ui.overlay_enabled = False
+            # The user asked for a mode SWITCH, not "off" — restart on the new target
+            # after the stop is applied (previously it silently stayed off until the
+            # user toggled the overlay again, which looked like "switching needs a
+            # program restart").
+            overlay_restart_after_target_switch = True
         desktop_runtime_controls = self._prepare_desktop_runtime_settings_update(
             previous_settings_for_desktop,
             settings,
@@ -4251,6 +4365,15 @@ class GuiController:
 
         if prev_overlay_enabled != settings.ui.overlay_enabled:
             await self.set_overlay_enabled(settings.ui.overlay_enabled)
+        if overlay_restart_after_target_switch:
+            # Bring the overlay back up on the freshly applied target.
+            await self.set_overlay_enabled(True)
+
+        next_steamvr_autolaunch = bool(getattr(settings.ui, "autolaunch_with_steamvr", False))
+        if prev_steamvr_autolaunch != next_steamvr_autolaunch:
+            asyncio.create_task(
+                self._apply_steamvr_autolaunch_setting(next_steamvr_autolaunch, notify=True)
+            )
 
         if self._last_vrc_mic_sync_enabled != settings.osc.vrc_mic_intercept:
             if self.vrc_mic_audio_gate is not None:
@@ -6055,6 +6178,14 @@ class GuiController:
             _sync_translator_label = getattr(self.app, "_sync_translator_label", None)
             if callable(_sync_translator_label):
                 _sync_translator_label(settings)
+
+        # Keep the dashboard MIC/PEER provider sublabels in lockstep with settings —
+        # without this, changing the STT provider from the Settings page left the
+        # dashboard labels stale until a restart or a model-load event.
+        with contextlib.suppress(Exception):
+            _sync_stt_label = getattr(self.app, "_sync_stt_label", None)
+            if callable(_sync_stt_label):
+                _sync_stt_label(settings)
 
         self._refresh_overlay_peer_consumers()
 

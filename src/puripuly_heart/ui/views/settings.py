@@ -1401,6 +1401,16 @@ class SettingsView(ft.Column):
             title=self._info_title_keyed("settings.self_in_overlay", "settings.self_in_overlay.tooltip"),
             value=self._self_in_overlay_text,
         )
+        self._steamvr_autolaunch_text = self._build_clickable_text(
+            t("settings.option.off"),
+            self._on_steamvr_autolaunch_click,
+        )
+        steamvr_autolaunch_card = self._wrap_unit_card(
+            title=self._info_title_keyed(
+                "settings.steamvr_autolaunch", "settings.steamvr_autolaunch.tooltip"
+            ),
+            value=self._steamvr_autolaunch_text,
+        )
         self._filter_peer_lang_text = self._build_clickable_text(
             t("settings.filter_peer_by_target_languages.off"),
             self._on_filter_peer_lang_click,
@@ -1437,6 +1447,7 @@ class SettingsView(ft.Column):
                     live_preview_card,
                     chatbox_send_peer_card,
                     self_in_overlay_card,
+                    steamvr_autolaunch_card,
                 ],
                 spacing=0,
             )
@@ -3040,6 +3051,9 @@ class SettingsView(ft.Column):
         )
         self._chatbox_send_peer_text.content.value = t(
             "settings.option.on" if bool(getattr(settings.ui, "chatbox_send_peer", False)) else "settings.option.off"
+        )
+        self._steamvr_autolaunch_text.content.value = t(
+            "settings.option.on" if bool(getattr(settings.ui, "autolaunch_with_steamvr", False)) else "settings.option.off"
         )
         # Prompt
         provider_name = self._active_prompt_key()
@@ -4945,6 +4959,18 @@ class SettingsView(ft.Column):
             self._filter_peer_lang_text.update()
         self._emit_settings_changed()
 
+    def _on_steamvr_autolaunch_click(self, e) -> None:
+        if not self._settings:
+            return
+        new_value = not bool(getattr(self._settings.ui, "autolaunch_with_steamvr", False))
+        self._settings.ui.autolaunch_with_steamvr = new_value
+        self._steamvr_autolaunch_text.content.value = t(
+            "settings.option.on" if new_value else "settings.option.off"
+        )
+        if self.page:
+            self._steamvr_autolaunch_text.update()
+        self._emit_settings_changed()
+
     def _on_live_preview_click(self, e) -> None:
         if not self._settings:
             return
@@ -5192,6 +5218,7 @@ class SettingsView(ft.Column):
                 (getattr(self, "_filter_peer_lang_text", None), "settings.filter_peer_by_target_languages.on" if bool(getattr(_ui, "filter_peer_by_target_languages", False)) else "settings.filter_peer_by_target_languages.off"),
                 (getattr(self, "_live_preview_text", None), "settings.option.on" if bool(getattr(_ui, "show_pending_echo", True)) else "settings.option.off"),
                 (getattr(self, "_chatbox_send_peer_text", None), "settings.option.on" if bool(getattr(_ui, "chatbox_send_peer", False)) else "settings.option.off"),
+                (getattr(self, "_steamvr_autolaunch_text", None), "settings.option.on" if bool(getattr(_ui, "autolaunch_with_steamvr", False)) else "settings.option.off"),
             ]
             for _ctrl, _key in _onoff_labels:
                 _content = getattr(_ctrl, "content", None)

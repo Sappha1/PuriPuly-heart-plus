@@ -701,15 +701,18 @@ def resolve_peer_stt_config(settings: AppSettings) -> ResolvedPeerSTTConfig:
         )
 
     if provider == STTProviderName.LOCAL_QWEN:
-        from puripuly_heart.core.language import get_local_qwen_language_hint
-
         return ResolvedPeerSTTConfig(
             provider=provider,
             source_language=peer_source_language,
             sample_rate_hz=STT_INTERNAL_SAMPLE_RATE_HZ,
             keyterms=(),
-            # RAW peer source language so "Auto Detect" (empty) yields no hint.
-            language_hint=get_local_qwen_language_hint(settings.languages.peer_source_language),
+            # NO language hint for the peer channel — always let Qwen's built-in LID
+            # self-detect. Forcing the decode language makes the model TRANSLATE foreign
+            # speech into the forced language (e.g. peer=Chinese + an English speaker
+            # produced Chinese text), which defeats the peer source-language filter
+            # because the transcript already looks like the expected language. Hint-free,
+            # English speech decodes as English and the hub filter discards it.
+            language_hint=None,
         )
 
     if provider in (STTProviderName.GOOGLE_STT, STTProviderName.WHISPER):
@@ -725,18 +728,15 @@ def resolve_peer_stt_config(settings: AppSettings) -> ResolvedPeerSTTConfig:
 
 def build_peer_stt_provider_signature(settings: AppSettings) -> tuple[object, ...]:
     resolved = resolve_peer_stt_config(settings)
-    # With peer Auto Detect (peer_source_language unset), the resolved language
-    # falls back to *your* source_language as a hint, which otherwise makes this
-    # signature change every time the self language changes (e.g. switching
-    # favorite tabs) even though the peer selection itself didn't change. For
-    # local Qwen specifically, that triggers an expensive model reload for no
-    # real reason, so pin the signature to a stable sentinel in that case.
+    # Local Qwen is ONE multilingual model and (since the peer channel decodes
+    # hint-free, letting the built-in LID detect the language) the peer language
+    # selection has no effect on the backend at all. It must therefore never be part
+    # of the reload signature: previously only Auto Detect was pinned, so switching
+    # favorite tabs with different EXPLICIT peer languages (zh-CN ⇄ ja) still tore the
+    # model down and showed the "loading speech model" popup on every switch.
     signature_source_language = resolved.source_language
-    if (
-        resolved.provider == STTProviderName.LOCAL_QWEN
-        and not settings.languages.peer_source_language
-    ):
-        signature_source_language = "__auto__"
+    if resolved.provider == STTProviderName.LOCAL_QWEN:
+        signature_source_language = "__local_qwen_multilingual__"
     return (
         resolved.provider,
         signature_source_language,

@@ -1753,9 +1753,23 @@ pub async fn run_cli(args: &[String]) -> i32 {
         return 0;
     }
 
+    // One-shot SteamVR application-manifest registration ("start with SteamVR").
+    // usage: --set-autolaunch <vrmanifest_path> <app_key> <0|1>
+    if args.len() == 5 && args[1] == "--set-autolaunch" {
+        let enable = match args[4].as_str() {
+            "1" | "true" => true,
+            "0" | "false" => false,
+            _ => {
+                eprintln!("usage: PuriPulyHeartOverlay --set-autolaunch <manifest> <app_key> <0|1>");
+                return 2;
+            }
+        };
+        return crate::autolaunch::run_set_autolaunch(&args[2], &args[3], enable);
+    }
+
     if args.len() != 3 || args[1] != "--config" {
         eprintln!(
-            "usage: PuriPulyHeartOverlay --config <manifest.json> | --check-startup-contract | --version"
+            "usage: PuriPulyHeartOverlay --config <manifest.json> | --set-autolaunch <manifest> <app_key> <0|1> | --check-startup-contract | --version"
         );
         return 2;
     }

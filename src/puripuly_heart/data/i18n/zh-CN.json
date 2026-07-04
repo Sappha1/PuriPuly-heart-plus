@@ -605,12 +605,17 @@
   "dashboard.translit.romanization": "音译",
   "dashboard.translit.menu.chatbox": "聊天框（游戏内发送）",
   "dashboard.translit.menu.overlay": "叠加层和日志",
-  "dashboard.translit.menu.show_reading": "显示{system}",
+  "dashboard.translit.menu.show_reading": "日志显示{system}",
   "dashboard.translit.fmt.orig_trans": "原文 + 翻译",
   "dashboard.translit.fmt.orig_read_trans": "原文 + {system} + 翻译",
   "dashboard.translit.fmt.read_trans": "{system} + 翻译",
   "dashboard.translit.fmt.read_only": "仅{system}",
   "dashboard.translit.fmt.trans_only": "仅翻译",
   "dashboard.translit.menu.title": "输出格式",
-  "dashboard.translit.menu.chatbox_short": "聊天框"
+  "dashboard.translit.menu.chatbox_short": "聊天框",
+  "settings.steamvr_autolaunch": "随 SteamVR 启动",
+  "settings.steamvr_autolaunch.tooltip": "SteamVR 启动时自动运行 PuriPulyHeart，让翻译器始终与 VRChat 一起运行。开关此选项时 SteamVR 必须正在运行。",
+  "settings.steamvr_autolaunch.steamvr_not_running": "SteamVR 未运行——请先启动 SteamVR，然后再切换此选项。",
+  "settings.steamvr_autolaunch.dev_build": "随 SteamVR 自动启动需要打包版应用。",
+  "settings.steamvr_autolaunch.failed": "无法更新 SteamVR 自动启动。请查看日志了解详情。"
 }

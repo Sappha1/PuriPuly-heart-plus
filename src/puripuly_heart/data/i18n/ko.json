@@ -605,12 +605,17 @@
   "dashboard.translit.romanization": "로마자",
   "dashboard.translit.menu.chatbox": "채팅박스 (게임 내 전송)",
   "dashboard.translit.menu.overlay": "오버레이 및 로그",
-  "dashboard.translit.menu.show_reading": "{system} 표시",
+  "dashboard.translit.menu.show_reading": "로그에 {system} 표시",
   "dashboard.translit.fmt.orig_trans": "원문 + 번역",
   "dashboard.translit.fmt.orig_read_trans": "원문 + {system} + 번역",
   "dashboard.translit.fmt.read_trans": "{system} + 번역",
   "dashboard.translit.fmt.read_only": "{system}만",
   "dashboard.translit.fmt.trans_only": "번역만",
   "dashboard.translit.menu.title": "출력 형식",
-  "dashboard.translit.menu.chatbox_short": "채팅박스"
+  "dashboard.translit.menu.chatbox_short": "채팅박스",
+  "settings.steamvr_autolaunch": "SteamVR와 함께 시작",
+  "settings.steamvr_autolaunch.tooltip": "SteamVR가 시작될 때 PuriPulyHeart를 자동으로 실행하여 번역기가 항상 VRChat과 함께 실행되도록 합니다. 전환 시 SteamVR가 실행 중이어야 합니다.",
+  "settings.steamvr_autolaunch.steamvr_not_running": "SteamVR가 실행 중이 아닙니다. SteamVR를 시작한 후 다시 전환하세요.",
+  "settings.steamvr_autolaunch.dev_build": "SteamVR 자동 시작은 패키지 앱이 필요합니다.",
+  "settings.steamvr_autolaunch.failed": "SteamVR 자동 시작을 업데이트할 수 없습니다. 로그를 확인하세요."
 }

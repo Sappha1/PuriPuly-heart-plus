@@ -152,7 +152,7 @@ _DESKTOP_OVERLAY_ACTIVE_BANNER_I18N_KEY = "settings.overlay.desktop.active_banne
 # consistent regardless of how long startup took. Held at full opacity, then faded out
 # via Flet's native opacity animation (smooth ~60fps, not a stepped re-render).
 _DESKTOP_ACTIVE_BANNER_VISIBLE_SECONDS = 0.8
-_DESKTOP_ACTIVE_BANNER_FADE_SECONDS = 0.45
+_DESKTOP_ACTIVE_BANNER_FADE_SECONDS = 0.65
 _DESKTOP_EMPTY_LOCK_ACTION_MIN_HIT_TARGET = 44
 _DESKTOP_EMPTY_LOCK_ACTION_HORIZONTAL_PADDING = 28
 _DESKTOP_EMPTY_LOCK_ACTION_VERTICAL_PADDING = 12
@@ -2228,6 +2228,7 @@ class FletDesktopRendererWindow:
         self._active_banner_until = None
         self._active_banner_opacity = 1.0
         self._startup_relayout_pending = True
+        self._suppress_content = False
         if self._app_task is None or self._app_task.done():
             self._app_task = asyncio.create_task(self._app_runner(self._handle_page))
 
@@ -2499,7 +2500,59 @@ class FletDesktopRendererWindow:
             )
             self._render_page()
             return
+        if command == "set_window_visible":
+            # Persistent-overlay toggle: the main app hides/shows this window instead of
+            # tearing the whole renderer process down, so toggling the overlay back on
+            # is instant (no process boot).
+            await self._set_window_visible(bool(payload.get("visible")))
+            return
         logger.warning("[DesktopOverlay] Ignoring unsupported desktop runtime control: %r", command)
+
+    async def _set_window_visible(self, visible: bool) -> None:
+        page = self._page
+        if page is None:
+            return
+        window = page.window
+        logger.info("[DesktopOverlay] runtime_control set_window_visible visible=%s", visible)
+        # The toggle NEVER touches window.visible, window.opacity, or the bounds.
+        # Every window-level hide variant broke Flutter's layout in a different way
+        # (visible=False reset the surface; opacity=0 stopped compositing so resizes
+        # never reached layout; partial alphas half-worked — all verified live,
+        # r197-r204). Instead, "hidden" = keep the window exactly as it is and render
+        # NOTHING: a click-through transparent overlay with no content is visually
+        # identical to a hidden window, and the layout can never be invalidated.
+        _ = window
+        if visible:
+            self._suppress_content = False
+            self._active_banner_until = None
+            self._active_banner_opacity = 1.0
+            # NOTE: the "overlay active" banner is deliberately NOT re-armed on soft
+            # reveals. A one-shot static render into an idle transparent click-through
+            # window is silently dropped by the Windows compositor, and every kick
+            # that made it paint also corrupted the layout (r197-r208 live testing).
+            # The banner still shows on full overlay boots (the window reveal itself
+            # forces the composite); for soft toggles the dashboard button state is
+            # the feedback, and captions render fine (continuous frame stream).
+            self._render_page()
+            self._apply_interaction_window_chrome()
+            # 1px size pulse: guarantees the first post-reveal frame lays out and
+            # composites (invisible; runs on the transparent idle window).
+            self._run_page_task(self._composite_nudge_after_reveal)
+        else:
+            self._suppress_content = True
+            # Invalidate any in-flight banner fade so a stale fade task from a previous
+            # reveal can't blank the banner of the next one.
+            self._active_banner_generation = getattr(self, "_active_banner_generation", 0) + 1
+            self._active_banner_until = None
+            self._render_page()
+            # Suppressed window must never intercept the mouse, even if it was hidden
+            # while unlocked (edit mode).
+            if hasattr(window, "ignore_mouse_events"):
+                with contextlib.suppress(Exception):
+                    window.ignore_mouse_events = True
+                    window_update = getattr(window, "update", None)
+                    if callable(window_update):
+                        window_update()
 
     def _handle_page(self, page: Any) -> None:
         self._page = page
@@ -2731,6 +2784,26 @@ class FletDesktopRendererWindow:
         plan = self._plan_with_grow_only_caption_card_widths(raw_plan)
         self._emit_caption_width_diagnostics(raw_plan, plan, previous_width_floors)
         caption_surface = build_desktop_caption_surface(plan)
+        if getattr(self, "_suppress_content", False):
+            # Soft-hidden ("toggled off") state: the window itself is untouched —
+            # visible, composited, correctly sized — we simply render nothing. A locked
+            # transparent overlay with no content is indistinguishable from a hidden
+            # window, and never touching window.visible/opacity/bounds means Flutter's
+            # layout can never be invalidated by the toggle (the r197-r204 saga).
+            root = ft.Container(
+                content=build_desktop_transparent_sizing_host(plan),
+                padding=0,
+                bgcolor=ft.Colors.TRANSPARENT,
+                alignment=ft.alignment.center,
+            )
+            if hasattr(page, "clean"):
+                page.clean()
+            else:
+                page.controls.clear()
+            page.add(root)
+            self._apply_interaction_window_chrome()
+            page.update()
+            return
         if self._interaction_mode == _DESKTOP_INTERACTION_MODE_EDIT:
             # Size the chrome EXPLICITLY to the real window (cur_bounds is correct at
             # startup; page.window.width/height lag the first render and made small
@@ -2897,6 +2970,10 @@ class FletDesktopRendererWindow:
         # content on Windows — which is why the banner rendered (per logs) but stayed
         # invisible while locked, yet the edit chrome (interactive) shows fine. The
         # banner is brief and only at startup, so dropping click-through is harmless.
+        if getattr(self, "_suppress_content", False):
+            # Soft-hidden: always click-through, regardless of interaction mode.
+            window.ignore_mouse_events = True
+            return
         window.ignore_mouse_events = (
             locked
             and not self._active_banner_visible()
@@ -2922,6 +2999,52 @@ class FletDesktopRendererWindow:
             )
             self._arm_active_banner_on_reveal()
 
+    async def _composite_nudge_after_reveal(self) -> None:
+        """Force the just-revealed content to lay out and paint: pulse the window size
+        by 1px and back while visible + interactive.
+
+        This is the r197 mechanism (the only variant that ever painted the banner
+        after a soft reveal) with the perturb shrunk from +48px — a visible font
+        jiggle — to +1px, which is imperceptible. A real size change is required:
+        position nudges, hidden resizes, and alpha tricks all failed to make Flutter
+        re-lay-out / Windows composite this idle transparent window (verified live)."""
+        page = self._page
+        if page is None or self._closed.is_set():
+            return
+        window = getattr(page, "window", None)
+        bounds = self._current_window_bounds
+        if window is None or bounds is None:
+            return
+        width0 = float(bounds["width"])
+        height0 = float(bounds["height"])
+        window_update = getattr(window, "update", None)
+        self._relayout_in_progress = True
+        try:
+            with contextlib.suppress(Exception):
+                window.ignore_mouse_events = False
+                if callable(window_update):
+                    window_update()
+            logger.info("[DesktopOverlay][Reveal] 1px size pulse for composite/relayout")
+            with contextlib.suppress(Exception):
+                window.width = width0 + 1
+                window.height = height0 + 1
+                if callable(window_update):
+                    window_update()
+            await asyncio.sleep(0.06)
+            if self._closed.is_set() or self._page is None:
+                return
+            with contextlib.suppress(Exception):
+                window.width = width0
+                window.height = height0
+                if callable(window_update):
+                    window_update()
+        finally:
+            self._relayout_in_progress = False
+            with contextlib.suppress(Exception):
+                self._apply_interaction_window_chrome()
+                if callable(window_update):
+                    window_update()
+
     def _arm_active_banner_on_reveal(self) -> None:
         """Arm the one-time "overlay active" banner now that the window is actually
         visible. Only while LOCKED (pass-through) — in edit mode the chrome already
@@ -2932,18 +3055,36 @@ class FletDesktopRendererWindow:
         if self._interaction_mode != _DESKTOP_INTERACTION_MODE_PASS_THROUGH:
             return
         self._startup_active_banner_shown = True
-        self._active_banner_opacity = 1.0
+        # Mount the banner nearly invisible, then animate to full opacity: the fade-IN
+        # makes Flutter submit a continuous stream of frames, which reliably gets the
+        # banner composited on an otherwise idle transparent window (a single static
+        # frame was silently dropped after soft reveals — verified live).
+        self._active_banner_opacity = 0.02
+        # Each arming gets a new generation; older fade tasks (from a previous reveal
+        # of a spam-toggled overlay) become stale and abort instead of blanking the
+        # fresh banner mid-display.
+        self._active_banner_generation = getattr(self, "_active_banner_generation", 0) + 1
         total = _DESKTOP_ACTIVE_BANNER_VISIBLE_SECONDS + _DESKTOP_ACTIVE_BANNER_FADE_SECONDS
         self._active_banner_until = time.monotonic() + total
         logger.info("[DesktopOverlay][Banner] armed on reveal total=%.1fs", total)
         self._render_page()
+        self._active_banner_opacity = 1.0
+        ctrl = self._active_banner_ctrl
+        if ctrl is not None:
+            with contextlib.suppress(Exception):
+                ctrl.opacity = 1.0
+                if getattr(ctrl, "page", None) is not None:
+                    ctrl.update()
         self._run_page_task(self._run_active_banner_fade)
 
     async def _run_active_banner_fade(self) -> None:
+        generation = getattr(self, "_active_banner_generation", 0)
         try:
             await asyncio.sleep(_DESKTOP_ACTIVE_BANNER_VISIBLE_SECONDS)
             if self._closed.is_set() or self._page is None:
                 return
+            if generation != getattr(self, "_active_banner_generation", 0):
+                return  # superseded by a newer reveal/hide
             # Trigger Flet's native opacity animation by flipping the banner control's
             # opacity to 0 and updating just that control (smooth, GPU-driven) rather
             # than re-rendering the page per step.
@@ -2961,6 +3102,8 @@ class FletDesktopRendererWindow:
             return
         if self._closed.is_set() or self._page is None:
             return
+        if generation != getattr(self, "_active_banner_generation", 0):
+            return  # superseded by a newer reveal/hide
         # Done: drop the banner and restore click-through (via _render_page chrome).
         self._active_banner_until = None
         self._active_banner_opacity = 1.0
@@ -2981,14 +3124,29 @@ class FletDesktopRendererWindow:
         # the confirmation text centered inside it.
         win_w = float(getattr(plan, "window_width", 0) or 0)
         win_h = float(getattr(plan, "window_height", 0) or 0)
+        logger.info(
+            "[DesktopOverlay][Banner] build ctrl win_w=%s win_h=%s opacity=%s locale=%s",
+            win_w, win_h, self._active_banner_opacity, self._locale,
+        )
         border_radius = getattr(plan, "border_radius", 12)
-        ctrl = ft.Container(
-            width=win_w or None,
-            height=win_h or None,
+        # Structure mirrors the EDIT chrome exactly (fixed-size Container -> Stack with
+        # edge-positioned children): that tree is proven to lay out correctly after a
+        # soft hide/reveal cycle, while a bare fixed-size Container collapsed to a 2px
+        # line in that situation (verified live with correct win_w/win_h inputs). The
+        # opacity fade rides on the inner positioned layer, not the sized shell.
+        inner = ft.Container(
+            left=0,
+            top=0,
+            right=0,
+            bottom=0,
             opacity=max(0.0, min(1.0, self._active_banner_opacity)),
             # Native opacity animation so the fade-out is smooth; _run_active_banner_fade
             # just flips opacity to 0 and Flutter animates it over this duration.
-            animate_opacity=int(_DESKTOP_ACTIVE_BANNER_FADE_SECONDS * 1000),
+            # Ease-out cubic: starts fading gently, accelerates away.
+            animate_opacity=ft.Animation(
+                int(_DESKTOP_ACTIVE_BANNER_FADE_SECONDS * 1000),
+                ft.AnimationCurve.EASE_OUT_CUBIC,
+            ),
             bgcolor="#0b0d10e0",
             border=ft.border.all(2, _DESKTOP_EDIT_ACCENT_COLOR),
             border_radius=border_radius,
@@ -3002,8 +3160,13 @@ class FletDesktopRendererWindow:
                 no_wrap=True,
             ),
         )
-        self._active_banner_ctrl = ctrl
-        return ctrl
+        shell = ft.Container(
+            width=win_w or None,
+            height=win_h or None,
+            content=ft.Stack([inner], width=win_w or None, height=win_h or None),
+        )
+        self._active_banner_ctrl = inner
+        return shell
 
     def hide_window_safely(self) -> None:
         """Best-effort hide of the native window.

@@ -1675,22 +1675,21 @@ class ClientHub:
         self, text: str, language: str, *, precomputed: str | None = None
     ) -> str:
         """Prepend pinyin/romaji/latin above non-Roman text for overlay display."""
+        # The OVERLAY's romanization is controlled ONLY by the overlay's own Display
+        # toggle (right-click menu -> "Show pinyin/latin"). It is fully independent of
+        # the dashboard cog's "Show Pinyin" (log display) and of the chatbox send_*
+        # format — neither of those may alter what the overlay renders.
         if not self.overlay_show_romanization:
             return text
-        # Overlay romanization follows the DISPLAY toggle (show_*) only — never the
-        # chatbox send_* flags. The chatbox "Output Format" must not alter the overlay;
-        # it only shapes the VRChat-printed message.
-        _want_pinyin = self.show_pinyin
-        _want_romaji = self.show_romaji
-        _want_latin = self.show_latin
-        if not text.strip() or not (_want_pinyin or _want_romaji or _want_latin):
+        if not text.strip():
             return text
         if precomputed:
             return f"{precomputed}\n{text}"
         try:
             from puripuly_heart.core.transliteration import transliterate_for_language
+            # All scripts enabled: the language decides which reading applies.
             translit = transliterate_for_language(
-                text, language, show_pinyin=_want_pinyin, show_romaji=_want_romaji, show_latin=_want_latin
+                text, language, show_pinyin=True, show_romaji=True, show_latin=True
             )
             if translit:
                 return f"{translit}\n{text}"

@@ -605,12 +605,17 @@
   "dashboard.translit.romanization": "Romanization",
   "dashboard.translit.menu.chatbox": "Chatbox (sent in-game)",
   "dashboard.translit.menu.overlay": "Overlay & Log",
-  "dashboard.translit.menu.show_reading": "Show {system}",
+  "dashboard.translit.menu.show_reading": "Show {system} (log)",
   "dashboard.translit.fmt.orig_trans": "Original + Translation",
   "dashboard.translit.fmt.orig_read_trans": "Original + {system} + Translation",
   "dashboard.translit.fmt.read_trans": "{system} + Translation",
   "dashboard.translit.fmt.read_only": "{system} Only",
   "dashboard.translit.fmt.trans_only": "Translation Only",
   "dashboard.translit.menu.title": "Output Format",
-  "dashboard.translit.menu.chatbox_short": "Chatbox"
+  "dashboard.translit.menu.chatbox_short": "Chatbox",
+  "settings.steamvr_autolaunch": "Start with SteamVR",
+  "settings.steamvr_autolaunch.tooltip": "Automatically launch PuriPulyHeart whenever SteamVR starts, so the translator always runs alongside VRChat. SteamVR must be running when you turn this on or off.",
+  "settings.steamvr_autolaunch.steamvr_not_running": "SteamVR isn't running — start SteamVR, then toggle this again.",
+  "settings.steamvr_autolaunch.dev_build": "Auto-start with SteamVR requires the packaged app.",
+  "settings.steamvr_autolaunch.failed": "Couldn't update SteamVR auto-start. Check the logs for details."
 }

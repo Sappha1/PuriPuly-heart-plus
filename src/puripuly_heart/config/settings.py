@@ -34,7 +34,7 @@ from puripuly_heart.config.llm_profiles import (
 )
 from puripuly_heart.ui.overlay_calibration import OverlayCalibration
 
-SETTINGS_SCHEMA_VERSION = 27
+SETTINGS_SCHEMA_VERSION = 28
 STT_INTERNAL_SAMPLE_RATE_HZ = 16000
 DEFAULT_DESKTOP_AUDIO_VAD_HANGOVER_MS = 500
 MAX_CUSTOM_VOCAB_TERMS = 100
@@ -668,7 +668,9 @@ class OSCSettings:
 class ProviderSettings:
     stt: STTProviderName = STTProviderName.LOCAL_QWEN
     peer_stt: STTProviderName = STTProviderName.LOCAL_QWEN
-    llm: LLMProviderName = LLMProviderName.OPENROUTER
+    # Default to the free web translator so a fresh install works with no key and never
+    # engages the (dead) managed OpenRouter flow. Must match TranslationSettings.model.
+    llm: LLMProviderName = LLMProviderName.GOOGLE_TRANSLATE
 
     def validate(self) -> None:
         if not isinstance(self.stt, STTProviderName):
@@ -773,7 +775,9 @@ class OpenRouterSettings:
     llm_model: OpenRouterLLMModel = OpenRouterLLMModel.GEMMA_4_26B_A4B_IT
     routing_mode: OpenRouterRoutingMode = OpenRouterRoutingMode.LATENCY
     provider_routing: OpenRouterProviderRouting = OpenRouterProviderRouting.DEFAULT
-    selected_source: OpenRouterCredentialSource = OpenRouterCredentialSource.MANAGED
+    # NONE (not MANAGED): the managed trial is upstream's and is dead in this fork —
+    # it must never be the default credential source.
+    selected_source: OpenRouterCredentialSource = OpenRouterCredentialSource.NONE
     selection_alias: OpenRouterSelectionAlias | None = None
     fallback_selection_alias: OpenRouterFallbackSelectionAlias = (
         OpenRouterFallbackSelectionAlias.DEEPSEEK_V4_FLASH
@@ -834,6 +838,10 @@ class UiSettings:
     # original characters and no translation. The other combos are expressed by
     # chatbox_include_source (osc) × send_pinyin/romaji/latin; this adds the last one.
     chatbox_reading_only: bool = False
+    # Register the app with SteamVR so it starts automatically alongside SteamVR
+    # (and therefore VRChat VR sessions). Applied via the overlay exe's
+    # --set-autolaunch one-shot; requires SteamVR running to (un)register.
+    autolaunch_with_steamvr: bool = False
     self_in_overlay: bool = True
     typed_in_overlay: bool = True
     filter_peer_by_target_languages: bool = False
@@ -1573,6 +1581,7 @@ def to_dict(settings: AppSettings) -> dict[str, Any]:
             "send_latin": settings.ui.send_latin,
             "pinyin_word_grouping": settings.ui.pinyin_word_grouping,
             "chatbox_reading_only": settings.ui.chatbox_reading_only,
+            "autolaunch_with_steamvr": settings.ui.autolaunch_with_steamvr,
             "self_in_overlay": settings.ui.self_in_overlay,
             "typed_in_overlay": settings.ui.typed_in_overlay,
             # Persisted so the overlay/peer toggles are restored on next launch.
@@ -2475,6 +2484,7 @@ def new_settings_for_first_run(system_locale: str | None = None) -> AppSettings:
     is_china = _detect_china_timezone() or normalized_locale.startswith("zh-cn")
     if is_china:
         settings.translation.model = TranslationModel.BING
+        settings.provider.llm = LLMProviderName.BING
     settings.validate()
     return settings
 
@@ -3013,6 +3023,39 @@ def _migrate_settings_dict(raw: dict[str, Any]) -> tuple[dict[str, Any], bool]:
                         preset_data["peer_target_language"] = ""
                         changed = True
         version = 27
+
+    if version < 28:
+        # The upstream managed OpenRouter trial is dead in this fork, but configs created
+        # before r192 defaulted to provider.llm=openrouter with the managed source — which
+        # made fresh installs surface "managed credits expired" prompts. Move anyone still
+        # on the managed source to the free web translator (Bing in China, else Google).
+        provider_data = data.get("provider")
+        openrouter_data = data.get("openrouter")
+        selected_source = (
+            openrouter_data.get("selected_source") if isinstance(openrouter_data, dict) else None
+        )
+        selection_alias = (
+            openrouter_data.get("selection_alias") if isinstance(openrouter_data, dict) else None
+        )
+        alias_is_managed = isinstance(selection_alias, str) and "managed" in selection_alias
+        stored_llm = provider_data.get("llm") if isinstance(provider_data, dict) else None
+        if selected_source == "managed" or alias_is_managed:
+            if isinstance(openrouter_data, dict):
+                openrouter_data["selected_source"] = "none"
+                # A managed selection_alias would resolve the source back to managed on
+                # the next save — clear it too.
+                openrouter_data["selection_alias"] = None
+            changed = True
+            if stored_llm == "openrouter" and isinstance(provider_data, dict):
+                free_model = "bing" if _detect_china_timezone() else "google_translate"
+                provider_data["llm"] = free_model
+                translation_data = data.get("translation")
+                if not isinstance(translation_data, dict):
+                    translation_data = {}
+                    data["translation"] = translation_data
+                translation_data["model"] = free_model
+                translation_data["connection"] = "free_web"
+        version = 28
 
     if _normalize_local_llm_data(data):
         changed = True
@@ -3805,6 +3848,7 @@ def from_dict(data: dict[str, Any]) -> AppSettings:
             send_latin=bool(ui_data.get("send_latin", False)),
             pinyin_word_grouping=bool(ui_data.get("pinyin_word_grouping", True)),
             chatbox_reading_only=bool(ui_data.get("chatbox_reading_only", False)),
+            autolaunch_with_steamvr=bool(ui_data.get("autolaunch_with_steamvr", False)),
             self_in_overlay=bool(ui_data.get("self_in_overlay", True)),
             typed_in_overlay=bool(ui_data.get("typed_in_overlay", True)),
             filter_peer_by_target_languages=bool(ui_data.get("filter_peer_by_target_languages", False)),

@@ -1777,9 +1777,20 @@ class TranslatorApp:
 
             current_settings = self.controller.settings
             updated = copy.deepcopy(current_settings)
+            old_model = ""
+            with contextlib.suppress(Exception):
+                old_model = str(getattr(current_settings.translation.model, "value",
+                                        current_settings.translation.model))
             updated.translation.model = matched.value
             from puripuly_heart.config.settings import materialize_translation_settings
             materialize_translation_settings(updated)
+            # Dashboard translator switches were previously unlogged, which made
+            # "it changed to X on its own" reports impossible to trace.
+            with contextlib.suppress(Exception):
+                self.controller.log_basic(
+                    f"[Settings] Translator changed via dashboard: "
+                    f"{old_model or '?'} -> {matched.value}"
+                )
 
             async def _task():
                 await self.controller.apply_settings(updated)

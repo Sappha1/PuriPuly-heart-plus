@@ -4599,6 +4599,22 @@ class GuiController:
         save_settings(path, settings)
         return settings
 
+    def _create_free_web_fallback_llm(self, reason: str):
+        """Keyless Google free-web provider used when the configured key-backed
+        translator can't be built. Translations must never silently die on a paid
+        model with no key — the runtime falls back to a free model (settings are
+        left untouched so the user's choice is preserved)."""
+        from puripuly_heart.providers.llm.free_web import FreeWebTranslationProvider
+
+        self.log_basic(
+            f"[Translation] {self.settings.provider.llm.value} unavailable ({reason}) — "
+            "falling back to Google Translate (free web) until it's configured"
+        )
+        return SemaphoreLLMProvider(
+            inner=FreeWebTranslationProvider("google"),
+            semaphore=asyncio.Semaphore(self.settings.llm.concurrency_limit),
+        )
+
     async def _rebuild_llm_provider(self) -> None:
         """Rebuild only the LLM provider without tearing down the entire pipeline."""
         if self.hub is None or self.settings is None:
@@ -4630,14 +4646,22 @@ class GuiController:
         except Exception as exc:
             llm_error = exc
 
+        llm_requires_secret = self._llm_provider_requires_secret(self.settings.provider.llm)
+        fallback_used = False
+        if llm is None and llm_requires_secret:
+            with contextlib.suppress(Exception):
+                llm = self._create_free_web_fallback_llm(str(llm_error or "no API key"))
+                fallback_used = True
+
         # Update hub's LLM provider
         self.hub.llm = llm
 
-        # Update dashboard status
+        # Update dashboard status. The needs-key badge stays on while running on
+        # the fallback so the user can see their chosen translator isn't serving.
         dash = getattr(self.app, "view_dashboard", None)
         if dash is not None:
             dash.set_translation_needs_key(
-                (llm is None) and self._llm_provider_requires_secret(self.settings.provider.llm)
+                llm_requires_secret and (llm is None or fallback_used)
             )
 
         await self._refresh_managed_trial_usage_state_best_effort()
@@ -4649,7 +4673,20 @@ class GuiController:
             self._log_error(message)
             return
 
-        self.log_basic("[Settings] LLM provider rebuilt successfully")
+        # A working provider must never leave translation silently disabled: both
+        # the needs-key auto-disable and a failed startup build park
+        # hub.translation_enabled at False, and nothing re-armed it afterwards —
+        # picking a valid translator looked applied but translated nothing until
+        # an app restart.
+        self.hub.translation_enabled = True
+        if dash is not None:
+            dash.set_translation_enabled(True)
+
+        suffix = " (free-web fallback)" if fallback_used else ""
+        self.log_basic(
+            f"[Settings] LLM provider rebuilt successfully: "
+            f"{self.settings.provider.llm.value}{suffix}"
+        )
 
     async def _rebuild_stt_provider(self) -> None:
         """Rebuild only the STT provider so later enable uses current settings."""
@@ -5015,7 +5052,8 @@ class GuiController:
         await self._replace_managed_openrouter_release_service(new_managed_release_service)
 
         llm = None
-        with contextlib.suppress(Exception):
+        llm_error: Exception | None = None
+        try:
             llm = create_llm_provider(
                 self.settings,
                 secrets=secrets,
@@ -5023,6 +5061,16 @@ class GuiController:
                 managed_delegate_ready=self._on_managed_trial_delegate_ready,
                 runtime_logging=self.runtime_logging,
             )
+        except Exception as exc:
+            llm_error = exc
+        if llm is None:
+            # This used to be a bare suppress: a key-backed translator with a
+            # missing/broken key started the whole session with llm=None and
+            # translations dead with zero log evidence.
+            self._log_error(f"LLM provider not available at startup: {llm_error}")
+            if self._llm_provider_requires_secret(self.settings.provider.llm):
+                with contextlib.suppress(Exception):
+                    llm = self._create_free_web_fallback_llm(str(llm_error or "no API key"))
 
         stt = None
         try:
@@ -6556,13 +6604,14 @@ class GuiController:
         # If LLM verification failed, only key-backed providers should show needs-key state.
         if not llm_valid:
             dash.set_translation_needs_key(llm_requires_secret)
-            # If it was enabled, we potentially disable it or just let the warning show on next interaction
-            # User request: "Validation Fail -> Orange". Implicitly, if it's ON and fails, maybe we should turn it OFF?
-            # For now, setting needs_key=True ensures that if they try to toggle, it warns.
-            # If it is currently ON, we might want to flag it.
-            if self.hub:
+            # Hard-disable only when there is genuinely no provider to run with.
+            # A transient verify failure (network hiccup, provider API blip) on a
+            # provider that is built and serving must not kill live translation —
+            # that forced users to re-enter a perfectly valid DeepL key to
+            # "revalidate" and re-arm translations.
+            if self.hub and self.hub.llm is None:
                 self.hub.translation_enabled = False  # Disable internally
-            dash.set_translation_enabled(False)  # Visually turn off
+                dash.set_translation_enabled(False)  # Visually turn off
         else:
             dash.set_translation_needs_key(False)
             if self.settings.provider.llm == LLMProviderName.LOCAL_LLM and self.hub is not None:

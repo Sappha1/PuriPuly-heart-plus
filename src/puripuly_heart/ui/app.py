@@ -2271,6 +2271,65 @@ class TranslatorApp:
 
         return current_key == key
 
+    async def _startup_heal_key_verification(self) -> None:
+        """Re-verify saved API keys whose persisted verified-flag is False.
+
+        The dashboard translator/STT pickers grey providers out purely from the
+        persisted api_key_verified flags, so a single past failed check (usually
+        a network hiccup) greyed a perfectly good provider at every launch until
+        the user visited the settings API page to trigger a re-check. Runs in
+        the background at startup; only promotes False->True (never demotes a
+        working flag on a transient failure)."""
+        from puripuly_heart.app.wiring import create_secret_store
+
+        controller = getattr(self, "controller", None)
+        settings = getattr(controller, "settings", None)
+        if settings is None:
+            return
+        try:
+            secrets = create_secret_store(settings.secrets, config_path=controller.config_path)
+        except Exception:
+            return
+        provider_to_secret = {
+            "deepl": "deepl_api_key",
+            "google": "google_api_key",
+            "openrouter": "openrouter_api_key",
+            "deepseek": "deepseek_api_key",
+            "deepgram": "deepgram_api_key",
+            "soniox": "soniox_api_key",
+            "alibaba_beijing": "alibaba_api_key_beijing",
+            "alibaba_singapore": "alibaba_api_key_singapore",
+        }
+        healed: list[str] = []
+        for provider, secret_key in provider_to_secret.items():
+            try:
+                if getattr(settings.api_key_verified, provider, True):
+                    continue
+                key = secrets.get(secret_key) or ""
+                if not key:
+                    continue
+                success, _msg = await controller.verify_api_key(provider, key)
+                if success:
+                    setattr(settings.api_key_verified, provider, True)
+                    healed.append(provider)
+            except Exception:
+                continue
+        if not healed:
+            return
+        with contextlib.suppress(Exception):
+            save_settings(controller.config_path, settings)
+        controller.log_basic(
+            f"[Settings] Startup key re-check: verified OK again: {', '.join(healed)}"
+        )
+        dash = getattr(self, "view_dashboard", None)
+        if dash is not None:
+            with contextlib.suppress(Exception):
+                dash.set_translator_key_flags(self._translator_key_flags_from_settings(settings))
+            with contextlib.suppress(Exception):
+                set_flags = getattr(dash, "set_stt_key_flags", None)
+                if callable(set_flags):
+                    set_flags(self._stt_key_flags_from_settings(settings))
+
     async def _on_verify_api_key(self, provider: str, key: str) -> tuple[bool, str]:
         success, msg = await self.controller.verify_api_key(provider, key)
 
@@ -2457,6 +2516,14 @@ async def main_gui(page: ft.Page, *, config_path, debug_ui_preview: bool = False
         from puripuly_heart.ui.update_flow import get_update_flow
 
         page.run_task(get_update_flow().check_silently)
+    except Exception:
+        pass
+
+    # Re-verify saved API keys whose persisted flag went stale-false, so the
+    # dashboard pickers don't grey out working providers until the user visits
+    # the settings API page.
+    try:
+        page.run_task(app._startup_heal_key_verification)
     except Exception:
         pass
 

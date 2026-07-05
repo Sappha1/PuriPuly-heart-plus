@@ -465,7 +465,7 @@
   "settings_modal.requires_api_key": "APIキーが必要 — 設定で入力してください",
   "dashboard.mute_sync.tooltip.off": "ミュート同期（オフ）— クリックで有効化。オンにすると、VRChatでマイクをミュート中は音声認識がチャットボックスにメッセージを送信しません。",
   "dashboard.mute_sync.tooltip.active": "ミュート同期（オン）— VRChatでマイクをミュート中は、音声認識がチャットボックスにメッセージを送信しません。",
-  "dashboard.mute_sync.tooltip.syncing": "⚠ ミュート同期がまだVRChatと同期していません。ゲーム内でマイクを一度切り替えるまで、ミュート中でも話した内容がすべて文字起こしされチャットに送信されます。マイクを切り替えて同期してください（緑色になります）。",
+  "dashboard.mute_sync.tooltip.syncing": "⚠ ミュート同期がまだVRChatと同期していません。ゲーム内でマイクを一度切り替えるまで、ミュート中でも話した内容がすべて文字起こしされチャットに送信されます。マイクを切り替えて同期してください（緑色になります）。\n切り替えてもオレンジのまま？VRChatがOSCを送信していません。アクションメニュー → Options → OSC → Enabled を確認（有効なのに変わらない場合は OSC → Reset Config）してから、もう一度マイクを切り替えてください。",
   "dashboard.mute_sync.warn_relay": "⚠ ミュート同期：ゲーム内でマイクを一度切り替えるまで、ミュート中でも話した内容がすべてチャットに送信されます。",
   "dashboard.tooltip.model": "モデル: {model}",
   "dashboard.tooltip.device": "デバイス: {device}",

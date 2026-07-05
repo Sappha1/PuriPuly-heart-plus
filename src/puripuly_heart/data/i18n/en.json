@@ -510,7 +510,7 @@
   "settings_modal.requires_api_key": "Requires API key — set it in Settings",
   "dashboard.mute_sync.tooltip.off": "Mute Sync (off) — click to enable. When on, speech-to-text won't send a chatbox message while your mic is muted in VRChat.",
   "dashboard.mute_sync.tooltip.active": "Mute Sync (on) — speech-to-text won't send a chatbox message while your mic is muted in VRChat.",
-  "dashboard.mute_sync.tooltip.syncing": "⚠ Mute Sync isn't synced with VRChat yet — until you toggle your mic in VRChat once, EVERYTHING you say is transcribed and sent to chat even while muted. Toggle your mic in-game to sync (turns green).",
+  "dashboard.mute_sync.tooltip.syncing": "⚠ Mute Sync isn't synced with VRChat yet — until you toggle your mic in VRChat once, EVERYTHING you say is transcribed and sent to chat even while muted. Toggle your mic in-game to sync (turns green).\nStill orange after toggling? VRChat isn't sending OSC: open the Action Menu → Options → OSC → Enabled (if already enabled, use OSC → Reset Config), then toggle your mic again.",
   "dashboard.mute_sync.warn_relay": "⚠ Mute Sync: until you toggle your mic in VRChat once, everything you say is sent to chat even while muted.",
   "dashboard.tooltip.model": "Model: {model}",
   "dashboard.tooltip.device": "Device: {device}",

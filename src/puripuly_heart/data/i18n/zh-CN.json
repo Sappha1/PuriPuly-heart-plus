@@ -464,7 +464,7 @@
   "settings_modal.requires_api_key": "需要 API 密钥 — 请在设置中填写",
   "dashboard.mute_sync.tooltip.off": "静音同步（关闭）— 点击启用。启用后，当你在 VRChat 中将麦克风静音时，语音识别不会向聊天框发送消息。",
   "dashboard.mute_sync.tooltip.active": "静音同步（开启）— 当你在 VRChat 中将麦克风静音时，语音识别不会向聊天框发送消息。",
-  "dashboard.mute_sync.tooltip.syncing": "⚠ 静音同步尚未与 VRChat 同步——在你于 VRChat 中切换一次麦克风之前，你说的所有内容都会被转录并发送到聊天框，即使已静音。请在游戏中切换一次麦克风以完成同步（变为绿色）。",
+  "dashboard.mute_sync.tooltip.syncing": "⚠ 静音同步尚未与 VRChat 同步——在你于 VRChat 中切换一次麦克风之前，你说的所有内容都会被转录并发送到聊天框，即使已静音。请在游戏中切换一次麦克风以完成同步（变为绿色）。\n切换后仍是橙色？说明 VRChat 没有发送 OSC：打开动作菜单 → Options → OSC → Enabled（若已启用，请使用 OSC → Reset Config），然后再切换一次麦克风。",
   "dashboard.mute_sync.warn_relay": "⚠ 静音同步：在你于 VRChat 中切换一次麦克风之前，你说的所有内容都会发送到聊天框，即使已静音。",
   "dashboard.tooltip.model": "模型: {model}",
   "dashboard.tooltip.device": "设备: {device}",

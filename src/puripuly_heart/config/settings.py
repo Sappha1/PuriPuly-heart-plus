@@ -34,7 +34,7 @@ from puripuly_heart.config.llm_profiles import (
 )
 from puripuly_heart.ui.overlay_calibration import OverlayCalibration
 
-SETTINGS_SCHEMA_VERSION = 28
+SETTINGS_SCHEMA_VERSION = 29
 STT_INTERNAL_SAMPLE_RATE_HZ = 16000
 DEFAULT_DESKTOP_AUDIO_VAD_HANGOVER_MS = 500
 MAX_CUSTOM_VOCAB_TERMS = 100
@@ -443,10 +443,16 @@ class LanguagePreset:
 
 @dataclass(slots=True)
 class LanguageSettings:
-    source_language: str = "ko"
+    # NOTE: upstream (Korean-made) defaulted source="ko" and peer_target="ko".
+    # The literal peer_target default was invisible in the UI and pinned fresh
+    # installs to Korean peer translations forever (migrations only fix OLD
+    # files — a fresh install starts at the current schema version and keeps
+    # whatever the dataclass says). peer_target must default to "" (follow the
+    # source/"You Speak" language).
+    source_language: str = "en"
     target_language: str = "en"
     peer_source_language: str = "en"
-    peer_target_language: str = "ko"
+    peer_target_language: str = ""
     recent_source_languages: list[str] = field(default_factory=lambda: ["en", "zh-CN", "ja"])
     recent_target_languages: list[str] = field(default_factory=lambda: ["en", "zh-CN", "ja"])
     presets: list[LanguagePreset] = field(default_factory=lambda: [
@@ -3056,6 +3062,31 @@ def _migrate_settings_dict(raw: dict[str, Any]) -> tuple[dict[str, Any], bool]:
                 translation_data["model"] = free_model
                 translation_data["connection"] = "free_web"
         version = 28
+
+    if version < 29:
+        # Fresh installs created at v26-v28 never ran the v26/v27 peer-target
+        # cleanups, so the old dataclass default peer_target_language="ko"
+        # survived and silently translated every peer message into Korean with
+        # no UI way to notice why. Clear the pin unless the user actually
+        # speaks Korean (source=ko), in which case "ko" is indistinguishable
+        # from follow-source anyway.
+        languages_data = data.get("languages")
+        if isinstance(languages_data, dict):
+            source_lang = str(languages_data.get("source_language", ""))
+            if languages_data.get("peer_target_language") == "ko" and source_lang != "ko":
+                languages_data["peer_target_language"] = ""
+                changed = True
+            presets_data = languages_data.get("presets")
+            if isinstance(presets_data, list):
+                for preset_data in presets_data:
+                    if (
+                        isinstance(preset_data, dict)
+                        and preset_data.get("peer_target_language") == "ko"
+                        and str(preset_data.get("source_language", "")) != "ko"
+                    ):
+                        preset_data["peer_target_language"] = ""
+                        changed = True
+        version = 29
 
     if _normalize_local_llm_data(data):
         changed = True

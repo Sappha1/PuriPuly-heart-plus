@@ -166,26 +166,61 @@ class ApiKeyField(ft.Row):
 
         self._pending_key = key
         self._pending_hash = key_hash
+        self._pending_notify = True
         if self._is_verifying:
             return
 
         if self.page:
             self.page.run_task(self._run_verification)
 
+    def auto_verify_silently(self) -> None:
+        """Verify a pre-filled key in the background (e.g. at page load) instead
+        of presenting a stale unverified/error icon until the user manually
+        focuses the field and blurs it. No snackbars — only the status icon."""
+        if not self._show_status or not self._on_verify:
+            return
+        key = self.value
+        if not key:
+            return
+        key_hash = self._get_key_hash(key)
+        if key_hash == self._last_verified_hash:
+            return
+        self._pending_key = key
+        self._pending_hash = key_hash
+        self._pending_notify = False
+        if self._is_verifying:
+            return
+        if self.page:
+            self.page.run_task(self._run_verification)
+        else:
+            # Not mounted yet (fields are populated before the page attaches at
+            # startup) — show "verifying" now and start once mounted.
+            self._auto_verify_on_mount = True
+            self._set_status("verifying")
+
+    def did_mount(self) -> None:
+        if getattr(self, "_auto_verify_on_mount", False):
+            self._auto_verify_on_mount = False
+            if getattr(self, "_pending_hash", "") and not self._is_verifying and self.page:
+                self.page.run_task(self._run_verification)
+
     async def _run_verification(self) -> None:
         """Wrapper for run_task compatibility."""
         while True:
             key = getattr(self, "_pending_key", "")
             key_hash = getattr(self, "_pending_hash", "")
+            notify = getattr(self, "_pending_notify", True)
             if not key_hash:
                 return
 
             self._pending_key = ""
             self._pending_hash = ""
-            await self._verify_async(key, key_hash)
+            self._pending_notify = True
+            await self._verify_async(key, key_hash, notify)
 
-    async def _verify_async(self, key: str, key_hash: str) -> None:
-        """Run verification asynchronously."""
+    async def _verify_async(self, key: str, key_hash: str, notify: bool = True) -> None:
+        """Run verification asynchronously. notify=False suppresses snackbars
+        (used by the silent page-load auto-verify)."""
         self._is_verifying = True
         self._set_status("verifying")
 
@@ -197,27 +232,30 @@ class ApiKeyField(ft.Row):
             if success:
                 self._set_status("success")
                 self._last_verified_hash = key_hash
-                self._show_snackbar(
-                    t("snackbar.verification_ok", provider=provider_label(self._provider)),
-                    colors.GREEN_400,
-                )
+                if notify:
+                    self._show_snackbar(
+                        t("snackbar.verification_ok", provider=provider_label(self._provider)),
+                        colors.GREEN_400,
+                    )
             else:
                 self._set_status("error")
                 self._last_verified_hash = ""
-                self._show_snackbar(
-                    t("snackbar.verification_failed", message=self._translate_error(msg)),
-                    colors.RED_400,
-                )
+                if notify:
+                    self._show_snackbar(
+                        t("snackbar.verification_failed", message=self._translate_error(msg)),
+                        colors.RED_400,
+                    )
         except Exception as exc:
             if self._get_key_hash(self.value) != key_hash:
                 return
 
             self._set_status("error")
             self._last_verified_hash = ""
-            self._show_snackbar(
-                t("snackbar.verification_error", message=self._translate_error(str(exc))),
-                colors.RED_400,
-            )
+            if notify:
+                self._show_snackbar(
+                    t("snackbar.verification_error", message=self._translate_error(str(exc))),
+                    colors.RED_400,
+                )
         finally:
             self._is_verifying = False
 

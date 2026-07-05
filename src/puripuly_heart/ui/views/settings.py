@@ -3190,8 +3190,12 @@ class SettingsView(ft.Column):
                 # Restore hash to prevent re-verification on blur
                 field._last_verified_hash = field._get_key_hash(has_key)
             else:
-                field._set_status("error")
+                # Key present but the saved flag says unverified — often just a
+                # past network hiccup, not a bad key. Actually test it in the
+                # background instead of showing a stale "invalid" icon the user
+                # has to clear by focusing the field and pressing enter.
                 field._last_verified_hash = ""
+                field.auto_verify_silently()
         self._sync_openrouter_pkce_button_state(settings)
 
     def _sync_openrouter_pkce_button_state(self, settings: AppSettings | None = None) -> None:

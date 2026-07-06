@@ -236,6 +236,8 @@
   "logs.conversation.hide": "시스템 로그 보기",
   "logs.conversation.empty": "아직 대화록이 없어요.",
   "update.available": "새 버전 v{version}이 나왔어요!",
+  "update.available_snackbar": "새 버전 {tag}이(가) 있습니다. 사이드바 하단의 초록색 업데이트 버튼을 눌러 주세요.",
+  "update.download_failed_snackbar": "업데이트 다운로드 실패: {reason}. 업데이트 버튼을 눌러 다시 시도하세요.",
   "update.download": "다운로드",
   "snackbar.verification_ok": "{provider} API 키가 검증되었어요",
   "snackbar.verification_failed": "실패했어요: {message}",

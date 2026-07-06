@@ -236,6 +236,8 @@
   "logs.conversation.hide": "查看系统日志",
   "logs.conversation.empty": "还没有对话记录。",
   "update.available": "新版本 v{version} 可用！",
+  "update.available_snackbar": "新版本 {tag} 已发布——请点击侧边栏底部的绿色更新按钮。",
+  "update.download_failed_snackbar": "更新下载失败：{reason}。请点击更新按钮重试。",
   "update.download": "下载",
   "snackbar.verification_ok": "{provider} 验证成功！",
   "snackbar.verification_failed": "验证失败：{message}",

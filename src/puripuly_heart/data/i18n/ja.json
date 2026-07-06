@@ -237,6 +237,8 @@
   "logs.conversation.hide": "システムログを見る",
   "logs.conversation.empty": "まだ会話ログはありません。",
   "update.available": "新しいバージョン v{version} が公開されました！",
+  "update.available_snackbar": "新しいバージョン {tag} が利用可能です。サイドバー下部の緑色の更新ボタンを押してください。",
+  "update.download_failed_snackbar": "アップデートのダウンロードに失敗しました：{reason}。更新ボタンを押して再試行してください。",
   "update.download": "ダウンロード",
   "snackbar.verification_ok": "{provider} APIキーが検証されました",
   "snackbar.verification_failed": "失敗しました: {message}",

@@ -340,6 +340,45 @@ class TranslatorApp:
 
         flow = get_update_flow()
 
+        # Once-per-build "new version" announcement marker. Lives next to (not
+        # inside) the update staging dir, which gets swept at every startup.
+        from puripuly_heart.config.paths import default_settings_path
+
+        _notified_marker = default_settings_path().parent / "update_notified.txt"
+
+        def _maybe_announce_available() -> None:
+            remote = flow.remote
+            if remote is None or not flow.comparable or flow.last_error:
+                return
+            build = int(getattr(remote, "build", 0) or 0)
+            if build <= 0:
+                return
+            try:
+                if _notified_marker.read_text(encoding="utf-8").strip() == str(build):
+                    return
+            except Exception:
+                pass
+            with contextlib.suppress(Exception):
+                _notified_marker.write_text(str(build), encoding="utf-8")
+            tag = remote.tag or f"r{build}"
+            with contextlib.suppress(Exception):
+                self._show_snackbar(
+                    t("update.available_snackbar", tag=tag),
+                    ft.Colors.GREEN_700,
+                    duration=6000,
+                )
+
+        def _on_flow_notice(kind: str, detail: str) -> None:
+            if kind == "download_failed":
+                with contextlib.suppress(Exception):
+                    self._show_snackbar(
+                        t("update.download_failed_snackbar", reason=detail),
+                        ft.Colors.RED_400,
+                        duration=6000,
+                    )
+
+        flow.on_notice = _on_flow_notice
+
         def _restart_and_close() -> None:
             if flow.launch_restart():
                 window = self.page.window
@@ -354,6 +393,8 @@ class TranslatorApp:
             self.view_dashboard.set_update_flow_state(
                 flow.state, flow.progress, flow.sidebar_visible(), flow.sidebar_tooltip()
             )
+            if flow.state == "available":
+                _maybe_announce_available()
             # One-click update: the moment the download is staged, restart and
             # apply — no second press on a restart button. (launch_restart guards
             # on state=="ready", so the re-entrant notify can't double-fire.)

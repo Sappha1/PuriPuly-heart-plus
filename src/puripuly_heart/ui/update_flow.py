@@ -31,6 +31,26 @@ def dev_fake_update_enabled() -> bool:
     return bool(os.environ.get(_FAKE_UPDATE_ENV))
 
 
+def _friendly_network_reason(exc: Exception) -> str:
+    """Map transport errors to a human explanation — GitHub's release CDN is
+    blocked in some regions (e.g. China), and 'ConnectTimeout(...)' tells the
+    user nothing about why the update isn't happening."""
+    msg = str(exc)
+    lowered = msg.lower()
+    if any(s in lowered for s in (
+        "timeout", "timed out", "connecterror", "connect error", "getaddrinfo",
+        "connection refused", "connection reset", "unreachable", "10060", "10054",
+        "ssl", "temporary failure in name resolution",
+    )):
+        return "can't reach GitHub (network blocked or offline)"
+    if "404" in lowered or "not found" in lowered:
+        return "release file missing on GitHub"
+    status = getattr(getattr(exc, "response", None), "status_code", None)
+    if status:
+        return f"GitHub returned HTTP {status}"
+    return msg[:120] if msg else "unknown error"
+
+
 class UpdateFlow:
     def __init__(self) -> None:
         self.state: str = "idle"
@@ -39,6 +59,9 @@ class UpdateFlow:
         self.remote = None  # core.updater.RemoteBuild | None
         self.comparable: bool = True  # False when the release has no version.json
         self.staged_root: Path | None = None
+        self.last_error: str = ""  # last failed download reason (retry hint)
+        # Optional UI notice hook: (kind, detail). Wired by the app to snackbars.
+        self.on_notice: Callable[[str, str], None] | None = None
         self._listeners: list[Callable[[], None]] = []
 
     # ── Observation ──────────────────────────────────────────────────────────
@@ -81,6 +104,8 @@ class UpdateFlow:
                 tag = self.remote.tag or (f"r{self.remote.build}" if self.remote.build > 0 else "")
                 size_mb = (self.remote.zip_size or 0) / (1024 * 1024)
             base = f"Update available: {tag}" if tag else "Update available"
+            if self.last_error:
+                return f"{base} — last attempt failed: {self.last_error}. Click to retry."
             suffix = "click to download & restart"
             return f"{base} ({size_mb:.0f} MB) — {suffix}" if size_mb else f"{base} — {suffix}"
         if self.state == "downloading":
@@ -153,6 +178,7 @@ class UpdateFlow:
         if self.state != "available" or self.remote is None:
             return
         remote = self.remote
+        self.last_error = ""
         self._set("downloading", progress=0.0, status="Downloading update… 0%")
         zip_path = update_staging_dir() / "PuriPulyHeart.zip"
         last = {"t": 0.0}
@@ -170,8 +196,19 @@ class UpdateFlow:
                 extract_update_zip, zip_path, update_staging_dir() / "stage"
             )
         except Exception as exc:
-            logger.warning("[UpdateFlow] download failed: %s", exc)
-            self._set("error", status=f"Update failed: {exc}")
+            reason = _friendly_network_reason(exc)
+            logger.warning("[UpdateFlow] download failed: %s (%s)", reason, exc)
+            self.last_error = reason
+            # Back to "available", NOT "error": the sidebar button must stay
+            # visible for a retry (previously it silently vanished on failure),
+            # and the tooltip/About card explain what went wrong.
+            self._set("available", progress=0.0,
+                      status=f"Update failed: {reason}. Click to retry.")
+            if self.on_notice is not None:
+                try:
+                    self.on_notice("download_failed", reason)
+                except Exception:
+                    pass
             return
         self.staged_root = staged
         self._set("ready",

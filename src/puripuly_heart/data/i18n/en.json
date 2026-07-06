@@ -242,6 +242,8 @@
   "logs.conversation.hide": "System Logs",
   "logs.conversation.empty": "No conversation records yet.",
   "update.available": "New version v{version} is available!",
+  "update.available_snackbar": "New version {tag} is available — press the green update button at the bottom of the sidebar.",
+  "update.download_failed_snackbar": "Update download failed: {reason}. Press the update button to try again.",
   "update.download": "Download",
   "snackbar.verification_ok": "{provider} verified!",
   "snackbar.verification_failed": "Failed: {message}",

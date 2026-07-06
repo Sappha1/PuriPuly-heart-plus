@@ -102,7 +102,7 @@ The installer is built from `installer.iss` with Inno Setup 6.
 
 ## Credits
 
-- Fork developed by [Sappha1](https://github.com/Sappha1).
+- Fork developed by [Sappha1](https://github.com/Sappha1) together with **Claude** (Anthropic's AI coding agent), who wrote much of the fork's code and pushes every release.
 - Based on **PuriPuly Heart** by [salee](https://github.com/kapitalismho) — thank you for the excellent foundation.
 - Contributors and special thanks from the original project: RICHARDwuxiaofei; SUI_32C, Nagikokoro, motoka96, _Ykol魚, kascr_, Just Monika V, FLUVIA, Han โชเล่ย์, EA_PE, Ephedrine.
 

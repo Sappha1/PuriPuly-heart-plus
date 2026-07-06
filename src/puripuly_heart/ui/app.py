@@ -340,10 +340,25 @@ class TranslatorApp:
 
         flow = get_update_flow()
 
+        def _restart_and_close() -> None:
+            if flow.launch_restart():
+                window = self.page.window
+                try:
+                    window.close()
+                except Exception:
+                    destroy = getattr(window, "destroy", None)
+                    if callable(destroy):
+                        destroy()
+
         def _sync() -> None:
             self.view_dashboard.set_update_flow_state(
                 flow.state, flow.progress, flow.sidebar_visible(), flow.sidebar_tooltip()
             )
+            # One-click update: the moment the download is staged, restart and
+            # apply — no second press on a restart button. (launch_restart guards
+            # on state=="ready", so the re-entrant notify can't double-fire.)
+            if flow.state == "ready":
+                _restart_and_close()
 
         flow.add_listener(_sync)
         _sync()
@@ -352,14 +367,8 @@ class TranslatorApp:
             if flow.state == "available":
                 self.page.run_task(flow.download)
             elif flow.state == "ready":
-                if flow.launch_restart():
-                    window = self.page.window
-                    try:
-                        window.close()
-                    except Exception:
-                        destroy = getattr(window, "destroy", None)
-                        if callable(destroy):
-                            destroy()
+                # Fallback path — normally auto-restart already handled it.
+                _restart_and_close()
 
         self.view_dashboard.on_update_click = _on_update_click
 

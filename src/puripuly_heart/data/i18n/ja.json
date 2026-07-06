@@ -43,6 +43,7 @@
   "settings.section.peer_vad_sensitivity": "相手の音声検出感度",
   "settings.self_stt_provider": "セルフSTTプロバイダー",
   "stt.whisper_hub_unreachable_fallback": "HuggingFace（Whisperモデルの配布元）に接続できませんでした。ファイアウォールの可能性があります。マイクをローカルQwenモデルに切り替えました。",
+  "stt.whisper_download_blocked": "Whisperのモデルをダウンロードできません。HuggingFaceがブロックされているかオフラインです。音声認識をQwen ASR（ローカル）に切り替えてください。完全オフラインで動作します。",
   "dashboard.whisper_hub_unreachable": "HuggingFaceに接続できません — ネットワーク / ファイアウォールを確認",
   "settings.shared_translation_provider": "共有翻訳プロバイダー",
   "settings.api_credentials_helper": "共有キー、リージョン、ルーティングはここで一括管理します。",

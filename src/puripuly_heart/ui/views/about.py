@@ -122,7 +122,8 @@ class AboutView(ft.Column):
         flow = self._upd_flow
         state = flow.state
         if state == "available":
-            label = "Download update" if flow.comparable else "Download latest"
+            # Download + restart happen in one click now (auto-restart on staged).
+            label = "Download & restart" if flow.comparable else "Download latest & restart"
         else:
             label = self._UPD_BUTTON_LABELS.get(state, "Check for updates")
         self._upd_btn_label.value = label

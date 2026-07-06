@@ -81,7 +81,8 @@ class UpdateFlow:
                 tag = self.remote.tag or (f"r{self.remote.build}" if self.remote.build > 0 else "")
                 size_mb = (self.remote.zip_size or 0) / (1024 * 1024)
             base = f"Update available: {tag}" if tag else "Update available"
-            return f"{base} ({size_mb:.0f} MB) — click to download" if size_mb else f"{base} — click to download"
+            suffix = "click to download & restart"
+            return f"{base} ({size_mb:.0f} MB) — {suffix}" if size_mb else f"{base} — {suffix}"
         if self.state == "downloading":
             return f"Downloading update… {int(self.progress * 100)}%"
         if self.state in ("ready", "restarting"):

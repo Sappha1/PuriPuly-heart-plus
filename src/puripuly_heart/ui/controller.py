@@ -1004,6 +1004,19 @@ class GuiController:
             with contextlib.suppress(Exception):
                 sync(self.settings)
 
+    async def _on_whisper_download_blocked(self, error_msg: str) -> None:
+        """First live Whisper model-download failure: tell the user what's wrong
+        (host blocked / offline) instead of retrying silently forever, and grey
+        Whisper out in the STT picker."""
+        first_line = (error_msg or "download failed").splitlines()[0][:160]
+        self._log_error(f"[STT] Whisper model download appears blocked: {first_line}")
+        self._show_short_message("stt.whisper_download_blocked")
+        dash = getattr(self.app, "view_dashboard", None)
+        set_avail = getattr(dash, "set_whisper_availability", None)
+        if callable(set_avail):
+            with contextlib.suppress(Exception):
+                set_avail(False, "dashboard.whisper_hub_unreachable")
+
     def dashboard_managed_auth_action(self) -> str:
         # The managed-OpenRouter free-trial / Discord-OAuth onboarding popup is disabled:
         # enabling translation always proceeds with the configured provider (the default
@@ -5071,6 +5084,23 @@ class GuiController:
             if self._llm_provider_requires_secret(self.settings.provider.llm):
                 with contextlib.suppress(Exception):
                     llm = self._create_free_web_fallback_llm(str(llm_error or "no API key"))
+
+        # Whisper hub-block alert: the startup reachability probe can pass while
+        # the real model download still times out — surface a visible alert on
+        # the first actual failure instead of silent per-utterance retry spam.
+        try:
+            from puripuly_heart.providers.stt import whisper_stt as _whisper_stt
+
+            _loop = asyncio.get_running_loop()
+
+            def _whisper_blocked_cb(error_msg: str) -> None:  # transcription thread
+                _loop.call_soon_threadsafe(
+                    lambda: _loop.create_task(self._on_whisper_download_blocked(error_msg))
+                )
+
+            _whisper_stt.set_download_blocked_callback(_whisper_blocked_cb)
+        except Exception:
+            pass
 
         stt = None
         try:

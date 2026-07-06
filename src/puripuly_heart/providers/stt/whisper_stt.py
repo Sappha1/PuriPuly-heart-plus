@@ -5,11 +5,50 @@ import io
 import logging
 import struct
 from dataclasses import dataclass, field
-from typing import AsyncIterator
+from typing import AsyncIterator, Callable
 
 from puripuly_heart.core.stt.backend import STTBackend, STTBackendSession, STTBackendTranscriptEvent
 
 logger = logging.getLogger(__name__)
+
+# Fired once when a transcription fails because the model couldn't be fetched
+# from HuggingFace. The startup reachability probe can PASS while the actual
+# model download still times out (partial blocking, e.g. behind the Great
+# Firewall the HEAD probe may succeed but the snapshot fetch dies) — this is
+# the belt-and-braces detection at the moment of real failure. Wired by the
+# controller; called from the transcription worker thread.
+_download_blocked_cb: Callable[[str], None] | None = None
+_download_blocked_fired = False
+
+
+def set_download_blocked_callback(cb: Callable[[str], None] | None) -> None:
+    global _download_blocked_cb, _download_blocked_fired
+    _download_blocked_cb = cb
+    _download_blocked_fired = False
+
+
+def _looks_like_hub_download_failure(msg: str) -> bool:
+    m = msg.lower()
+    return (
+        "locate the files on the hub" in m
+        or "snapshot folder" in m
+        or "huggingface" in m
+        or "connecttimeout" in m
+        or "10060" in m
+    )
+
+
+def _notify_download_blocked_once(error_msg: str) -> None:
+    global _download_blocked_fired
+    if _download_blocked_fired or _download_blocked_cb is None:
+        return
+    if not _looks_like_hub_download_failure(error_msg):
+        return
+    _download_blocked_fired = True
+    try:
+        _download_blocked_cb(error_msg)
+    except Exception:
+        pass
 
 WHISPER_MODELS = (
     "tiny",
@@ -242,6 +281,7 @@ class _WhisperSTTSession:
             return text
         except Exception as exc:
             logger.warning("[Whisper] transcription failed: %s", exc)
+            _notify_download_blocked_once(str(exc))
             return ""
 
     async def stop(self) -> None:

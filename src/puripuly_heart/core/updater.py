@@ -114,9 +114,9 @@ import zipfile
 from pathlib import Path
 from typing import Callable
 
-# Release asset names. The fork asset is preferred; the legacy name stays as a
-# fallback because every pre-r228 install looks for it — releases upload the
-# same zip under BOTH names so old builds can still self-update.
+# Release asset names. The legacy name is no longer uploaded (retired at r228
+# while the updater was days old); the fallback read stays as a harmless safety
+# in case an asset is ever published under the old name again.
 ZIP_ASSET_NAME = "PuriPulyHeartPlus.zip"
 LEGACY_ZIP_ASSET_NAME = "PuriPulyHeart.zip"
 VERSION_ASSET_NAME = "version.json"

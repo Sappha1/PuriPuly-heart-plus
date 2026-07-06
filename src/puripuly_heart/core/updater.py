@@ -114,7 +114,11 @@ import zipfile
 from pathlib import Path
 from typing import Callable
 
-ZIP_ASSET_NAME = "PuriPulyHeart.zip"
+# Release asset names. The fork asset is preferred; the legacy name stays as a
+# fallback because every pre-r228 install looks for it — releases upload the
+# same zip under BOTH names so old builds can still self-update.
+ZIP_ASSET_NAME = "PuriPulyHeartPlus.zip"
+LEGACY_ZIP_ASSET_NAME = "PuriPulyHeart.zip"
 VERSION_ASSET_NAME = "version.json"
 
 
@@ -154,14 +158,21 @@ async def fetch_remote_build() -> RemoteBuild | None:
             data: dict[str, Any] = resp.json()
             zip_url = ""
             zip_size = 0
+            legacy_zip_url = ""
+            legacy_zip_size = 0
             version_url = ""
             for asset in data.get("assets", []):
                 name = asset.get("name", "")
                 if name == ZIP_ASSET_NAME:
                     zip_url = asset.get("browser_download_url", "")
                     zip_size = int(asset.get("size", 0) or 0)
+                elif name == LEGACY_ZIP_ASSET_NAME:
+                    legacy_zip_url = asset.get("browser_download_url", "")
+                    legacy_zip_size = int(asset.get("size", 0) or 0)
                 elif name == VERSION_ASSET_NAME:
                     version_url = asset.get("browser_download_url", "")
+            if not zip_url:
+                zip_url, zip_size = legacy_zip_url, legacy_zip_size
             if not zip_url:
                 return None
             build = -1

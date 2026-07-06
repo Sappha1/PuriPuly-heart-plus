@@ -1,21 +1,30 @@
-; Inno Setup Script for PuriPuly <3
-; Compile with: ISCC installer.iss
+; Inno Setup Script for PuriPulyHeart+ (fork of PuriPuly <3 by salee)
+; Compile with:
+;   ISCC installer.iss /DMyPackagedAppDir=<built PuriPulyHeart folder> /DMyAppBuild=rNNN
+; (defaults to dist\PuriPulyHeart and build tag "dev" when omitted)
 
-#define MyAppName "PuriPuly <3"
-#define MyAppDirName "PuriPulyHeart"
-#define MyAppGroupName "PuriPulyHeart"
+#define MyAppName "PuriPulyHeart+"
+#define MyAppDirName "PuriPulyHeartPlus"
+#define MyAppGroupName "PuriPulyHeart+"
 #define MyAppVersion "2.1.2"
-#define MyAppPublisher "salee"
-#define MyAppURL "https://github.com/kapitalismho/PuriPuly-heart"
+#define MyAppPublisher "Sappha1 (original by salee)"
+#define MyAppURL "https://github.com/Sappha1/PuriPuly-heart-plus"
 #define MyAppExeName "PuriPulyHeart.exe"
 #define MyOverlayExeName "PuriPulyHeartOverlay.exe"
-#define MyPackagedAppDir "dist\PuriPulyHeart"
+#ifndef MyPackagedAppDir
+  #define MyPackagedAppDir "dist\PuriPulyHeart"
+#endif
+#ifndef MyAppBuild
+  #define MyAppBuild "dev"
+#endif
 #define MyStagedOverlayDir "build\overlay"
 #define NotoCjkFontRelativePath "puripuly_heart\data\fonts\NotoSansCJK-Medium.ttc"
 #define LocalSttManifestRelativePath "puripuly_heart\data\models\qwen3-asr-0.6b-int8-sherpa.manifest.json"
 
 #ifndef MyAppId
-  #define MyAppId "{{A1B2C3D4-E5F6-7890-ABCD-EF1234567890}"
+  ; Fork-specific AppId — deliberately different from the upstream installer so
+  ; the fork never upgrades-over/uninstalls an original PuriPuly install.
+  #define MyAppId "{{B7F2C4D9-1E5A-4A63-9C8F-3D2E71A0B5C4}"
 #endif
 
 [Setup]
@@ -23,7 +32,7 @@
 AppId={#MyAppId}
 AppName={#MyAppName}
 AppVersion={#MyAppVersion}
-AppVerName={#MyAppName} {#MyAppVersion}
+AppVerName={#MyAppName} {#MyAppVersion} {#MyAppBuild}
 AppPublisher={#MyAppPublisher}
 AppPublisherURL={#MyAppURL}
 AppSupportURL={#MyAppURL}
@@ -33,14 +42,17 @@ DefaultGroupName={#MyAppGroupName}
 AllowNoIcons=yes
 LicenseFile=LICENSE
 OutputDir=installer_output
-OutputBaseFilename=PuriPulyHeart-Setup-{#MyAppVersion}
+OutputBaseFilename=PuriPulyHeart-Setup
 SetupIconFile=src\puripuly_heart\data\icons\icon.ico
 UninstallDisplayIcon={app}\PuriPulyHeart.exe
 Compression=lzma
 SolidCompression=yes
 WizardStyle=modern
+; Per-user only ({autopf} resolves to %LOCALAPPDATA%\Programs): the in-app
+; self-updater rewrites its own install folder, so the folder must stay
+; user-writable. An admin/Program Files install would break one-click updates —
+; that's why the privilege-override dialog is intentionally NOT offered.
 PrivilegesRequired=lowest
-PrivilegesRequiredOverridesAllowed=dialog
 ; Auto-upgrade: remember previous install location
 UsePreviousAppDir=yes
 UsePreviousGroup=yes

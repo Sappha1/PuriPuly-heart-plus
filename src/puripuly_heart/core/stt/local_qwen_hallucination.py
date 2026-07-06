@@ -51,6 +51,32 @@ _HALLUCINATION_SUBSTRINGS = (
 # Single characters that are meaningless to send (punctuation/whitespace only)
 _TRIVIAL_CHARS = frozenset(".。,，!！?？;；:：、…")
 
+# HTML/XML-ish markup fragment ('<col="" title=""'). Speech transcripts never
+# contain markup — its presence means the model hallucinated document/subtitle
+# structure (captured live on noise/music through desktop loopback).
+_MARKUP_LINE_RE = re.compile(r"<[a-zA-Z]+[=>\"]")
+# Bare numbered-list line ("#1", "12.", "3"). Walls of these are OCR/subtitle
+# hallucinations, not speech.
+_NUMBER_LINE_RE = re.compile(r"^#?\d{1,4}\.?$")
+
+
+def _is_multiline_garbage(stripped: str) -> bool:
+    """Real STT output is a single line of prose. Multi-line output made of
+    markup, number walls, or one-token-per-line words (e.g.
+    'acia\\n<col="" title=""\\n#1\\n#2\\n...' captured live) is a hallucination."""
+    lines = [ln.strip() for ln in stripped.splitlines() if ln.strip()]
+    if len(lines) < 3:
+        return False
+    if any(_MARKUP_LINE_RE.search(ln) for ln in lines):
+        return True
+    number_lines = sum(1 for ln in lines if _NUMBER_LINE_RE.match(ln))
+    if number_lines >= 3 and number_lines / len(lines) >= 0.5:
+        return True
+    single_token_lines = sum(1 for ln in lines if len(ln.split()) == 1)
+    if len(lines) >= 6 and single_token_lines / len(lines) >= 0.8:
+        return True
+    return False
+
 
 def is_known_local_qwen_hallucination(text: str) -> bool:
     stripped = text.strip()
@@ -67,6 +93,8 @@ def is_known_local_qwen_hallucination(text: str) -> bool:
     for sub in _HALLUCINATION_SUBSTRINGS:
         if sub in stripped:
             return True
+    if _is_multiline_garbage(stripped):
+        return True
     return False
 
 

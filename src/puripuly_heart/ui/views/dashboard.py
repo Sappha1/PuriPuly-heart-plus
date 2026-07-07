@@ -15,7 +15,7 @@ from puripuly_heart.ui.fonts import font_for_language
 from puripuly_heart.ui.i18n import get_locale, language_name, t
 from puripuly_heart.ui.overlay_peer_contract import OverlayPeerConsumerContract
 
-_BUILD_TAG = "r234"  #increment each build so user can confirm version
+_BUILD_TAG = "r235"  #increment each build so user can confirm version
 
 # ── VRCT-style dark palette ──────────────────────────────────────────────────
 _BG_MAIN = "#2e2f32"
@@ -1446,6 +1446,10 @@ class DashboardView(ft.Row):
             self._mini_stt_btn.set_state(self.is_stt_on, warning=self._stt_showing_warning, error=self._stt_showing_error)
         if hasattr(self, "_vrc_mute_sync_btn"):
             self._refresh_vrc_mute_sync_btn()
+        # Mic state gates the model-loading banner (hidden while all channels
+        # are off), so re-evaluate the notice like the peer path does.
+        with contextlib.suppress(Exception):
+            self._sync_notice()
 
     def _sync_translation_button_state(self) -> None:
         self._row_trans.set_state(self.is_translation_on, warning=self._translation_showing_warning)
@@ -3968,6 +3972,16 @@ class DashboardView(ft.Row):
     def _current_local_stt_notice(self) -> tuple[str | None, str | None]:
         status = self._local_stt_notice_status
         if status is None:
+            return None, None
+        # A model warm-up while every voice channel is off shows no banner —
+        # the grey MIC/PEER dots say "off", so "loading speech model" reads
+        # wrong. The banner (re)appears via _sync_notice if a channel turns on
+        # mid-load; downloads stay visible regardless (rare and actionable).
+        if (
+            status == "loading"
+            and not getattr(self, "is_stt_on", False)
+            and not self._peer_intent_enabled()
+        ):
             return None, None
         notice_key_by_status = {
             "missing": "dashboard.local_stt_notice_missing",

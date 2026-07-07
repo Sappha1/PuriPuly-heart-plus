@@ -2,6 +2,9 @@
 
 User-facing changes per build. The latest build's highlights also appear in-app when an update is ready.
 
+## r235
+- The "Loading speech model" banner no longer shows while all voice channels are off — the warm-up happens silently, and the banner appears only when a channel is actually starting.
+
 ## r234
 - The sidebar update button now matches the settings gear in size.
 

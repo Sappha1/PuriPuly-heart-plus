@@ -24,32 +24,28 @@ PuriPulyHeart+ listens to your voice, translates it, and prints it to the VRChat
 This is a heavily extended fork of PuriPuly Heart. It keeps the translation core and rebuilds the experience around being **free-first, self-maintaining, and reliable for real daily use**:
 
 ### Updates that take care of themselves
-- **One-click in-app updates** — a green update button appears in the sidebar when a new build is out; one click downloads, applies, and restarts the app. A launch notification points new users to it (once per release, never nagging).
-- **Failed downloads explain themselves** — if the update can't reach GitHub (blocked network, offline), the app says so in plain words and keeps the retry button, instead of silently giving up.
-- **A real installer** — `PuriPulyHeartPlus-Setup.exe`: per-user install (no admin prompt), Start-menu shortcut, uninstaller, installer UI in English / 한국어 / 日本語 / 简体中文 / 繁體中文, and it downloads the speech model during setup with an automatic China-friendly mirror fallback.
+- **One-click in-app updates** — when a new version is out, an update button appears in the sidebar; one click downloads, applies, and restarts the app.
+- **A real installer** — `PuriPulyHeartPlus-Setup.exe`: per-user install (no admin prompt), Start-menu shortcut, uninstaller, installer UI in English / 한국어 / 日本語 / 简体中文 / 繁體中文, and it downloads the speech model during setup with an automatic China-friendly mirror.
 
-### Free by default, and it stays working
-- **Google / Bing free web translation built in** — no key, no cost. DeepL and LLM providers (Gemini, DeepSeek, Qwen, OpenRouter, local LLMs) supported when you bring your own key.
-- **Never silently dies** — if a key-backed translator can't run, the app tells you and falls back to free Google Translate at runtime instead of translating nothing.
-- **API keys validate themselves** — saved keys are re-checked automatically at startup; no more "invalid key" ghosts you have to clear by hand.
-- **No account onboarding** — no Discord sign-in, no managed trial credits, no expiry prompts.
+### Free by default
+- **Google / Bing free web translation built in** — no key, no cost, no account. DeepL and LLM providers (Gemini, DeepSeek, Qwen, OpenRouter, local LLMs) supported when you bring your own key.
+- **Automatic fallback** — if a paid translator can't run, translation switches to the free provider instead of stopping.
 
-### An overlay that keeps up
-- **Instant toggling** — the desktop subtitle overlay turns on/off immediately (persistent window architecture, no relaunch delay), survives being minimized by Win+D, and switches live between VR and desktop targets.
-- **Auto-launch with SteamVR or VRChat**, including a `--launch %command%` Steam launch-option wrapper.
+### Subtitle overlay
+- **Instant on/off** and live switching between VR and desktop display.
+- **Auto-launch with SteamVR or VRChat**, including a Steam launch-option wrapper.
 
 ### Reading options for language learners
 - **Output Format menu** — choose exactly what goes to the chatbox: original + translation, translation only, reading only, and more.
 - **Pinyin and romaji readings** — pinyin with word-grouping (jieba) or per-character, romaji per character, independently configurable for the chatbox and the overlay.
 
 ### Speech recognition you can trust
-- **Local multilingual STT** with automatic language identification — English, Chinese, Japanese, Korean and more without switching models.
-- **Hallucination filtering** — repetition walls, subtitle/markup garbage, and known junk tokens from noisy audio are suppressed before they ever reach the chat.
-- **Peer speech is translated into *your* language** (follows your "You Speak" setting), with script-based filtering so random background languages don't leak in.
-- **Blocked-network alerts** — if a model host is unreachable (common behind the Great Firewall), the app tells you and points you to the local model instead of retrying forever.
+- **Local multilingual speech recognition** with automatic language detection — English, Chinese, Japanese, Korean and more without switching models.
+- **Noise-resistant** — garbled or repeating output from noisy audio is filtered out before it reaches the chat.
+- **The other person's speech is translated into *your* language**, following your "You Speak" setting.
 
 ### Quality of life
-- Language presets (3 quick slots), favorites that switch without reloading models, two-way dashboard ⇄ settings sync, mute-sync tooltips that explain VRChat OSC setup, UI in English / 한국어 / 日本語 / 简体中文.
+- Three quick language preset slots, favorites for saved configurations, built-in guidance for VRChat OSC setup, and UI in English / 한국어 / 日本語 / 简体中文.
 
 ## Download
 

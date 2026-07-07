@@ -2,6 +2,9 @@
 
 User-facing changes per build. The latest build's highlights also appear in-app when an update is ready.
 
+## r234
+- The sidebar update button now matches the settings gear in size.
+
 ## r233
 - Updates now show a what's-new popup when they're ready, with a restart button.
 - Added this changelog.

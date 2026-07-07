@@ -15,7 +15,7 @@ from puripuly_heart.ui.fonts import font_for_language
 from puripuly_heart.ui.i18n import get_locale, language_name, t
 from puripuly_heart.ui.overlay_peer_contract import OverlayPeerConsumerContract
 
-_BUILD_TAG = "r233"  #increment each build so user can confirm version
+_BUILD_TAG = "r234"  #increment each build so user can confirm version
 
 # ── VRCT-style dark palette ──────────────────────────────────────────────────
 _BG_MAIN = "#2e2f32"
@@ -290,13 +290,15 @@ class _UpdateNavBtn(ft.Container):
     ring (downloading) → solid teal restart icon (staged, ready)."""
 
     def __init__(self, *, on_click):
-        self._icon = ft.Icon(ft.Icons.DOWNLOAD, size=17, color=_TOGGLE_ON)
+        # Sized to match the settings gear button exactly (44x40 slot) so the
+        # bottom nav row reads as one consistent set of controls.
+        self._icon = ft.Icon(ft.Icons.DOWNLOAD, size=19, color=_TOGGLE_ON)
         self._ring = ft.ProgressRing(
-            value=0, width=30, height=30, stroke_width=2.5,
+            value=0, width=32, height=32, stroke_width=2.5,
             color=_TOGGLE_WARNING, bgcolor="#3f4044", visible=False,
         )
         self._inner = ft.Container(
-            content=self._icon, width=30, height=30, border_radius=7,
+            content=self._icon, width=32, height=32, border_radius=7,
             alignment=ft.alignment.center,
             bgcolor="#2e4a45", border=ft.border.all(1, _TOGGLE_ON),
         )
@@ -306,9 +308,9 @@ class _UpdateNavBtn(ft.Container):
                     ft.Container(content=self._ring, alignment=ft.alignment.center, expand=True),
                     ft.Container(content=self._inner, alignment=ft.alignment.center, expand=True),
                 ],
-                width=36, height=40,
+                width=44, height=40,
             ),
-            width=36, height=40,
+            width=44, height=40,
             border_radius=6,
             bgcolor=ft.Colors.TRANSPARENT,
             visible=False,
@@ -333,21 +335,21 @@ class _UpdateNavBtn(ft.Container):
             self._inner.bgcolor = ft.Colors.TRANSPARENT
             self._inner.border = None
             self._icon.name = ft.Icons.ARROW_DOWNWARD
-            self._icon.size = 13
+            self._icon.size = 14
             self._icon.color = _TOGGLE_WARNING
         elif state in ("ready", "restarting"):
             self._ring.visible = False
             self._inner.bgcolor = _TOGGLE_ON
             self._inner.border = None
             self._icon.name = ft.Icons.RESTART_ALT
-            self._icon.size = 17
+            self._icon.size = 19
             self._icon.color = "#10322d"
         else:  # available (any hidden state renders the same defaults)
             self._ring.visible = False
             self._inner.bgcolor = "#2e4a45"
             self._inner.border = ft.border.all(1, _TOGGLE_ON)
             self._icon.name = ft.Icons.DOWNLOAD
-            self._icon.size = 17
+            self._icon.size = 19
             self._icon.color = _TOGGLE_ON
         try:
             if self.page:

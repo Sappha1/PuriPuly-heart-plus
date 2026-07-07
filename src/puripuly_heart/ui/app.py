@@ -1391,13 +1391,16 @@ class TranslatorApp:
             f"[Dashboard] Language change detail: overlay_state={getattr(self, 'overlay_state', 'unknown')}"
         )
 
-        # Check STT provider compatibility and show warning if needed
+        # Check STT provider compatibility and show warning if needed. Each
+        # channel checks ITS OWN provider — the peer channel used to be checked
+        # against the mic's provider, so unsupported peer languages slipped by.
         stt_provider = settings.provider.stt.value
+        peer_stt_provider = getattr(settings.provider, "peer_stt", settings.provider.stt).value
         warning = None
         if source_code != previous_source_code:
             warning = get_stt_compatibility_warning(source_code, stt_provider)
         if not warning and peer_source_code and peer_source_code != previous_peer_source_code:
-            warning = get_stt_compatibility_warning(peer_source_code, stt_provider)
+            warning = get_stt_compatibility_warning(peer_source_code, peer_stt_provider)
         if warning:
             snackbar = ft.SnackBar(
                 ft.Text(t(warning.key, language=language_name(warning.language_code))),
@@ -1911,11 +1914,20 @@ class TranslatorApp:
         try:
             import copy
             from puripuly_heart.config.settings import STTProviderName
+            from puripuly_heart.ui.i18n import provider_label
             current = self.controller.settings
             if current is None:
                 return
             updated = copy.deepcopy(current)
             updated.provider.peer_stt = STTProviderName(provider_value)
+            # Update the PEER row label immediately, like the MIC handler does —
+            # without this the runtime switched providers while the row kept
+            # showing (and the picker kept highlighting) the old one.
+            dash = getattr(self, "view_dashboard", None)
+            if dash is not None:
+                set_fn = getattr(dash, "set_peer_stt_provider_label", None)
+                if callable(set_fn):
+                    set_fn(provider_label(provider_value), provider_value)
 
             async def _task():
                 await self.controller.apply_settings(updated)

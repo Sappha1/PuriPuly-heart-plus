@@ -122,6 +122,25 @@ _QWEN_ASR_LANGUAGE_MAP: dict[str, str] = {
     "sv": "sv",
 }
 
+# Languages the LOCAL Qwen3-ASR 0.6B model can actually transcribe. This is a
+# strict subset of the cloud Qwen ASR service map above — the cloud map wrongly
+# doubled as the local check, so picking e.g. Indonesian for a local-qwen
+# channel warned nothing and then silently produced no transcripts at all.
+_LOCAL_QWEN_SUPPORTED: frozenset = frozenset({
+    "zh", "zh-CN", "zh-TW", "yue",
+    "en", "ja", "ko",
+    "es", "fr", "de", "it", "pt", "ru", "ar",
+})
+
+
+def is_local_qwen_supported(code: str) -> bool:
+    """Check if a language is supported by the local Qwen3-ASR 0.6B model."""
+    if code in _LOCAL_QWEN_SUPPORTED:
+        return True
+    base_code = code.split("-")[0].lower()
+    return base_code in _LOCAL_QWEN_SUPPORTED
+
+
 _LOCAL_QWEN_LANGUAGE_HINT_MAP: dict[str, str] = {
     "en": "English",
     "ja": "Japanese",
@@ -246,7 +265,10 @@ def get_stt_compatibility_warning(code: str, stt_provider: str) -> SttCompatibil
             return SttCompatibilityWarning("warning.deepgram_suggest_qwen", lang_code)
         return SttCompatibilityWarning("warning.deepgram_not_supported", lang_code)
 
-    if stt_provider in {"qwen_asr", "local_qwen"} and not is_qwen_asr_supported(code):
+    if stt_provider == "local_qwen" and not is_local_qwen_supported(code):
+        return SttCompatibilityWarning("warning.local_qwen_not_supported", lang_code)
+
+    if stt_provider == "qwen_asr" and not is_qwen_asr_supported(code):
         if is_deepgram_supported(code):
             return SttCompatibilityWarning("warning.qwen_suggest_deepgram", lang_code)
         return SttCompatibilityWarning("warning.qwen_not_supported", lang_code)

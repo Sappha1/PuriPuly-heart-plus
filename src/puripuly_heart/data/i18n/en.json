@@ -254,6 +254,7 @@
   "warning.deepgram_not_supported": "{language} is not supported by Deepgram",
   "warning.deepgram_suggest_qwen": "{language} is not supported by Deepgram",
   "warning.qwen_not_supported": "{language} is not supported by Qwen ASR",
+  "warning.local_qwen_not_supported": "{language} is not supported by Qwen ASR (Local) — speech in it won't be recognized. Right-click MIC or PEER to switch that channel to Whisper or a cloud model.",
   "warning.qwen_suggest_deepgram": "{language} is not supported by Qwen ASR",
   "warning.soniox_not_supported": "{language} is not supported by Soniox",
   "error.unknown": "Unknown error",

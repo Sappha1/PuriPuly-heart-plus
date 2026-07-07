@@ -248,6 +248,7 @@
   "warning.deepgram_not_supported": "{language}은(는) Deepgram에서 지원하지 않아요",
   "warning.deepgram_suggest_qwen": "{language}은(는) Deepgram에서 지원하지 않아요",
   "warning.qwen_not_supported": "{language}은(는) Qwen ASR에서 지원하지 않아요",
+  "warning.local_qwen_not_supported": "{language}은(는) Qwen ASR(로컬)에서 지원하지 않아 해당 언어 음성이 인식되지 않습니다. MIC 또는 PEER를 우클릭해 그 채널을 Whisper나 클라우드 모델로 전환하세요.",
   "warning.qwen_suggest_deepgram": "{language}은(는) Qwen ASR에서 지원하지 않아요",
   "warning.soniox_not_supported": "{language}은(는) Soniox에서 지원하지 않아요",
   "error.unknown": "알 수 없는 오류",

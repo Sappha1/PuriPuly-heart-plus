@@ -368,31 +368,64 @@ class TranslatorApp:
             tag = (getattr(remote, "tag", "") or (f"r{build}" if build > 0 else "")) if remote is not None else ""
             return build, tag
 
+        def _open_update_dialog(*, ready: bool) -> None:
+            """One-time (per build) what's-new popup with a restart/download
+            action. Dismissible; the sidebar button stays armed either way."""
+            build, tag = _remote_build_and_tag()
+            if build <= 0 or _already_notified(build):
+                return
+            _mark_notified(build)
+            notes = list(getattr(flow.remote, "notes", ()) or ())
+            body: list = []
+            if notes:
+                body.append(
+                    ft.Text(t("update.dialog.whats_new"), size=13, weight=ft.FontWeight.W_600)
+                )
+                for note in notes:
+                    body.append(ft.Text(f"•  {note}", size=13))
+            else:
+                body.append(ft.Text(t("update.dialog.no_notes"), size=13))
+            dialog = ft.AlertDialog(
+                modal=False,
+                title=ft.Text(
+                    t("update.dialog.title_ready" if ready else "update.dialog.title_available",
+                      tag=tag),
+                    size=16,
+                ),
+                content=ft.Column(body, tight=True, spacing=6, width=420),
+            )
+
+            def _later(_e) -> None:
+                with contextlib.suppress(Exception):
+                    self.page.close(dialog)
+
+            def _go(_e) -> None:
+                with contextlib.suppress(Exception):
+                    self.page.close(dialog)
+                if ready:
+                    _restart_and_close()
+                else:
+                    flow.auto_initiated = False
+                    with contextlib.suppress(Exception):
+                        self.page.run_task(flow.download)
+
+            dialog.actions = [
+                ft.TextButton(t("update.dialog.later"), on_click=_later),
+                ft.TextButton(
+                    t("update.dialog.restart_now" if ready else "update.dialog.download_restart"),
+                    on_click=_go,
+                ),
+            ]
+            with contextlib.suppress(Exception):
+                self.page.open(dialog)
+
         def _maybe_announce_available() -> None:
             if flow.remote is None or not flow.comparable or flow.last_error:
                 return
-            build, tag = _remote_build_and_tag()
-            if build <= 0 or _already_notified(build):
-                return
-            _mark_notified(build)
-            with contextlib.suppress(Exception):
-                self._show_snackbar(
-                    t("update.available_snackbar", tag=tag),
-                    ft.Colors.GREEN_700,
-                    duration=6000,
-                )
+            _open_update_dialog(ready=False)
 
         def _maybe_announce_ready() -> None:
-            build, tag = _remote_build_and_tag()
-            if build <= 0 or _already_notified(build):
-                return
-            _mark_notified(build)
-            with contextlib.suppress(Exception):
-                self._show_snackbar(
-                    t("update.ready_snackbar", tag=tag),
-                    ft.Colors.GREEN_700,
-                    duration=8000,
-                )
+            _open_update_dialog(ready=True)
 
         def _on_flow_notice(kind: str, detail: str) -> None:
             if kind == "download_failed":

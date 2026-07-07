@@ -19,6 +19,30 @@ from puripuly_heart.ui.theme import (
 _CENTER_ALIGNMENT = ft.alignment.Alignment(0, 0)
 
 
+def _load_changelog_entries() -> list:
+    """Parse the packaged CHANGELOG.md into (heading, bullets) pairs."""
+    try:
+        text = (
+            resources.files("puripuly_heart.data")
+            .joinpath("CHANGELOG.md")
+            .read_text(encoding="utf-8")
+        )
+    except Exception:
+        return []
+    entries = []
+    title, bullets = None, []
+    for line in text.splitlines():
+        if line.startswith("## "):
+            if title is not None:
+                entries.append((title, bullets))
+            title, bullets = line[3:].strip(), []
+        elif line.startswith("- ") and title is not None:
+            bullets.append(line[2:].strip())
+    if title is not None:
+        entries.append((title, bullets))
+    return entries
+
+
 def _load_third_party_notices() -> str:
     """Load THIRD_PARTY_NOTICES.txt from package data."""
     try:
@@ -49,8 +73,8 @@ class AboutView(ft.Column):
 
     def _build_ui(self):
         self.controls = [
-            self._build_header(),
             self._build_updates_card(),
+            self._build_header(),
             self._build_providers_card(),
             self._build_licenses_card(),
         ]
@@ -84,6 +108,14 @@ class AboutView(ft.Column):
         )
         self._upd_flow.add_listener(self._upd_render)
         self._upd_render()
+        changelog_btn = ft.Container(
+            content=ft.Text("What's new", size=13, color=COLOR_ON_BACKGROUND, weight=ft.FontWeight.W_600),
+            border=ft.border.all(1, COLOR_DIVIDER),
+            border_radius=8,
+            padding=ft.padding.symmetric(horizontal=14, vertical=8),
+            on_click=self._open_changelog,
+            tooltip="Every version's changes, newest first",
+        )
         content = ft.Column(
             [
                 ft.Row(
@@ -93,14 +125,9 @@ class AboutView(ft.Column):
                     ],
                     spacing=8, vertical_alignment=ft.CrossAxisAlignment.CENTER,
                 ),
-                ft.Text(
-                    "Download and apply the latest build in place — no manual zip handling. "
-                    "The app restarts itself to finish the update.",
-                    size=12, color=COLOR_ON_BACKGROUND, no_wrap=False,
-                ),
                 self._upd_status,
                 self._upd_bar,
-                ft.Row([self._upd_btn]),
+                ft.Row([self._upd_btn, changelog_btn], spacing=10),
             ],
             spacing=8,
         )
@@ -151,6 +178,31 @@ class AboutView(ft.Column):
             self.page.run_task(flow.download)
         elif flow.state == "ready":
             self._upd_restart()
+
+    def _open_changelog(self, _e) -> None:
+        if not self.page:
+            return
+        entries = _load_changelog_entries()
+        body: list = []
+        if not entries:
+            body.append(ft.Text("Changelog unavailable.", size=12, color=COLOR_NEUTRAL))
+        for title, bullets in entries:
+            body.append(ft.Text(title, size=13, weight=ft.FontWeight.W_600, color=COLOR_PRIMARY))
+            for bullet in bullets:
+                body.append(ft.Text(f"•  {bullet}", size=12, color=COLOR_ON_BACKGROUND, no_wrap=False))
+            body.append(ft.Container(height=6))
+        dialog = ft.AlertDialog(
+            title=ft.Text("What's new", size=16),
+            content=ft.Container(
+                content=ft.Column(body, scroll=ft.ScrollMode.AUTO, spacing=4, tight=True),
+                width=480,
+                height=420,
+            ),
+        )
+        dialog.actions = [
+            ft.TextButton("Close", on_click=lambda _: self.page.close(dialog)),
+        ]
+        self.page.open(dialog)
 
     def _upd_restart(self) -> None:
         if not self._upd_flow.launch_restart() or not self.page:

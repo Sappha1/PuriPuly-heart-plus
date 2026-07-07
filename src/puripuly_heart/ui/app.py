@@ -272,6 +272,32 @@ class TranslatorApp:
                     on_click=lambda _, idx=app_idx: self._on_nav_change(idx),
                 )
             )
+        # Update button on the far right of the top nav: tooltip carries the
+        # description, icon turns teal when an update is available/staged.
+        from puripuly_heart.ui.update_flow import get_update_flow
+
+        toolbar_upd_flow = get_update_flow()
+        self._toolbar_upd_icon = ft.Icon(ft.Icons.SYSTEM_UPDATE_ALT, size=18, color=_OFF)
+        self._toolbar_upd_btn = ft.Container(
+            content=self._toolbar_upd_icon,
+            width=40,
+            height=36,
+            alignment=ft.alignment.center,
+            border_radius=6,
+            tooltip=t("update.toolbar.tooltip"),
+            on_click=self._on_toolbar_update_click,
+        )
+
+        def _toolbar_upd_sync() -> None:
+            active = toolbar_upd_flow.state in ("available", "downloading", "ready", "restarting")
+            self._toolbar_upd_icon.color = _ON if active else _OFF
+            with contextlib.suppress(Exception):
+                if self._toolbar_upd_icon.page:
+                    self._toolbar_upd_icon.update()
+
+        toolbar_upd_flow.add_listener(_toolbar_upd_sync)
+        _toolbar_upd_sync()
+
         self._top_nav_bar = ft.Container(
             content=ft.Row(
                 [
@@ -287,6 +313,8 @@ class TranslatorApp:
                     ),
                     ft.Container(width=8),
                     *top_nav_tabs,
+                    ft.Container(expand=True),
+                    self._toolbar_upd_btn,
                 ],
                 spacing=2,
                 vertical_alignment=ft.CrossAxisAlignment.CENTER,
@@ -1952,6 +1980,38 @@ class TranslatorApp:
             self.page.run_task(_task)
         except Exception:
             logger.exception("Failed to start local STT model download")
+
+    def _on_toolbar_update_click(self, _e) -> None:
+        """Top-nav update button: check when idle, download when available,
+        restart when staged — mirroring the About page button."""
+        from puripuly_heart.ui.update_flow import get_update_flow
+
+        flow = get_update_flow()
+        if flow.state in ("idle", "uptodate", "error"):
+
+            async def _check_and_report() -> None:
+                await flow.check()
+                if flow.state == "uptodate":
+                    with contextlib.suppress(Exception):
+                        self._show_snackbar(
+                            flow.status_text or "Up to date.",
+                            ft.Colors.GREEN_700,
+                            duration=4000,
+                        )
+
+            self.page.run_task(_check_and_report)
+        elif flow.state == "available":
+            flow.auto_initiated = False
+            self.page.run_task(flow.download)
+        elif flow.state == "ready":
+            if flow.launch_restart():
+                window = self.page.window
+                try:
+                    window.close()
+                except Exception:
+                    destroy = getattr(window, "destroy", None)
+                    if callable(destroy):
+                        destroy()
 
     def _on_dashboard_stt_provider_change(self, provider_value: str) -> None:
         try:

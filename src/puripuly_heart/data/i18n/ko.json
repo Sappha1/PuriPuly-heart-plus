@@ -246,6 +246,7 @@
   "update.dialog.later": "나중에",
   "update.dialog.restart_now": "지금 재시작",
   "update.dialog.download_restart": "다운로드 후 재시작",
+  "update.toolbar.tooltip": "최신 빌드를 다운로드하여 바로 적용",
   "update.download": "다운로드",
   "snackbar.verification_ok": "{provider} API 키가 검증되었어요",
   "snackbar.verification_failed": "실패했어요: {message}",

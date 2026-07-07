@@ -247,6 +247,7 @@
   "update.dialog.later": "後で",
   "update.dialog.restart_now": "今すぐ再起動",
   "update.dialog.download_restart": "ダウンロードして再起動",
+  "update.toolbar.tooltip": "最新ビルドをダウンロードしてその場で適用",
   "update.download": "ダウンロード",
   "snackbar.verification_ok": "{provider} APIキーが検証されました",
   "snackbar.verification_failed": "失敗しました: {message}",

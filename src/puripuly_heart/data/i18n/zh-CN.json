@@ -246,6 +246,7 @@
   "update.dialog.later": "稍后",
   "update.dialog.restart_now": "立即重启",
   "update.dialog.download_restart": "下载并重启",
+  "update.toolbar.tooltip": "下载并就地应用最新版本",
   "update.download": "下载",
   "snackbar.verification_ok": "{provider} 验证成功！",
   "snackbar.verification_failed": "验证失败：{message}",

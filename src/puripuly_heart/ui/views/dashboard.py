@@ -6,7 +6,7 @@ from typing import Any, Callable
 
 import flet as ft
 
-from puripuly_heart.core.language import get_all_language_options
+from puripuly_heart.core.language import get_all_language_options, is_local_qwen_supported
 from puripuly_heart.core.transliteration import transliterate_for_language
 from puripuly_heart.ui.components.display_card import DisplayCard
 from puripuly_heart.ui.components.language_modal import LanguageModal
@@ -15,7 +15,7 @@ from puripuly_heart.ui.fonts import font_for_language
 from puripuly_heart.ui.i18n import get_locale, language_name, t
 from puripuly_heart.ui.overlay_peer_contract import OverlayPeerConsumerContract
 
-_BUILD_TAG = "r229"  #increment each build so user can confirm version
+_BUILD_TAG = "r230"  #increment each build so user can confirm version
 
 # ── VRCT-style dark palette ──────────────────────────────────────────────────
 _BG_MAIN = "#2e2f32"
@@ -2750,7 +2750,9 @@ class DashboardView(ft.Row):
         self._whisper_available = bool(available)
         self._whisper_unavailable_reason = reason_key or ""
 
-    def _build_stt_options(self) -> list:
+    def _build_stt_options(self, for_language: str = "") -> list:
+        """for_language: the channel's configured language ("" = auto-detect) so
+        options that can't handle it are greyed out with a reason."""
         from puripuly_heart.config.settings import STTProviderName
         from puripuly_heart.ui.i18n import provider_label
         # LOCAL_QWEN and WHISPER are local models — always free, no API key needed
@@ -2769,6 +2771,19 @@ class DashboardView(ft.Row):
             if p == STTProviderName.WHISPER and not self._whisper_available:
                 disabled = True
                 desc = t(self._whisper_unavailable_reason or "dashboard.whisper_hub_unreachable")
+            # The local Qwen model can't hear every language. When this channel's
+            # language is outside its set, selecting it would silently transcribe
+            # nothing — grey it out with the reason instead of allowing a dead pick.
+            if (
+                p == STTProviderName.LOCAL_QWEN
+                and for_language
+                and not is_local_qwen_supported(for_language)
+            ):
+                disabled = True
+                desc = t(
+                    "stt.option.local_qwen_unsupported_language",
+                    language=language_name(for_language),
+                )
             options.append(OptionItem(value=p.value, label=provider_label(p.value), description=desc, disabled=disabled))
         return options
 
@@ -2785,7 +2800,7 @@ class DashboardView(ft.Row):
             return
         from puripuly_heart.config.settings import STTProviderName
         current = getattr(self, "_current_stt_provider_value", STTProviderName.LOCAL_QWEN.value)
-        SettingsModal(self.page, "Mic (STT)", self._build_stt_options(), self._on_stt_provider_selected, show_description=True).open(current)
+        SettingsModal(self.page, "Mic (STT)", self._build_stt_options(for_language=self._source_lang_code), self._on_stt_provider_selected, show_description=True).open(current)
 
     def _on_stt_provider_selected(self, value: str) -> None:
         if callable(self.on_stt_provider_change):
@@ -2796,7 +2811,7 @@ class DashboardView(ft.Row):
             return
         from puripuly_heart.config.settings import STTProviderName
         current = getattr(self, "_current_peer_stt_provider_value", STTProviderName.LOCAL_QWEN.value)
-        SettingsModal(self.page, "Peer Voice (STT)", self._build_stt_options(), self._on_peer_stt_provider_selected, show_description=True).open(current)
+        SettingsModal(self.page, "Peer Voice (STT)", self._build_stt_options(for_language=self._peer_source_lang_code), self._on_peer_stt_provider_selected, show_description=True).open(current)
 
     def _on_peer_stt_provider_selected(self, value: str) -> None:
         if callable(self.on_peer_stt_provider_change):

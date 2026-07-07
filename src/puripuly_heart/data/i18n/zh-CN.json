@@ -249,6 +249,7 @@
   "warning.deepgram_suggest_qwen": "Deepgram 不支持 {language}",
   "warning.qwen_not_supported": "Qwen ASR 不支持 {language}",
   "warning.local_qwen_not_supported": "Qwen ASR（本地）不支持 {language}——该语言的语音将无法识别。请右键点击 MIC 或 PEER，将该通道切换到 Whisper 或云端模型。",
+  "stt.option.local_qwen_unsupported_language": "⚠ 无法识别{language}——请先更换语言或选择其他模型",
   "warning.qwen_suggest_deepgram": "Qwen ASR 不支持 {language}",
   "warning.soniox_not_supported": "Soniox 不支持 {language}",
   "error.unknown": "未知错误",

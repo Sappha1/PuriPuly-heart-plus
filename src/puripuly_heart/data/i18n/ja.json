@@ -250,6 +250,7 @@
   "warning.deepgram_suggest_qwen": "{language}はDeepgramでサポートされていません",
   "warning.qwen_not_supported": "{language}はQwen ASRでサポートされていません",
   "warning.local_qwen_not_supported": "{language}はQwen ASR（ローカル）でサポートされていないため、その言語の音声は認識されません。MICまたはPEERを右クリックして、そのチャンネルをWhisperかクラウドモデルに切り替えてください。",
+  "stt.option.local_qwen_unsupported_language": "⚠ {language}を認識できません。先に言語を変更するか、他のモデルを選んでください",
   "warning.qwen_suggest_deepgram": "{language}はQwen ASRでサポートされていません",
   "warning.soniox_not_supported": "{language}はSonioxでサポートされていません",
   "error.unknown": "不明なエラー",

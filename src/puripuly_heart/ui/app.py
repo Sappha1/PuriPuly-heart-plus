@@ -2589,6 +2589,32 @@ async def main_gui(page: ft.Page, *, config_path, debug_ui_preview: bool = False
     except Exception:
         pass
 
+    # Warn at launch when a SAVED channel language isn't supported by that
+    # channel's STT provider (e.g. an Indonesian preset restored onto the local
+    # Qwen model). Interactive changes already warn; a bad saved combo didn't.
+    try:
+        from puripuly_heart.core.language import get_stt_compatibility_warning
+        from puripuly_heart.ui.i18n import language_name as _lang_name
+
+        _s = app.controller.settings
+        startup_warning = None
+        _src = getattr(_s.languages, "source_language", "") or ""
+        if _src:
+            startup_warning = get_stt_compatibility_warning(_src, _s.provider.stt.value)
+        _peer_src = getattr(_s.languages, "peer_source_language", "") or ""
+        if startup_warning is None and _peer_src:
+            startup_warning = get_stt_compatibility_warning(
+                _peer_src, _s.provider.peer_stt.value
+            )
+        if startup_warning is not None:
+            app._show_snackbar(
+                t(startup_warning.key, language=_lang_name(startup_warning.language_code)),
+                ft.Colors.ORANGE_700,
+                duration=8000,
+            )
+    except Exception:
+        pass
+
     # GitHub star prompt disabled
 
 

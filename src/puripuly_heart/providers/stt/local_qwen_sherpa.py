@@ -96,6 +96,17 @@ def _transcript_text_for_log(text: str) -> str:
     return text
 
 
+def _strip_asr_meta_wrapper(text: str) -> str:
+    """The Qwen3 ASR model occasionally leaks its internal prompt format instead
+    of a bare transcript ('system\\nlanguage Chinese<asr_text>是河南的吗？' —
+    captured live while decoding Chinese speech under an Indonesian language
+    setting). The real speech follows the last <asr_text> marker — salvage it
+    and drop the meta prefix."""
+    if "<asr_text>" in text:
+        text = text.rsplit("<asr_text>", 1)[1]
+    return text.replace("</asr_text>", "").strip()
+
+
 def _looks_repetitive(text: str) -> bool:
     stripped = text.strip()
     if len(stripped) < 6:
@@ -326,7 +337,7 @@ class LocalQwenSherpaSTTBackend(STTBackend):
         stream.accept_waveform(LOCAL_QWEN_RECOGNIZER_SAMPLE_RATE_HZ, samples)
         recognizer.decode_stream(stream)
         result = getattr(stream, "result", None)
-        text = str(getattr(result, "text", "")).strip()
+        text = _strip_asr_meta_wrapper(str(getattr(result, "text", "")).strip())
 
         # Confidence-based garbage filter (free, model-native). The Qwen3 ASR model
         # exposes per-token log-probs in `ys_log_probs`; very low average confidence

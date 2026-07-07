@@ -2,6 +2,10 @@
 
 User-facing changes per build. The latest build's highlights also appear in-app when an update is ready.
 
+## r238 — 2026-07-07
+- Update controls moved fully to the header bar: a labeled "Check for updates" button that shows live progress, next to "What's new".
+- The Updates card is gone from the About page.
+
 ## r237 — 2026-07-07
 - The sidebar update button is now truly gear-sized (the ring drew oversized).
 - The update popup title shows the release date.

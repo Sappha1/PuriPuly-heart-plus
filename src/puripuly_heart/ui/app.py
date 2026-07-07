@@ -272,31 +272,68 @@ class TranslatorApp:
                     on_click=lambda _, idx=app_idx: self._on_nav_change(idx),
                 )
             )
-        # Update button on the far right of the top nav: tooltip carries the
-        # description, icon turns teal when an update is available/staged.
-        from puripuly_heart.ui.update_flow import get_update_flow
+        # Update controls on the far right of the top nav: a labeled
+        # check-for-updates pill that morphs through the whole flow, and a
+        # What's-new button that opens the dated changelog. The About page has
+        # no update UI anymore — this bar is the one home for it.
+        from puripuly_heart.core.updater import is_self_update_supported
+        from puripuly_heart.ui.update_flow import dev_fake_update_enabled, get_update_flow
 
         toolbar_upd_flow = get_update_flow()
-        self._toolbar_upd_icon = ft.Icon(ft.Icons.SYSTEM_UPDATE_ALT, size=18, color=_OFF)
-        self._toolbar_upd_btn = ft.Container(
-            content=self._toolbar_upd_icon,
-            width=40,
-            height=36,
-            alignment=ft.alignment.center,
-            border_radius=6,
-            tooltip=t("update.toolbar.tooltip"),
+        upd_supported = is_self_update_supported() or dev_fake_update_enabled()
+        self._hdr_upd_label = ft.Text(
+            "Check for updates", size=12, color=_ON, weight=ft.FontWeight.W_600
+        )
+        self._hdr_upd_btn = ft.Container(
+            content=self._hdr_upd_label,
+            border=ft.border.all(1, "#4a4b4f"),
+            border_radius=8,
+            padding=ft.padding.symmetric(horizontal=12, vertical=6),
             on_click=self._on_toolbar_update_click,
+            disabled=not upd_supported,
+            tooltip=t("update.toolbar.tooltip") if upd_supported
+            else "Available in the packaged app only",
+        )
+        hdr_whatsnew_btn = ft.Container(
+            content=ft.Text("What's new", size=12, color=_OFF, weight=ft.FontWeight.W_600),
+            border=ft.border.all(1, "#4a4b4f"),
+            border_radius=8,
+            padding=ft.padding.symmetric(horizontal=12, vertical=6),
+            on_click=self._open_changelog_dialog,
+            tooltip="Every version's changes, newest first",
         )
 
-        def _toolbar_upd_sync() -> None:
-            active = toolbar_upd_flow.state in ("available", "downloading", "ready", "restarting")
-            self._toolbar_upd_icon.color = _ON if active else _OFF
+        def _hdr_upd_sync() -> None:
+            state = toolbar_upd_flow.state
+            if state == "available":
+                label = "Download & restart"
+            elif state == "downloading":
+                label = f"Downloading… {int(toolbar_upd_flow.progress * 100)}%"
+            elif state == "checking":
+                label = "Checking…"
+            elif state == "uptodate":
+                label = (toolbar_upd_flow.status_text or "Up to date").rstrip(".")
+            elif state == "ready":
+                label = "Restart & update"
+            elif state == "restarting":
+                label = "Restarting…"
+            elif state == "error":
+                label = "Retry update"
+            else:
+                label = "Check for updates"
+            actionable = state in ("available", "ready")
+            self._hdr_upd_label.value = label
+            self._hdr_upd_btn.border = ft.border.all(1, _ON if actionable else "#4a4b4f")
+            self._hdr_upd_btn.bgcolor = "#2e4a45" if actionable else ft.Colors.TRANSPARENT
+            self._hdr_upd_btn.disabled = (
+                not upd_supported or state in ("checking", "downloading", "restarting")
+            )
             with contextlib.suppress(Exception):
-                if self._toolbar_upd_icon.page:
-                    self._toolbar_upd_icon.update()
+                if self._hdr_upd_btn.page:
+                    self._hdr_upd_btn.update()
 
-        toolbar_upd_flow.add_listener(_toolbar_upd_sync)
-        _toolbar_upd_sync()
+        toolbar_upd_flow.add_listener(_hdr_upd_sync)
+        _hdr_upd_sync()
 
         self._top_nav_bar = ft.Container(
             content=ft.Row(
@@ -314,7 +351,10 @@ class TranslatorApp:
                     ft.Container(width=8),
                     *top_nav_tabs,
                     ft.Container(expand=True),
-                    self._toolbar_upd_btn,
+                    hdr_whatsnew_btn,
+                    ft.Container(width=8),
+                    self._hdr_upd_btn,
+                    ft.Container(width=4),
                 ],
                 spacing=2,
                 vertical_alignment=ft.CrossAxisAlignment.CENTER,
@@ -362,9 +402,15 @@ class TranslatorApp:
             self.page.add(root_content)
 
     def _wire_update_flow(self) -> None:
-        """Feed the shared self-update flow into the dashboard sidebar button and
-        route its clicks (About's Updates card observes the same flow directly)."""
+        """Feed the shared self-update flow into the dashboard sidebar button
+        and the top-nav update pill, and route their clicks."""
+        from puripuly_heart.core.updater import sweep_leftover_update_files
         from puripuly_heart.ui.update_flow import get_update_flow
+
+        # Used to run when the About Updates card was built; that card is gone,
+        # so clean stale staging/zip leftovers here at startup instead.
+        with contextlib.suppress(Exception):
+            sweep_leftover_update_files()
 
         flow = get_update_flow()
 
@@ -1984,25 +2030,39 @@ class TranslatorApp:
         except Exception:
             logger.exception("Failed to start local STT model download")
 
+    def _open_changelog_dialog(self, _e=None) -> None:
+        """What's-new dialog: the packaged dated changelog, newest first."""
+        from puripuly_heart.ui.views.about import _load_changelog_entries
+
+        entries = _load_changelog_entries()
+        body: list = []
+        if not entries:
+            body.append(ft.Text("Changelog unavailable.", size=12, color="#8a8d91"))
+        for title, bullets in entries:
+            body.append(ft.Text(title, size=13, weight=ft.FontWeight.W_600, color="#48a495"))
+            for bullet in bullets:
+                body.append(ft.Text(f"•  {bullet}", size=12, no_wrap=False))
+            body.append(ft.Container(height=6))
+        dialog = ft.AlertDialog(
+            title=ft.Text("What's new", size=16),
+            content=ft.Container(
+                content=ft.Column(body, scroll=ft.ScrollMode.AUTO, spacing=4, tight=True),
+                width=480,
+                height=420,
+            ),
+        )
+        dialog.actions = [ft.TextButton("Close", on_click=lambda _: self.page.close(dialog))]
+        with contextlib.suppress(Exception):
+            self.page.open(dialog)
+
     def _on_toolbar_update_click(self, _e) -> None:
         """Top-nav update button: check when idle, download when available,
-        restart when staged — mirroring the About page button."""
+        restart when staged. The pill label reports the outcome, no snackbar."""
         from puripuly_heart.ui.update_flow import get_update_flow
 
         flow = get_update_flow()
         if flow.state in ("idle", "uptodate", "error"):
-
-            async def _check_and_report() -> None:
-                await flow.check()
-                if flow.state == "uptodate":
-                    with contextlib.suppress(Exception):
-                        self._show_snackbar(
-                            flow.status_text or "Up to date.",
-                            ft.Colors.GREEN_700,
-                            duration=4000,
-                        )
-
-            self.page.run_task(_check_and_report)
+            self.page.run_task(flow.check)
         elif flow.state == "available":
             flow.auto_initiated = False
             self.page.run_task(flow.download)

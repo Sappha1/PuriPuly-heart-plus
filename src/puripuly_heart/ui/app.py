@@ -346,26 +346,52 @@ class TranslatorApp:
 
         _notified_marker = default_settings_path().parent / "update_notified.txt"
 
-        def _maybe_announce_available() -> None:
-            remote = flow.remote
-            if remote is None or not flow.comparable or flow.last_error:
-                return
-            build = int(getattr(remote, "build", 0) or 0)
-            if build <= 0:
-                return
+        def _auto_download_enabled() -> bool:
+            s = getattr(self.controller, "settings", None)
+            return bool(getattr(getattr(s, "ui", None), "auto_download_updates", True))
+
+        _auto_download_attempted = {"done": False}
+
+        def _already_notified(build: int) -> bool:
             try:
-                if _notified_marker.read_text(encoding="utf-8").strip() == str(build):
-                    return
+                return _notified_marker.read_text(encoding="utf-8").strip() == str(build)
             except Exception:
-                pass
+                return False
+
+        def _mark_notified(build: int) -> None:
             with contextlib.suppress(Exception):
                 _notified_marker.write_text(str(build), encoding="utf-8")
-            tag = remote.tag or f"r{build}"
+
+        def _remote_build_and_tag() -> tuple[int, str]:
+            remote = flow.remote
+            build = int(getattr(remote, "build", 0) or 0) if remote is not None else 0
+            tag = (getattr(remote, "tag", "") or (f"r{build}" if build > 0 else "")) if remote is not None else ""
+            return build, tag
+
+        def _maybe_announce_available() -> None:
+            if flow.remote is None or not flow.comparable or flow.last_error:
+                return
+            build, tag = _remote_build_and_tag()
+            if build <= 0 or _already_notified(build):
+                return
+            _mark_notified(build)
             with contextlib.suppress(Exception):
                 self._show_snackbar(
                     t("update.available_snackbar", tag=tag),
                     ft.Colors.GREEN_700,
                     duration=6000,
+                )
+
+        def _maybe_announce_ready() -> None:
+            build, tag = _remote_build_and_tag()
+            if build <= 0 or _already_notified(build):
+                return
+            _mark_notified(build)
+            with contextlib.suppress(Exception):
+                self._show_snackbar(
+                    t("update.ready_snackbar", tag=tag),
+                    ft.Colors.GREEN_700,
+                    duration=8000,
                 )
 
         def _on_flow_notice(kind: str, detail: str) -> None:
@@ -394,21 +420,36 @@ class TranslatorApp:
                 flow.state, flow.progress, flow.sidebar_visible(), flow.sidebar_tooltip()
             )
             if flow.state == "available":
-                _maybe_announce_available()
-            # One-click update: the moment the download is staged, restart and
-            # apply — no second press on a restart button. (launch_restart guards
-            # on state=="ready", so the re-entrant notify can't double-fire.)
+                if (
+                    _auto_download_enabled()
+                    and not flow.last_error
+                    and not _auto_download_attempted["done"]
+                ):
+                    # Default behavior: fetch the update in the background so the
+                    # button goes straight to "restart". One attempt per run — a
+                    # failure leaves the button for a manual retry.
+                    _auto_download_attempted["done"] = True
+                    with contextlib.suppress(Exception):
+                        self.page.run_task(flow.download_auto)
+                elif not _auto_download_enabled():
+                    _maybe_announce_available()
             if flow.state == "ready":
-                _restart_and_close()
+                if flow.auto_initiated:
+                    # Auto-downloaded: never restart on our own — tell the user
+                    # the restart button is armed and let them press it.
+                    _maybe_announce_ready()
+                else:
+                    # User-initiated download: finish the one-click update.
+                    _restart_and_close()
 
         flow.add_listener(_sync)
         _sync()
 
         def _on_update_click() -> None:
             if flow.state == "available":
+                flow.auto_initiated = False
                 self.page.run_task(flow.download)
             elif flow.state == "ready":
-                # Fallback path — normally auto-restart already handled it.
                 _restart_and_close()
 
         self.view_dashboard.on_update_click = _on_update_click

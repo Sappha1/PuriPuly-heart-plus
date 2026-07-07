@@ -848,6 +848,10 @@ class UiSettings:
     # (and therefore VRChat VR sessions). Applied via the overlay exe's
     # --set-autolaunch one-shot; requires SteamVR running to (un)register.
     autolaunch_with_steamvr: bool = False
+    # Download new builds in the background as soon as the launch check finds
+    # one, so the sidebar button goes straight to "restart". Off = the button
+    # asks before downloading.
+    auto_download_updates: bool = True
     self_in_overlay: bool = True
     typed_in_overlay: bool = True
     filter_peer_by_target_languages: bool = False
@@ -1588,6 +1592,7 @@ def to_dict(settings: AppSettings) -> dict[str, Any]:
             "pinyin_word_grouping": settings.ui.pinyin_word_grouping,
             "chatbox_reading_only": settings.ui.chatbox_reading_only,
             "autolaunch_with_steamvr": settings.ui.autolaunch_with_steamvr,
+            "auto_download_updates": settings.ui.auto_download_updates,
             "self_in_overlay": settings.ui.self_in_overlay,
             "typed_in_overlay": settings.ui.typed_in_overlay,
             # Persisted so the overlay/peer toggles are restored on next launch.
@@ -3880,6 +3885,7 @@ def from_dict(data: dict[str, Any]) -> AppSettings:
             pinyin_word_grouping=bool(ui_data.get("pinyin_word_grouping", True)),
             chatbox_reading_only=bool(ui_data.get("chatbox_reading_only", False)),
             autolaunch_with_steamvr=bool(ui_data.get("autolaunch_with_steamvr", False)),
+            auto_download_updates=bool(ui_data.get("auto_download_updates", True)),
             self_in_overlay=bool(ui_data.get("self_in_overlay", True)),
             typed_in_overlay=bool(ui_data.get("typed_in_overlay", True)),
             filter_peer_by_target_languages=bool(ui_data.get("filter_peer_by_target_languages", False)),

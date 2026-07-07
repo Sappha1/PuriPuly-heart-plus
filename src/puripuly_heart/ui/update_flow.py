@@ -60,6 +60,10 @@ class UpdateFlow:
         self.comparable: bool = True  # False when the release has no version.json
         self.staged_root: Path | None = None
         self.last_error: str = ""  # last failed download reason (retry hint)
+        # True when the running download was started automatically at launch
+        # (auto-download setting) rather than by a user click — an auto download
+        # must NOT auto-restart the app when it finishes staging.
+        self.auto_initiated: bool = False
         # Optional UI notice hook: (kind, detail). Wired by the app to snackbars.
         self.on_notice: Callable[[str, str], None] | None = None
         self._listeners: list[Callable[[], None]] = []
@@ -95,6 +99,16 @@ class UpdateFlow:
         if self.state in ("downloading", "ready", "restarting"):
             return True
         return self.state == "available" and self.comparable
+
+    async def download_auto(self) -> None:
+        """Background auto-download at launch — same as download() but flagged
+        so the UI shows a restart button instead of restarting on its own."""
+        self.auto_initiated = True
+        try:
+            await self.download()
+        finally:
+            if self.state != "ready":
+                self.auto_initiated = False
 
     def sidebar_tooltip(self) -> str:
         if self.state == "available":

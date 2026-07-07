@@ -1411,6 +1411,16 @@ class SettingsView(ft.Column):
             ),
             value=self._steamvr_autolaunch_text,
         )
+        self._auto_download_updates_text = self._build_clickable_text(
+            t("settings.option.on"),
+            self._on_auto_download_updates_click,
+        )
+        auto_download_updates_card = self._wrap_unit_card(
+            title=self._info_title_keyed(
+                "settings.auto_download_updates", "settings.auto_download_updates.tooltip"
+            ),
+            value=self._auto_download_updates_text,
+        )
         self._filter_peer_lang_text = self._build_clickable_text(
             t("settings.filter_peer_by_target_languages.off"),
             self._on_filter_peer_lang_click,
@@ -1448,6 +1458,7 @@ class SettingsView(ft.Column):
                     chatbox_send_peer_card,
                     self_in_overlay_card,
                     steamvr_autolaunch_card,
+                    auto_download_updates_card,
                 ],
                 spacing=0,
             )
@@ -3054,6 +3065,9 @@ class SettingsView(ft.Column):
         )
         self._steamvr_autolaunch_text.content.value = t(
             "settings.option.on" if bool(getattr(settings.ui, "autolaunch_with_steamvr", False)) else "settings.option.off"
+        )
+        self._auto_download_updates_text.content.value = t(
+            "settings.option.on" if bool(getattr(settings.ui, "auto_download_updates", True)) else "settings.option.off"
         )
         # Prompt
         provider_name = self._active_prompt_key()
@@ -4975,6 +4989,18 @@ class SettingsView(ft.Column):
             self._steamvr_autolaunch_text.update()
         self._emit_settings_changed()
 
+    def _on_auto_download_updates_click(self, e) -> None:
+        if not self._settings:
+            return
+        new_value = not bool(getattr(self._settings.ui, "auto_download_updates", True))
+        self._settings.ui.auto_download_updates = new_value
+        self._auto_download_updates_text.content.value = t(
+            "settings.option.on" if new_value else "settings.option.off"
+        )
+        if self.page:
+            self._auto_download_updates_text.update()
+        self._emit_settings_changed()
+
     def _on_live_preview_click(self, e) -> None:
         if not self._settings:
             return
@@ -5223,6 +5249,7 @@ class SettingsView(ft.Column):
                 (getattr(self, "_live_preview_text", None), "settings.option.on" if bool(getattr(_ui, "show_pending_echo", True)) else "settings.option.off"),
                 (getattr(self, "_chatbox_send_peer_text", None), "settings.option.on" if bool(getattr(_ui, "chatbox_send_peer", False)) else "settings.option.off"),
                 (getattr(self, "_steamvr_autolaunch_text", None), "settings.option.on" if bool(getattr(_ui, "autolaunch_with_steamvr", False)) else "settings.option.off"),
+                (getattr(self, "_auto_download_updates_text", None), "settings.option.on" if bool(getattr(_ui, "auto_download_updates", True)) else "settings.option.off"),
             ]
             for _ctrl, _key in _onoff_labels:
                 _content = getattr(_ctrl, "content", None)

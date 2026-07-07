@@ -145,6 +145,8 @@ class RemoteBuild:
     zip_size: int
     # Short user-facing changelog bullets shipped in version.json ("notes").
     notes: tuple = ()
+    # Release date string from version.json ("date", e.g. "2026-07-07").
+    date: str = ""
 
 
 async def fetch_remote_build() -> RemoteBuild | None:
@@ -180,6 +182,7 @@ async def fetch_remote_build() -> RemoteBuild | None:
             build = -1
             tag = ""
             notes: tuple = ()
+            date = ""
             if version_url:
                 v_resp = await client.get(version_url)
                 if v_resp.status_code == 200:
@@ -189,6 +192,7 @@ async def fetch_remote_build() -> RemoteBuild | None:
                         v_data = json.loads(v_resp.text.lstrip("﻿"))
                         build = int(v_data.get("build", -1))
                         tag = str(v_data.get("tag", ""))
+                        date = str(v_data.get("date", "")).strip()
                         raw_notes = v_data.get("notes", [])
                         if isinstance(raw_notes, list):
                             notes = tuple(
@@ -197,7 +201,8 @@ async def fetch_remote_build() -> RemoteBuild | None:
                     except Exception:
                         pass
             return RemoteBuild(
-                build=build, tag=tag, zip_url=zip_url, zip_size=zip_size, notes=notes
+                build=build, tag=tag, zip_url=zip_url, zip_size=zip_size,
+                notes=notes, date=date,
             )
     except Exception as exc:
         logger.debug(f"fetch_remote_build failed: {exc}")

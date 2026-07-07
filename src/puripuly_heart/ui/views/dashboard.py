@@ -15,7 +15,7 @@ from puripuly_heart.ui.fonts import font_for_language
 from puripuly_heart.ui.i18n import get_locale, language_name, t
 from puripuly_heart.ui.overlay_peer_contract import OverlayPeerConsumerContract
 
-_BUILD_TAG = "r236"  #increment each build so user can confirm version
+_BUILD_TAG = "r237"  #increment each build so user can confirm version
 
 # ── VRCT-style dark palette ──────────────────────────────────────────────────
 _BG_MAIN = "#2e2f32"
@@ -292,13 +292,15 @@ class _UpdateNavBtn(ft.Container):
     def __init__(self, *, on_click):
         # Sized to match the settings gear button exactly (44x40 slot) so the
         # bottom nav row reads as one consistent set of controls.
-        self._icon = ft.Icon(ft.Icons.DOWNLOAD, size=19, color=_TOGGLE_ON)
+        # Visual mass matches the bare 20px settings gear glyph next to it: a
+        # 26px box/ring, not the 32px it used to be (which read oversized).
+        self._icon = ft.Icon(ft.Icons.DOWNLOAD, size=16, color=_TOGGLE_ON)
         self._ring = ft.ProgressRing(
-            value=0, width=32, height=32, stroke_width=2.5,
+            value=0, width=26, height=26, stroke_width=2,
             color=_TOGGLE_WARNING, bgcolor="#3f4044", visible=False,
         )
         self._inner = ft.Container(
-            content=self._icon, width=32, height=32, border_radius=7,
+            content=self._icon, width=26, height=26, border_radius=6,
             alignment=ft.alignment.center,
             bgcolor="#2e4a45", border=ft.border.all(1, _TOGGLE_ON),
         )
@@ -335,21 +337,21 @@ class _UpdateNavBtn(ft.Container):
             self._inner.bgcolor = ft.Colors.TRANSPARENT
             self._inner.border = None
             self._icon.name = ft.Icons.ARROW_DOWNWARD
-            self._icon.size = 14
+            self._icon.size = 12
             self._icon.color = _TOGGLE_WARNING
         elif state in ("ready", "restarting"):
             self._ring.visible = False
             self._inner.bgcolor = _TOGGLE_ON
             self._inner.border = None
             self._icon.name = ft.Icons.RESTART_ALT
-            self._icon.size = 19
+            self._icon.size = 16
             self._icon.color = "#10322d"
         else:  # available (any hidden state renders the same defaults)
             self._ring.visible = False
             self._inner.bgcolor = "#2e4a45"
             self._inner.border = ft.border.all(1, _TOGGLE_ON)
             self._icon.name = ft.Icons.DOWNLOAD
-            self._icon.size = 19
+            self._icon.size = 16
             self._icon.color = _TOGGLE_ON
         try:
             if self.page:

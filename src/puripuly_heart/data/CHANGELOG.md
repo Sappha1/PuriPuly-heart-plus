@@ -2,6 +2,10 @@
 
 User-facing changes per build. The latest build's highlights also appear in-app when an update is ready.
 
+## r237 — 2026-07-07
+- The sidebar update button is now truly gear-sized (the ring drew oversized).
+- The update popup title shows the release date.
+
 ## r236 — 2026-07-07
 - Update check button moved to the top toolbar (far right), with the description as its tooltip.
 - New "What's new" button on the About page shows this changelog with dates.

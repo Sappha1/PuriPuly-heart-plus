@@ -413,13 +413,16 @@ class TranslatorApp:
                     body.append(ft.Text(f"•  {note}", size=13))
             else:
                 body.append(ft.Text(t("update.dialog.no_notes"), size=13))
+            title_text = t(
+                "update.dialog.title_ready" if ready else "update.dialog.title_available",
+                tag=tag,
+            )
+            date = str(getattr(flow.remote, "date", "") or "")
+            if date:
+                title_text = f"{title_text} — {date}"
             dialog = ft.AlertDialog(
                 modal=False,
-                title=ft.Text(
-                    t("update.dialog.title_ready" if ready else "update.dialog.title_available",
-                      tag=tag),
-                    size=16,
-                ),
+                title=ft.Text(title_text, size=16),
                 content=ft.Column(body, tight=True, spacing=6, width=420),
             )
 

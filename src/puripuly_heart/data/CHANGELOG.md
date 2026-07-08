@@ -2,7 +2,8 @@
 
 User-facing changes per build. The latest build's highlights also appear in-app when an update is ready.
 
-## r240 — 2026-07-07
+## r241 — 2026-07-07
+- Clear moved from the chat header into a right-click menu on the chat area.
 - The header-bar update buttons ("Check for updates", "What's new", and all their states) are now translated in all four UI languages and switch language live.
 
 ## r239 — 2026-07-07

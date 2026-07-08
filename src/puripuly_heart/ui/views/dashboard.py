@@ -15,7 +15,7 @@ from puripuly_heart.ui.fonts import font_for_language
 from puripuly_heart.ui.i18n import get_locale, language_name, t
 from puripuly_heart.ui.overlay_peer_contract import OverlayPeerConsumerContract
 
-_BUILD_TAG = "r245"  #increment each build so user can confirm version
+_BUILD_TAG = "r246"  #increment each build so user can confirm version
 
 # ── VRCT-style dark palette ──────────────────────────────────────────────────
 _BG_MAIN = "#2e2f32"
@@ -304,6 +304,8 @@ class _UpdateNavBtn(ft.Container):
             alignment=ft.alignment.center,
             bgcolor="#2e4a45", border=ft.border.all(1, _TOGGLE_ON),
         )
+        self._on_click_cb = on_click
+        self._active = False
         super().__init__(
             content=ft.Stack(
                 [
@@ -315,12 +317,22 @@ class _UpdateNavBtn(ft.Container):
             width=44, height=40,
             border_radius=6,
             bgcolor=ft.Colors.TRANSPARENT,
-            visible=False,
-            on_click=on_click,
+            # The 44x40 slot is ALWAYS laid out; hiding is done via opacity so
+            # the gear next to it never shifts when the button appears.
+            visible=True,
+            opacity=0.0,
+            disabled=True,
+            on_click=self._handle_click,
             on_hover=self._on_hover,
         )
 
+    def _handle_click(self, e) -> None:
+        if self._active and callable(self._on_click_cb):
+            self._on_click_cb(e)
+
     def _on_hover(self, e):
+        if not self._active:
+            return
         self.bgcolor = _BG_ROW_HOVER if e.data == "true" else ft.Colors.TRANSPARENT
         try:
             self.update()
@@ -328,8 +340,12 @@ class _UpdateNavBtn(ft.Container):
             pass
 
     def set_flow(self, state: str, progress: float, visible: bool, tooltip: str) -> None:
-        self.visible = visible
-        self.tooltip = tooltip or None
+        self._active = bool(visible)
+        self.opacity = 1.0 if visible else 0.0
+        self.disabled = not visible
+        self.tooltip = (tooltip or None) if visible else None
+        if not visible:
+            self.bgcolor = ft.Colors.TRANSPARENT
         if state == "downloading":
             self._ring.visible = True
             # Floor keeps the arc visible from the first pixel of progress.

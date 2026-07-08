@@ -2,6 +2,9 @@
 
 User-facing changes per build. The latest build's highlights also appear in-app when an update is ready.
 
+## r246 — 2026-07-07
+- The settings gear no longer shifts when the update button appears — the button's slot is always reserved.
+
 ## r245 — 2026-07-07
 - The update popup no longer disappears from a stray click outside it — it stays until you pick "Later" or "Restart now".
 - The status banner now sits attached across the top of the chat box instead of floating loose over it.

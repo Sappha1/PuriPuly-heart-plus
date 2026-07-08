@@ -4,6 +4,7 @@ User-facing changes per build. The latest build's highlights also appear in-app 
 
 ## r245 — 2026-07-07
 - The update popup no longer disappears from a stray click outside it — it stays until you pick "Later" or "Restart now".
+- The status banner now sits attached across the top of the chat box instead of floating loose over it.
 
 ## r244 — 2026-07-07
 - The status banner (e.g. "Loading speech model") now floats over the top of the chat instead of pushing the chat header and messages down.

@@ -1065,14 +1065,13 @@ class DashboardView(ft.Row):
                 spacing=6,
                 vertical_alignment=ft.CrossAxisAlignment.CENTER,
             ),
-            # Solid background + toned border: the strip floats over the chat
-            # text, so a translucent tint would let messages bleed through.
+            # Attached bar across the top of the chat box: solid background,
+            # square corners, toned bottom border — part of the frame, not a
+            # floating chip.
             bgcolor="#2b3032",
-            border=ft.border.all(1, ft.Colors.with_opacity(0.55, _TOGGLE_WARNING)),
-            border_radius=6,
+            border=ft.border.only(bottom=ft.BorderSide(1, ft.Colors.with_opacity(0.55, _TOGGLE_WARNING))),
             padding=ft.padding.symmetric(horizontal=10, vertical=6),
             visible=False,
-            shadow=ft.BoxShadow(blur_radius=8, color="#00000066"),
         )
 
         # ── Chat log ─────────────────────────────────────────────────────────
@@ -1245,34 +1244,44 @@ class DashboardView(ft.Row):
         # The message list (SelectionArea enables free Copy/Select-all of log text) plus
         # the floating jump button, stacked so the button overlays the bottom-center.
         chat_box = ft.Container(
-            content=ft.Stack(
+            content=ft.Column(
                 [
+                    # Notice banner is attached to the top edge of the chat box
+                    # (full width, square corners, bottom border) — inside the
+                    # box so it never pushes the chat header or panel around;
+                    # only the messages reflow beneath it.
+                    self._notice_strip,
                     ft.Container(
-                        left=0, top=0, right=0, bottom=0,
-                        # No custom right-click here: Flutter's native selection
-                        # menu (Select all) can't be suppressed or extended from
-                        # Flet, so an app menu on the same click doubles up.
-                        content=ft.SelectionArea(content=self._chat_list_view),
-                    ),
-                    ft.Container(
-                        left=0, right=0, bottom=6,
-                        alignment=ft.alignment.center,
-                        content=self._chat_jump_btn,
-                    ),
-                    # Notice banner floats over the top of the chat area instead
-                    # of living in the outer column — appearing/disappearing must
-                    # not push the chat header and messages down.
-                    ft.Container(
-                        left=2, right=2, top=2,
-                        content=self._notice_strip,
+                        content=ft.Stack(
+                            [
+                                ft.Container(
+                                    left=0, top=0, right=0, bottom=0,
+                                    # No custom right-click here: Flutter's native
+                                    # selection menu (Select all) can't be suppressed
+                                    # or extended from Flet, so an app menu on the
+                                    # same click doubles up.
+                                    content=ft.SelectionArea(content=self._chat_list_view),
+                                ),
+                                ft.Container(
+                                    left=0, right=0, bottom=6,
+                                    alignment=ft.alignment.center,
+                                    content=self._chat_jump_btn,
+                                ),
+                            ],
+                            expand=True,
+                        ),
+                        padding=ft.padding.all(8),
+                        expand=True,
                     ),
                 ],
+                spacing=0,
                 expand=True,
+                horizontal_alignment=ft.CrossAxisAlignment.STRETCH,
             ),
             expand=True,
             bgcolor=_BG_CHAT,
             border_radius=6,
-            padding=ft.padding.all(8),
+            clip_behavior=ft.ClipBehavior.ANTI_ALIAS,
         )
 
         # ── Message input at bottom (VRCT style) ─────────────────────────────
@@ -4080,9 +4089,11 @@ class DashboardView(ft.Row):
             )
             self._notice_text_ctrl.value = text
             self._notice_text_ctrl.color = color
-            # Solid bg (the strip floats over chat text); tone lives in the border.
+            # Attached top bar; tone lives in the bottom border.
             self._notice_strip.bgcolor = "#2b3032"
-            self._notice_strip.border = ft.border.all(1, ft.Colors.with_opacity(0.55, color))
+            self._notice_strip.border = ft.border.only(
+                bottom=ft.BorderSide(1, ft.Colors.with_opacity(0.55, color))
+            )
             self._notice_strip.visible = True
             # Show download button when model is missing or download failed
             show_dl = self._local_stt_notice_status in ("missing", "invalid", "download_failed")

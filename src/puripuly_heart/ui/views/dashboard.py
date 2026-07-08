@@ -15,7 +15,7 @@ from puripuly_heart.ui.fonts import font_for_language
 from puripuly_heart.ui.i18n import get_locale, language_name, t
 from puripuly_heart.ui.overlay_peer_contract import OverlayPeerConsumerContract
 
-_BUILD_TAG = "r246"  #increment each build so user can confirm version
+_BUILD_TAG = "r247"  #increment each build so user can confirm version
 
 # ── VRCT-style dark palette ──────────────────────────────────────────────────
 _BG_MAIN = "#2e2f32"
@@ -878,7 +878,10 @@ class DashboardView(ft.Row):
 
         self._sidebar_nav_row = ft.Container(
             content=ft.Row(
-                [gear_btn, self._update_btn],
+                # Invisible counterweight mirrors the update button's reserved
+                # slot so the gear sits dead-center whether or not an update is
+                # showing; the update button fades in to the gear's right.
+                [ft.Container(width=44, height=40), gear_btn, self._update_btn],
                 spacing=6,
                 alignment=ft.MainAxisAlignment.CENTER,
                 vertical_alignment=ft.CrossAxisAlignment.CENTER,

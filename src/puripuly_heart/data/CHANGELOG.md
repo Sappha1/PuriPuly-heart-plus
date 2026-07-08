@@ -2,6 +2,9 @@
 
 User-facing changes per build. The latest build's highlights also appear in-app when an update is ready.
 
+## r247 — 2026-07-07
+- The settings gear now stays dead-center; the update button fades in to its right without moving anything.
+
 ## r246 — 2026-07-07
 - The settings gear no longer shifts when the update button appears — the button's slot is always reserved.
 

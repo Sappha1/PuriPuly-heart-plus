@@ -2,6 +2,9 @@
 
 User-facing changes per build. The latest build's highlights also appear in-app when an update is ready.
 
+## r240 — 2026-07-07
+- The header-bar update buttons ("Check for updates", "What's new", and all their states) are now translated in all four UI languages and switch language live.
+
 ## r239 — 2026-07-07
 - Update downloads no longer pile up on disk: the zip is deleted the moment it's unpacked, and leftovers from past updates are cleaned at every launch (previously only when the About page was opened).
 

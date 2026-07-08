@@ -281,8 +281,9 @@ class TranslatorApp:
 
         toolbar_upd_flow = get_update_flow()
         upd_supported = is_self_update_supported() or dev_fake_update_enabled()
+        self._hdr_upd_supported = upd_supported
         self._hdr_upd_label = ft.Text(
-            "Check for updates", size=12, color=_ON, weight=ft.FontWeight.W_600
+            t("update.hdr.check"), size=12, color=_ON, weight=ft.FontWeight.W_600
         )
         self._hdr_upd_btn = ft.Container(
             content=self._hdr_upd_label,
@@ -294,33 +295,41 @@ class TranslatorApp:
             tooltip=t("update.toolbar.tooltip") if upd_supported
             else "Available in the packaged app only",
         )
-        hdr_whatsnew_btn = ft.Container(
-            content=ft.Text("What's new", size=12, color=_OFF, weight=ft.FontWeight.W_600),
+        self._hdr_whatsnew_text = ft.Text(
+            t("update.whatsnew"), size=12, color=_OFF, weight=ft.FontWeight.W_600
+        )
+        self._hdr_whatsnew_btn = ft.Container(
+            content=self._hdr_whatsnew_text,
             border=ft.border.all(1, "#4a4b4f"),
             border_radius=8,
             padding=ft.padding.symmetric(horizontal=12, vertical=6),
             on_click=self._open_changelog_dialog,
-            tooltip="Every version's changes, newest first",
+            tooltip=t("update.whatsnew.tooltip"),
         )
+        hdr_whatsnew_btn = self._hdr_whatsnew_btn
 
         def _hdr_upd_sync() -> None:
+            from puripuly_heart.core.updater import current_build_number
+
             state = toolbar_upd_flow.state
             if state == "available":
-                label = "Download & restart"
+                label = t("update.dialog.download_restart")
             elif state == "downloading":
-                label = f"Downloading… {int(toolbar_upd_flow.progress * 100)}%"
+                label = t("update.hdr.downloading",
+                          percent=int(toolbar_upd_flow.progress * 100))
             elif state == "checking":
-                label = "Checking…"
+                label = t("update.hdr.checking")
             elif state == "uptodate":
-                label = (toolbar_upd_flow.status_text or "Up to date").rstrip(".")
+                build = current_build_number()
+                label = t("update.hdr.uptodate", tag=f"r{build}" if build else "—")
             elif state == "ready":
-                label = "Restart & update"
+                label = t("update.hdr.restart")
             elif state == "restarting":
-                label = "Restarting…"
+                label = t("update.hdr.restarting")
             elif state == "error":
-                label = "Retry update"
+                label = t("update.hdr.retry")
             else:
-                label = "Check for updates"
+                label = t("update.hdr.check")
             actionable = state in ("available", "ready")
             self._hdr_upd_label.value = label
             self._hdr_upd_btn.border = ft.border.all(1, _ON if actionable else "#4a4b4f")
@@ -332,6 +341,8 @@ class TranslatorApp:
                 if self._hdr_upd_btn.page:
                     self._hdr_upd_btn.update()
 
+        # Kept for apply_locale so a UI-language switch re-renders the labels.
+        self._hdr_upd_sync_fn = _hdr_upd_sync
         toolbar_upd_flow.add_listener(_hdr_upd_sync)
         _hdr_upd_sync()
 
@@ -987,6 +998,15 @@ class TranslatorApp:
         self.view_settings.apply_locale()
         self.refresh_overlay_peer_contract()
         self.view_logs.apply_locale()
+        # Header-bar update controls (built once in _build_layout)
+        with contextlib.suppress(Exception):
+            self._hdr_whatsnew_text.value = t("update.whatsnew")
+            self._hdr_whatsnew_btn.tooltip = t("update.whatsnew.tooltip")
+            if self._hdr_upd_supported:
+                self._hdr_upd_btn.tooltip = t("update.toolbar.tooltip")
+            self._hdr_upd_sync_fn()
+            if self._hdr_whatsnew_btn.page:
+                self._hdr_whatsnew_btn.update()
         debug_preview_panel = getattr(self, "debug_preview_panel", None)
         apply_debug_locale = getattr(debug_preview_panel, "apply_locale", None)
         if callable(apply_debug_locale):
@@ -2044,14 +2064,16 @@ class TranslatorApp:
                 body.append(ft.Text(f"•  {bullet}", size=12, no_wrap=False))
             body.append(ft.Container(height=6))
         dialog = ft.AlertDialog(
-            title=ft.Text("What's new", size=16),
+            title=ft.Text(t("update.whatsnew"), size=16),
             content=ft.Container(
                 content=ft.Column(body, scroll=ft.ScrollMode.AUTO, spacing=4, tight=True),
                 width=480,
                 height=420,
             ),
         )
-        dialog.actions = [ft.TextButton("Close", on_click=lambda _: self.page.close(dialog))]
+        dialog.actions = [
+            ft.TextButton(t("update.whatsnew.close"), on_click=lambda _: self.page.close(dialog))
+        ]
         with contextlib.suppress(Exception):
             self.page.open(dialog)
 

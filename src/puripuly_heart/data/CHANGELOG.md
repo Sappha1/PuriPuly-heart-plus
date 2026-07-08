@@ -2,6 +2,9 @@
 
 User-facing changes per build. The latest build's highlights also appear in-app when an update is ready.
 
+## r245 — 2026-07-07
+- The update popup no longer disappears from a stray click outside it — it stays until you pick "Later" or "Restart now".
+
 ## r244 — 2026-07-07
 - The status banner (e.g. "Loading speech model") now floats over the top of the chat instead of pushing the chat header and messages down.
 - Dropped the "(free)" suffix from translator picker entries — no key required already says it.

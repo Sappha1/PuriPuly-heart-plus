@@ -477,8 +477,11 @@ class TranslatorApp:
             date = str(getattr(flow.remote, "date", "") or "")
             if date:
                 title_text = f"{title_text} — {date}"
+            # modal=True: a stray click (or right-click) outside must not
+            # dismiss it — it shows once per build, so an accidental dismissal
+            # loses the notes. "Later" is always one click away.
             dialog = ft.AlertDialog(
-                modal=False,
+                modal=True,
                 title=ft.Text(title_text, size=16),
                 content=ft.Column(body, tight=True, spacing=6, width=420),
             )

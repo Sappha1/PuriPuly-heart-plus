@@ -2,6 +2,9 @@
 
 User-facing changes per build. The latest build's highlights also appear in-app when an update is ready.
 
+## r239 — 2026-07-07
+- Update downloads no longer pile up on disk: the zip is deleted the moment it's unpacked, and leftovers from past updates are cleaned at every launch (previously only when the About page was opened).
+
 ## r238 — 2026-07-07
 - Update controls moved fully to the header bar: a labeled "Check for updates" button that shows live progress, next to "What's new".
 - The Updates card is gone from the About page.

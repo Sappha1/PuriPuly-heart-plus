@@ -13,6 +13,7 @@ States: idle → checking → (uptodate | available | error)
 from __future__ import annotations
 
 import asyncio
+import contextlib
 import logging
 import os
 import time
@@ -224,6 +225,10 @@ class UpdateFlow:
                 except Exception:
                     pass
             return
+        # The staged tree is all the swap needs — drop the ~280 MB zip right
+        # away instead of letting it sit until the next startup sweep.
+        with contextlib.suppress(Exception):
+            zip_path.unlink()
         self.staged_root = staged
         self._set("ready",
                   status="Update downloaded. The app will close, apply the update, "

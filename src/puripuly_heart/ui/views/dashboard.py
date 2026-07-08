@@ -15,7 +15,7 @@ from puripuly_heart.ui.fonts import font_for_language
 from puripuly_heart.ui.i18n import get_locale, language_name, t
 from puripuly_heart.ui.overlay_peer_contract import OverlayPeerConsumerContract
 
-_BUILD_TAG = "r242"  #increment each build so user can confirm version
+_BUILD_TAG = "r243"  #increment each build so user can confirm version
 
 # ── VRCT-style dark palette ──────────────────────────────────────────────────
 _BG_MAIN = "#2e2f32"
@@ -2732,6 +2732,9 @@ class DashboardView(ft.Row):
             needs_key = m in _NEEDS_KEY and not self._translator_model_has_key.get(m.value, False)
             desc = t("settings_modal.requires_api_key") if needs_key else ""
             options.append(OptionItem(value=m.value, label=_LABELS.get(m, m.value), description=desc, disabled=needs_key))
+        # Usable options first; greyed-out ones sink below (stable sort keeps
+        # each group's original order).
+        options.sort(key=lambda o: o.disabled)
         # Prefer the live model from settings so the highlight is always accurate,
         # even if the cached label value drifted (e.g. a temporary fallback).
         current_val = ""
@@ -2796,6 +2799,9 @@ class DashboardView(ft.Row):
                     language=language_name(for_language),
                 )
             options.append(OptionItem(value=p.value, label=provider_label(p.value), description=desc, disabled=disabled))
+        # Usable options first; greyed-out ones sink below (stable sort keeps
+        # each group's original order).
+        options.sort(key=lambda o: o.disabled)
         return options
 
     def set_stt_key_flags(self, flags: dict) -> None:

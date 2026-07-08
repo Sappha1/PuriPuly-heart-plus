@@ -2,6 +2,9 @@
 
 User-facing changes per build. The latest build's highlights also appear in-app when an update is ready.
 
+## r243 — 2026-07-07
+- Model pickers (translator and speech) now list usable options first; greyed-out ones sit at the bottom.
+
 ## r242 — 2026-07-07
 - Reverted the chat right-click Clear menu: it doubled up with the system's Select-all popup. Clear is back in the chat header.
 

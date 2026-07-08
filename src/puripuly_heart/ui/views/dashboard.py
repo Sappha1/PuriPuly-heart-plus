@@ -2724,9 +2724,9 @@ class DashboardView(ft.Row):
             TranslationModel.GEMINI_31_FLASH_LITE: "Gemini 3.1 Flash-Lite",
             TranslationModel.QWEN_35_PLUS: "Qwen 3.5 Plus",
             TranslationModel.DEEPL: "DeepL",
-            TranslationModel.GOOGLE_TRANSLATE: "Google Translate (free)",
-            TranslationModel.BING: "Bing (free)",
-            TranslationModel.PAPAGO: "Papago (free)",
+            TranslationModel.GOOGLE_TRANSLATE: "Google Translate",
+            TranslationModel.BING: "Bing",
+            TranslationModel.PAPAGO: "Papago",
             TranslationModel.LOCAL_LLM: "Local LLMs",
         }
         # Models that require an API key (no managed/free fallback)

@@ -2,6 +2,9 @@
 
 User-facing changes per build. The latest build's highlights also appear in-app when an update is ready.
 
+## r244 — 2026-07-07
+- The status banner (e.g. "Loading speech model") now floats over the top of the chat instead of pushing the chat header and messages down.
+
 ## r243 — 2026-07-07
 - Model pickers (translator and speech) now list usable options first; greyed-out ones sit at the bottom.
 

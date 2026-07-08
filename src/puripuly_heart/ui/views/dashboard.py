@@ -15,7 +15,7 @@ from puripuly_heart.ui.fonts import font_for_language
 from puripuly_heart.ui.i18n import get_locale, language_name, t
 from puripuly_heart.ui.overlay_peer_contract import OverlayPeerConsumerContract
 
-_BUILD_TAG = "r243"  #increment each build so user can confirm version
+_BUILD_TAG = "r244"  #increment each build so user can confirm version
 
 # ── VRCT-style dark palette ──────────────────────────────────────────────────
 _BG_MAIN = "#2e2f32"
@@ -1065,10 +1065,14 @@ class DashboardView(ft.Row):
                 spacing=6,
                 vertical_alignment=ft.CrossAxisAlignment.CENTER,
             ),
-            bgcolor=ft.Colors.with_opacity(0.15, _TOGGLE_WARNING),
+            # Solid background + toned border: the strip floats over the chat
+            # text, so a translucent tint would let messages bleed through.
+            bgcolor="#2b3032",
+            border=ft.border.all(1, ft.Colors.with_opacity(0.55, _TOGGLE_WARNING)),
             border_radius=6,
             padding=ft.padding.symmetric(horizontal=10, vertical=6),
             visible=False,
+            shadow=ft.BoxShadow(blur_radius=8, color="#00000066"),
         )
 
         # ── Chat log ─────────────────────────────────────────────────────────
@@ -1255,6 +1259,13 @@ class DashboardView(ft.Row):
                         alignment=ft.alignment.center,
                         content=self._chat_jump_btn,
                     ),
+                    # Notice banner floats over the top of the chat area instead
+                    # of living in the outer column — appearing/disappearing must
+                    # not push the chat header and messages down.
+                    ft.Container(
+                        left=2, right=2, top=2,
+                        content=self._notice_strip,
+                    ),
                 ],
                 expand=True,
             ),
@@ -1311,7 +1322,6 @@ class DashboardView(ft.Row):
         right_panel = ft.Container(
             content=ft.Column(
                 [
-                    self._notice_strip,
                     chat_header,
                     chat_box,
                     ft.Divider(height=1, color=_DIVIDER, thickness=1),
@@ -4070,7 +4080,9 @@ class DashboardView(ft.Row):
             )
             self._notice_text_ctrl.value = text
             self._notice_text_ctrl.color = color
-            self._notice_strip.bgcolor = ft.Colors.with_opacity(0.15, color)
+            # Solid bg (the strip floats over chat text); tone lives in the border.
+            self._notice_strip.bgcolor = "#2b3032"
+            self._notice_strip.border = ft.border.all(1, ft.Colors.with_opacity(0.55, color))
             self._notice_strip.visible = True
             # Show download button when model is missing or download failed
             show_dl = self._local_stt_notice_status in ("missing", "invalid", "download_failed")

@@ -15,7 +15,7 @@ from puripuly_heart.ui.fonts import font_for_language
 from puripuly_heart.ui.i18n import get_locale, language_name, t
 from puripuly_heart.ui.overlay_peer_contract import OverlayPeerConsumerContract
 
-_BUILD_TAG = "r241"  #increment each build so user can confirm version
+_BUILD_TAG = "r242"  #increment each build so user can confirm version
 
 # ── VRCT-style dark palette ──────────────────────────────────────────────────
 _BG_MAIN = "#2e2f32"
@@ -1094,6 +1094,15 @@ class DashboardView(ft.Row):
             # its content — the narrow-box "bad theme" regression vs the old ListView).
             horizontal_alignment=ft.CrossAxisAlignment.STRETCH,
         )
+        self._chat_clear_button = ft.TextButton(
+            t("dashboard.clear") if t("dashboard.clear") != "dashboard.clear" else "Clear",
+            style=ft.ButtonStyle(
+                color={ft.ControlState.DEFAULT: _TEXT_FAINT, ft.ControlState.HOVERED: _TEXT_MUTED},
+                overlay_color=ft.Colors.TRANSPARENT,
+                padding=ft.padding.all(0),
+            ),
+            on_click=self._on_chat_clear,
+        )
         _pill_border_off = ft.border.all(1, "#3a3b3f")
         _pill_border_on = ft.border.all(1, _TOGGLE_ON)
         _pill_border_peer = ft.border.all(1, _RECV_COLOR)
@@ -1209,6 +1218,8 @@ class DashboardView(ft.Row):
                 ),
                 ft.Container(width=4),
                 self._overlay_header_btn,
+                ft.Container(width=4),
+                self._chat_clear_button,
             ],
             vertical_alignment=ft.CrossAxisAlignment.CENTER,
             spacing=0,
@@ -1234,12 +1245,10 @@ class DashboardView(ft.Row):
                 [
                     ft.Container(
                         left=0, top=0, right=0, bottom=0,
-                        # Right-click anywhere in the chat opens the app's own
-                        # menu (Clear). Drag-select + Ctrl+C copying still work.
-                        content=ft.GestureDetector(
-                            content=ft.SelectionArea(content=self._chat_list_view),
-                            on_secondary_tap_down=self._on_chat_right_click,
-                        ),
+                        # No custom right-click here: Flutter's native selection
+                        # menu (Select all) can't be suppressed or extended from
+                        # Flet, so an app menu on the same click doubles up.
+                        content=ft.SelectionArea(content=self._chat_list_view),
                     ),
                     ft.Container(
                         left=0, right=0, bottom=6,
@@ -2171,12 +2180,6 @@ class DashboardView(ft.Row):
     def set_filter_peer_by_target_languages(self, enabled: bool) -> None:
         self._filter_peer_lang_active = bool(enabled)
         self._refresh_filter_peer_btn()
-
-    def _on_chat_right_click(self, e) -> None:
-        x, y = self._tap_xy(e)
-        self._open_context_menu(
-            x, y, [(t("dashboard.clear"), None, lambda: self._on_chat_clear(None))]
-        )
 
     def _on_chat_clear(self, e) -> None:
         if self._chat_list_view is None:
@@ -4135,6 +4138,13 @@ class DashboardView(ft.Row):
             _peer_lbl.value = t("dashboard.language.peer")
             try:
                 _peer_lbl.update()
+            except Exception:
+                pass
+        _clear_btn = getattr(self, "_chat_clear_button", None)
+        if _clear_btn is not None:
+            _clear_btn.text = t("dashboard.clear")
+            try:
+                _clear_btn.update()
             except Exception:
                 pass
         for _hdr, _key in getattr(self, "_section_header_labels", []):

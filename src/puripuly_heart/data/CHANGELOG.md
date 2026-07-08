@@ -2,6 +2,9 @@
 
 User-facing changes per build. The latest build's highlights also appear in-app when an update is ready.
 
+## r242 — 2026-07-07
+- Reverted the chat right-click Clear menu: it doubled up with the system's Select-all popup. Clear is back in the chat header.
+
 ## r241 — 2026-07-07
 - Clear moved from the chat header into a right-click menu on the chat area.
 - The header-bar update buttons ("Check for updates", "What's new", and all their states) are now translated in all four UI languages and switch language live.

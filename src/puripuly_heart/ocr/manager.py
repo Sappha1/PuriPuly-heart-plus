@@ -9,10 +9,20 @@ from __future__ import annotations
 
 import contextlib
 import logging
+import os
 import subprocess
 import sys
 
 logger = logging.getLogger(__name__)
+
+# PROTOTYPE LOCAL BUILD ONLY. The packaged app doesn't bundle the OCR libraries
+# (rapidocr/mss/opencv/tkinter), so when running frozen we launch the overlay
+# through the source venv that DOES have them. These paths are this dev machine's
+# repo; a real shippable OCR feature would bundle the deps instead.
+_DEV_REPO = r"C:\Users\Owner\Desktop\PuriPuly-heart-2.1.2"
+_DEV_VENV_PY = os.path.join(_DEV_REPO, ".venv", "Scripts", "python.exe")
+_DEV_SRC = os.path.join(_DEV_REPO, "src")
+_CREATE_NO_WINDOW = 0x08000000
 
 
 class OcrOverlayManager:
@@ -28,15 +38,22 @@ class OcrOverlayManager:
     def start(self) -> bool:
         if self.running:
             return True
-        # Prototype: launched from source via the venv interpreter. (Frozen
-        # builds would need a bundled launcher — deferred until this ships.)
+        args = ["-m", "puripuly_heart.ocr.overlay_proc",
+                "--fps", str(self._fps), "--monitor", str(self._monitor)]
+        env = dict(os.environ)
         if getattr(sys, "frozen", False):
-            logger.warning("[OCR] overlay not available in packaged build yet")
-            return False
+            # Packaged app: shell out to the source venv that has the OCR libs.
+            python = _DEV_VENV_PY
+            env["PYTHONPATH"] = _DEV_SRC
+            if not os.path.exists(python):
+                logger.warning("[OCR] dev venv not found at %s", python)
+                return False
+        else:
+            python = sys.executable  # running from source
+            env.setdefault("PYTHONPATH", _DEV_SRC)
         try:
             self._proc = subprocess.Popen(
-                [sys.executable, "-m", "puripuly_heart.ocr.overlay_proc",
-                 "--fps", str(self._fps), "--monitor", str(self._monitor)],
+                [python, *args], env=env, creationflags=_CREATE_NO_WINDOW,
             )
             logger.info("[OCR] overlay subprocess started (pid=%s)", self._proc.pid)
             return True

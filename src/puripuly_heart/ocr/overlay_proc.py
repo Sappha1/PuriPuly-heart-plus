@@ -106,7 +106,7 @@ def _capture_loop(state: _BoxState, monitor_index: int, fps: float,
             stop.wait(max(0.0, period - dt))
 
 
-def run(monitor_index: int = 1, fps: float = 4.0, max_side: int = 960) -> None:
+def run(monitor_index: int = 1, fps: float = 10.0, max_side: int = 960) -> None:
     _set_dpi_aware()
 
     # Size the overlay to the target monitor via mss geometry.
@@ -168,7 +168,7 @@ def run(monitor_index: int = 1, fps: float = 4.0, max_side: int = 960) -> None:
 def main() -> None:
     ap = argparse.ArgumentParser()
     ap.add_argument("--monitor", type=int, default=1)
-    ap.add_argument("--fps", type=float, default=4.0)
+    ap.add_argument("--fps", type=float, default=10.0)
     ap.add_argument("--max-side", type=int, default=960)
     args = ap.parse_args()
     logging.basicConfig(level=logging.INFO)

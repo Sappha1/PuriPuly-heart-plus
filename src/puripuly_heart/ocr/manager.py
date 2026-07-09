@@ -26,7 +26,7 @@ _CREATE_NO_WINDOW = 0x08000000
 
 
 class OcrOverlayManager:
-    def __init__(self, *, fps: float = 4.0, monitor: int = 1) -> None:
+    def __init__(self, *, fps: float = 10.0, monitor: int = 1) -> None:
         self._proc: subprocess.Popen | None = None
         self._fps = fps
         self._monitor = monitor

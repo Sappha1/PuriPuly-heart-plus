@@ -64,28 +64,27 @@ class TextDetector:
             xs = (np.arange(new_w) / scale).astype(np.int32).clip(0, w - 1)
             frame = bgr[ys][:, xs]
 
+        # DET-ONLY. The high-level engine call also runs recognition on every
+        # crop (~4 s/frame with many text regions); text_detector returns just
+        # the boxes at ~9 fps. Recognition (text/score) is added back later,
+        # only on stable boxes, when we move to translation.
         try:
-            result, _elapse = self._engine(
-                frame, use_det=True, use_cls=False, use_rec=True
-            )
+            det_boxes, _elapse = self._engine.text_detector(frame)
         except Exception as exc:
             logger.debug("[OCR] detect call failed: %s", exc)
             return []
 
         boxes: list[TextBox] = []
-        for elem in result or []:
+        for quad in det_boxes if det_boxes is not None else []:
             try:
-                pts = np.asarray(elem[0], dtype=float)
-                text = str(elem[1]) if len(elem) > 1 else ""
-                score = float(elem[2]) if len(elem) > 2 else 0.0
+                pts = np.asarray(quad, dtype=float)
+                xs_, ys_ = pts[:, 0] / scale, pts[:, 1] / scale
+                boxes.append(
+                    TextBox(
+                        x1=int(xs_.min()), y1=int(ys_.min()),
+                        x2=int(xs_.max()), y2=int(ys_.max()),
+                    )
+                )
             except Exception:
                 continue
-            xs_, ys_ = pts[:, 0] / scale, pts[:, 1] / scale
-            boxes.append(
-                TextBox(
-                    x1=int(xs_.min()), y1=int(ys_.min()),
-                    x2=int(xs_.max()), y2=int(ys_.max()),
-                    text=text, score=score,
-                )
-            )
         return boxes

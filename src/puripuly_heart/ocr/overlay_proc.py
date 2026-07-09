@@ -1,18 +1,20 @@
 """OCR detection overlay — standalone subprocess (prototype).
 
-Detect-then-track architecture so boxes stay glued to moving text with no
-perceptible delay:
+Detect-then-track for every-frame, zero-lag boxes on moving text:
   * a background DETECTION thread scans the screen a few times a second to find
-    and refresh text boxes (slow);
-  * a fast TRACKING loop moves each existing box every frame via optical flow,
-    following the pixels it sits on (cheap), so walking avatars' bubbles keep
-    their outline in real time.
+    and refresh text boxes (slow, full-frame);
+  * a fast TRACKING loop moves each box every delivered frame using optical flow
+    on a SMALL PATCH around that box only — cost is independent of the 4K screen
+    resolution, so it runs at the frame-delivery rate;
+  * VELOCITY EXTRAPOLATION nudges each box one frame ahead by its recent motion,
+    cancelling the ~1-frame capture latency so the outline sits on the text
+    rather than trailing it.
 
-Capture uses dxcam (DXGI desktop duplication, ~5 ms for 4K) with an mss
-fallback. Detection only — no translation.
+Capture uses dxcam (DXGI desktop duplication) with an mss fallback. Detection
+only — no translation.
 
 Run directly:
-    python -m puripuly_heart.ocr.overlay_proc --fps 30
+    python -m puripuly_heart.ocr.overlay_proc
 """
 
 from __future__ import annotations
@@ -33,8 +35,10 @@ logger = logging.getLogger(__name__)
 _TRANSPARENT_KEY = "#010203"
 _BOX_COLOR = "#ff2020"
 _BOX_WIDTH = 1
-_WORK_MAX = 1280          # tracking/detection working resolution (longest side)
-_DETECT_INTERVAL = 0.4    # seconds between full detections
+_DETECT_MAX_SIDE = 1280   # detection working resolution (recall vs speed)
+_DETECT_INTERVAL = 0.35   # seconds between full detections
+_FLOW_MARGIN = 72         # px of context around a box for its flow patch
+_EXTRAPOLATE = 1.0        # frames of motion to lead by (latency cancel)
 
 
 def _set_dpi_aware() -> None:
@@ -61,8 +65,6 @@ def _make_click_through(root: tk.Tk) -> None:
 
 
 def _exclude_from_capture(root: tk.Tk) -> None:
-    """Hide our own boxes from screen capture so the detector never sees them
-    (would otherwise feed back and make boxes crawl). Windows 10 2004+."""
     WDA_EXCLUDEFROMCAPTURE = 0x00000011
     try:
         hwnd = ctypes.windll.user32.GetParent(root.winfo_id())
@@ -71,19 +73,15 @@ def _exclude_from_capture(root: tk.Tk) -> None:
         logger.debug("[OCR] exclude-from-capture failed: %s", exc)
 
 
-# ── Capture backends ────────────────────────────────────────────────────────
-
 class _Capture:
-    """Full-screen grabber. Prefers dxcam (DXGI, ~5 ms); falls back to mss."""
+    """Full-screen grabber. Prefers dxcam (DXGI); falls back to mss."""
 
     def __init__(self) -> None:
         self._cam = None
         self._sct = None
         self._mon = None
-        self.width = 0
-        self.height = 0
-        self.left = 0
-        self.top = 0
+        self.width = self.height = 0
+        self.left = self.top = 0
         try:
             import dxcam
 
@@ -98,21 +96,18 @@ class _Capture:
                 raise RuntimeError("dxcam produced no frame")
             self.height, self.width = frame.shape[:2]
             self._last = frame
-            logger.info("[OCR] capture backend: dxcam %dx%d", self.width, self.height)
+            logger.info("[OCR] capture: dxcam %dx%d", self.width, self.height)
         except Exception as exc:
             logger.warning("[OCR] dxcam unavailable (%s); using mss", exc)
             import mss
 
             self._sct = mss.mss()
             self._mon = self._sct.monitors[1]
-            self.width = self._mon["width"]
-            self.height = self._mon["height"]
-            self.left = self._mon["left"]
-            self.top = self._mon["top"]
+            self.width, self.height = self._mon["width"], self._mon["height"]
+            self.left, self.top = self._mon["left"], self._mon["top"]
             self._last = np.asarray(self._sct.grab(self._mon))[:, :, :3]
 
     def grab(self) -> np.ndarray | None:
-        """Latest frame in BGR, or None if nothing changed (dxcam only)."""
         if self._cam is not None:
             f = self._cam.grab()
             if f is not None:
@@ -127,130 +122,109 @@ class _Capture:
         return self._last
 
 
-def _to_work_gray(bgr: np.ndarray, work_max: int) -> tuple[np.ndarray, float]:
-    """Single-channel, downscaled gray for optical flow. Uses the green channel
-    as a luminance proxy (skips a full cvtColor). Returns (gray, scale) where
-    scale maps original -> work pixels."""
-    import cv2
-
-    h, w = bgr.shape[:2]
-    scale = work_max / float(max(h, w)) if max(h, w) > work_max else 1.0
-    g = bgr[:, :, 1]  # green plane view — cheap luminance proxy
-    if scale < 1.0:
-        g = cv2.resize(g, (max(1, int(w * scale)), max(1, int(h * scale))),
-                       interpolation=cv2.INTER_AREA)
-    return np.ascontiguousarray(g), scale
-
-
-# ── Detection thread: finds/refreshes boxes (in WORK coords) ────────────────
-
 class _Anchors:
+    """Latest detection result handed from the detect thread to the tracker."""
+
     def __init__(self) -> None:
         self._lock = threading.Lock()
         self.boxes: list[TextBox] = []
-        self.gray: np.ndarray | None = None
+        self.green: np.ndarray | None = None
         self.stamp = 0
 
-    def publish(self, boxes: list[TextBox], gray: np.ndarray) -> None:
+    def publish(self, boxes: list[TextBox], green: np.ndarray) -> None:
         with self._lock:
-            self.boxes = boxes
-            self.gray = gray
-            self.stamp += 1
+            self.boxes, self.green, self.stamp = boxes, green, self.stamp + 1
 
     def take(self, last_stamp: int):
         with self._lock:
             if self.stamp == last_stamp:
                 return None
-            return self.stamp, list(self.boxes), self.gray
+            return self.stamp, list(self.boxes), self.green
 
 
-def _detect_loop(cap: _Capture, work_max: int, anchors: _Anchors,
-                 stop: threading.Event) -> None:
-    detector = TextDetector(max_side=work_max)
+def _detect_loop(cap: _Capture, anchors: _Anchors, stop: threading.Event) -> None:
+    detector = TextDetector(max_side=_DETECT_MAX_SIDE)
     while not stop.is_set():
         t0 = time.monotonic()
         try:
             frame = cap.last()
-            gray, scale = _to_work_gray(frame, work_max)
-            # Detect on the work-resolution BGR (build it once from the frame).
-            import cv2
-            h, w = frame.shape[:2]
-            if scale < 1.0:
-                work_bgr = cv2.resize(frame, (int(w * scale), int(h * scale)),
-                                      interpolation=cv2.INTER_AREA)
-            else:
-                work_bgr = frame
-            boxes = detector.detect(work_bgr)  # already work-res, no re-scale
-            anchors.publish(boxes, gray)
+            boxes = detector.detect(frame)  # returns full-res coords
+            green = np.ascontiguousarray(frame[:, :, 1])  # for latency-advance
+            anchors.publish(boxes, green)
         except Exception as exc:
             logger.debug("[OCR] detect error: %s", exc)
         stop.wait(max(0.0, _DETECT_INTERVAL - (time.monotonic() - t0)))
 
 
-# ── Tracking: move boxes by optical flow every frame ────────────────────────
-
-def _flow_boxes(prev_gray: np.ndarray, cur_gray: np.ndarray,
-                boxes: list[TextBox]) -> list[TextBox]:
-    """Translate each box by the median optical-flow of sample points inside it."""
-    if not boxes:
-        return boxes
+def _flow_boxes(prev_g: np.ndarray, cur_g: np.ndarray,
+                boxes: list[TextBox]) -> list[tuple[TextBox, float, float]]:
+    """Move each box by the median optical flow of points inside it, computed on
+    a SMALL patch around the box (cost independent of screen resolution).
+    Returns (moved_box, dx, dy) so callers can extrapolate."""
     import cv2
 
-    pts = []
-    spans = []
+    H, W = cur_g.shape[:2]
+    out: list[tuple[TextBox, float, float]] = []
     for b in boxes:
-        gx = np.linspace(b.x1 + 2, b.x2 - 2, 4)
-        gy = np.linspace(b.y1 + 2, b.y2 - 2, 3)
-        p = np.array([[x, y] for y in gy for x in gx], dtype=np.float32)
-        spans.append((len(pts), len(pts) + len(p)))
-        pts.extend(p.tolist())
-    if not pts:
-        return boxes
-    p0 = np.array(pts, dtype=np.float32).reshape(-1, 1, 2)
-    p1, st, _ = cv2.calcOpticalFlowPyrLK(prev_gray, cur_gray, p0, None,
-                                         winSize=(21, 21), maxLevel=2)
-    out: list[TextBox] = []
-    for b, (a, z) in zip(boxes, spans):
-        d = (p1[a:z] - p0[a:z]).reshape(-1, 2)
-        good = st[a:z].reshape(-1) == 1
+        x1 = max(0, b.x1 - _FLOW_MARGIN); y1 = max(0, b.y1 - _FLOW_MARGIN)
+        x2 = min(W, b.x2 + _FLOW_MARGIN); y2 = min(H, b.y2 + _FLOW_MARGIN)
+        if x2 - x1 < 8 or y2 - y1 < 8:
+            out.append((b, 0.0, 0.0)); continue
+        pp = np.ascontiguousarray(prev_g[y1:y2, x1:x2])
+        cp = np.ascontiguousarray(cur_g[y1:y2, x1:x2])
+        gx = np.linspace(b.x1 + 2, b.x2 - 2, 4) - x1
+        gy = np.linspace(b.y1 + 2, b.y2 - 2, 3) - y1
+        p0 = np.array([[x, y] for y in gy for x in gx], dtype=np.float32).reshape(-1, 1, 2)
+        try:
+            p1, st, _ = cv2.calcOpticalFlowPyrLK(pp, cp, p0, None,
+                                                 winSize=(21, 21), maxLevel=2)
+        except Exception:
+            out.append((b, 0.0, 0.0)); continue
+        d = (p1 - p0).reshape(-1, 2)
+        good = st.reshape(-1) == 1
         if good.sum() >= 2:
-            dx, dy = np.median(d[good], axis=0)
+            dx, dy = (float(v) for v in np.median(d[good], axis=0))
         else:
             dx = dy = 0.0
-        out.append(TextBox(int(b.x1 + dx), int(b.y1 + dy),
-                           int(b.x2 + dx), int(b.y2 + dy)))
+        out.append((TextBox(int(b.x1 + dx), int(b.y1 + dy),
+                            int(b.x2 + dx), int(b.y2 + dy)), dx, dy))
     return out
 
 
-def _track_loop(cap: _Capture, work_max: int, anchors: _Anchors,
-                state: "_BoxState", stop: threading.Event) -> None:
+def _track_loop(cap: _Capture, anchors: _Anchors, state: "_BoxState",
+                stop: threading.Event) -> None:
+    prev_frame: np.ndarray | None = None
     tracked: list[TextBox] = []
-    prev_gray: np.ndarray | None = None
     last_stamp = 0
     while not stop.is_set():
-        frame = cap.grab()
-        if frame is None:
-            time.sleep(0.004)  # nothing changed on screen
+        cur = cap.grab()
+        if cur is None:
+            time.sleep(0.002)  # screen unchanged — nothing to move
             continue
-        cur_gray, scale = _to_work_gray(frame, work_max)
+        cur_g = cur[:, :, 1]
 
         fresh = anchors.take(last_stamp)
         if fresh is not None:
-            last_stamp, det_boxes, det_gray = fresh
-            # Advance the fresh (slightly old) boxes to NOW via one flow step.
-            if det_gray is not None and prev_gray is not None and det_boxes:
-                tracked = _flow_boxes(det_gray, cur_gray, det_boxes)
+            last_stamp, det_boxes, det_g = fresh
+            if det_g is not None and det_boxes and det_g.shape == cur_g.shape:
+                moved = _flow_boxes(det_g, cur_g, det_boxes)  # advance to now
             else:
-                tracked = det_boxes
-        elif prev_gray is not None and tracked:
-            tracked = _flow_boxes(prev_gray, cur_gray, tracked)
+                moved = [(b, 0.0, 0.0) for b in det_boxes]
+        elif prev_frame is not None and tracked:
+            moved = _flow_boxes(prev_frame[:, :, 1], cur_g, tracked)
+        else:
+            moved = [(b, 0.0, 0.0) for b in tracked]
 
-        prev_gray = cur_gray
-        # WORK coords -> screen coords.
-        inv = 1.0 / scale if scale else 1.0
-        disp = [TextBox(int(b.x1 * inv) + cap.left, int(b.y1 * inv) + cap.top,
-                        int(b.x2 * inv) + cap.left, int(b.y2 * inv) + cap.top)
-                for b in tracked]
+        # Extrapolate one frame ahead by the just-measured velocity so the box
+        # sits ON the moving text instead of one capture-frame behind.
+        tracked = []
+        disp: list[TextBox] = []
+        for b, dx, dy in moved:
+            tracked.append(b)
+            ex, ey = int(dx * _EXTRAPOLATE), int(dy * _EXTRAPOLATE)
+            disp.append(TextBox(b.x1 + ex + cap.left, b.y1 + ey + cap.top,
+                                b.x2 + ex + cap.left, b.y2 + ey + cap.top))
+        prev_frame = cur
         state.set(disp)
 
 
@@ -268,7 +242,7 @@ class _BoxState:
             return list(self._boxes)
 
 
-def run(monitor_index: int = 1, fps: float = 30.0, max_side: int = _WORK_MAX) -> None:
+def run(monitor_index: int = 1, fps: float = 0.0, max_side: int = _DETECT_MAX_SIDE) -> None:
     _set_dpi_aware()
     cap = _Capture()
     left, top, width, height = cap.left, cap.top, cap.width, cap.height
@@ -298,10 +272,8 @@ def run(monitor_index: int = 1, fps: float = 30.0, max_side: int = _WORK_MAX) ->
     state = _BoxState()
     anchors = _Anchors()
     stop = threading.Event()
-    threading.Thread(target=_detect_loop, args=(cap, max_side, anchors, stop),
-                     daemon=True).start()
-    threading.Thread(target=_track_loop, args=(cap, max_side, anchors, state, stop),
-                     daemon=True).start()
+    threading.Thread(target=_detect_loop, args=(cap, anchors, stop), daemon=True).start()
+    threading.Thread(target=_track_loop, args=(cap, anchors, state, stop), daemon=True).start()
 
     def _redraw() -> None:
         canvas.delete("box")
@@ -311,14 +283,14 @@ def run(monitor_index: int = 1, fps: float = 30.0, max_side: int = _WORK_MAX) ->
                 (b.x2 - left) * sx, (b.y2 - top) * sy,
                 outline=_BOX_COLOR, width=_BOX_WIDTH, tags="box",
             )
-        root.after(16, _redraw)  # ~60 fps redraw
+        root.after(6, _redraw)  # ~160 fps redraw
 
     def _on_close() -> None:
         stop.set()
         root.destroy()
 
     root.protocol("WM_DELETE_WINDOW", _on_close)
-    root.after(16, _redraw)
+    root.after(6, _redraw)
     try:
         root.mainloop()
     finally:
@@ -328,8 +300,8 @@ def run(monitor_index: int = 1, fps: float = 30.0, max_side: int = _WORK_MAX) ->
 def main() -> None:
     ap = argparse.ArgumentParser()
     ap.add_argument("--monitor", type=int, default=1)
-    ap.add_argument("--fps", type=float, default=30.0)
-    ap.add_argument("--max-side", type=int, default=_WORK_MAX)
+    ap.add_argument("--fps", type=float, default=0.0)  # unused; tracks at frame rate
+    ap.add_argument("--max-side", type=int, default=_DETECT_MAX_SIDE)
     args = ap.parse_args()
     logging.basicConfig(level=logging.INFO)
     run(monitor_index=args.monitor, fps=args.fps, max_side=args.max_side)

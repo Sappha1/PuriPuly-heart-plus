@@ -89,12 +89,38 @@ class _BoxState:
             return list(self._boxes)
 
 
+def _stabilize(prev: list[TextBox], new: list[TextBox], tol: int) -> list[TextBox]:
+    """Hold a box at its previous position if it barely moved (center and size
+    both within `tol` px). Kills sub-pixel wobble on text that isn't really
+    moving, while genuine movement (> tol) still updates. Greedy nearest match."""
+    used = [False] * len(prev)
+    out: list[TextBox] = []
+    for nb in new:
+        ncx, ncy = (nb.x1 + nb.x2) / 2, (nb.y1 + nb.y2) / 2
+        nw, nh = nb.x2 - nb.x1, nb.y2 - nb.y1
+        best, best_d = -1, float(tol * tol)
+        for i, pb in enumerate(prev):
+            if used[i]:
+                continue
+            pcx, pcy = (pb.x1 + pb.x2) / 2, (pb.y1 + pb.y2) / 2
+            d = (ncx - pcx) ** 2 + (ncy - pcy) ** 2
+            if d <= best_d and abs(nw - (pb.x2 - pb.x1)) <= tol and abs(nh - (pb.y2 - pb.y1)) <= tol:
+                best, best_d = i, d
+        if best >= 0:
+            used[best] = True
+            out.append(prev[best])  # freeze to previous → no wobble
+        else:
+            out.append(nb)
+    return out
+
+
 def _capture_loop(state: _BoxState, monitor_index: int, fps: float,
                   max_side: int, stop: threading.Event) -> None:
     import mss
 
     detector = TextDetector(max_side=max_side)
     period = 1.0 / max(0.5, fps)
+    prev: list[TextBox] = []
     with mss.mss() as sct:
         mons = sct.monitors
         idx = monitor_index if 0 < monitor_index < len(mons) else 1
@@ -106,12 +132,13 @@ def _capture_loop(state: _BoxState, monitor_index: int, fps: float,
                 shot = sct.grab(mon)
                 # BGRA -> BGR
                 frame = np.asarray(shot)[:, :, :3]
-                boxes = detector.detect(frame)
-                # Shift into absolute screen coords for the canvas.
-                for b in boxes:
-                    b.x1 += left; b.x2 += left
-                    b.y1 += top; b.y2 += top
-                state.set(boxes)
+                boxes = detector.detect(frame)  # capture-local coords
+                boxes = _stabilize(prev, boxes, tol=8)
+                prev = boxes
+                # Shift a copy into absolute screen coords for the canvas.
+                disp = [TextBox(b.x1 + left, b.y1 + top, b.x2 + left, b.y2 + top)
+                        for b in boxes]
+                state.set(disp)
             except Exception as exc:
                 logger.debug("[OCR] capture/detect error: %s", exc)
             dt = time.monotonic() - t0

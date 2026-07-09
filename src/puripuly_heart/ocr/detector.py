@@ -42,6 +42,15 @@ class TextDetector:
 
             # Defaults run on CPU. First call downloads/loads the bundled models.
             self._engine = RapidOCR()
+            # RapidOCR otherwise re-caps detection to ~736px internally, so at 4K
+            # small text is lost. Raise its limit to match our target resolution
+            # so detection actually happens at max_side.
+            try:
+                self._engine.text_detector.preprocess_op[0].limit_side_len = (
+                    self._max_side + 64
+                )
+            except Exception as exc:
+                logger.debug("[OCR] could not raise det limit: %s", exc)
 
     def detect(self, bgr: np.ndarray) -> list[TextBox]:
         """Detect text regions in a BGR frame. Never raises — returns [] on any
@@ -59,10 +68,17 @@ class TextDetector:
         if longest > self._max_side:
             scale = self._max_side / float(longest)
             new_w, new_h = max(1, int(w * scale)), max(1, int(h * scale))
-            # Cheap nearest-neighbour resize without pulling in cv2 here.
-            ys = (np.arange(new_h) / scale).astype(np.int32).clip(0, h - 1)
-            xs = (np.arange(new_w) / scale).astype(np.int32).clip(0, w - 1)
-            frame = bgr[ys][:, xs]
+            # INTER_AREA averages pixels when shrinking — it preserves thin
+            # antialiased text that nearest-neighbour would drop, which is the
+            # difference between catching and missing small on-screen lines.
+            try:
+                import cv2
+
+                frame = cv2.resize(bgr, (new_w, new_h), interpolation=cv2.INTER_AREA)
+            except Exception:
+                ys = (np.arange(new_h) / scale).astype(np.int32).clip(0, h - 1)
+                xs = (np.arange(new_w) / scale).astype(np.int32).clip(0, w - 1)
+                frame = bgr[ys][:, xs]
 
         # DET-ONLY. The high-level engine call also runs recognition on every
         # crop (~4 s/frame with many text regions); text_detector returns just

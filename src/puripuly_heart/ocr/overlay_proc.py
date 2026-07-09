@@ -32,15 +32,14 @@ _BOX_WIDTH = 1
 
 
 def _set_dpi_aware() -> None:
-    """Make capture pixels and Tk geometry share one (physical) coordinate
-    space, so boxes land on the text under display scaling."""
+    """System-DPI awareness so mss captures at full physical resolution. We use
+    the OLDER SetProcessDPIAware (system-aware) rather than shcore per-monitor —
+    Tk virtualizes under per-monitor awareness, which threw the boxes off. Any
+    residual capture-vs-canvas scale is corrected explicitly in run()."""
     try:
-        ctypes.windll.shcore.SetProcessDpiAwareness(2)  # per-monitor v2
+        ctypes.windll.user32.SetProcessDPIAware()
     except Exception:
-        try:
-            ctypes.windll.user32.SetProcessDPIAware()
-        except Exception:
-            pass
+        pass
 
 
 def _make_click_through(root: tk.Tk) -> None:
@@ -121,7 +120,22 @@ def run(monitor_index: int = 1, fps: float = 10.0, max_side: int = 960) -> None:
     root = tk.Tk()
     root.overrideredirect(True)
     root.attributes("-topmost", True)
-    root.geometry(f"{width}x{height}+{left}+{top}")
+    root.update_idletasks()
+
+    # Capture pixels (mss, physical) vs Tk logical pixels can still differ under
+    # display scaling. Measure the ratio and map every box through it so the
+    # outline lands exactly on the text. scale ~1.0 when they already agree.
+    tk_w = root.winfo_screenwidth()
+    tk_h = root.winfo_screenheight()
+    sx = tk_w / float(width) if width else 1.0
+    sy = tk_h / float(height) if height else 1.0
+    logger.info("[OCR] capture=%dx%d tk=%dx%d scale=%.3f,%.3f",
+                width, height, tk_w, tk_h, sx, sy)
+
+    # Window covers the monitor in Tk-logical coordinates.
+    win_w, win_h = int(round(width * sx)), int(round(height * sy))
+    win_x, win_y = int(round(left * sx)), int(round(top * sy))
+    root.geometry(f"{win_w}x{win_h}+{win_x}+{win_y}")
     root.configure(bg=_TRANSPARENT_KEY)
     try:
         root.attributes("-transparentcolor", _TRANSPARENT_KEY)
@@ -129,7 +143,7 @@ def run(monitor_index: int = 1, fps: float = 10.0, max_side: int = 960) -> None:
         pass
 
     canvas = tk.Canvas(root, bg=_TRANSPARENT_KEY, highlightthickness=0,
-                       width=width, height=height)
+                       width=win_w, height=win_h)
     canvas.pack(fill="both", expand=True)
     root.update_idletasks()
     _make_click_through(root)
@@ -146,9 +160,10 @@ def run(monitor_index: int = 1, fps: float = 10.0, max_side: int = 960) -> None:
     def _redraw() -> None:
         canvas.delete("box")
         for b in state.get():
-            # Canvas origin is the monitor origin, so subtract it back out.
+            # Screen(physical) -> monitor-local -> Tk-logical via the scale.
             canvas.create_rectangle(
-                b.x1 - left, b.y1 - top, b.x2 - left, b.y2 - top,
+                (b.x1 - left) * sx, (b.y1 - top) * sy,
+                (b.x2 - left) * sx, (b.y2 - top) * sy,
                 outline=_BOX_COLOR, width=_BOX_WIDTH, tags="box",
             )
         root.after(40, _redraw)

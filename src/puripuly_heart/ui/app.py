@@ -156,6 +156,10 @@ class TranslatorApp:
         self.view_dashboard.on_request_stt_download = self._on_request_stt_download
         self.view_dashboard.on_stt_provider_change = self._on_dashboard_stt_provider_change
         self.view_dashboard.on_peer_stt_provider_change = self._on_dashboard_peer_stt_provider_change
+        # (Prototype) OCR detection overlay — self-contained, off by default.
+        from puripuly_heart.ocr.manager import OcrOverlayManager
+        self._ocr_manager = OcrOverlayManager()
+        self.view_dashboard.on_toggle_ocr = self._ocr_manager.toggle
         self.view_dashboard.on_overlay_lock_change = self._on_dashboard_overlay_lock_change
         self.view_dashboard.on_overlay_transparency_change = self._on_overlay_transparency_change
         self.view_dashboard.on_chatbox_send_peer_toggle = self._on_dashboard_chatbox_send_peer_toggle

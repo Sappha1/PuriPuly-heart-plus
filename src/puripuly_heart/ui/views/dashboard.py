@@ -460,6 +460,8 @@ class DashboardView(ft.Row):
         self.on_toggle_stt = None
         self.on_toggle_overlay = None
         self.on_toggle_peer_translation = None
+        self.on_toggle_ocr = None  # (prototype) callback(enabled: bool)
+        self._ocr_on = False
         self.on_language_change = None
         self.on_recent_languages_change = None
         self.on_nav_change: Callable[[int], None] | None = None
@@ -1213,6 +1215,16 @@ class DashboardView(ft.Row):
             border=_pill_border_off,
         )
         self._static_tooltip_registry.append((self._chatbox_peer_btn, "dashboard.loopback.tooltip"))
+        # ── OCR detection toggle (prototype) — red boxes around on-screen text ──
+        self._ocr_btn = ft.Container(
+            content=ft.Text("OCR", size=9, color=_TEXT_FAINT, weight=ft.FontWeight.W_600),
+            on_click=self._on_ocr_btn_click,
+            tooltip="Detect on-screen text and outline it (prototype)",
+            padding=ft.padding.symmetric(horizontal=7, vertical=3),
+            border_radius=10,
+            bgcolor=ft.Colors.TRANSPARENT,
+            border=_pill_border_off,
+        )
         self._vrc_mute_sync_btn = ft.Container(
             content=ft.Text(
                 t("dashboard.button.mute_sync"),
@@ -1238,6 +1250,8 @@ class DashboardView(ft.Row):
                     content=self._chatbox_peer_btn,
                     on_secondary_tap_down=self._on_loopback_right_click,
                 ),
+                ft.Container(width=4),
+                self._ocr_btn,
                 ft.Container(width=4),
                 self._overlay_header_btn,
                 ft.Container(width=4),
@@ -1472,6 +1486,18 @@ class DashboardView(ft.Row):
             enabled = not self._overlay_peer_contract.overlay.intent_enabled
         if self.on_toggle_overlay:
             self.on_toggle_overlay(enabled)
+
+    def _on_ocr_btn_click(self, _e) -> None:
+        # (Prototype) flip the OCR detection overlay on/off and reflect state in
+        # the pill: teal border/text when active, faint when off.
+        self._ocr_on = not self._ocr_on
+        on = self._ocr_on
+        self._ocr_btn.border = ft.border.all(1, _TOGGLE_ON if on else "#3a3b3f")
+        self._ocr_btn.content.color = _TOGGLE_ON if on else _TEXT_FAINT
+        with contextlib.suppress(Exception):
+            self._ocr_btn.update()
+        if callable(self.on_toggle_ocr):
+            self.on_toggle_ocr(on)
 
     def _toggle_peer_translation(self) -> None:
         self._peer_showing_error = False

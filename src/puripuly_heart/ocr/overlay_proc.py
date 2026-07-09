@@ -60,6 +60,19 @@ def _make_click_through(root: tk.Tk) -> None:
         logger.debug("[OCR] click-through setup failed: %s", exc)
 
 
+def _exclude_from_capture(root: tk.Tk) -> None:
+    """Hide our own red outlines from screen capture (visible to the user, blank
+    to mss). Without this, mss grabs the overlay's boxes, the detector re-detects
+    around them, and the boxes crawl/pulse on a static screen — a feedback loop.
+    WDA_EXCLUDEFROMCAPTURE needs Windows 10 2004+."""
+    WDA_EXCLUDEFROMCAPTURE = 0x00000011
+    try:
+        hwnd = ctypes.windll.user32.GetParent(root.winfo_id())
+        ctypes.windll.user32.SetWindowDisplayAffinity(hwnd, WDA_EXCLUDEFROMCAPTURE)
+    except Exception as exc:
+        logger.debug("[OCR] exclude-from-capture failed: %s", exc)
+
+
 class _BoxState:
     """Latest detected boxes, handed from the worker thread to the Tk thread."""
 
@@ -147,6 +160,7 @@ def run(monitor_index: int = 1, fps: float = 10.0, max_side: int = 960) -> None:
     canvas.pack(fill="both", expand=True)
     root.update_idletasks()
     _make_click_through(root)
+    _exclude_from_capture(root)
 
     state = _BoxState()
     stop = threading.Event()

@@ -1,21 +1,23 @@
 """OCR detection overlay — standalone subprocess (prototype).
 
-Detect-then-track, tuned for TRUE per-frame updates on moving text:
+Detect-then-track, tuned for per-frame updates that stay honest about what is
+actually on screen:
 
-  * DETECTION thread: full text detection a few times a second (slow path).
-  * TRACKING loop: every delivered frame, ONE downscale of the new frame and
-    ONE batched optical-flow call covering all boxes — cost is flat (~6 ms)
-    no matter how many boxes are on screen, so tracking runs at the monitor's
-    frame-delivery rate.
-  * Boxes live in float coordinates with a per-box velocity estimate:
-      - speed below a px/SECOND threshold  -> hard-frozen at an anchor
-        (kills sub-pixel drift on static screens, cannot accumulate);
-      - real motion -> float-precision movement every frame, plus a velocity
-        lead of ~1 frame to cancel capture latency, so the outline rides ON
-        the moving text instead of trailing it.
-    A per-frame pixel deadzone is deliberately NOT used: at high fps real
-    motion is <2 px/frame and a distance deadzone would clip it (the earlier
-    "boxes float then snap" bug).
+  * DETECTION thread (own, smaller resolution for a faster refresh) finds text
+    boxes ~3x/sec, geometry-filtered to text-plausible shapes. Results whose
+    source frame no longer resembles the current view are discarded (a mid-pan
+    detection is garbage).
+  * TRACKING loop: every delivered frame, ONE downscale + ONE batched
+    optical-flow call for all boxes (~6 ms flat). Box positions are floats that
+    ALWAYS follow the text; a position-hysteresis anchor decides only what is
+    RENDERED — still boxes draw rock-solid at their anchor, and ~2 px of real
+    accumulated motion unfreezes them with an instant catch-up (no trail, no
+    lost tracking, max ~2 frames of onset delay).
+  * SCENE-CUT GUARD: a cheap whole-frame difference metric detects fast camera
+    turns; all boxes are cleared immediately (no ghost outlines over new
+    scenery) and an immediate re-detect is requested.
+  * Boxes whose tracking points go unhealthy (text left the region) are
+    dropped rather than left floating.
 
 Capture is dxcam (DXGI, ~1-5 ms at 4K) with an mss fallback. Detection only —
 no translation.
@@ -43,16 +45,26 @@ _TRANSPARENT_KEY = "#010203"
 _BOX_COLOR = "#ff2020"
 _BOX_WIDTH = 1
 
-_WORK_SIDE = 1280         # working resolution for tracking + detection
-_DETECT_INTERVAL = 0.35   # seconds between full detections
+_TRACK_SIDE = 1280        # tracking working resolution (longest side)
+_DETECT_SIDE = 960        # detection resolution (smaller => faster refresh)
+_DETECT_INTERVAL = 0.30   # seconds between detections (detect itself ~0.25 s)
 _PTS_X, _PTS_Y = 4, 3     # flow sample grid per box
 
-# Stillness hysteresis in FULL-RES px/sec. Below LO long enough -> frozen at
-# anchor; above HI -> moving. Walking-avatar bubbles are hundreds of px/sec.
-_SPEED_STILL = 20.0
-_SPEED_MOVE = 45.0
-_STILL_FRAMES = 6         # consecutive slow frames before freezing
-_LEAD_FRAMES = 1.2        # velocity lead, in frames, to cancel capture latency
+# Rendering hysteresis (track px). Float position always follows the text;
+# the DRAWN box stays at its anchor until offset exceeds _UNFREEZE_PX, then
+# snaps to the float and follows every frame until calm again.
+_UNFREEZE_PX = 2.0
+_STILL_SPEED_PX = 0.35    # per-frame |d| below this counts as calm
+_STILL_FRAMES = 8         # calm frames required to re-freeze
+_STILL_DECAY = 0.12       # pull float toward anchor while frozen (kills bias drift)
+_LEAD_FRAMES = 1.2        # velocity lead (frames) to cancel capture latency
+
+# Scene-change thresholds (mean abs gray diff, 0-255).
+_SCENE_CUT = 22.0         # whip pan / teleport: clear boxes instantly
+_DET_STALE = 16.0         # detection older than the scene: discard result
+
+# Flow health: minimum fraction of good sample points to keep a box alive.
+_MIN_OK_RATIO = 0.34
 
 
 def _set_dpi_aware() -> None:
@@ -123,7 +135,6 @@ class _Capture:
             self._last = np.asarray(self._sct.grab(self._mon))[:, :, :3]
 
     def grab(self) -> np.ndarray | None:
-        """Newest frame in BGR, or None if the screen hasn't changed (dxcam)."""
         if self._cam is not None:
             f = self._cam.grab()
             if f is not None:
@@ -138,16 +149,8 @@ class _Capture:
         return self._last
 
 
-def _work_gray(frame: np.ndarray, work_w: int, work_h: int) -> np.ndarray:
-    """Green channel downscaled to work resolution (one cheap resize/frame)."""
-    import cv2
-
-    g = cv2.extractChannel(frame, 1)
-    return cv2.resize(g, (work_w, work_h), interpolation=cv2.INTER_LINEAR)
-
-
 class _Anchors:
-    """Latest detection (work coords + matching work gray) for the tracker."""
+    """Latest detection (track coords + track-res gray) for the tracker."""
 
     def __init__(self) -> None:
         self._lock = threading.Lock()
@@ -166,78 +169,116 @@ class _Anchors:
             return self.stamp, list(self.boxes), self.gray
 
 
-def _detect_loop(cap: _Capture, work_w: int, work_h: int,
-                 anchors: _Anchors, stop: threading.Event) -> None:
+def _text_plausible(b: TextBox, det_w: int, det_h: int) -> bool:
+    """Geometry filter: keep boxes shaped like lines of text, drop speckle and
+    screen-sized slabs (false positives on foliage/edges while running)."""
+    w = b.x2 - b.x1
+    h = b.y2 - b.y1
+    if w < 10 or h < 5:
+        return False
+    if h > 0.12 * det_h:          # taller than any plausible text line
+        return False
+    if w > 0.92 * det_w:          # near full-screen slab
+        return False
+    if w * h < 110:               # speckle
+        return False
+    if w / max(1.0, float(h)) < 0.55:  # skinnier-than-tall column, not a line
+        return False
+    return True
+
+
+def _detect_loop(cap: _Capture, det_w: int, det_h: int, track_w: int,
+                 track_h: int, anchors: _Anchors, wake: threading.Event,
+                 stop: threading.Event) -> None:
     import cv2
 
-    detector = TextDetector(max_side=max(work_w, work_h))
+    detector = TextDetector(max_side=max(det_w, det_h))
+    sx = track_w / float(det_w)
+    sy = track_h / float(det_h)
     while not stop.is_set():
         t0 = time.monotonic()
         try:
             frame = cap.last()
-            work_bgr = cv2.resize(frame, (work_w, work_h),
-                                  interpolation=cv2.INTER_AREA)
-            boxes = detector.detect(work_bgr)  # work-res in, work coords out
-            gray = cv2.extractChannel(work_bgr, 1)
+            det_bgr = cv2.resize(frame, (det_w, det_h), interpolation=cv2.INTER_AREA)
+            raw = detector.detect(det_bgr)  # det-res in, det coords out
+            boxes = [
+                TextBox(int(b.x1 * sx), int(b.y1 * sy), int(b.x2 * sx), int(b.y2 * sy))
+                for b in raw if _text_plausible(b, det_w, det_h)
+            ]
+            # Gray at TRACK resolution from the same frame, so the tracker can
+            # advance these boxes to "now" with one flow step.
+            gray = cv2.resize(cv2.extractChannel(frame, 1), (track_w, track_h),
+                              interpolation=cv2.INTER_LINEAR)
             anchors.publish(boxes, gray)
         except Exception as exc:
             logger.debug("[OCR] detect error: %s", exc)
-        stop.wait(max(0.0, _DETECT_INTERVAL - (time.monotonic() - t0)))
+        remaining = max(0.0, _DETECT_INTERVAL - (time.monotonic() - t0))
+        wake.wait(remaining)   # early wake on scene cut
+        wake.clear()
 
 
 class _Tracked:
-    """One box tracked in float work-coords with velocity + stillness state."""
+    """Float box that always follows the text; anchor decides what is drawn."""
 
-    __slots__ = ("x1", "y1", "x2", "y2", "ax1", "ay1", "ax2", "ay2",
-                 "vx", "vy", "slow_frames", "moving")
+    __slots__ = ("x1", "y1", "x2", "y2", "ax", "ay", "vx", "vy",
+                 "moving", "calm_frames")
 
     def __init__(self, b: TextBox) -> None:
-        self.x1, self.y1, self.x2, self.y2 = float(b.x1), float(b.y1), float(b.x2), float(b.y2)
-        self.ax1, self.ay1, self.ax2, self.ay2 = self.x1, self.y1, self.x2, self.y2
+        self.x1, self.y1 = float(b.x1), float(b.y1)
+        self.x2, self.y2 = float(b.x2), float(b.y2)
+        self.ax, self.ay = self.x1, self.y1   # anchor (render position offset base)
         self.vx = self.vy = 0.0
-        self.slow_frames = 0
-        self.moving = True  # assume motion until proven still (never clip real motion)
+        self.moving = True        # start permissive; settles to still if calm
+        self.calm_frames = 0
 
-    def advance(self, dx: float, dy: float, dt: float, inv_scale: float) -> None:
+    def advance(self, dx: float, dy: float, dt: float) -> None:
+        # Float position ALWAYS follows the text — tracking never pauses.
         self.x1 += dx; self.x2 += dx
         self.y1 += dy; self.y2 += dy
         if dt > 0:
-            # EMA velocity in work px/sec.
-            a = 0.35
+            a = 0.4
             self.vx = (1 - a) * self.vx + a * (dx / dt)
             self.vy = (1 - a) * self.vy + a * (dy / dt)
-        speed_full = ((self.vx ** 2 + self.vy ** 2) ** 0.5) * inv_scale
+
+        step = (dx * dx + dy * dy) ** 0.5
         if self.moving:
-            if speed_full < _SPEED_STILL:
-                self.slow_frames += 1
-                if self.slow_frames >= _STILL_FRAMES:
+            # Anchor follows while moving; calm streak re-freezes.
+            self.ax, self.ay = self.x1, self.y1
+            if step < _STILL_SPEED_PX:
+                self.calm_frames += 1
+                if self.calm_frames >= _STILL_FRAMES:
                     self.moving = False
-                    self.ax1, self.ay1 = self.x1, self.y1
-                    self.ax2, self.ay2 = self.x2, self.y2
+                    self.vx = self.vy = 0.0
             else:
-                self.slow_frames = 0
+                self.calm_frames = 0
         else:
-            if speed_full > _SPEED_MOVE:
+            off = ((self.x1 - self.ax) ** 2 + (self.y1 - self.ay) ** 2) ** 0.5
+            if off > _UNFREEZE_PX:
+                # Real accumulated motion: unfreeze and catch up instantly.
                 self.moving = True
-                self.slow_frames = 0
+                self.calm_frames = 0
+                self.ax, self.ay = self.x1, self.y1
             else:
-                # Frozen: pin floats to the anchor so noise can't accumulate.
-                self.x1, self.y1 = self.ax1, self.ay1
-                self.x2, self.y2 = self.ax2, self.ay2
-                self.vx *= 0.8
-                self.vy *= 0.8
+                # Frozen render; bleed float back toward anchor so sub-pixel
+                # bias can never accumulate into a crawl.
+                self.x1 = self.ax + (self.x1 - self.ax) * (1 - _STILL_DECAY)
+                self.y1 = self.ay + (self.y1 - self.ay) * (1 - _STILL_DECAY)
+                self.x2 = self.x1 + (self.x2 - self.x1)
+                self.y2 = self.y1 + (self.y2 - self.y1)
 
     def display(self, dt: float) -> tuple[float, float, float, float]:
+        w = self.x2 - self.x1
+        h = self.y2 - self.y1
         if not self.moving:
-            return self.ax1, self.ay1, self.ax2, self.ay2
+            return self.ax, self.ay, self.ax + w, self.ay + h
         lead = _LEAD_FRAMES * dt
         ex, ey = self.vx * lead, self.vy * lead
         return self.x1 + ex, self.y1 + ey, self.x2 + ex, self.y2 + ey
 
 
 def _batched_flow(prev_g: np.ndarray, cur_g: np.ndarray,
-                  tracked: list[_Tracked]) -> list[tuple[float, float]]:
-    """One pyrLK call for every box's sample grid. Returns per-box (dx, dy)."""
+                  tracked: list[_Tracked]) -> list[tuple[float, float, float]]:
+    """One pyrLK call for all boxes. Returns per-box (dx, dy, ok_ratio)."""
     import cv2
 
     if not tracked:
@@ -255,23 +296,27 @@ def _batched_flow(prev_g: np.ndarray, cur_g: np.ndarray,
         p1, st, _ = cv2.calcOpticalFlowPyrLK(prev_g, cur_g, p0, None,
                                              winSize=(21, 21), maxLevel=3)
     except Exception:
-        return [(0.0, 0.0)] * len(tracked)
+        return [(0.0, 0.0, 0.0)] * len(tracked)
     d = (p1 - p0).reshape(-1, 2)
     ok = st.reshape(-1) == 1
-    out: list[tuple[float, float]] = []
+    out: list[tuple[float, float, float]] = []
     for a, z in spans:
         good = ok[a:z]
+        n = max(1, z - a)
+        ratio = float(good.sum()) / n
         if good.sum() >= 2:
             dx, dy = np.median(d[a:z][good], axis=0)
-            out.append((float(dx), float(dy)))
+            out.append((float(dx), float(dy), ratio))
         else:
-            out.append((0.0, 0.0))
+            out.append((0.0, 0.0, ratio))
     return out
 
 
-def _track_loop(cap: _Capture, work_w: int, work_h: int, inv_scale: float,
-                anchors: _Anchors, state: "_BoxState",
+def _track_loop(cap: _Capture, track_w: int, track_h: int, inv_scale: float,
+                anchors: _Anchors, wake: threading.Event, state: "_BoxState",
                 stop: threading.Event) -> None:
+    import cv2
+
     prev_g: np.ndarray | None = None
     tracked: list[_Tracked] = []
     last_stamp = 0
@@ -279,26 +324,54 @@ def _track_loop(cap: _Capture, work_w: int, work_h: int, inv_scale: float,
     while not stop.is_set():
         frame = cap.grab()
         if frame is None:
-            time.sleep(0.001)  # screen unchanged
+            time.sleep(0.001)
             continue
         now = time.monotonic()
         dt = min(0.1, max(1e-4, now - last_t))
         last_t = now
-        cur_g = _work_gray(frame, work_w, work_h)
+        cur_g = cv2.resize(cv2.extractChannel(frame, 1), (track_w, track_h),
+                           interpolation=cv2.INTER_LINEAR)
+
+        # Scene-cut guard: a whip pan/teleport invalidates every box NOW.
+        if prev_g is not None and tracked:
+            diff = float(cv2.mean(cv2.absdiff(cur_g, prev_g))[0])
+            if diff > _SCENE_CUT:
+                tracked = []
+                state.set([])
+                wake.set()           # ask for an immediate re-detect
+                prev_g = cur_g
+                continue
 
         fresh = anchors.take(last_stamp)
         if fresh is not None:
             last_stamp, det_boxes, det_gray = fresh
-            new_tracked = [_Tracked(b) for b in det_boxes]
-            # Advance the (slightly old) detections to the current frame.
-            if det_gray is not None and new_tracked and det_gray.shape == cur_g.shape:
-                for tr, (dx, dy) in zip(new_tracked,
-                                        _batched_flow(det_gray, cur_g, new_tracked)):
-                    tr.advance(dx, dy, dt, inv_scale)
-            tracked = new_tracked
+            usable = det_gray is not None and det_gray.shape == cur_g.shape
+            if usable:
+                # Discard detections whose source frame no longer matches the
+                # view (started before a pan finished — boxes would be wrong).
+                stale = float(cv2.mean(cv2.absdiff(cur_g, det_gray))[0])
+                usable = stale < _DET_STALE
+            if usable:
+                new_tracked = [_Tracked(b) for b in det_boxes]
+                if new_tracked:
+                    flows = _batched_flow(det_gray, cur_g, new_tracked)
+                    kept = []
+                    for tr, (dx, dy, ratio) in zip(new_tracked, flows):
+                        if ratio >= _MIN_OK_RATIO:
+                            tr.advance(dx, dy, dt)
+                            kept.append(tr)
+                    tracked = kept
+                else:
+                    tracked = []
         elif prev_g is not None and tracked:
-            for tr, (dx, dy) in zip(tracked, _batched_flow(prev_g, cur_g, tracked)):
-                tr.advance(dx, dy, dt, inv_scale)
+            flows = _batched_flow(prev_g, cur_g, tracked)
+            kept = []
+            for tr, (dx, dy, ratio) in zip(tracked, flows):
+                if ratio < _MIN_OK_RATIO:
+                    continue          # text left the region — drop, don't float
+                tr.advance(dx, dy, dt)
+                kept.append(tr)
+            tracked = kept
 
         prev_g = cur_g
         disp = []
@@ -325,14 +398,16 @@ class _BoxState:
             return self.version, list(self._boxes)
 
 
-def run(monitor_index: int = 1, fps: float = 0.0, max_side: int = _WORK_SIDE) -> None:
+def run(monitor_index: int = 1, fps: float = 0.0, max_side: int = _TRACK_SIDE) -> None:
     _set_dpi_aware()
     cap = _Capture()
     left, top, width, height = cap.left, cap.top, cap.width, cap.height
 
-    scale = min(1.0, max_side / float(max(width, height)))
-    work_w, work_h = max(1, int(width * scale)), max(1, int(height * scale))
-    inv_scale = 1.0 / scale if scale else 1.0
+    t_scale = min(1.0, max_side / float(max(width, height)))
+    track_w, track_h = max(1, int(width * t_scale)), max(1, int(height * t_scale))
+    inv_scale = 1.0 / t_scale if t_scale else 1.0
+    d_scale = min(1.0, _DETECT_SIDE / float(max(width, height)))
+    det_w, det_h = max(1, int(width * d_scale)), max(1, int(height * d_scale))
 
     root = tk.Tk()
     root.overrideredirect(True)
@@ -358,15 +433,15 @@ def run(monitor_index: int = 1, fps: float = 0.0, max_side: int = _WORK_SIDE) ->
 
     state = _BoxState()
     anchors = _Anchors()
+    wake = threading.Event()
     stop = threading.Event()
     threading.Thread(target=_detect_loop,
-                     args=(cap, work_w, work_h, anchors, stop), daemon=True).start()
+                     args=(cap, det_w, det_h, track_w, track_h, anchors, wake, stop),
+                     daemon=True).start()
     threading.Thread(target=_track_loop,
-                     args=(cap, work_w, work_h, inv_scale, anchors, state, stop),
+                     args=(cap, track_w, track_h, inv_scale, anchors, wake, state, stop),
                      daemon=True).start()
 
-    # Reuse canvas rectangles (coords update) instead of delete/create — far
-    # cheaper at high redraw rates and avoids flicker.
     pool: list[int] = []
     last_version = -1
 
@@ -387,7 +462,7 @@ def run(monitor_index: int = 1, fps: float = 0.0, max_side: int = _WORK_SIDE) ->
                     canvas.itemconfigure(item, state="normal")
                 else:
                     canvas.itemconfigure(item, state="hidden")
-        root.after(5, _redraw)  # ~200 Hz poll; only repaints on change
+        root.after(5, _redraw)
 
     def _on_close() -> None:
         stop.set()
@@ -405,7 +480,7 @@ def main() -> None:
     ap = argparse.ArgumentParser()
     ap.add_argument("--monitor", type=int, default=1)
     ap.add_argument("--fps", type=float, default=0.0)  # tracks at frame rate
-    ap.add_argument("--max-side", type=int, default=_WORK_SIDE)
+    ap.add_argument("--max-side", type=int, default=_TRACK_SIDE)
     args = ap.parse_args()
     logging.basicConfig(level=logging.INFO)
     run(monitor_index=args.monitor, fps=args.fps, max_side=args.max_side)

@@ -39,6 +39,7 @@ _DETECT_MAX_SIDE = 1280   # detection working resolution (recall vs speed)
 _DETECT_INTERVAL = 0.35   # seconds between full detections
 _FLOW_MARGIN = 72         # px of context around a box for its flow patch
 _EXTRAPOLATE = 1.0        # frames of motion to lead by (latency cancel)
+_FLOW_DEADZONE = 2.5      # px; below this, motion is treated as 0 (no drift)
 
 
 def _set_dpi_aware() -> None:
@@ -185,6 +186,10 @@ def _flow_boxes(prev_g: np.ndarray, cur_g: np.ndarray,
         if good.sum() >= 2:
             dx, dy = (float(v) for v in np.median(d[good], axis=0))
         else:
+            dx = dy = 0.0
+        # Deadzone: sub-threshold motion is flow noise, not real movement —
+        # zero it so static text can't slowly drift/rise frame over frame.
+        if (dx * dx + dy * dy) < (_FLOW_DEADZONE * _FLOW_DEADZONE):
             dx = dy = 0.0
         out.append((TextBox(int(b.x1 + dx), int(b.y1 + dy),
                             int(b.x2 + dx), int(b.y2 + dy)), dx, dy))

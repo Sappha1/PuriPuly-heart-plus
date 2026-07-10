@@ -74,8 +74,14 @@ _MAX_MISSES = 1
 # difference vs the remembered fingerprint exceeds this for a few consecutive
 # frames, the content is gone (menu closed / bubble expired) — drop the box.
 _SIG_X, _SIG_Y = 6, 2
-_SIG_DIFF = 32.0
+_SIG_DIFF = 36.0
 _SIG_BAD_FRAMES = 3
+
+# Texture check: text has strong local contrast. A box whose content's std
+# stays below this is sitting on a featureless surface (floor/wall a ghost
+# drifted onto) — kill it. Applies even during motion, since flat is flat.
+_TEX_MIN_STD = 10.0
+_TEX_BAD_FRAMES = 4
 
 _RENDER_LEAD_S = 0.016
 _RENDER_EXTRAP_CAP_S = 0.06
@@ -335,7 +341,7 @@ def _detect_loop(cap: _Capture, target: _Target, anchors: _Anchors,
 
 class _Tracked:
     __slots__ = ("x1", "y1", "x2", "y2", "ax", "ay", "vx", "vy",
-                 "moving", "calm_frames", "miss", "sig", "sig_bad")
+                 "moving", "calm_frames", "miss", "sig", "sig_bad", "tex_bad")
 
     def __init__(self, b: TextBox) -> None:
         self.x1, self.y1 = float(b.x1), float(b.y1)
@@ -347,6 +353,7 @@ class _Tracked:
         self.miss = 0
         self.sig: np.ndarray | None = None
         self.sig_bad = 0
+        self.tex_bad = 0
 
     def advance(self, dx: float, dy: float, dt: float,
                 gx: float, gy: float) -> None:
@@ -365,7 +372,9 @@ class _Tracked:
                 if self.calm_frames >= _STILL_FRAMES:
                     self.moving = False
                     self.vx = self.vy = 0.0
-                    self.sig = None  # fresh fingerprint at the settled position
+                    # Keep the CREATION-time fingerprint: a box that drifted
+                    # off its text during motion must fail against the real
+                    # text baseline and die, not adopt whatever it landed on.
             else:
                 self.calm_frames = 0
         else:
@@ -376,7 +385,6 @@ class _Tracked:
                 self.moving = True
                 self.calm_frames = 0
                 self.ax, self.ay = self.x1, self.y1
-                self.sig = None
                 self.sig_bad = 0
             else:
                 w = self.x2 - self.x1
@@ -409,14 +417,17 @@ class _Tracked:
             return 0.0, 0.0
         return self.vx, self.vy
 
-    def check_signature(self, gray: np.ndarray) -> bool:
-        """Fingerprint the pixels under the box; returns False when the content
-        has been gone for _SIG_BAD_FRAMES frames (drop the box)."""
+    def _sample(self, gray: np.ndarray) -> np.ndarray:
         H, W = gray.shape[:2]
         x1, y1, x2, y2 = self.rect()
         xs = np.clip(np.linspace(x1 + 2, x2 - 2, _SIG_X).astype(np.int32), 0, W - 1)
         ys = np.clip(np.linspace(y1 + 1, y2 - 1, _SIG_Y).astype(np.int32), 0, H - 1)
-        sample = gray[np.ix_(ys, xs)].astype(np.float32).ravel()
+        return gray[np.ix_(ys, xs)].astype(np.float32).ravel()
+
+    def check_signature(self, gray: np.ndarray) -> bool:
+        """Fingerprint the pixels under the box; returns False when the content
+        has been gone for _SIG_BAD_FRAMES frames (drop the box)."""
+        sample = self._sample(gray)
         if self.sig is None:
             self.sig = sample
             self.sig_bad = 0
@@ -429,6 +440,18 @@ class _Tracked:
         else:
             self.sig_bad = 0
             self.sig = 0.9 * self.sig + 0.1 * sample
+        return True
+
+    def check_texture(self, gray: np.ndarray) -> bool:
+        """Text has contrast. A box whose content is flat for a few frames is a
+        ghost sitting on floor/wall — drop it (works even during motion)."""
+        std = float(self._sample(gray).std())
+        if std < _TEX_MIN_STD:
+            self.tex_bad += 1
+            if self.tex_bad >= _TEX_BAD_FRAMES:
+                return False
+        else:
+            self.tex_bad = 0
         return True
 
 
@@ -589,6 +612,11 @@ def _track_loop(cap: _Capture, target: _Target, anchors: _Anchors,
                 if ratio < _MIN_OK_RATIO:
                     continue
                 tr.advance(dx, dy, dt, agx, agy)
+                # Texture check ALWAYS: a box on featureless content (floor,
+                # wall) is a ghost regardless of motion — flow reports OK on
+                # flat surfaces, so this is the only thing that catches them.
+                if not tr.check_texture(cur_g):
+                    continue
                 # Appearance check ONLY for frozen boxes under a still camera
                 # (the menu-close case). During motion a few px of tracking
                 # error over contrasty text would misread as "content gone"
@@ -607,6 +635,10 @@ def _track_loop(cap: _Capture, target: _Target, anchors: _Anchors,
                 if usable:
                     stale = float(cv2.mean(cv2.absdiff(cur_g, det_gray))[0])
                     usable = stale < _DET_STALE
+                    if not usable:
+                        # This pass is unusable (view moved on) — request a
+                        # fresh one NOW so ghosts don't outlive the movement.
+                        wake.set()
                 if usable:
                     fresh_tracked: list[_Tracked] = []
                     if det_boxes:
@@ -616,6 +648,9 @@ def _track_loop(cap: _Capture, target: _Target, anchors: _Anchors,
                         for tr, (dx, dy, ratio) in zip(cands, adv):
                             if ratio >= _MIN_OK_RATIO:
                                 tr.advance(dx, dy, dt, agx, agy)
+                                # Baseline fingerprint NOW, while the content
+                                # under the box is verified text.
+                                tr.check_signature(cur_g)
                                 fresh_tracked.append(tr)
                     merged: list[_Tracked] = []
                     used = [False] * len(fresh_tracked)

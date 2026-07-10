@@ -48,7 +48,7 @@ _BOX_WIDTH = 1
 
 _TRACK_SIDE = 1280
 _DETECT_SIDE = 960
-_DETECT_INTERVAL = 0.30
+_DETECT_INTERVAL = 0.22  # detect itself ~0.25s; effectively back-to-back
 _PTS_X, _PTS_Y = 4, 3
 _GRID_X, _GRID_Y = 8, 5
 
@@ -74,7 +74,13 @@ _MIN_OK_RATIO = 0.34
 # match more loosely so extent wobble updates the box instead of replacing it.
 _MERGE_IOU = 0.25
 _MERGE_BLEND = 0.60
-_MAX_MISSES = 4
+# Asymmetric persistence: blanket tolerance made ONE-OFF false detections
+# (roof tiles, icons) linger ~2s. A box seen only once dies after a single
+# missed pass (junk rarely repeats in place); a box confirmed twice+ is real
+# text and rides out detector nondeterminism without blinking.
+_MAX_MISSES_CONFIRMED = 4
+_MAX_MISSES_UNPROVEN = 1
+_CONFIRMED_AT = 2
 
 # Appearance signature: sample grid inside each box; if the mean abs gray
 # difference vs the remembered fingerprint exceeds this for a few consecutive
@@ -429,7 +435,7 @@ def _detect_loop(cap: _Capture, target: _Target, anchors: _Anchors,
 class _Tracked:
     __slots__ = ("x1", "y1", "x2", "y2", "ax", "ay", "vx", "vy",
                  "moving", "calm_frames", "miss", "sig", "sig_bad", "tex_bad",
-                 "last_confirm")
+                 "last_confirm", "confirms")
 
     def __init__(self, b: TextBox) -> None:
         self.x1, self.y1 = float(b.x1), float(b.y1)
@@ -443,6 +449,7 @@ class _Tracked:
         self.sig_bad = 0
         self.tex_bad = 0
         self.last_confirm = time.monotonic()
+        self.confirms = 1  # detections that have vouched for this box
 
     def advance(self, dx: float, dy: float, dt: float,
                 gx: float, gy: float) -> None:
@@ -494,6 +501,7 @@ class _Tracked:
         self.sig = None  # re-fingerprint at the corrected position
         self.sig_bad = 0
         self.last_confirm = time.monotonic()
+        self.confirms = min(10, self.confirms + 1)
 
     def rect(self) -> tuple[float, float, float, float]:
         if not self.moving:
@@ -832,7 +840,10 @@ def _track_loop(cap: _Capture, target: _Target, anchors: _Anchors,
                             merged.append(tr)
                         else:
                             tr.miss += 1
-                            if tr.miss <= _MAX_MISSES:
+                            allowed = (_MAX_MISSES_CONFIRMED
+                                       if tr.confirms >= _CONFIRMED_AT
+                                       else _MAX_MISSES_UNPROVEN)
+                            if tr.miss <= allowed:
                                 merged.append(tr)
                     for i, nb in enumerate(fresh_tracked):
                         if not used[i]:

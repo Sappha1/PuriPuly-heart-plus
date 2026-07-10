@@ -972,27 +972,20 @@ def run(monitor_index: int = 1, fps: float = 0.0, max_side: int = _TRACK_SIDE,
 
 
 def _parent_watch_loop(parent_pid: int) -> None:
-    """Exit when the parent app dies. Without this the overlay survives app
-    close as an orphan, drawing boxes with no app running (and its capture
-    session then fights any new overlay's)."""
-    PROCESS_QUERY_LIMITED_INFORMATION = 0x1000
-    STILL_ACTIVE = 259
+    """Exit the INSTANT the parent app dies. Holds a HANDLE to the exact
+    process object (immune to Windows PID reuse — polling by pid could latch
+    onto an unrelated process that recycled the number) and blocks on it, so
+    there is no polling window either. If the parent can't be opened at all,
+    it is already gone — exit immediately."""
+    SYNCHRONIZE = 0x00100000
+    INFINITE = 0xFFFFFFFF
     kernel32 = ctypes.windll.kernel32
-    while True:
-        time.sleep(1.0)
-        try:
-            h = kernel32.OpenProcess(PROCESS_QUERY_LIMITED_INFORMATION, False,
-                                     parent_pid)
-            if not h:
-                break
-            code = wintypes.DWORD()
-            alive = (kernel32.GetExitCodeProcess(h, ctypes.byref(code))
-                     and code.value == STILL_ACTIVE)
-            kernel32.CloseHandle(h)
-            if not alive:
-                break
-        except Exception:
-            break
+    try:
+        handle = kernel32.OpenProcess(SYNCHRONIZE, False, parent_pid)
+        if handle:
+            kernel32.WaitForSingleObject(handle, INFINITE)  # returns on death
+    except Exception:
+        pass
     logger.info("[OCR] parent app (pid %s) exited — shutting down", parent_pid)
     os._exit(0)
 

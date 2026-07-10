@@ -84,27 +84,28 @@ class TextDetector:
             if "DmlExecutionProvider" not in ort.get_available_providers():
                 logger.info("[OCR] DirectML not available — OCR on CPU")
                 return
-            for name, infer in (
-                ("detection", self._engine.text_detector.infer),
-                ("recognition", self._engine.text_recognizer.session),
-            ):
-                path = getattr(infer.session, "_model_path", None)
-                if not path or not os.path.exists(path):
-                    logger.info("[OCR] %s model path unknown — stays on CPU",
-                                name)
-                    continue
-                so = ort.SessionOptions()
-                so.log_severity_level = 4
-                so.graph_optimization_level = (
-                    ort.GraphOptimizationLevel.ORT_ENABLE_ALL
-                )
-                so.enable_mem_pattern = False  # required off for DML
-                infer.session = ort.InferenceSession(
-                    path, sess_options=so,
-                    providers=[("DmlExecutionProvider", {"device_id": 0}),
-                               "CPUExecutionProvider"])
-                logger.info("[OCR] %s inference provider: %s", name,
-                            infer.session.get_providers()[0])
+            # DETECTION ONLY. Recognition (CRNN: LSTM + variable-width input)
+            # is broken on DirectML — per-shape graph recompiles thrash the
+            # GPU (starving detection passes, freezing everything) and the
+            # output degrades to junk ('.'/garbage on plain English). It
+            # stays on CPU, where it is fast enough in small batches.
+            infer = self._engine.text_detector.infer
+            path = getattr(infer.session, "_model_path", None)
+            if not path or not os.path.exists(path):
+                logger.info("[OCR] det model path unknown — detection on CPU")
+                return
+            so = ort.SessionOptions()
+            so.log_severity_level = 4
+            so.graph_optimization_level = (
+                ort.GraphOptimizationLevel.ORT_ENABLE_ALL
+            )
+            so.enable_mem_pattern = False  # required off for DML
+            infer.session = ort.InferenceSession(
+                path, sess_options=so,
+                providers=[("DmlExecutionProvider", {"device_id": 0}),
+                           "CPUExecutionProvider"])
+            logger.info("[OCR] detection inference provider: %s",
+                        infer.session.get_providers()[0])
         except Exception as exc:
             logger.warning("[OCR] DirectML init failed — CPU fallback: %s", exc)
 

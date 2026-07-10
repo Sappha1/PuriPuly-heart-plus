@@ -1359,7 +1359,7 @@ def _track_loop(cap: _Capture, target: _Target, anchors: _Anchors,
                     for tr in tracked:
                         live.add(tr.uid)
                         if tr.uid in _REC_OUT:
-                            tr.text = _REC_OUT.pop(tr.uid) or "·"
+                            tr.text = _REC_OUT.pop(tr.uid) or "-"
                         elif (not tr.text and tr.confirms >= 2
                               and tr.uid not in _REC_REQ and pending < 24):
                             bx1, by1, bx2, by2 = tr.rect()
@@ -1405,7 +1405,7 @@ def _save_debug_shot(cap: _Capture, boxes, pills: bool = False) -> None:
                 # cv2.putText is ASCII-only: CJK renders as '?' in the
                 # composite. The LIVE overlay (Tk) draws CJK correctly —
                 # judge accuracy on screen, use composites for layout.
-                raw = it[7] or "…"
+                raw = it[7] or "..."
                 label = raw.encode("ascii", "replace").decode("ascii")
                 scale = max(0.35, min(1.5, (y2 - y1) / 34.0))
                 (tw, th), _b = cv2.getTextSize(
@@ -1597,7 +1597,7 @@ def run(monitor_index: int = 1, fps: float = 0.0, max_side: int = _TRACK_SIDE,
                     y1 = (by1 + ey - top) * sy
                     x2 = (bx2 + ex - left) * sx
                     y2 = (by2 + ey - top) * sy
-                    label = text or "…"
+                    label = text or "..."
                     px = max(9, min(46, int((y2 - y1) * 0.62)))
                     f = _font_px(px)
                     bw = x2 - x1

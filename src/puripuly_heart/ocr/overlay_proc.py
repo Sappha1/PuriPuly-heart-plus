@@ -990,18 +990,39 @@ def _save_debug_shot(cap: _Capture, boxes) -> None:
         logger.debug("[OCR] debug shot failed: %s", exc)
 
 
+_SHOT_TRIGGER = os.path.join(os.path.expanduser("~"), "AppData", "Local",
+                             "puripuly-heart", "ocr_shot_trigger")
+
+
 def _prtscn_loop(cap: _Capture, state: _BoxState, stop: threading.Event) -> None:
+    """Composite triggers: the PrintScreen key (user's muscle memory) OR a
+    trigger FILE — the file path lets tooling request a composite silently,
+    without touching the keyboard (the user's ShareX intercepts PrtScn with a
+    focus-stealing capture UI)."""
     was_down = False
     while not stop.is_set():
         try:
             down = bool(ctypes.windll.user32.GetAsyncKeyState(_VK_SNAPSHOT) & 0x8000)
-            if down and not was_down:
+            fire = down and not was_down
+            was_down = down
+            if not fire and os.path.exists(_SHOT_TRIGGER):
+                with contextlib_suppress():
+                    os.remove(_SHOT_TRIGGER)
+                fire = True
+            if fire:
                 _v, _s, boxes = state.get()
                 _save_debug_shot(cap, boxes)
-            was_down = down
         except Exception:
             pass
         time.sleep(0.03)
+
+
+class contextlib_suppress:
+    def __enter__(self):
+        return self
+
+    def __exit__(self, *exc):
+        return True
 
 
 def run(monitor_index: int = 1, fps: float = 0.0, max_side: int = _TRACK_SIDE,

@@ -63,15 +63,21 @@ _STILL_DECAY = 0.12
 _LEAD_FRAMES = 1.2
 
 # Global camera-motion gate: EMA of the grid's median per-frame flow (track
-# px/frame). Coherent slow pans exceed this; mean-zero noise does not.
-_GLOBAL_MOVE_PX = 0.12
+# px/frame). The median of 40 points is very low-noise, so the gate can be
+# tiny — any coherent pan, however slow, passes; static noise does not.
+# When the gate is open the GLOBAL component is applied to frozen boxes'
+# anchors too, so world-locked text glides with the camera instead of the
+# box floating in the air (freezing only suppresses per-box residual noise).
+_GLOBAL_MOVE_PX = 0.04
 
 # Scene-cut: only a true discontinuity clears boxes.
 _CUT_DIFF_HARD = 70.0     # mean abs gray diff: unconditional cut
 _CUT_DIFF_SOFT = 38.0     # ...or this much diff AND tracking collapse
 _CUT_GRID_RATIO = 0.5
 
-_DET_STALE = 28.0         # discard detections older than the scene by this much
+# Detections are advanced to "now" by a wide-window flow step, which bridges
+# slow-pan displacement fine — only near-cut staleness is rejected.
+_DET_STALE = 45.0
 _MIN_OK_RATIO = 0.34
 
 _VK_SNAPSHOT = 0x2C
@@ -235,7 +241,12 @@ class _Tracked:
         self.moving = True
         self.calm_frames = 0
 
-    def advance(self, dx: float, dy: float, dt: float, camera_moving: bool) -> None:
+    def advance(self, dx: float, dy: float, dt: float,
+                gx: float, gy: float) -> None:
+        """dx/dy: this box's measured motion. gx/gy: the applied global
+        (camera) motion — (0,0) when the camera is still. Camera motion moves
+        the ANCHOR too, so a frozen (world-locked) box glides with the world
+        instead of floating; freezing only suppresses per-box residual noise."""
         self.x1 += dx; self.x2 += dx
         self.y1 += dy; self.y2 += dy
         if dt > 0:
@@ -243,17 +254,12 @@ class _Tracked:
             self.vx = (1 - a) * self.vx + a * (dx / dt)
             self.vy = (1 - a) * self.vy + a * (dy / dt)
 
-        if camera_moving:
-            # Camera pans (however slow) keep every box live — freezing while
-            # the whole scene glides is what caused misaligned boxes.
-            self.moving = True
-            self.calm_frames = 0
-            self.ax, self.ay = self.x1, self.y1
-            return
-
-        step = (dx * dx + dy * dy) ** 0.5
         if self.moving:
             self.ax, self.ay = self.x1, self.y1
+            # Calm is judged on RESIDUAL motion (own motion minus camera), so
+            # a bubble world-static during a pan can still settle and freeze —
+            # its anchor keeps gliding with the world below.
+            step = ((dx - gx) ** 2 + (dy - gy) ** 2) ** 0.5
             if step < _STILL_SPEED_PX:
                 self.calm_frames += 1
                 if self.calm_frames >= _STILL_FRAMES:
@@ -262,8 +268,12 @@ class _Tracked:
             else:
                 self.calm_frames = 0
         else:
+            # World glide: the anchor rides the camera motion 1:1.
+            self.ax += gx
+            self.ay += gy
             off = ((self.x1 - self.ax) ** 2 + (self.y1 - self.ay) ** 2) ** 0.5
             if off > _UNFREEZE_PX:
+                # Genuine residual motion (object moved relative to the world).
                 self.moving = True
                 self.calm_frames = 0
                 self.ax, self.ay = self.x1, self.y1
@@ -366,6 +376,9 @@ def _track_loop(cap: _Capture, track_w: int, track_h: int, inv_scale: float,
         gx_ema = 0.7 * gx_ema + 0.3 * gx
         gy_ema = 0.7 * gy_ema + 0.3 * gy
         camera_moving = (gx_ema * gx_ema + gy_ema * gy_ema) ** 0.5 > _GLOBAL_MOVE_PX
+        # Global component applied to anchors: real camera motion passes, the
+        # (tiny) static-scene noise is gated to exactly zero.
+        agx, agy = (gx, gy) if camera_moving else (0.0, 0.0)
 
         # Scene cut: ONLY a true discontinuity clears boxes (huge diff alone,
         # or big diff plus tracking collapse). Ordinary movement never does.
@@ -383,7 +396,7 @@ def _track_loop(cap: _Capture, track_w: int, track_h: int, inv_scale: float,
         for tr, (dx, dy, ratio) in zip(tracked, flows):
             if ratio < _MIN_OK_RATIO:
                 continue
-            tr.advance(dx, dy, dt, camera_moving)
+            tr.advance(dx, dy, dt, agx, agy)
             kept.append(tr)
         tracked = kept
 
@@ -404,7 +417,7 @@ def _track_loop(cap: _Capture, track_w: int, track_h: int, inv_scale: float,
                     kept2 = []
                     for tr, (dx, dy, ratio) in zip(new_tracked, adv):
                         if ratio >= _MIN_OK_RATIO:
-                            tr.advance(dx, dy, dt, camera_moving)
+                            tr.advance(dx, dy, dt, agx, agy)
                             kept2.append(tr)
                     tracked = kept2
                 else:

@@ -74,9 +74,15 @@ _MIN_OK_RATIO = 0.34
 # match more loosely so extent wobble updates the box instead of replacing it.
 _MERGE_IOU = 0.25
 _MERGE_BLEND = 0.60
-# RECOGNITION GATE: a detected region must actually READ as text before it is
-# allowed a box (what established OCR translators do). Kills icons, lattice
-# patterns, foliage — anything that doesn't produce legible characters.
+# PERMISSIVE PROFILE (user-chosen): the high-recall pre-filter pipeline
+# "detected everything" best. The recognition gate and content-kill checks
+# cost too much recall/latency, so they are OFF; detection publishes every
+# text-shaped region and tracking keeps it glued. Rec stays available for
+# the future translation stage.
+_REC_GATE_ENABLED = False
+_TEXTURE_KILL_ENABLED = False
+_SIG_KILL_ENABLED = False
+
 _REC_MIN_SCORE = 0.50
 _REC_MAX_BOXES = 25          # rec budget per detection pass
 import re as _re
@@ -483,17 +489,15 @@ class _Anchors:
 
 
 def _text_plausible(b: TextBox, det_w: int, det_h: int) -> bool:
+    # Minimal filter (permissive profile): reject only specks and
+    # screen-sized slabs; everything else gets its chance.
     w = b.x2 - b.x1
     h = b.y2 - b.y1
-    if w < 10 or h < 5:
+    if w < 8 or h < 5:
         return False
-    if h > 0.12 * det_h:
+    if w * h < 80:
         return False
-    if w > 0.92 * det_w:
-        return False
-    if w * h < 110:
-        return False
-    if w / max(1.0, float(h)) < 0.55:
+    if h > 0.5 * det_h and w > 0.9 * det_w:
         return False
     return True
 
@@ -546,21 +550,24 @@ def _detect_loop(cap: _Capture, target: _Target, anchors: _Anchors,
             # image) so the gate judges sharp pixels — at whole-screen scope a
             # 4K frame squeezed to 960px made every crop unreadable and the
             # gate rejected nearly all real text.
-            inv_d = 1.0 / d_scale if d_scale else 1.0
-            crops, keep = [], []
-            for b in shaped[:_REC_MAX_BOXES]:
-                fx1 = max(0, int(b.x1 * inv_d) - 3)
-                fy1 = max(0, int(b.y1 * inv_d) - 3)
-                fx2 = min(cw, int(b.x2 * inv_d) + 3)
-                fy2 = min(ch, int(b.y2 * inv_d) + 3)
-                if fx2 - fx1 < 12 or fy2 - fy1 < 8:
-                    continue
-                crops.append(np.ascontiguousarray(frame[fy1:fy2, fx1:fx2]))
-                keep.append(b)
-            verified = [
-                b for b, (text, score) in zip(keep, detector.recognize(crops))
-                if score >= _REC_MIN_SCORE and _REC_TEXTY.search(text)
-            ]
+            if _REC_GATE_ENABLED:
+                inv_d = 1.0 / d_scale if d_scale else 1.0
+                crops, keep = [], []
+                for b in shaped[:_REC_MAX_BOXES]:
+                    fx1 = max(0, int(b.x1 * inv_d) - 3)
+                    fy1 = max(0, int(b.y1 * inv_d) - 3)
+                    fx2 = min(cw, int(b.x2 * inv_d) + 3)
+                    fy2 = min(ch, int(b.y2 * inv_d) + 3)
+                    if fx2 - fx1 < 12 or fy2 - fy1 < 8:
+                        continue
+                    crops.append(np.ascontiguousarray(frame[fy1:fy2, fx1:fx2]))
+                    keep.append(b)
+                verified = [
+                    b for b, (text, score) in zip(keep, detector.recognize(crops))
+                    if score >= _REC_MIN_SCORE and _REC_TEXTY.search(text)
+                ]
+            else:
+                verified = shaped  # permissive: every text-shaped region
             det_pass[0] += 1
             if det_pass[0] % 10 == 1:
                 logger.info("[OCR] det: raw=%d shaped=%d verified=%d region=%dx%d "
@@ -983,13 +990,15 @@ def _track_loop(cap: _Capture, target: _Target, anchors: _Anchors,
                 if any(ox1 <= bcx <= ox2 and oy1 <= bcy <= oy2
                        for ox1, oy1, ox2, oy2 in occl_wk):
                     continue  # box sits on another window's area — drop
-                if not cursor_on_box and not tr.check_texture(cur_g):
+                if (_TEXTURE_KILL_ENABLED and not cursor_on_box
+                        and not tr.check_texture(cur_g)):
                     continue
                 # Appearance check ONLY for frozen boxes under a still camera
                 # (the menu-close case), and only when detection hasn't
                 # re-confirmed the box recently — a repeatedly-confirmed box is
                 # real text; sig-killing it caused an on/off flash loop.
-                if (not cursor_on_box and not camera_moving and not tr.moving
+                if (_SIG_KILL_ENABLED and not cursor_on_box
+                        and not camera_moving and not tr.moving
                         and (now - tr.last_confirm) > _SIG_CONFIRM_GRACE_S
                         and not tr.check_signature(cur_g)):
                     continue

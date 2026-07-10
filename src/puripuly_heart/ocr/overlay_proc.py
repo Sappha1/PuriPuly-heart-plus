@@ -1,26 +1,27 @@
 """OCR detection overlay — standalone subprocess (prototype).
 
-Detect-then-track, tuned for per-frame updates that stay honest about what is
-actually on screen:
+Detect-then-track with GLOBAL camera-motion estimation:
 
-  * DETECTION thread (own, smaller resolution for a faster refresh) finds text
-    boxes ~3x/sec, geometry-filtered to text-plausible shapes. Results whose
-    source frame no longer resembles the current view are discarded (a mid-pan
-    detection is garbage).
+  * DETECTION thread (960px, ~0.25 s) finds text boxes ~3x/sec, geometry
+    filtered to text-plausible shapes.
   * TRACKING loop: every delivered frame, ONE downscale + ONE batched
-    optical-flow call for all boxes (~6 ms flat). Box positions are floats that
-    ALWAYS follow the text; a position-hysteresis anchor decides only what is
-    RENDERED — still boxes draw rock-solid at their anchor, and ~2 px of real
-    accumulated motion unfreezes them with an instant catch-up (no trail, no
-    lost tracking, max ~2 frames of onset delay).
-  * SCENE-CUT GUARD: a cheap whole-frame difference metric detects fast camera
-    turns; all boxes are cleared immediately (no ghost outlines over new
-    scenery) and an immediate re-detect is requested.
-  * Boxes whose tracking points go unhealthy (text left the region) are
-    dropped rather than left floating.
+    optical-flow call covering a whole-frame sample grid (global camera
+    motion) AND every box (~6 ms flat). Boxes are floats that always follow
+    the text.
+  * Freeze-for-stability applies ONLY when the camera is truly still: global
+    motion is judged by COHERENCE (EMA of the grid's median flow) — slow pans
+    move everything consistently and keep all boxes live, while sub-pixel
+    noise averages to zero and lets static text freeze rock-solid.
+  * SCENE-CUT guard is two-tier (huge frame diff AND broken tracking) so
+    ordinary running/turning never clears boxes — only true discontinuities
+    (whip pan, teleport) do, which also wakes an immediate re-detect.
+  * PrintScreen (dev aid): pressing PrtScn saves a composited PNG — current
+    frame WITH the red boxes burned in — to Desktop/puripuly_ocr_shots/.
+    (The overlay itself is excluded from screen capture to prevent the
+    detector feeding back on its own outlines, so a normal screenshot can
+    physically never contain the boxes.)
 
-Capture is dxcam (DXGI, ~1-5 ms at 4K) with an mss fallback. Detection only —
-no translation.
+Capture is dxcam (DXGI) with an mss fallback. Detection only — no translation.
 
 Run directly:
     python -m puripuly_heart.ocr.overlay_proc
@@ -31,6 +32,7 @@ from __future__ import annotations
 import argparse
 import ctypes
 import logging
+import os
 import threading
 import time
 import tkinter as tk
@@ -47,24 +49,33 @@ _BOX_WIDTH = 1
 
 _TRACK_SIDE = 1280        # tracking working resolution (longest side)
 _DETECT_SIDE = 960        # detection resolution (smaller => faster refresh)
-_DETECT_INTERVAL = 0.30   # seconds between detections (detect itself ~0.25 s)
+_DETECT_INTERVAL = 0.30   # seconds between detections
 _PTS_X, _PTS_Y = 4, 3     # flow sample grid per box
+_GRID_X, _GRID_Y = 8, 5   # whole-frame grid for global camera motion
 
-# Rendering hysteresis (track px). Float position always follows the text;
-# the DRAWN box stays at its anchor until offset exceeds _UNFREEZE_PX, then
-# snaps to the float and follows every frame until calm again.
+# Stillness (track px). Freezing is allowed ONLY when the camera is globally
+# still; then a box also needs a calm residual streak. ~2 px of accumulated
+# real motion unfreezes with an instant catch-up.
 _UNFREEZE_PX = 2.0
-_STILL_SPEED_PX = 0.35    # per-frame |d| below this counts as calm
-_STILL_FRAMES = 8         # calm frames required to re-freeze
-_STILL_DECAY = 0.12       # pull float toward anchor while frozen (kills bias drift)
-_LEAD_FRAMES = 1.2        # velocity lead (frames) to cancel capture latency
+_STILL_SPEED_PX = 0.35
+_STILL_FRAMES = 8
+_STILL_DECAY = 0.12
+_LEAD_FRAMES = 1.2
 
-# Scene-change thresholds (mean abs gray diff, 0-255).
-_SCENE_CUT = 22.0         # whip pan / teleport: clear boxes instantly
-_DET_STALE = 16.0         # detection older than the scene: discard result
+# Global camera-motion gate: EMA of the grid's median per-frame flow (track
+# px/frame). Coherent slow pans exceed this; mean-zero noise does not.
+_GLOBAL_MOVE_PX = 0.12
 
-# Flow health: minimum fraction of good sample points to keep a box alive.
+# Scene-cut: only a true discontinuity clears boxes.
+_CUT_DIFF_HARD = 70.0     # mean abs gray diff: unconditional cut
+_CUT_DIFF_SOFT = 38.0     # ...or this much diff AND tracking collapse
+_CUT_GRID_RATIO = 0.5
+
+_DET_STALE = 28.0         # discard detections older than the scene by this much
 _MIN_OK_RATIO = 0.34
+
+_VK_SNAPSHOT = 0x2C
+_SHOT_DIR = os.path.join(os.path.expanduser("~"), "Desktop", "puripuly_ocr_shots")
 
 
 def _set_dpi_aware() -> None:
@@ -91,7 +102,6 @@ def _make_click_through(root: tk.Tk) -> None:
 
 
 def _exclude_from_capture(root: tk.Tk) -> None:
-    """Hide our own boxes from screen capture (feedback-loop guard)."""
     WDA_EXCLUDEFROMCAPTURE = 0x00000011
     try:
         hwnd = ctypes.windll.user32.GetParent(root.winfo_id())
@@ -150,8 +160,6 @@ class _Capture:
 
 
 class _Anchors:
-    """Latest detection (track coords + track-res gray) for the tracker."""
-
     def __init__(self) -> None:
         self._lock = threading.Lock()
         self.boxes: list[TextBox] = []
@@ -170,19 +178,17 @@ class _Anchors:
 
 
 def _text_plausible(b: TextBox, det_w: int, det_h: int) -> bool:
-    """Geometry filter: keep boxes shaped like lines of text, drop speckle and
-    screen-sized slabs (false positives on foliage/edges while running)."""
     w = b.x2 - b.x1
     h = b.y2 - b.y1
     if w < 10 or h < 5:
         return False
-    if h > 0.12 * det_h:          # taller than any plausible text line
+    if h > 0.12 * det_h:
         return False
-    if w > 0.92 * det_w:          # near full-screen slab
+    if w > 0.92 * det_w:
         return False
-    if w * h < 110:               # speckle
+    if w * h < 110:
         return False
-    if w / max(1.0, float(h)) < 0.55:  # skinnier-than-tall column, not a line
+    if w / max(1.0, float(h)) < 0.55:
         return False
     return True
 
@@ -200,20 +206,18 @@ def _detect_loop(cap: _Capture, det_w: int, det_h: int, track_w: int,
         try:
             frame = cap.last()
             det_bgr = cv2.resize(frame, (det_w, det_h), interpolation=cv2.INTER_AREA)
-            raw = detector.detect(det_bgr)  # det-res in, det coords out
+            raw = detector.detect(det_bgr)
             boxes = [
                 TextBox(int(b.x1 * sx), int(b.y1 * sy), int(b.x2 * sx), int(b.y2 * sy))
                 for b in raw if _text_plausible(b, det_w, det_h)
             ]
-            # Gray at TRACK resolution from the same frame, so the tracker can
-            # advance these boxes to "now" with one flow step.
             gray = cv2.resize(cv2.extractChannel(frame, 1), (track_w, track_h),
                               interpolation=cv2.INTER_LINEAR)
             anchors.publish(boxes, gray)
         except Exception as exc:
             logger.debug("[OCR] detect error: %s", exc)
         remaining = max(0.0, _DETECT_INTERVAL - (time.monotonic() - t0))
-        wake.wait(remaining)   # early wake on scene cut
+        wake.wait(remaining)
         wake.clear()
 
 
@@ -226,13 +230,12 @@ class _Tracked:
     def __init__(self, b: TextBox) -> None:
         self.x1, self.y1 = float(b.x1), float(b.y1)
         self.x2, self.y2 = float(b.x2), float(b.y2)
-        self.ax, self.ay = self.x1, self.y1   # anchor (render position offset base)
+        self.ax, self.ay = self.x1, self.y1
         self.vx = self.vy = 0.0
-        self.moving = True        # start permissive; settles to still if calm
+        self.moving = True
         self.calm_frames = 0
 
-    def advance(self, dx: float, dy: float, dt: float) -> None:
-        # Float position ALWAYS follows the text — tracking never pauses.
+    def advance(self, dx: float, dy: float, dt: float, camera_moving: bool) -> None:
         self.x1 += dx; self.x2 += dx
         self.y1 += dy; self.y2 += dy
         if dt > 0:
@@ -240,9 +243,16 @@ class _Tracked:
             self.vx = (1 - a) * self.vx + a * (dx / dt)
             self.vy = (1 - a) * self.vy + a * (dy / dt)
 
+        if camera_moving:
+            # Camera pans (however slow) keep every box live — freezing while
+            # the whole scene glides is what caused misaligned boxes.
+            self.moving = True
+            self.calm_frames = 0
+            self.ax, self.ay = self.x1, self.y1
+            return
+
         step = (dx * dx + dy * dy) ** 0.5
         if self.moving:
-            # Anchor follows while moving; calm streak re-freezes.
             self.ax, self.ay = self.x1, self.y1
             if step < _STILL_SPEED_PX:
                 self.calm_frames += 1
@@ -254,17 +264,16 @@ class _Tracked:
         else:
             off = ((self.x1 - self.ax) ** 2 + (self.y1 - self.ay) ** 2) ** 0.5
             if off > _UNFREEZE_PX:
-                # Real accumulated motion: unfreeze and catch up instantly.
                 self.moving = True
                 self.calm_frames = 0
                 self.ax, self.ay = self.x1, self.y1
             else:
-                # Frozen render; bleed float back toward anchor so sub-pixel
-                # bias can never accumulate into a crawl.
+                w = self.x2 - self.x1
+                h = self.y2 - self.y1
                 self.x1 = self.ax + (self.x1 - self.ax) * (1 - _STILL_DECAY)
                 self.y1 = self.ay + (self.y1 - self.ay) * (1 - _STILL_DECAY)
-                self.x2 = self.x1 + (self.x2 - self.x1)
-                self.y2 = self.y1 + (self.y2 - self.y1)
+                self.x2 = self.x1 + w
+                self.y2 = self.y1 + h
 
     def display(self, dt: float) -> tuple[float, float, float, float]:
         w = self.x2 - self.x1
@@ -276,15 +285,23 @@ class _Tracked:
         return self.x1 + ex, self.y1 + ey, self.x2 + ex, self.y2 + ey
 
 
-def _batched_flow(prev_g: np.ndarray, cur_g: np.ndarray,
-                  tracked: list[_Tracked]) -> list[tuple[float, float, float]]:
-    """One pyrLK call for all boxes. Returns per-box (dx, dy, ok_ratio)."""
+def _make_grid(w: int, h: int) -> np.ndarray:
+    xs = np.linspace(w * 0.08, w * 0.92, _GRID_X)
+    ys = np.linspace(h * 0.10, h * 0.90, _GRID_Y)
+    return np.array([[x, y] for y in ys for x in xs], dtype=np.float32)
+
+
+def _flow_all(prev_g: np.ndarray, cur_g: np.ndarray, tracked: list["_Tracked"],
+              grid: np.ndarray, win: int = 21, levels: int = 3):
+    """ONE pyrLK call: whole-frame grid (global motion) + all boxes.
+
+    Returns (per_box [(dx, dy, ok_ratio)], (gx, gy, grid_ratio))."""
     import cv2
 
-    if not tracked:
-        return []
     H, W = cur_g.shape[:2]
-    pts, spans = [], []
+    pts: list[list[float]] = [p.tolist() for p in grid]
+    n_grid = len(pts)
+    spans = []
     for tr in tracked:
         gx = np.linspace(max(1.0, tr.x1 + 2), min(W - 2.0, tr.x2 - 2), _PTS_X)
         gy = np.linspace(max(1.0, tr.y1 + 2), min(H - 2.0, tr.y2 - 2), _PTS_Y)
@@ -293,23 +310,30 @@ def _batched_flow(prev_g: np.ndarray, cur_g: np.ndarray,
         pts.extend(p)
     p0 = np.asarray(pts, dtype=np.float32).reshape(-1, 1, 2)
     try:
-        p1, st, _ = cv2.calcOpticalFlowPyrLK(prev_g, cur_g, p0, None,
-                                             winSize=(21, 21), maxLevel=3)
+        p1, st, _ = cv2.calcOpticalFlowPyrLK(
+            prev_g, cur_g, p0, None, winSize=(win, win), maxLevel=levels)
     except Exception:
-        return [(0.0, 0.0, 0.0)] * len(tracked)
+        return [(0.0, 0.0, 0.0)] * len(tracked), (0.0, 0.0, 0.0)
     d = (p1 - p0).reshape(-1, 2)
     ok = st.reshape(-1) == 1
+
+    g_ok = ok[:n_grid]
+    if g_ok.sum() >= 4:
+        gxy = np.median(d[:n_grid][g_ok], axis=0)
+        g = (float(gxy[0]), float(gxy[1]), float(g_ok.sum()) / n_grid)
+    else:
+        g = (0.0, 0.0, float(g_ok.sum()) / max(1, n_grid))
+
     out: list[tuple[float, float, float]] = []
     for a, z in spans:
         good = ok[a:z]
         n = max(1, z - a)
-        ratio = float(good.sum()) / n
         if good.sum() >= 2:
             dx, dy = np.median(d[a:z][good], axis=0)
-            out.append((float(dx), float(dy), ratio))
+            out.append((float(dx), float(dy), float(good.sum()) / n))
         else:
-            out.append((0.0, 0.0, ratio))
-    return out
+            out.append((0.0, 0.0, float(good.sum()) / n))
+    return out, g
 
 
 def _track_loop(cap: _Capture, track_w: int, track_h: int, inv_scale: float,
@@ -317,10 +341,12 @@ def _track_loop(cap: _Capture, track_w: int, track_h: int, inv_scale: float,
                 stop: threading.Event) -> None:
     import cv2
 
+    grid = _make_grid(track_w, track_h)
     prev_g: np.ndarray | None = None
     tracked: list[_Tracked] = []
     last_stamp = 0
     last_t = time.monotonic()
+    gx_ema = gy_ema = 0.0
     while not stop.is_set():
         frame = cap.grab()
         if frame is None:
@@ -332,46 +358,57 @@ def _track_loop(cap: _Capture, track_w: int, track_h: int, inv_scale: float,
         cur_g = cv2.resize(cv2.extractChannel(frame, 1), (track_w, track_h),
                            interpolation=cv2.INTER_LINEAR)
 
-        # Scene-cut guard: a whip pan/teleport invalidates every box NOW.
-        if prev_g is not None and tracked:
+        if prev_g is None:
+            prev_g = cur_g
+            continue
+
+        flows, (gx, gy, grid_ratio) = _flow_all(prev_g, cur_g, tracked, grid)
+        gx_ema = 0.7 * gx_ema + 0.3 * gx
+        gy_ema = 0.7 * gy_ema + 0.3 * gy
+        camera_moving = (gx_ema * gx_ema + gy_ema * gy_ema) ** 0.5 > _GLOBAL_MOVE_PX
+
+        # Scene cut: ONLY a true discontinuity clears boxes (huge diff alone,
+        # or big diff plus tracking collapse). Ordinary movement never does.
+        if tracked:
             diff = float(cv2.mean(cv2.absdiff(cur_g, prev_g))[0])
-            if diff > _SCENE_CUT:
+            if diff > _CUT_DIFF_HARD or (diff > _CUT_DIFF_SOFT
+                                         and grid_ratio < _CUT_GRID_RATIO):
                 tracked = []
                 state.set([])
-                wake.set()           # ask for an immediate re-detect
+                wake.set()
                 prev_g = cur_g
                 continue
+
+        kept: list[_Tracked] = []
+        for tr, (dx, dy, ratio) in zip(tracked, flows):
+            if ratio < _MIN_OK_RATIO:
+                continue
+            tr.advance(dx, dy, dt, camera_moving)
+            kept.append(tr)
+        tracked = kept
 
         fresh = anchors.take(last_stamp)
         if fresh is not None:
             last_stamp, det_boxes, det_gray = fresh
             usable = det_gray is not None and det_gray.shape == cur_g.shape
             if usable:
-                # Discard detections whose source frame no longer matches the
-                # view (started before a pan finished — boxes would be wrong).
                 stale = float(cv2.mean(cv2.absdiff(cur_g, det_gray))[0])
                 usable = stale < _DET_STALE
             if usable:
                 new_tracked = [_Tracked(b) for b in det_boxes]
                 if new_tracked:
-                    flows = _batched_flow(det_gray, cur_g, new_tracked)
-                    kept = []
-                    for tr, (dx, dy, ratio) in zip(new_tracked, flows):
+                    # Advance detections to "now" with a wider window (they can
+                    # be a few hundred ms old during a pan).
+                    adv, _g = _flow_all(det_gray, cur_g, new_tracked, grid,
+                                        win=25, levels=4)
+                    kept2 = []
+                    for tr, (dx, dy, ratio) in zip(new_tracked, adv):
                         if ratio >= _MIN_OK_RATIO:
-                            tr.advance(dx, dy, dt)
-                            kept.append(tr)
-                    tracked = kept
+                            tr.advance(dx, dy, dt, camera_moving)
+                            kept2.append(tr)
+                    tracked = kept2
                 else:
                     tracked = []
-        elif prev_g is not None and tracked:
-            flows = _batched_flow(prev_g, cur_g, tracked)
-            kept = []
-            for tr, (dx, dy, ratio) in zip(tracked, flows):
-                if ratio < _MIN_OK_RATIO:
-                    continue          # text left the region — drop, don't float
-                tr.advance(dx, dy, dt)
-                kept.append(tr)
-            tracked = kept
 
         prev_g = cur_g
         disp = []
@@ -396,6 +433,25 @@ class _BoxState:
     def get(self) -> tuple[int, list[tuple[float, float, float, float]]]:
         with self._lock:
             return self.version, list(self._boxes)
+
+
+def _save_debug_shot(cap: _Capture, boxes: list[tuple[float, float, float, float]]) -> None:
+    """Composite the current frame with the boxes burned in (PrtScn dev aid)."""
+    import cv2
+
+    try:
+        os.makedirs(_SHOT_DIR, exist_ok=True)
+        frame = cap.last().copy()
+        for x1, y1, x2, y2 in boxes:
+            cv2.rectangle(frame,
+                          (int(x1 - cap.left), int(y1 - cap.top)),
+                          (int(x2 - cap.left), int(y2 - cap.top)),
+                          (0, 0, 255), 2)
+        path = os.path.join(_SHOT_DIR, time.strftime("shot_%H%M%S.png"))
+        cv2.imwrite(path, frame)
+        logger.info("[OCR] debug shot saved: %s", path)
+    except Exception as exc:
+        logger.debug("[OCR] debug shot failed: %s", exc)
 
 
 def run(monitor_index: int = 1, fps: float = 0.0, max_side: int = _TRACK_SIDE) -> None:
@@ -444,6 +500,7 @@ def run(monitor_index: int = 1, fps: float = 0.0, max_side: int = _TRACK_SIDE) -
 
     pool: list[int] = []
     last_version = -1
+    prtscn_down = {"v": False}
 
     def _redraw() -> None:
         nonlocal last_version
@@ -462,6 +519,15 @@ def run(monitor_index: int = 1, fps: float = 0.0, max_side: int = _TRACK_SIDE) -
                     canvas.itemconfigure(item, state="normal")
                 else:
                     canvas.itemconfigure(item, state="hidden")
+        # PrintScreen dev aid: save a composite (frame + boxes) once per press.
+        try:
+            down = bool(ctypes.windll.user32.GetAsyncKeyState(_VK_SNAPSHOT) & 0x8000)
+            if down and not prtscn_down["v"]:
+                threading.Thread(target=_save_debug_shot, args=(cap, boxes),
+                                 daemon=True).start()
+            prtscn_down["v"] = down
+        except Exception:
+            pass
         root.after(5, _redraw)
 
     def _on_close() -> None:
@@ -479,7 +545,7 @@ def run(monitor_index: int = 1, fps: float = 0.0, max_side: int = _TRACK_SIDE) -
 def main() -> None:
     ap = argparse.ArgumentParser()
     ap.add_argument("--monitor", type=int, default=1)
-    ap.add_argument("--fps", type=float, default=0.0)  # tracks at frame rate
+    ap.add_argument("--fps", type=float, default=0.0)
     ap.add_argument("--max-side", type=int, default=_TRACK_SIDE)
     args = ap.parse_args()
     logging.basicConfig(level=logging.INFO)

@@ -78,7 +78,62 @@ _PREWARM = [True]
 # chips like "..."), killing and re-creating its box every second or two —
 # each rebirth used to visibly reset to pending and re-recognize. A box born
 # where a just-read box lived inherits that text instantly.
-_TEXT_CACHE_TTL = 8.0
+_TEXT_CACHE_TTL = 12.0
+
+# Region lock: OCR restricted to a user-dragged rectangle (config-persisted).
+# The app signals these named events; selection happens in-overlay (the
+# window temporarily becomes clickable and dims while the user drags).
+_SELECT_REGION_EVENT = "PuriPulyHeart_OCR_SelectRegion"
+_CLEAR_REGION_EVENT = "PuriPulyHeart_OCR_ClearRegion"
+_SELECT_REQ = [False]
+
+
+def _load_config() -> dict:
+    try:
+        import json
+
+        with open(_CONFIG_PATH, encoding="utf-8") as fh:
+            cfg = json.load(fh)
+        return cfg if isinstance(cfg, dict) else {}
+    except Exception:
+        return {}
+
+
+def _save_config_key(key: str, value) -> None:
+    try:
+        import json
+
+        cfg = _load_config()
+        cfg[key] = value
+        os.makedirs(os.path.dirname(_CONFIG_PATH), exist_ok=True)
+        with open(_CONFIG_PATH, "w", encoding="utf-8") as fh:
+            json.dump(cfg, fh)
+    except Exception as exc:
+        logger.debug("[OCR] config save failed: %s", exc)
+
+
+_PIL_FONTS: dict[int, object] = {}
+
+
+def _pil_font(px: int):
+    f = _PIL_FONTS.get(px)
+    if f is None:
+        from PIL import ImageFont
+
+        for name in ("msyh.ttc", "meiryo.ttc", "msgothic.ttc", "segoeui.ttf"):
+            try:
+                f = ImageFont.truetype(
+                    os.path.join(os.environ.get("WINDIR", r"C:\Windows"),
+                                 "Fonts", name), px)
+                break
+            except Exception:
+                continue
+        if f is None:
+            from PIL import ImageFont as _IF
+
+            f = _IF.load_default()
+        _PIL_FONTS[px] = f
+    return f
 
 _TRACK_SIDE = 1280
 _DETECT_SIDE = 960
@@ -338,8 +393,30 @@ class _Target:
         self._epoch = 0
         self._warned = False
         self._occl: list[tuple[int, int, int, int]] = []
+        # Region lock (whole-screen mode only): restrict OCR to a
+        # user-dragged rectangle, persisted in the config file.
+        self._region: tuple[int, int, int, int] | None = None
+        try:
+            r = _load_config().get("region")
+            if (isinstance(r, list) and len(r) == 4
+                    and r[2] - r[0] >= 64 and r[3] - r[1] >= 64):
+                self._region = (int(r[0]), int(r[1]), int(r[2]), int(r[3]))
+                logger.info("[OCR] region lock restored: %s", self._region)
+        except Exception:
+            pass
         if self._title:
             self._rect = None  # resolved by poll()
+
+    def set_region(self, rect: tuple[int, int, int, int] | None) -> None:
+        with self._lock:
+            self._region = rect
+        _save_config_key("region", list(rect) if rect else None)
+        logger.info("[OCR] region lock %s", rect if rect else "cleared")
+        self.poll()
+
+    def region(self) -> tuple[int, int, int, int] | None:
+        with self._lock:
+            return self._region
 
     @staticmethod
     def _occlusions_for(hwnd: int, sx1: int, sy1: int, sx2: int, sy2: int
@@ -419,6 +496,20 @@ class _Target:
 
     def poll(self) -> None:
         if not self._title:
+            # Whole-screen mode: the "window" is the monitor, or the locked
+            # region when one is set. Epoch bumps resync both loops.
+            with self._lock:
+                r = self._region
+                rect_new = r if r else (0, 0, self._cap.width,
+                                        self._cap.height)
+                rect_new = (max(0, rect_new[0]), max(0, rect_new[1]),
+                            min(self._cap.width, rect_new[2]),
+                            min(self._cap.height, rect_new[3]))
+                if rect_new != self._rect:
+                    self._rect = rect_new
+                    self._epoch += 1
+                self._fg = True
+                self._occl = []
             return
         user32 = ctypes.windll.user32
         rect_new: tuple[int, int, int, int] | None = None
@@ -1002,7 +1093,7 @@ def _track_loop(cap: _Capture, target: _Target, anchors: _Anchors,
 
     prev_g: np.ndarray | None = None
     tracked: list[_Tracked] = []
-    text_cache: dict[tuple[int, int, int, int], tuple[str, float]] = {}
+    text_cache: dict[tuple[int, int], tuple[str, float, float, float]] = {}
     last_stamp = 0
     last_t = time.monotonic()
     gx_ema = gy_ema = 0.0
@@ -1401,11 +1492,17 @@ def _track_loop(cap: _Capture, target: _Target, anchors: _Anchors,
                 pending = len(_REC_REQ)
                 for tr in tracked:
                     live.add(tr.uid)
-                    ckey = (int(tr.x1) // 6, int(tr.y1) // 6,
-                            int(tr.x2) // 6, int(tr.y2) // 6)
+                    # Center-keyed (rebirth extents wobble a few px per pass,
+                    # which made exact-corner keys miss — the "text keeps
+                    # regenerating" complaint; centers are far more stable).
+                    ckey = (int(tr.x1 + tr.x2) // 16,
+                            int(tr.y1 + tr.y2) // 16)
                     if not tr.text:
                         hit = text_cache.get(ckey)
-                        if hit is not None and now - hit[1] < _TEXT_CACHE_TTL:
+                        if (hit is not None
+                                and now - hit[1] < _TEXT_CACHE_TTL
+                                and abs((tr.x2 - tr.x1) - hit[2])
+                                < 0.3 * hit[2] + 8):
                             tr.text = hit[0]  # reborn box inherits its text
                     if tr.uid in _REC_OUT:
                         text, rrect = _REC_OUT.pop(tr.uid)
@@ -1426,7 +1523,8 @@ def _track_loop(cap: _Capture, target: _Target, anchors: _Anchors,
                                 tr.ax, tr.ay = nx1, ny1
                                 tr.refined = True
                     if tr.text and tr.text != "-":
-                        text_cache[ckey] = (tr.text, now)
+                        text_cache[ckey] = (tr.text, now,
+                                            tr.x2 - tr.x1, tr.y2 - tr.y1)
                     elif ((_PREWARM[0] or _SUBTITLE_ON[0]) and not tr.text
                           and tr.confirms >= 2
                           and tr.uid not in _REC_REQ and pending < 48):
@@ -1470,32 +1568,39 @@ def _save_debug_shot(cap: _Capture, boxes, pills: bool = False) -> None:
     try:
         os.makedirs(_SHOT_DIR, exist_ok=True)
         frame = cap.last().copy()
+        texted = []
         for it in boxes:
             bx1, by1, bx2, by2 = it[0], it[1], it[2], it[3]
             x1, y1 = int(bx1 - cap.left), int(by1 - cap.top)
             x2, y2 = int(bx2 - cap.left), int(by2 - cap.top)
             if pills and len(it) > 7:
-                # cv2.putText is ASCII-only: CJK renders as '?' in the
-                # composite. The LIVE overlay (Tk) draws CJK correctly —
-                # judge accuracy on screen, use composites for layout.
-                raw = it[7] or "..."
-                label = raw.encode("ascii", "replace").decode("ascii")
-                scale = max(0.35, min(1.5, (y2 - y1) / 34.0))
-                (tw, th), _b = cv2.getTextSize(
-                    label, cv2.FONT_HERSHEY_SIMPLEX, scale, 2)
-                if tw > (x2 - x1) - 4 and tw > 0:
-                    scale = max(0.3, scale * ((x2 - x1) - 4) / tw)
-                    (tw, th), _b = cv2.getTextSize(
-                        label, cv2.FONT_HERSHEY_SIMPLEX, scale, 2)
                 cv2.rectangle(frame, (x1, y1), (x2, y2), (26, 22, 20), -1)
                 cv2.rectangle(frame, (x1, y1), (x2, y2), (0, 0, 255), 1)
-                tx = x1 + max(2, ((x2 - x1) - tw) // 2)
-                ty = y1 + ((y2 - y1) + th) // 2
-                cv2.putText(frame, label, (tx, ty),
-                            cv2.FONT_HERSHEY_SIMPLEX, scale,
-                            (255, 255, 255), 2, cv2.LINE_AA)
+                texted.append((x1, y1, x2, y2, it[7] or "..."))
             else:
                 cv2.rectangle(frame, (x1, y1), (x2, y2), (0, 0, 255), 2)
+        if texted:
+            # PIL pass for the labels: cv2's built-in font is ASCII-only,
+            # which turned CJK into '?' in shared screenshots. A real
+            # TrueType font (YaHei/Meiryo) draws every script.
+            from PIL import Image, ImageDraw
+
+            img = Image.fromarray(frame[:, :, ::-1])
+            d = ImageDraw.Draw(img)
+            for x1, y1, x2, y2, label in texted:
+                bw, bh = x2 - x1, y2 - y1
+                px = max(9, min(46, int(bh * 0.62)))
+                font = _pil_font(px)
+                try:
+                    tw = d.textlength(label, font=font)
+                    if tw > bw - 4 and bw > 24 and tw > 0:
+                        px = max(8, int(px * (bw - 4) / tw))
+                        font = _pil_font(px)
+                except Exception:
+                    pass
+                d.text((x1 + 2, (y1 + y2) // 2), label, font=font,
+                       fill=(255, 255, 255), anchor="lm")
+            frame = np.asarray(img)[:, :, ::-1].copy()
         path = os.path.join(_SHOT_DIR, time.strftime("shot_%H%M%S.png"))
         cv2.imwrite(path, frame)
         logger.info("[OCR] debug shot saved: %s (pills=%s)", path, pills)
@@ -1580,6 +1685,73 @@ def run(monitor_index: int = 1, fps: float = 0.0, max_side: int = _TRACK_SIDE,
     _make_click_through(root)
     _exclude_from_capture(root)
 
+    # ── Region selection (drag a rectangle; OCR locks to it) ──
+    sel = {"active": False, "start": None}
+
+    def _set_click_through(enable: bool) -> None:
+        GWL_EXSTYLE = -20
+        WS_EX_TRANSPARENT = 0x00000020
+        try:
+            hwnd = ctypes.windll.user32.GetParent(root.winfo_id())
+            st = ctypes.windll.user32.GetWindowLongW(hwnd, GWL_EXSTYLE)
+            st = (st | WS_EX_TRANSPARENT) if enable else (st & ~WS_EX_TRANSPARENT)
+            ctypes.windll.user32.SetWindowLongW(hwnd, GWL_EXSTYLE, st)
+        except Exception:
+            pass
+
+    def _begin_select() -> None:
+        if sel["active"]:
+            return
+        sel["active"] = True
+        sel["start"] = None
+        _set_click_through(False)
+        # A dimmed SOLID background: transparent-key pixels never receive
+        # clicks, so the veil is what makes the drag land on us.
+        canvas.configure(bg="#161616")
+        root.attributes("-alpha", 0.35)
+        with contextlib_suppress():
+            root.focus_force()
+
+    def _end_select(region) -> None:
+        sel["active"] = False
+        sel["start"] = None
+        canvas.delete("selrect")
+        canvas.configure(bg=_TRANSPARENT_KEY)
+        root.attributes("-alpha", 1.0)
+        _set_click_through(True)
+        if region is not None:
+            target.set_region(region)
+
+    def _sel_press(ev) -> None:
+        if sel["active"]:
+            sel["start"] = (ev.x, ev.y)
+
+    def _sel_drag(ev) -> None:
+        if not sel["active"] or sel["start"] is None:
+            return
+        canvas.delete("selrect")
+        x0, y0 = sel["start"]
+        canvas.create_rectangle(x0, y0, ev.x, ev.y, outline=_BOX_COLOR,
+                                width=2, tags="selrect")
+
+    def _sel_release(ev) -> None:
+        if not sel["active"] or sel["start"] is None:
+            return
+        x0, y0 = sel["start"]
+        rx1 = int(min(x0, ev.x) / sx)
+        ry1 = int(min(y0, ev.y) / sy)
+        rx2 = int(max(x0, ev.x) / sx)
+        ry2 = int(max(y0, ev.y) / sy)
+        # A tiny drag is a mis-click, not a region — cancel.
+        _end_select((rx1, ry1, rx2, ry2)
+                    if rx2 - rx1 >= 64 and ry2 - ry1 >= 64 else None)
+
+    canvas.bind("<ButtonPress-1>", _sel_press)
+    canvas.bind("<B1-Motion>", _sel_drag)
+    canvas.bind("<ButtonRelease-1>", _sel_release)
+    root.bind("<Escape>",
+              lambda _e: _end_select(None) if sel["active"] else None)
+
     state = _BoxState()
     anchors = _Anchors()
     wake = threading.Event()
@@ -1598,6 +1770,14 @@ def run(monitor_index: int = 1, fps: float = 0.0, max_side: int = _TRACK_SIDE,
                      args=(cap, target, anchors, wake, state, stop),
                      daemon=True).start()
     threading.Thread(target=_prtscn_loop, args=(cap, state, stop),
+                     daemon=True).start()
+    threading.Thread(target=_wait_event_loop,
+                     args=(_SELECT_REGION_EVENT,
+                           lambda: _SELECT_REQ.__setitem__(0, True)),
+                     daemon=True).start()
+    threading.Thread(target=_wait_event_loop,
+                     args=(_CLEAR_REGION_EVENT,
+                           lambda: target.set_region(None)),
                      daemon=True).start()
 
     # Hold-to-translate bind: overridable without a rebuild via the config
@@ -1629,9 +1809,21 @@ def run(monitor_index: int = 1, fps: float = 0.0, max_side: int = _TRACK_SIDE,
     pool: list[int] = []
     pill_pool: list[tuple[int, int]] = []
     pill_meta: list[tuple[str, int]] = []
+    region_border = canvas.create_rectangle(
+        0, 0, 0, 0, outline="#909090", width=1, dash=(5, 5), state="hidden")
 
     def _redraw() -> None:
         try:
+            if _SELECT_REQ[0]:
+                _SELECT_REQ[0] = False
+                _begin_select()
+            rgn = target.region()
+            if rgn is not None and not sel["active"]:
+                canvas.coords(region_border, rgn[0] * sx, rgn[1] * sy,
+                              rgn[2] * sx, rgn[3] * sy)
+                canvas.itemconfigure(region_border, state="normal")
+            else:
+                canvas.itemconfigure(region_border, state="hidden")
             _version, stamp, items = state.get()
             age = time.monotonic() - stamp
             ext = min(age, _RENDER_EXTRAP_CAP_S) + _RENDER_LEAD_S
@@ -1708,6 +1900,22 @@ def run(monitor_index: int = 1, fps: float = 0.0, max_side: int = _TRACK_SIDE,
         root.mainloop()
     finally:
         stop.set()
+
+
+def _wait_event_loop(name: str, cb) -> None:
+    """Fire cb() every time the named auto-reset event is signaled."""
+    INFINITE = 0xFFFFFFFF
+    try:
+        kernel32 = ctypes.windll.kernel32
+        evt = kernel32.CreateEventW(None, False, False, name)
+        while True:
+            kernel32.WaitForSingleObject(evt, INFINITE)
+            try:
+                cb()
+            except Exception:
+                pass
+    except Exception:
+        pass
 
 
 def _parent_watch_loop(parent_pid: int) -> None:

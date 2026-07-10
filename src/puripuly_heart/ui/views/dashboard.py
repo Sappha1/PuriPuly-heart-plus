@@ -462,6 +462,8 @@ class DashboardView(ft.Row):
         self.on_toggle_peer_translation = None
         self.on_toggle_ocr = None  # (prototype) callback(enabled: bool)
         self.on_ocr_prewarm_change = None  # (prototype) callback(bool)
+        self.on_ocr_region_toggle = None  # (prototype) callback()
+        self.on_ocr_region_state = None  # (prototype) -> bool (region set?)
         self._ocr_on = False
         self._ocr_prewarm = True  # background recognition (extra CPU)
         self.on_language_change = None
@@ -1507,16 +1509,30 @@ class DashboardView(ft.Row):
 
     def _on_ocr_right_click(self, e) -> None:
         x, y = self._tap_xy(e)
+        region_on = False
+        if callable(self.on_ocr_region_state):
+            with contextlib.suppress(Exception):
+                region_on = bool(self.on_ocr_region_state())
         self._open_context_menu(
             x, y,
             [("Pre-warm recognition (extra CPU)", self._ocr_prewarm,
-              self._toggle_ocr_prewarm)],
+              self._toggle_ocr_prewarm),
+             ("🔒 Lock to region (drag to set)", region_on,
+              self._toggle_ocr_region)],
         )
 
     def _toggle_ocr_prewarm(self) -> None:
         self._ocr_prewarm = not self._ocr_prewarm
         if callable(self.on_ocr_prewarm_change):
             self.on_ocr_prewarm_change(self._ocr_prewarm)
+
+    def _toggle_ocr_region(self) -> None:
+        # Selecting a region needs the overlay running — flip the pill on
+        # first so its visual state matches reality.
+        if not self._ocr_on:
+            self._on_ocr_btn_click(None)
+        if callable(self.on_ocr_region_toggle):
+            self.on_ocr_region_toggle()
 
     def _toggle_peer_translation(self) -> None:
         self._peer_showing_error = False

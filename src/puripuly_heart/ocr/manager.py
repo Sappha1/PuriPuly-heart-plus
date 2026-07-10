@@ -19,6 +19,11 @@ logger = logging.getLogger(__name__)
 # Named event that tells EVERY overlay generation to exit. The stored process
 # handle can't reach a hot-swapped replacement, so toggle-off must broadcast.
 _SHUTDOWN_EVENT = "PuriPulyHeart_OCR_Shutdown"
+# Region lock control (handled by the overlay): start drag-selection / clear.
+_SELECT_REGION_EVENT = "PuriPulyHeart_OCR_SelectRegion"
+_CLEAR_REGION_EVENT = "PuriPulyHeart_OCR_ClearRegion"
+_CONFIG_PATH = os.path.join(os.path.expanduser("~"), "AppData", "Local",
+                            "puripuly-heart", "ocr_overlay_config.json")
 
 
 def _shutdown_event(set_it: bool) -> None:
@@ -29,6 +34,13 @@ def _shutdown_event(set_it: bool) -> None:
             kernel32.SetEvent(evt)
         else:
             kernel32.ResetEvent(evt)
+
+
+def _fire_event(name: str) -> None:
+    with contextlib.suppress(Exception):
+        kernel32 = ctypes.windll.kernel32
+        evt = kernel32.CreateEventW(None, False, False, name)
+        kernel32.SetEvent(evt)
 
 # PROTOTYPE LOCAL BUILD ONLY. The packaged app doesn't bundle the OCR libraries
 # (rapidocr/mss/opencv/tkinter), so when running frozen we launch the overlay
@@ -60,6 +72,36 @@ class OcrOverlayManager:
         if self.running:
             self.stop()
             self.start()
+
+    def has_region(self) -> bool:
+        try:
+            import json
+
+            with open(_CONFIG_PATH, encoding="utf-8") as fh:
+                r = json.load(fh).get("region")
+            return isinstance(r, list) and len(r) == 4
+        except Exception:
+            return False
+
+    def toggle_region(self) -> None:
+        """No region set: start drag-selection in the overlay (starting it if
+        needed). Region set: clear back to whole screen."""
+        if self.has_region():
+            if self.running:
+                _fire_event(_CLEAR_REGION_EVENT)
+            else:
+                with contextlib.suppress(Exception):
+                    import json
+
+                    with open(_CONFIG_PATH, encoding="utf-8") as fh:
+                        cfg = json.load(fh)
+                    cfg["region"] = None
+                    with open(_CONFIG_PATH, "w", encoding="utf-8") as fh:
+                        json.dump(cfg, fh)
+            return
+        if not self.running:
+            self.start()
+        _fire_event(_SELECT_REGION_EVENT)
 
     def set_vrchat_only(self, enabled: bool) -> None:
         enabled = bool(enabled)

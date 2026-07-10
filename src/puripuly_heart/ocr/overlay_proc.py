@@ -66,9 +66,15 @@ _CUT_GRID_RATIO = 0.5
 _DET_STALE = 45.0
 _MIN_OK_RATIO = 0.34
 
-_MERGE_IOU = 0.35
+# Merge/miss tolerance. The detector is nondeterministic on borderline text —
+# it can find a line on one pass and miss it on the next, or alternate the
+# box extents. A strict match + fast miss-delete made such boxes blink at the
+# detection cadence (~0.5s). Boxes now survive several missed passes (their
+# content is still verified text-like every frame by texture/appearance) and
+# match more loosely so extent wobble updates the box instead of replacing it.
+_MERGE_IOU = 0.25
 _MERGE_BLEND = 0.60
-_MAX_MISSES = 1
+_MAX_MISSES = 4
 
 # Appearance signature: sample grid inside each box; if the mean abs gray
 # difference vs the remembered fingerprint exceeds this for a few consecutive

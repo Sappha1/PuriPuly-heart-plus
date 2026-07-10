@@ -298,7 +298,20 @@ class _Target:
         rect_new: tuple[int, int, int, int] | None = None
         fg = False
         try:
-            hwnd = self._find_window(self._title)
+            # FOREGROUND-FIRST: with multiple same-titled windows (the user
+            # runs TWO VRChat instances — identical 1920x1080 windows!), size
+            # cannot identify the one being played. The focused one can.
+            hwnd = 0
+            fgw = user32.GetForegroundWindow()
+            if fgw and user32.IsWindowVisible(fgw):
+                n = user32.GetWindowTextLengthW(fgw)
+                if n > 0:
+                    b = ctypes.create_unicode_buffer(n + 1)
+                    user32.GetWindowTextW(fgw, b, n + 1)
+                    if b.value == self._title:
+                        hwnd = fgw
+            if not hwnd:
+                hwnd = self._find_window(self._title)
             if hwnd:
                 r = wintypes.RECT()
                 user32.GetClientRect(hwnd, ctypes.byref(r))

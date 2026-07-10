@@ -502,7 +502,11 @@ def _detect_loop(cap: _Capture, target: _Target, anchors: _Anchors,
                  wake: threading.Event, stop: threading.Event) -> None:
     import cv2
 
-    detector = TextDetector(max_side=_DETECT_SIDE)
+    # max_side here only raises the engine's internal cap; the actual working
+    # resolution is chosen per-pass below, scaled to the region (a fixed 960
+    # turned 4K text into ~4px shards — fragmented boxes, missed lines,
+    # pass-to-pass flashing; the accurate ~5pm build ran 1280).
+    detector = TextDetector(max_side=1664)
     det_pass = [0]
     last_epoch = -1
     while not stop.is_set():
@@ -519,7 +523,12 @@ def _detect_loop(cap: _Capture, target: _Target, anchors: _Anchors,
             x1, y1, x2, y2 = rect
             frame = cap.last()[y1:y2, x1:x2]
             ch, cw = frame.shape[:2]
-            d_scale = min(1.0, _DETECT_SIDE / float(max(cw, ch)))
+            longest = max(cw, ch)
+            # Adaptive: ~0.42x of the region, floor 960, cap 1600. A 1080p
+            # window detects at 960 as before; a 4K region gets 1600 so small
+            # text stays detectable.
+            target_side = min(1600, max(_DETECT_SIDE, int(longest * 0.42)))
+            d_scale = min(1.0, target_side / float(longest))
             det_w, det_h = max(1, int(cw * d_scale)), max(1, int(ch * d_scale))
             det_bgr = cv2.resize(frame, (det_w, det_h), interpolation=cv2.INTER_AREA)
             # Blank regions covered by other windows so their text is never
@@ -554,8 +563,11 @@ def _detect_loop(cap: _Capture, target: _Target, anchors: _Anchors,
             ]
             det_pass[0] += 1
             if det_pass[0] % 10 == 1:
-                logger.info("[OCR] det: raw=%d shaped=%d verified=%d region=%dx%d",
-                            len(raw), len(shaped), len(verified), cw, ch)
+                logger.info("[OCR] det: raw=%d shaped=%d verified=%d region=%dx%d "
+                            "det_side=%d pass_ms=%.0f",
+                            len(raw), len(shaped), len(verified), cw, ch,
+                            max(det_w, det_h),
+                            (time.monotonic() - t0) * 1000)
             t_scale = min(1.0, _TRACK_SIDE / float(max(cw, ch)))
             track_w, track_h = max(1, int(cw * t_scale)), max(1, int(ch * t_scale))
             sx = track_w / float(det_w)

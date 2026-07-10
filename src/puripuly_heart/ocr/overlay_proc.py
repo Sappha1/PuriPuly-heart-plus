@@ -544,6 +544,29 @@ def _detect_loop(cap: _Capture, target: _Target, anchors: _Anchors,
             ]
             gray = cv2.resize(cv2.extractChannel(frame, 1), (track_w, track_h),
                               interpolation=cv2.INTER_LINEAR)
+            # The recognition gate adds ~0.3-0.6s inside this pass, so the
+            # boxes describe an OLD frame; merging them dragged well-tracked
+            # boxes off their text (the alignment regression). Re-advance the
+            # boxes to the CURRENT frame before publishing so the tracker
+            # always merges toward fresh positions.
+            if boxes:
+                now_crop = cap.last()[y1:y2, x1:x2]
+                if now_crop.shape[:2] == (ch, cw):
+                    now_gray = cv2.resize(
+                        np.ascontiguousarray(now_crop[:, :, 1]),
+                        (track_w, track_h), interpolation=cv2.INTER_LINEAR)
+                    tmp = [_Tracked(b) for b in boxes]
+                    adv, _g = _flow_all(gray, now_gray, tmp,
+                                        _make_grid(track_w, track_h),
+                                        win=25, levels=4)
+                    fresh_boxes = []
+                    for tb, (adx, ady, ar) in zip(tmp, adv):
+                        if ar >= _MIN_OK_RATIO:
+                            fresh_boxes.append(TextBox(
+                                int(tb.x1 + adx), int(tb.y1 + ady),
+                                int(tb.x2 + adx), int(tb.y2 + ady)))
+                    boxes = fresh_boxes
+                    gray = now_gray
             anchors.publish(boxes, gray, epoch)
         except Exception as exc:
             # WARNING, not debug: a broken detect loop looks like "boxes never

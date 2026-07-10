@@ -528,10 +528,9 @@ def _detect_loop(cap: _Capture, target: _Target, anchors: _Anchors,
             frame = cap.last()[y1:y2, x1:x2]
             ch, cw = frame.shape[:2]
             longest = max(cw, ch)
-            # Adaptive: ~0.42x of the region, floor 960, cap 1600. A 1080p
-            # window detects at 960 as before; a 4K region gets 1600 so small
-            # text stays detectable.
-            target_side = min(1600, max(_DETECT_SIDE, int(longest * 0.42)))
+            # Adaptive: ~0.42x of the region, floor 960, cap 1280 (the proven
+            # ~5pm resolution; 1600 measured 1-3s/pass over 4K — too slow).
+            target_side = min(1280, max(_DETECT_SIDE, int(longest * 0.42)))
             d_scale = min(1.0, target_side / float(longest))
             det_w, det_h = max(1, int(cw * d_scale)), max(1, int(ch * d_scale))
             det_bgr = cv2.resize(frame, (det_w, det_h), interpolation=cv2.INTER_AREA)

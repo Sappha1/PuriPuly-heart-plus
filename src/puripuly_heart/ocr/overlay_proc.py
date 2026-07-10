@@ -719,6 +719,18 @@ class _Tracked:
         self.last_confirm = time.monotonic()
         self.confirms = min(10, self.confirms + 1)
 
+    def content_changed(self, gray: np.ndarray) -> bool:
+        """One-shot: do the pixels under the box still match the fingerprint
+        from when detection last confirmed it? No hysteresis, no adaptation.
+        Lets a trusted pass fast-kill boxes whose content is GONE while boxes
+        on unchanged pixels keep the anti-blink miss tolerance."""
+        if self.sig is None:
+            return False
+        try:
+            return float(np.mean(np.abs(self._sample(gray) - self.sig))) > _SIG_DIFF
+        except Exception:
+            return False
+
     def confirm_only(self) -> None:
         """Detection vouches this box still exists, but its positions are
         motion-stale (scroll/pan during the pass): refresh liveness only,
@@ -1123,6 +1135,10 @@ def _track_loop(cap: _Capture, target: _Target, anchors: _Anchors,
                                 # Softer during motion (some staleness).
                                 tr.blend_toward(fresh_tracked[best],
                                                 0.55 if camera_moving else 1.0)
+                                # blend cleared the fingerprint — retake it at
+                                # the corrected position NOW so the fast-kill
+                                # below has a fresh baseline to judge against.
+                                tr.check_signature(cur_g)
                             tr.miss = 0
                             n_matched += 1
                             merged.append(tr)
@@ -1131,6 +1147,21 @@ def _track_loop(cap: _Capture, target: _Target, anchors: _Anchors,
                             # nothing. No miss penalty.
                             merged.append(tr)
                         else:
+                            # FAST-KILL (settle speed): a trusted pass didn't
+                            # corroborate this box AND the pixels under it no
+                            # longer match its last-confirmed fingerprint —
+                            # the text is really gone; don't ride out the miss
+                            # tolerance. Unchanged pixels = detector flake on
+                            # borderline text: keep the anti-blink tolerance.
+                            cursor_on = False
+                            if cursor_wk is not None:
+                                ccx, ccy = cursor_wk
+                                m = _CURSOR_RADIUS
+                                cursor_on = (tr.x1 - m <= ccx <= tr.x2 + m
+                                             and tr.y1 - m <= ccy <= tr.y2 + m)
+                            if (stale < _DET_TRUST_DIFF and not cursor_on
+                                    and tr.content_changed(cur_g)):
+                                continue
                             tr.miss += 1
                             allowed = (_MAX_MISSES_CONFIRMED
                                        if tr.confirms >= _CONFIRMED_AT

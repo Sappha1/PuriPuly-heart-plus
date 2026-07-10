@@ -282,7 +282,19 @@ class _Target:
                 y2 = max(0, min(self._cap.height, y2))
                 if x2 - x1 >= 64 and y2 - y1 >= 64:
                     rect_new = (x1, y1, x2, y2)
-                fg = user32.GetForegroundWindow() == hwnd
+                fgw = user32.GetForegroundWindow()
+                fg = fgw == hwnd
+                if not fg and fgw:
+                    # Our own translator app counts as friendly focus: the user
+                    # clicks it constantly while playing, and boxes vanishing
+                    # every time reads as OCR breaking (VRChat is still on
+                    # screen behind it). Other apps still hide the boxes.
+                    n = user32.GetWindowTextLengthW(fgw)
+                    if n > 0:
+                        buf = ctypes.create_unicode_buffer(n + 1)
+                        user32.GetWindowTextW(fgw, buf, n + 1)
+                        if buf.value.startswith("PuriPulyHeart"):
+                            fg = True
         except Exception as exc:
             logger.debug("[OCR] window poll failed: %s", exc)
         with self._lock:

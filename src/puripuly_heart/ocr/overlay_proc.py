@@ -67,7 +67,8 @@ _SUBTITLE_ON = [False]
 _REC_LOCK = threading.Lock()
 _REC_REQ: dict[int, tuple[int, int, int, int]] = {}
 _REC_OUT: dict[int, str] = {}
-_REC_BATCH = 8
+_REC_BATCH = 12
+_REC_WORKERS = 3  # parallel CPU rec: session.run releases the GIL
 
 _TRACK_SIDE = 1280
 _DETECT_SIDE = 960
@@ -556,16 +557,17 @@ def _text_plausible(b: TextBox, det_w: int, det_h: int) -> bool:
 
 def _rec_loop(cap: _Capture, detector: TextDetector,
               stop: threading.Event) -> None:
-    """Recognition worker (subtitle mode): reads the requested boxes' text
-    with the LOCAL RapidOCR recognizer — free, no API. Crops come from the
-    full-res frame so glyphs are sharp. Small batches keep results flowing
-    onto screen incrementally instead of one big stall."""
+    """Recognition worker: reads the requested boxes' text with the LOCAL
+    RapidOCR recognizer — free, no API. Crops come from the full-res frame
+    so glyphs are sharp. Runs even while subtitles are toggled OFF (pre-warm)
+    so Alt+T shows text instantly instead of a wall of pending markers.
+    Several workers run in parallel — the claim below pops entries under the
+    lock so no two workers read the same box."""
     while not stop.is_set():
-        if not _SUBTITLE_ON[0]:
-            time.sleep(0.1)
-            continue
         with _REC_LOCK:
             batch = list(_REC_REQ.items())[:_REC_BATCH]
+            for uid, _r in batch:
+                _REC_REQ.pop(uid, None)
         if not batch:
             time.sleep(0.05)
             continue
@@ -1350,31 +1352,32 @@ def _track_loop(cap: _Capture, target: _Target, anchors: _Anchors,
                         wake.set()  # ask for a cleaner pass immediately
 
             prev_g = cur_g
-            # Subtitle mode: claim finished recognitions, request text for
-            # stable boxes that don't have any yet, drop orphaned entries.
-            if _SUBTITLE_ON[0]:
-                with _REC_LOCK:
-                    live = set()
-                    pending = len(_REC_REQ)
-                    for tr in tracked:
-                        live.add(tr.uid)
-                        if tr.uid in _REC_OUT:
-                            tr.text = _REC_OUT.pop(tr.uid) or "-"
-                        elif (not tr.text and tr.confirms >= 2
-                              and tr.uid not in _REC_REQ and pending < 24):
-                            bx1, by1, bx2, by2 = tr.rect()
-                            _REC_REQ[tr.uid] = (
-                                int(bx1 * inv_scale + off_x),
-                                int(by1 * inv_scale + off_y),
-                                int(bx2 * inv_scale + off_x),
-                                int(by2 * inv_scale + off_y))
-                            pending += 1
-                    for k in list(_REC_OUT):
-                        if k not in live:
-                            del _REC_OUT[k]
-                    for k in list(_REC_REQ):
-                        if k not in live:
-                            del _REC_REQ[k]
+            # Recognition bookkeeping runs ALWAYS (pre-warm): text is read in
+            # the background while subtitles are off, so Alt+T shows results
+            # instantly. Claim finished reads, request text for stable boxes
+            # that have none, drop orphaned entries.
+            with _REC_LOCK:
+                live = set()
+                pending = len(_REC_REQ)
+                for tr in tracked:
+                    live.add(tr.uid)
+                    if tr.uid in _REC_OUT:
+                        tr.text = _REC_OUT.pop(tr.uid) or "-"
+                    elif (not tr.text and tr.confirms >= 2
+                          and tr.uid not in _REC_REQ and pending < 48):
+                        bx1, by1, bx2, by2 = tr.rect()
+                        _REC_REQ[tr.uid] = (
+                            int(bx1 * inv_scale + off_x),
+                            int(by1 * inv_scale + off_y),
+                            int(bx2 * inv_scale + off_x),
+                            int(by2 * inv_scale + off_y))
+                        pending += 1
+                for k in list(_REC_OUT):
+                    if k not in live:
+                        del _REC_OUT[k]
+                for k in list(_REC_REQ):
+                    if k not in live:
+                        del _REC_REQ[k]
             items = []
             for tr in tracked:
                 bx1, by1, bx2, by2 = tr.rect()
@@ -1518,8 +1521,9 @@ def run(monitor_index: int = 1, fps: float = 0.0, max_side: int = _TRACK_SIDE,
     threading.Thread(target=_detect_loop,
                      args=(cap, target, anchors, wake, stop, detector),
                      daemon=True).start()
-    threading.Thread(target=_rec_loop, args=(cap, detector, stop),
-                     daemon=True).start()
+    for _w in range(_REC_WORKERS):
+        threading.Thread(target=_rec_loop, args=(cap, detector, stop),
+                         daemon=True).start()
     threading.Thread(target=_track_loop,
                      args=(cap, target, anchors, wake, state, stop),
                      daemon=True).start()
@@ -1571,7 +1575,7 @@ def run(monitor_index: int = 1, fps: float = 0.0, max_side: int = _TRACK_SIDE,
                     0, 0, 0, 0, fill=_PILL_BG, outline=_BOX_COLOR,
                     width=_BOX_WIDTH, state="hidden")
                 t = canvas.create_text(
-                    0, 0, text="", fill=_PILL_TEXT, anchor="center",
+                    0, 0, text="", fill=_PILL_TEXT, anchor="w",
                     state="hidden")
                 pill_pool.append((r, t))
                 pill_meta.append(("", 0))
@@ -1609,7 +1613,11 @@ def run(monitor_index: int = 1, fps: float = 0.0, max_side: int = _TRACK_SIDE,
                         pill_meta[i] = (label, px)
                         canvas.itemconfigure(tid, text=label, font=f)
                     canvas.coords(rid, x1 - 1, y1 - 1, x2 + 1, y2 + 1)
-                    canvas.coords(tid, (x1 + x2) / 2, (y1 + y2) / 2)
+                    # Left-anchored at the box start: replacement characters
+                    # begin where the original characters began, so the swap
+                    # reads near-1:1 (an exact glyph match is impossible —
+                    # the page's own font is unknown to us).
+                    canvas.coords(tid, x1 + 2, (y1 + y2) / 2)
                     canvas.itemconfigure(rid, state="normal")
                     canvas.itemconfigure(tid, state="normal")
                 else:

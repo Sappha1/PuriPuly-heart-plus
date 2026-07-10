@@ -1231,6 +1231,46 @@ def _takeover_listener(evt: int) -> None:
     os._exit(0)
 
 
+def _source_watch_loop() -> None:
+    """Hot-swap on source change: when this file or detector.py is modified
+    (a fix landed), spawn a replacement of ourselves with the same arguments
+    and let its takeover handshake retire us. Removes the re-toggle burden
+    that repeatedly left stale code running while new fixes sat unused."""
+    import subprocess
+    import sys as _sys
+
+    watch = [__file__.rstrip("co"),
+             os.path.join(os.path.dirname(__file__), "detector.py")]
+    last = {}
+    for p in watch:
+        try:
+            last[p] = os.path.getmtime(p)
+        except Exception:
+            last[p] = 0.0
+    while True:
+        time.sleep(2.0)
+        changed = False
+        for p in watch:
+            try:
+                m = os.path.getmtime(p)
+            except Exception:
+                continue
+            if m != last[p]:
+                last[p] = m
+                changed = True
+        if changed:
+            time.sleep(1.5)  # let the write settle
+            logger.info("[OCR] source changed — hot-swapping to new code")
+            try:
+                subprocess.Popen([_sys.executable, "-m",
+                                  "puripuly_heart.ocr.overlay_proc",
+                                  *_sys.argv[1:]],
+                                 creationflags=0x08000000)
+            except Exception as exc:
+                logger.warning("[OCR] hot-swap spawn failed: %s", exc)
+            # The new instance's takeover event will terminate us.
+
+
 def _acquire_single_instance() -> bool:
     """One OCR overlay at a time (two DXGI capture sessions randomly kill each
     other) — but NEVER let a stale instance block a new one: the new overlay
@@ -1285,6 +1325,7 @@ def main() -> None:
     if args.parent_pid:
         threading.Thread(target=_parent_watch_loop, args=(args.parent_pid,),
                          daemon=True).start()
+    threading.Thread(target=_source_watch_loop, daemon=True).start()
     logger.info("[OCR] starting: window=%r parent=%s",
                 args.window or None, args.parent_pid or "none")
     run(monitor_index=args.monitor, fps=args.fps, max_side=args.max_side,

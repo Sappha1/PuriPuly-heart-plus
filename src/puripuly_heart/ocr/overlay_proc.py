@@ -1330,17 +1330,24 @@ def _save_debug_shot(cap: _Capture, boxes, pills: bool = False) -> None:
             bx1, by1, bx2, by2 = it[0], it[1], it[2], it[3]
             x1, y1 = int(bx1 - cap.left), int(by1 - cap.top)
             x2, y2 = int(bx2 - cap.left), int(by2 - cap.top)
-            cv2.rectangle(frame, (x1, y1), (x2, y2), (0, 0, 255), 2)
             if pills and len(it) > 6:
                 label = f"Sample Text {it[6]}"
+                scale = max(0.35, min(1.5, (y2 - y1) / 34.0))
                 (tw, th), _b = cv2.getTextSize(
-                    label, cv2.FONT_HERSHEY_SIMPLEX, 0.8, 2)
-                py = y2 + 8
-                cv2.rectangle(frame, (x1, py), (x1 + tw + 16, py + th + 16),
-                              (26, 22, 20), -1)
-                cv2.putText(frame, label, (x1 + 8, py + th + 6),
-                            cv2.FONT_HERSHEY_SIMPLEX, 0.8, (255, 255, 255), 2,
-                            cv2.LINE_AA)
+                    label, cv2.FONT_HERSHEY_SIMPLEX, scale, 2)
+                if tw > (x2 - x1) - 4 and tw > 0:
+                    scale = max(0.3, scale * ((x2 - x1) - 4) / tw)
+                    (tw, th), _b = cv2.getTextSize(
+                        label, cv2.FONT_HERSHEY_SIMPLEX, scale, 2)
+                cv2.rectangle(frame, (x1, y1), (x2, y2), (26, 22, 20), -1)
+                cv2.rectangle(frame, (x1, y1), (x2, y2), (0, 0, 255), 1)
+                tx = x1 + max(2, ((x2 - x1) - tw) // 2)
+                ty = y1 + ((y2 - y1) + th) // 2
+                cv2.putText(frame, label, (tx, ty),
+                            cv2.FONT_HERSHEY_SIMPLEX, scale,
+                            (255, 255, 255), 2, cv2.LINE_AA)
+            else:
+                cv2.rectangle(frame, (x1, y1), (x2, y2), (0, 0, 255), 2)
         path = os.path.join(_SHOT_DIR, time.strftime("shot_%H%M%S.png"))
         cv2.imwrite(path, frame)
         logger.info("[OCR] debug shot saved: %s (pills=%s)", path, pills)
@@ -1446,8 +1453,14 @@ def run(monitor_index: int = 1, fps: float = 0.0, max_side: int = _TRACK_SIDE,
                 chr(_TRANSLATE_VK[0]))
     import tkinter.font as tkfont
 
-    pill_font = tkfont.Font(family="Segoe UI", size=13)
-    pill_h = pill_font.metrics("linespace") + 8
+    _font_cache: dict[int, tkfont.Font] = {}
+
+    def _font_px(px: int) -> tkfont.Font:
+        f = _font_cache.get(px)
+        if f is None:
+            f = tkfont.Font(family="Segoe UI", size=-px)  # negative = pixels
+            _font_cache[px] = f
+        return f
 
     pool: list[int] = []
     pill_pool: list[tuple[int, int]] = []
@@ -1466,11 +1479,11 @@ def run(monitor_index: int = 1, fps: float = 0.0, max_side: int = _TRACK_SIDE,
                     state="hidden"))
             while len(pill_pool) < len(items):
                 r = canvas.create_rectangle(
-                    0, 0, 0, 0, fill=_PILL_BG, outline=_PILL_BORDER,
-                    state="hidden")
+                    0, 0, 0, 0, fill=_PILL_BG, outline=_BOX_COLOR,
+                    width=_BOX_WIDTH, state="hidden")
                 t = canvas.create_text(
-                    0, 0, text="", fill=_PILL_TEXT, font=pill_font,
-                    anchor="nw", state="hidden")
+                    0, 0, text="", fill=_PILL_TEXT, anchor="center",
+                    state="hidden")
                 pill_pool.append((r, t))
                 pill_meta.append(("", 0))
             for i, item in enumerate(pool):
@@ -1485,17 +1498,29 @@ def run(monitor_index: int = 1, fps: float = 0.0, max_side: int = _TRACK_SIDE,
                     canvas.itemconfigure(item, state="hidden")
             for i, (rid, tid) in enumerate(pill_pool):
                 if held and i < len(items):
+                    # IN-PLACE SUBTITLE: fill the detected bounds and draw
+                    # the replacement text INSIDE them, hiding the original
+                    # (release the key to read it). Font is sized to the box
+                    # height, then shrunk if the label would overflow width.
                     bx1, by1, bx2, by2, vx, vy, uid = items[i]
                     ex, ey = vx * ext, vy * ext
+                    x1 = (bx1 + ex - left) * sx
+                    y1 = (by1 + ey - top) * sy
+                    x2 = (bx2 + ex - left) * sx
+                    y2 = (by2 + ey - top) * sy
                     label = f"Sample Text {uid}"
-                    if pill_meta[i][0] != label:
-                        pill_meta[i] = (label, pill_font.measure(label))
-                        canvas.itemconfigure(tid, text=label)
-                    w = pill_meta[i][1]
-                    px = (bx1 + ex - left) * sx
-                    py = (by2 + ey - top) * sy + 6
-                    canvas.coords(rid, px, py, px + w + 16, py + pill_h)
-                    canvas.coords(tid, px + 8, py + 4)
+                    px = max(9, min(46, int((y2 - y1) * 0.62)))
+                    f = _font_px(px)
+                    bw = x2 - x1
+                    tw = f.measure(label)
+                    if tw > bw - 4 and bw > 24:
+                        px = max(8, int(px * (bw - 4) / max(1, tw)))
+                        f = _font_px(px)
+                    if pill_meta[i] != (label, px):
+                        pill_meta[i] = (label, px)
+                        canvas.itemconfigure(tid, text=label, font=f)
+                    canvas.coords(rid, x1 - 1, y1 - 1, x2 + 1, y2 + 1)
+                    canvas.coords(tid, (x1 + x2) / 2, (y1 + y2) / 2)
                     canvas.itemconfigure(rid, state="normal")
                     canvas.itemconfigure(tid, state="normal")
                 else:

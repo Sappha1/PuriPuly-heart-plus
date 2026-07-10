@@ -574,23 +574,41 @@ def _rec_loop(cap: _Capture, detector: TextDetector,
         try:
             frame = cap.last()
             H, W = frame.shape[:2]
-            crops, uids = [], []
+            crops, uids, origins = [], [], []
             for uid, (x1, y1, x2, y2) in batch:
-                x1p, y1p = max(0, x1 - 3), max(0, y1 - 2)
-                x2p, y2p = min(W, x2 + 3), min(H, y2 + 2)
+                x1p, y1p = max(0, x1 - 6), max(0, y1 - 4)
+                x2p, y2p = min(W, x2 + 6), min(H, y2 + 4)
                 if x2p - x1p < 8 or y2p - y1p < 6:
                     with _REC_LOCK:
-                        _REC_REQ.pop(uid, None)
-                        _REC_OUT[uid] = ""
+                        _REC_OUT[uid] = ("", None)
                     continue
                 crops.append(np.ascontiguousarray(frame[y1p:y2p, x1p:x2p]))
                 uids.append(uid)
+                origins.append((x1p, y1p))
             if crops:
                 res = detector.recognize(crops)
                 with _REC_LOCK:
-                    for uid, (text, _score) in zip(uids, res):
-                        _REC_REQ.pop(uid, None)
-                        _REC_OUT[uid] = (text or "").strip()
+                    for uid, crop, (ox, oy), (text, _score) in zip(
+                            uids, crops, origins, res):
+                        # EDGE REFINEMENT: detection is quantized to ~3px
+                        # steps (1152px pass on a 4K screen). The full-res
+                        # crop shows exactly where the glyphs start and end —
+                        # snap the box edges to them. Bounded by the crop
+                        # margin, so a busy background can only nudge edges
+                        # a few px, never relocate the box.
+                        rect = None
+                        try:
+                            g = crop[:, :, 1].astype(np.float32)
+                            kc = np.flatnonzero(g.std(axis=0) > 6.0)
+                            kr = np.flatnonzero(g.std(axis=1) > 6.0)
+                            if kc.size and kr.size:
+                                rect = (ox + int(kc[0]) - 1,
+                                        oy + int(kr[0]) - 1,
+                                        ox + int(kc[-1]) + 2,
+                                        oy + int(kr[-1]) + 2)
+                        except Exception:
+                            rect = None
+                        _REC_OUT[uid] = ((text or "").strip(), rect)
         except Exception as exc:
             logger.debug("[OCR] rec loop error: %s", exc)
             time.sleep(0.1)
@@ -733,7 +751,7 @@ class _Tracked:
     __slots__ = ("x1", "y1", "x2", "y2", "ax", "ay", "vx", "vy",
                  "moving", "calm_frames", "miss", "sig", "sig_bad", "tex_bad",
                  "last_confirm", "confirms", "jump_dx", "jump_dy", "jump_n",
-                 "uid", "text")
+                 "uid", "text", "refined")
 
     def __init__(self, b: TextBox) -> None:
         self.x1, self.y1 = float(b.x1), float(b.y1)
@@ -753,6 +771,7 @@ class _Tracked:
         _NEXT_UID[0] += 1
         self.uid = _NEXT_UID[0]  # persistent identity keys recognition
         self.text = ""  # what the local recognizer read (subtitle mode)
+        self.refined = False  # edges snapped to full-res glyph extents
 
     def advance(self, dx: float, dy: float, dt: float,
                 gx: float, gy: float) -> None:
@@ -1294,6 +1313,14 @@ def _track_loop(cap: _Capture, target: _Target, anchors: _Anchors,
                                 # Motion-stale pass: liveness only — never
                                 # drag a well-tracked box toward stale coords.
                                 tr.confirm_only()
+                            elif tr.refined and _iou(
+                                    tr.rect(),
+                                    fresh_tracked[best].rect()) > 0.55:
+                                # Edges were snapped to full-res glyph
+                                # extents; a re-detection within quantization
+                                # slop must not drag them back to its coarse
+                                # 1152px grid.
+                                tr.confirm_only()
                             else:
                                 # Still camera => detections are exact: snap
                                 # EXACTLY (k=1) so one pass fully aligns.
@@ -1362,7 +1389,23 @@ def _track_loop(cap: _Capture, target: _Target, anchors: _Anchors,
                 for tr in tracked:
                     live.add(tr.uid)
                     if tr.uid in _REC_OUT:
-                        tr.text = _REC_OUT.pop(tr.uid) or "-"
+                        text, rrect = _REC_OUT.pop(tr.uid)
+                        tr.text = text or "-"
+                        # Apply the full-res edge refinement when the box is
+                        # settled and the correction is within detection's
+                        # quantization slop (a large delta means the box
+                        # moved since the crop — stale, don't apply).
+                        if rrect is not None and not tr.moving:
+                            nx1 = (rrect[0] - off_x) / inv_scale
+                            ny1 = (rrect[1] - off_y) / inv_scale
+                            nx2 = (rrect[2] - off_x) / inv_scale
+                            ny2 = (rrect[3] - off_y) / inv_scale
+                            if (abs(nx1 - tr.x1) <= 5 and abs(ny1 - tr.y1) <= 4
+                                    and abs(nx2 - tr.x2) <= 5
+                                    and abs(ny2 - tr.y2) <= 4):
+                                tr.x1, tr.y1, tr.x2, tr.y2 = nx1, ny1, nx2, ny2
+                                tr.ax, tr.ay = nx1, ny1
+                                tr.refined = True
                     elif (not tr.text and tr.confirms >= 2
                           and tr.uid not in _REC_REQ and pending < 48):
                         bx1, by1, bx2, by2 = tr.rect()

@@ -97,6 +97,24 @@ _CURSOR_RADIUS = 18.0
 # perfectly static text. Only a SUSTAINED focus change hides the boxes.
 _FG_GRACE_S = 0.6
 
+# A small box centered on the cursor IS the cursor: the pointer glyph passes
+# the text-shape filter and (being fully inside the cursor radius) even tracks
+# its motion. Boxes this small, this close to the pointer, are never kept.
+_CURSOR_BOX_DIST = 22.0
+_CURSOR_BOX_W = 42.0
+_CURSOR_BOX_H = 28.0
+
+
+def _is_cursor_box(x1: float, y1: float, x2: float, y2: float,
+                   cursor: tuple[float, float] | None) -> bool:
+    if cursor is None:
+        return False
+    if (x2 - x1) > _CURSOR_BOX_W or (y2 - y1) > _CURSOR_BOX_H:
+        return False
+    cx, cy = (x1 + x2) / 2, (y1 + y2) / 2
+    return ((cx - cursor[0]) ** 2 + (cy - cursor[1]) ** 2
+            <= _CURSOR_BOX_DIST * _CURSOR_BOX_DIST)
+
 # Texture check: text has strong local contrast. A box whose content's std
 # stays below this is sitting on a featureless surface (floor/wall a ghost
 # drifted onto) — kill it. Applies even during motion, since flat is flat.
@@ -754,6 +772,8 @@ def _track_loop(cap: _Capture, target: _Target, anchors: _Anchors,
                 # Texture check ALWAYS: a box on featureless content (floor,
                 # wall) is a ghost regardless of motion — flow reports OK on
                 # flat surfaces, so this is the only thing that catches them.
+                if _is_cursor_box(tr.x1, tr.y1, tr.x2, tr.y2, cursor_wk):
+                    continue  # tiny box riding the pointer — it IS the cursor
                 if not cursor_on_box and not tr.check_texture(cur_g):
                     continue
                 # Appearance check ONLY for frozen boxes under a still camera
@@ -788,6 +808,9 @@ def _track_loop(cap: _Capture, target: _Target, anchors: _Anchors,
                         for tr, (dx, dy, ratio) in zip(cands, adv):
                             if ratio >= _MIN_OK_RATIO:
                                 tr.advance(dx, dy, dt, agx, agy)
+                                if _is_cursor_box(tr.x1, tr.y1, tr.x2, tr.y2,
+                                                  cursor_wk):
+                                    continue  # never adopt the pointer glyph
                                 # Baseline fingerprint NOW, while the content
                                 # under the box is verified text.
                                 tr.check_signature(cur_g)

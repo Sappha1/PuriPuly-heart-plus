@@ -48,7 +48,7 @@ _BOX_WIDTH = 1
 
 _TRACK_SIDE = 1280
 _DETECT_SIDE = 960
-_DETECT_INTERVAL = 0.22  # detect itself ~0.25s; effectively back-to-back
+_DETECT_INTERVAL = 0.05  # near back-to-back: correction latency = pass time
 _PTS_X, _PTS_Y = 4, 3
 _GRID_X, _GRID_Y = 8, 5
 
@@ -74,6 +74,11 @@ _MIN_OK_RATIO = 0.34
 #    since it was captured may only VOUCH for existing boxes (keep them
 #    alive) — it may not move them and may not add new ones.
 _DET_VOUCH_SHIFT = 12.0
+# Below this mean-abs-diff the screen is pixel-identical to the pass — the
+# pass is EXACT and is applied fully, no flow opinion consulted. (Flow
+# confidence is chronically low on dark/flat pages; gating on it alone froze
+# every correction — boxes sat misaligned forever.)
+_DET_TRUST_DIFF = 7.0
 #  * A per-frame box motion that disagrees with the global motion by more
 #    than this is an aliasing jump, not real motion (real relative motion
 #    between consecutive frames is tiny) — the box follows the world instead.
@@ -596,7 +601,8 @@ def _detect_loop(cap: _Capture, target: _Target, anchors: _Anchors,
             sx = track_w / float(det_w)
             sy = track_h / float(det_h)
             boxes = [
-                TextBox(int(b.x1 * sx), int(b.y1 * sy), int(b.x2 * sx), int(b.y2 * sy))
+                TextBox(round(b.x1 * sx), round(b.y1 * sy),
+                        round(b.x2 * sx), round(b.y2 * sy))
                 for b in verified
             ]
             gray = cv2.resize(cv2.extractChannel(frame, 1), (track_w, track_h),
@@ -1065,18 +1071,20 @@ def _track_loop(cap: _Capture, target: _Target, anchors: _Anchors,
                         adv, (mgx, mgy, mgr) = _flow_all(det_gray, cur_g,
                                                          cands, grid,
                                                          win=25, levels=4)
-                        # Content shifted a lot since this pass was captured
-                        # (scroll/pan mid-pass), or the bridge flow itself is
-                        # unreliable: the advanced positions cannot be trusted
-                        # — the pass may only VOUCH for existing boxes.
+                        # Screen unchanged since the pass => the pass is exact:
+                        # trust it fully. Otherwise, a big content shift
+                        # (scroll/pan mid-pass) or an unreliable bridge flow
+                        # means positions can't be trusted — vouch only.
                         det_shift = (mgx * mgx + mgy * mgy) ** 0.5
-                        vouch_only = (det_shift > _DET_VOUCH_SHIFT
-                                      or mgr < _MIN_OK_RATIO)
+                        vouch_only = (stale >= _DET_TRUST_DIFF
+                                      and (det_shift > _DET_VOUCH_SHIFT
+                                           or mgr < _MIN_OK_RATIO))
                         for tr, (dx, dy, ratio) in zip(cands, adv):
                             if ratio < _MIN_OK_RATIO:
                                 continue
-                            if ((dx - mgx) ** 2 + (dy - mgy) ** 2) ** 0.5 \
-                                    > _FLOW_JUMP_PX:
+                            if (mgr >= _MIN_OK_RATIO
+                                    and ((dx - mgx) ** 2 + (dy - mgy) ** 2)
+                                    ** 0.5 > _FLOW_JUMP_PX):
                                 continue  # line-aliased advance — wrong spot
                             tr.advance(dx, dy, dt, agx, agy)
                             if _is_cursor_box(tr.x1, tr.y1, tr.x2, tr.y2,
@@ -1111,10 +1119,10 @@ def _track_loop(cap: _Capture, target: _Target, anchors: _Anchors,
                                 tr.confirm_only()
                             else:
                                 # Still camera => detections are exact: snap
-                                # ~fully so alignment settles in 1-2 passes.
+                                # EXACTLY (k=1) so one pass fully aligns.
                                 # Softer during motion (some staleness).
                                 tr.blend_toward(fresh_tracked[best],
-                                                0.55 if camera_moving else 0.95)
+                                                0.55 if camera_moving else 1.0)
                             tr.miss = 0
                             n_matched += 1
                             merged.append(tr)

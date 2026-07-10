@@ -161,6 +161,13 @@ def _is_cursor_box(x1: float, y1: float, x2: float, y2: float,
 _TEX_MIN_STD = 10.0
 _TEX_BAD_FRAMES = 4
 
+# FLAT-KILL (always on, unlike the sparse-sample texture check): full-patch
+# std below this = solid color; no text of any faintness measures this low.
+# Kills scroll ghosts sitting on bare background DURING the scroll (~0.1s)
+# instead of waiting for the next trusted detection pass.
+_FLAT_KILL_STD = 6.0
+_FLAT_BAD_FRAMES = 3
+
 _RENDER_LEAD_S = 0.016
 _RENDER_EXTRAP_CAP_S = 0.06
 
@@ -754,11 +761,8 @@ class _Tracked:
         return self.vx, self.vy
 
     def _sample(self, gray: np.ndarray) -> np.ndarray:
-        H, W = gray.shape[:2]
         x1, y1, x2, y2 = self.rect()
-        xs = np.clip(np.linspace(x1 + 2, x2 - 2, _SIG_X).astype(np.int32), 0, W - 1)
-        ys = np.clip(np.linspace(y1 + 1, y2 - 1, _SIG_Y).astype(np.int32), 0, H - 1)
-        return gray[np.ix_(ys, xs)].astype(np.float32).ravel()
+        return _grid_sample(gray, x1, y1, x2, y2)
 
     def check_signature(self, gray: np.ndarray) -> bool:
         """Fingerprint the pixels under the box; returns False when the content
@@ -789,6 +793,14 @@ class _Tracked:
         else:
             self.tex_bad = 0
         return True
+
+
+def _grid_sample(gray: np.ndarray, x1: float, y1: float, x2: float, y2: float
+                 ) -> np.ndarray:
+    H, W = gray.shape[:2]
+    xs = np.clip(np.linspace(x1 + 2, x2 - 2, _SIG_X).astype(np.int32), 0, W - 1)
+    ys = np.clip(np.linspace(y1 + 1, y2 - 1, _SIG_Y).astype(np.int32), 0, H - 1)
+    return gray[np.ix_(ys, xs)].astype(np.float32).ravel()
 
 
 def _iou(a, b) -> float:
@@ -1072,6 +1084,22 @@ def _track_loop(cap: _Capture, target: _Target, anchors: _Anchors,
                 if any(ox1 <= bcx <= ox2 and oy1 <= bcy <= oy2
                        for ox1, oy1, ox2, oy2 in occl_wk):
                     continue  # box sits on another window's area — drop
+                # FLAT-KILL: a solid-color patch cannot be text (text needs
+                # contrast). When scrolled content leaves a box behind, flow
+                # stalls at "no motion" on the bare background and the box
+                # would sit on grey until the next trusted pass — this removes
+                # it DURING the scroll instead (~3 frames).
+                if not cursor_on_box:
+                    fx1, fy1 = int(max(0.0, tr.x1)), int(max(0.0, tr.y1))
+                    fx2 = int(min(float(track_w), tr.x2))
+                    fy2 = int(min(float(track_h), tr.y2))
+                    if fx2 - fx1 >= 4 and fy2 - fy1 >= 2:
+                        if float(cur_g[fy1:fy2, fx1:fx2].std()) < _FLAT_KILL_STD:
+                            tr.tex_bad += 1
+                            if tr.tex_bad >= _FLAT_BAD_FRAMES:
+                                continue
+                        else:
+                            tr.tex_bad = 0
                 if (_TEXTURE_KILL_ENABLED and not cursor_on_box
                         and not tr.check_texture(cur_g)):
                     continue
@@ -1122,7 +1150,21 @@ def _track_loop(cap: _Capture, target: _Target, anchors: _Anchors,
                                     and ((dx - mgx) ** 2 + (dy - mgy) ** 2)
                                     ** 0.5 > _FLOW_JUMP_PX):
                                 continue  # line-aliased advance — wrong spot
+                            dox1, doy1 = tr.x1, tr.y1  # det-time position
+                            dox2, doy2 = tr.x2, tr.y2
                             tr.advance(dx, dy, dt, agx, agy)
+                            # LOCAL staleness: the pixels at the box's landing
+                            # spot must still look like the pixels it was
+                            # detected on. A mid-scroll box whose flow stalled
+                            # lands on the VACATED (bare) area and can't match
+                            # the text it came from — drop it here instead of
+                            # painting a ghost on the background.
+                            s_det = _grid_sample(det_gray, dox1, doy1,
+                                                 dox2, doy2)
+                            s_now = _grid_sample(cur_g, tr.x1, tr.y1,
+                                                 tr.x2, tr.y2)
+                            if float(np.mean(np.abs(s_now - s_det))) > _SIG_DIFF:
+                                continue
                             if _is_cursor_box(tr.x1, tr.y1, tr.x2, tr.y2,
                                               cursor_wk):
                                 continue  # never adopt the pointer glyph

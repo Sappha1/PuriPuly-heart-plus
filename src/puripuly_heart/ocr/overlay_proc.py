@@ -997,14 +997,44 @@ def _parent_watch_loop(parent_pid: int) -> None:
     os._exit(0)
 
 
+_TAKEOVER_EVENT = "PuriPulyHeart_OCR_Takeover"
+_INSTANCE_MUTEX = "PuriPulyHeart_OCR_Overlay"
+
+
+def _takeover_listener(evt: int) -> None:
+    """Exit when a NEWER overlay signals takeover — the fresh code wins."""
+    INFINITE = 0xFFFFFFFF
+    try:
+        ctypes.windll.kernel32.WaitForSingleObject(evt, INFINITE)
+        logger.info("[OCR] takeover signaled by a newer instance — exiting")
+    except Exception:
+        pass
+    os._exit(0)
+
+
 def _acquire_single_instance() -> bool:
-    """Named mutex: only ONE OCR overlay may run. Two capture sessions fight
-    over DXGI desktop duplication and randomly kill each other."""
+    """One OCR overlay at a time (two DXGI capture sessions randomly kill each
+    other) — but NEVER let a stale instance block a new one: the new overlay
+    signals takeover, the old one exits, then the mutex is acquired. Without
+    this, an orphan holding the mutex silently rejected every re-toggle and
+    kept ancient code drawing on screen."""
     ERROR_ALREADY_EXISTS = 183
     try:
-        ctypes.windll.kernel32.CreateMutexW(None, False,
-                                            "PuriPulyHeart_OCR_Overlay")
-        return ctypes.windll.kernel32.GetLastError() != ERROR_ALREADY_EXISTS
+        kernel32 = ctypes.windll.kernel32
+        # Manual-reset event: any old instance's listener wakes and exits.
+        evt = kernel32.CreateEventW(None, True, False, _TAKEOVER_EVENT)
+        kernel32.SetEvent(evt)
+        time.sleep(0.7)  # give the old instance time to leave
+        kernel32.ResetEvent(evt)
+        for _ in range(10):
+            kernel32.CreateMutexW(None, False, _INSTANCE_MUTEX)
+            if kernel32.GetLastError() != ERROR_ALREADY_EXISTS:
+                threading.Thread(target=_takeover_listener, args=(evt,),
+                                 daemon=True).start()
+                return True
+            time.sleep(0.3)
+        logger.warning("[OCR] could not take over from the running instance")
+        return False
     except Exception:
         return True
 

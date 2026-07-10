@@ -8,12 +8,27 @@ Flet app, and killing the process is a clean, complete "off".
 from __future__ import annotations
 
 import contextlib
+import ctypes
 import logging
 import os
 import subprocess
 import sys
 
 logger = logging.getLogger(__name__)
+
+# Named event that tells EVERY overlay generation to exit. The stored process
+# handle can't reach a hot-swapped replacement, so toggle-off must broadcast.
+_SHUTDOWN_EVENT = "PuriPulyHeart_OCR_Shutdown"
+
+
+def _shutdown_event(set_it: bool) -> None:
+    with contextlib.suppress(Exception):
+        kernel32 = ctypes.windll.kernel32
+        evt = kernel32.CreateEventW(None, True, False, _SHUTDOWN_EVENT)
+        if set_it:
+            kernel32.SetEvent(evt)
+        else:
+            kernel32.ResetEvent(evt)
 
 # PROTOTYPE LOCAL BUILD ONLY. The packaged app doesn't bundle the OCR libraries
 # (rapidocr/mss/opencv/tkinter), so when running frozen we launch the overlay
@@ -51,6 +66,7 @@ class OcrOverlayManager:
     def start(self) -> bool:
         if self.running:
             return True
+        _shutdown_event(False)  # clear any previous OFF signal before spawning
         args = ["-m", "puripuly_heart.ocr.overlay_proc",
                 "--fps", str(self._fps), "--monitor", str(self._monitor),
                 "--parent-pid", str(os.getpid())]
@@ -79,14 +95,16 @@ class OcrOverlayManager:
             return False
 
     def stop(self) -> None:
+        # Broadcast OFF to every overlay generation (a hot-swapped replacement
+        # isn't our child, so the handle alone can't stop it).
+        _shutdown_event(True)
         proc = self._proc
         self._proc = None
-        if proc is None:
-            return
-        with contextlib.suppress(Exception):
-            if proc.poll() is None:
-                proc.terminate()
-        logger.info("[OCR] overlay subprocess stopped")
+        if proc is not None:
+            with contextlib.suppress(Exception):
+                if proc.poll() is None:
+                    proc.terminate()
+        logger.info("[OCR] overlay stop signaled")
 
     def toggle(self, enabled: bool) -> bool:
         if enabled:

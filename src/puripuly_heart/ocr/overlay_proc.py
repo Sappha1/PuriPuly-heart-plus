@@ -88,10 +88,14 @@ _REC_MAX_BOXES = 25          # rec budget per detection pass
 import re as _re
 _REC_TEXTY = _re.compile(r"[0-9A-Za-z一-鿿぀-ヿ가-힯]")
 
-# Persistence: every displayed box has already passed recognition, so err on
-# the side of KEEPING it — flicker hurts more than a briefly stale box.
-_MAX_MISSES_CONFIRMED = 6
-_MAX_MISSES_UNPROVEN = 3
+# Early-version persistence profile: garbage dies within 1-2 passes. The
+# generous 6/3 tolerance (anti-blink overcorrection) let stale/junk boxes
+# linger for many seconds after view changes.
+_MAX_MISSES_CONFIRMED = 2
+_MAX_MISSES_UNPROVEN = 1
+# When a still-camera detection corroborates <34% of current boxes, the view
+# changed (app switch, teleport): drop every uncorroborated box immediately.
+_COHERENCE_MIN = 0.34
 _CONFIRMED_AT = 2
 
 # Appearance signature: sample grid inside each box; if the mean abs gray
@@ -528,9 +532,9 @@ def _detect_loop(cap: _Capture, target: _Target, anchors: _Anchors,
             frame = cap.last()[y1:y2, x1:x2]
             ch, cw = frame.shape[:2]
             longest = max(cw, ch)
-            # Adaptive: ~0.42x of the region, floor 960, cap 1280 (the proven
-            # ~5pm resolution; 1600 measured 1-3s/pass over 4K — too slow).
-            target_side = min(1280, max(_DETECT_SIDE, int(longest * 0.42)))
+            # Adaptive: floor 960, cap 1152 for 4K (~0.5s/pass; 1280 measured
+            # ~1s — the settle sluggishness the user felt).
+            target_side = min(1152, max(_DETECT_SIDE, int(longest * 0.30)))
             d_scale = min(1.0, target_side / float(longest))
             det_w, det_h = max(1, int(cw * d_scale)), max(1, int(ch * d_scale))
             det_bgr = cv2.resize(frame, (det_w, det_h), interpolation=cv2.INTER_AREA)
@@ -1038,6 +1042,8 @@ def _track_loop(cap: _Capture, target: _Target, anchors: _Anchors,
                                 fresh_tracked.append(tr)
                     merged: list[_Tracked] = []
                     used = [False] * len(fresh_tracked)
+                    n_prior = len(tracked)
+                    n_matched = 0
                     for tr in tracked:
                         best, best_iou = -1, _MERGE_IOU
                         for i, nb in enumerate(fresh_tracked):
@@ -1055,6 +1061,7 @@ def _track_loop(cap: _Capture, target: _Target, anchors: _Anchors,
                             tr.blend_toward(fresh_tracked[best],
                                             0.55 if camera_moving else 0.95)
                             tr.miss = 0
+                            n_matched += 1
                             merged.append(tr)
                         else:
                             tr.miss += 1
@@ -1066,6 +1073,14 @@ def _track_loop(cap: _Capture, target: _Target, anchors: _Anchors,
                     for i, nb in enumerate(fresh_tracked):
                         if not used[i]:
                             merged.append(nb)
+                    # Coherence: a still-camera detection that corroborates
+                    # almost none of the current boxes means the VIEW CHANGED
+                    # (app switch) — keep only what it confirmed + the fresh
+                    # set, instead of letting stale boxes ride out misses
+                    # ("existing boxes fling all over" after tab-back).
+                    if (not camera_moving and n_prior >= 4
+                            and n_matched / n_prior < _COHERENCE_MIN):
+                        merged = ([tr for tr in merged if tr.miss == 0])
                     tracked = merged
 
             prev_g = cur_g
@@ -1242,6 +1257,22 @@ def _parent_watch_loop(parent_pid: int) -> None:
 
 _TAKEOVER_EVENT = "PuriPulyHeart_OCR_Takeover"
 _INSTANCE_MUTEX = "PuriPulyHeart_OCR_Overlay"
+_SHUTDOWN_EVENT = "PuriPulyHeart_OCR_Shutdown"
+
+
+def _shutdown_listener() -> None:
+    """Exit when the app signals OCR-off. The manager's process handle can't
+    reach a hot-swapped replacement (toggle-off killed nothing after a swap);
+    a named event reaches EVERY overlay generation."""
+    INFINITE = 0xFFFFFFFF
+    try:
+        kernel32 = ctypes.windll.kernel32
+        evt = kernel32.CreateEventW(None, True, False, _SHUTDOWN_EVENT)
+        kernel32.WaitForSingleObject(evt, INFINITE)
+        logger.info("[OCR] shutdown signaled by the app — exiting")
+    except Exception:
+        return
+    os._exit(0)
 
 
 def _takeover_listener(evt: int) -> None:
@@ -1350,6 +1381,7 @@ def main() -> None:
         threading.Thread(target=_parent_watch_loop, args=(args.parent_pid,),
                          daemon=True).start()
     threading.Thread(target=_source_watch_loop, daemon=True).start()
+    threading.Thread(target=_shutdown_listener, daemon=True).start()
     logger.info("[OCR] starting: window=%r parent=%s",
                 args.window or None, args.parent_pid or "none")
     run(monitor_index=args.monitor, fps=args.fps, max_side=args.max_side,

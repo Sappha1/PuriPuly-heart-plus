@@ -481,10 +481,15 @@ def _detect_loop(cap: _Capture, target: _Target, anchors: _Anchors,
     import cv2
 
     detector = TextDetector(max_side=_DETECT_SIDE)
+    det_pass = [0]
+    last_epoch = -1
     while not stop.is_set():
         t0 = time.monotonic()
         try:
             rect, fg, epoch = target.get()
+            if epoch != last_epoch:
+                last_epoch = epoch
+                logger.info("[OCR] target region: %s (epoch %d)", rect, epoch)
             if rect is None or not fg:
                 wake.wait(0.2)
                 wake.clear()
@@ -506,18 +511,29 @@ def _detect_loop(cap: _Capture, target: _Target, anchors: _Anchors,
             shaped = [b for b in raw if _text_plausible(b, det_w, det_h)]
             # RECOGNITION GATE: actually READ each candidate; only regions
             # producing legible characters at decent confidence earn a box.
+            # Crops come from the FULL-RES frame (not the downscaled detection
+            # image) so the gate judges sharp pixels — at whole-screen scope a
+            # 4K frame squeezed to 960px made every crop unreadable and the
+            # gate rejected nearly all real text.
+            inv_d = 1.0 / d_scale if d_scale else 1.0
             crops, keep = [], []
             for b in shaped[:_REC_MAX_BOXES]:
-                cx1, cy1 = max(0, b.x1 - 2), max(0, b.y1 - 2)
-                cx2, cy2 = min(det_w, b.x2 + 2), min(det_h, b.y2 + 2)
-                if cx2 - cx1 < 8 or cy2 - cy1 < 6:
+                fx1 = max(0, int(b.x1 * inv_d) - 3)
+                fy1 = max(0, int(b.y1 * inv_d) - 3)
+                fx2 = min(cw, int(b.x2 * inv_d) + 3)
+                fy2 = min(ch, int(b.y2 * inv_d) + 3)
+                if fx2 - fx1 < 12 or fy2 - fy1 < 8:
                     continue
-                crops.append(np.ascontiguousarray(det_bgr[cy1:cy2, cx1:cx2]))
+                crops.append(np.ascontiguousarray(frame[fy1:fy2, fx1:fx2]))
                 keep.append(b)
             verified = [
                 b for b, (text, score) in zip(keep, detector.recognize(crops))
                 if score >= _REC_MIN_SCORE and _REC_TEXTY.search(text)
             ]
+            det_pass[0] += 1
+            if det_pass[0] % 10 == 1:
+                logger.info("[OCR] det: raw=%d shaped=%d verified=%d region=%dx%d",
+                            len(raw), len(shaped), len(verified), cw, ch)
             t_scale = min(1.0, _TRACK_SIDE / float(max(cw, ch)))
             track_w, track_h = max(1, int(cw * t_scale)), max(1, int(ch * t_scale))
             sx = track_w / float(det_w)
@@ -530,7 +546,9 @@ def _detect_loop(cap: _Capture, target: _Target, anchors: _Anchors,
                               interpolation=cv2.INTER_LINEAR)
             anchors.publish(boxes, gray, epoch)
         except Exception as exc:
-            logger.debug("[OCR] detect error: %s", exc)
+            # WARNING, not debug: a broken detect loop looks like "boxes never
+            # appear" — it must be visible in the log file.
+            logger.warning("[OCR] detect error: %s", exc)
         remaining = max(0.0, _DETECT_INTERVAL - (time.monotonic() - t0))
         wake.wait(remaining)
         wake.clear()

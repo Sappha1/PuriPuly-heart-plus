@@ -652,7 +652,7 @@ def _detect_loop(cap: _Capture, target: _Target, anchors: _Anchors,
 class _Tracked:
     __slots__ = ("x1", "y1", "x2", "y2", "ax", "ay", "vx", "vy",
                  "moving", "calm_frames", "miss", "sig", "sig_bad", "tex_bad",
-                 "last_confirm", "confirms")
+                 "last_confirm", "confirms", "jump_dx", "jump_dy", "jump_n")
 
     def __init__(self, b: TextBox) -> None:
         self.x1, self.y1 = float(b.x1), float(b.y1)
@@ -667,6 +667,8 @@ class _Tracked:
         self.tex_bad = 0
         self.last_confirm = time.monotonic()
         self.confirms = 1  # detections that have vouched for this box
+        self.jump_dx = self.jump_dy = 0.0  # pending unconfirmed motion jump
+        self.jump_n = 0
 
     def advance(self, dx: float, dy: float, dt: float,
                 gx: float, gy: float) -> None:
@@ -1020,16 +1022,38 @@ def _track_loop(cap: _Capture, target: _Target, anchors: _Anchors,
 
             kept: list[_Tracked] = []
             for tr, (dx, dy, ratio) in zip(tracked, flows):
+                # Reference for "plausible motion" is the box's OWN momentum,
+                # NOT the whole-screen median: the median becomes the pane's
+                # scroll when a large window scrolls, and overriding static
+                # boxes with it dragged sidebar/header boxes onto empty space.
+                pvx, pvy = tr.vx * dt, tr.vy * dt
                 if ratio < _MIN_OK_RATIO:
                     if not (camera_moving and grid_ratio >= _MIN_OK_RATIO):
                         continue
-                    # Points lost mid-pan: ride the world instead of dying —
+                    # Points lost mid-motion: coast one frame on momentum —
                     # detection settles the box's fate at the next pass.
-                    dx, dy = gx, gy
-                elif ((dx - gx) ** 2 + (dy - gy) ** 2) ** 0.5 > _FLOW_JUMP_PX:
-                    # Aliasing jump (text lines look alike): a box cannot
-                    # really move this far against the world in one frame.
-                    dx, dy = gx, gy
+                    dx, dy = pvx, pvy
+                elif ((dx - pvx) ** 2 + (dy - pvy) ** 2) ** 0.5 > _FLOW_JUMP_PX:
+                    # Sudden large motion: line-aliasing OR a genuine scroll
+                    # start — indistinguishable in a single frame. Hold the
+                    # box on its momentum for ONE frame; if the next frame
+                    # repeats the same jump it is real motion (aliasing does
+                    # not repeat consistently) — accept it and repay the held
+                    # frame so the box catches up exactly.
+                    jdx, jdy = dx - pvx, dy - pvy
+                    if (tr.jump_n > 0
+                            and ((jdx - tr.jump_dx) ** 2
+                                 + (jdy - tr.jump_dy) ** 2) ** 0.5
+                            < _FLOW_JUMP_PX):
+                        dx += tr.jump_dx
+                        dy += tr.jump_dy
+                        tr.jump_n = 0
+                    else:
+                        tr.jump_dx, tr.jump_dy = jdx, jdy
+                        tr.jump_n = 1
+                        dx, dy = pvx, pvy
+                else:
+                    tr.jump_n = 0
                 tr.advance(dx, dy, dt, agx, agy)
                 # Content checks are suspended while the cursor touches the
                 # box — the game-drawn pointer legitimately changes the pixels.

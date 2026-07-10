@@ -91,6 +91,12 @@ _SIG_CONFIRM_GRACE_S = 0.7
 # and content checks are suspended for boxes the cursor is touching.
 _CURSOR_RADIUS = 18.0
 
+# Focus-loss debounce. Foreground can blip for milliseconds (the app's own
+# always-on-top subtitle overlay re-asserting bounds, OS transitions); reacting
+# instantly nuked all boxes and forced a ~0.5s rebuild — visible flashing on
+# perfectly static text. Only a SUSTAINED focus change hides the boxes.
+_FG_GRACE_S = 0.6
+
 # Texture check: text has strong local contrast. A box whose content's std
 # stays below this is sitting on a featureless surface (floor/wall a ghost
 # drifted onto) — kill it. Applies even during motion, since flat is flat.
@@ -226,6 +232,7 @@ class _Target:
         self._lock = threading.Lock()
         self._rect: tuple[int, int, int, int] | None = (0, 0, cap.width, cap.height)
         self._fg = True
+        self._fg_title = ""
         self._epoch = 0
         self._warned = False
         if self._title:
@@ -284,17 +291,20 @@ class _Target:
                     rect_new = (x1, y1, x2, y2)
                 fgw = user32.GetForegroundWindow()
                 fg = fgw == hwnd
+                fg_title = ""
                 if not fg and fgw:
-                    # Our own translator app counts as friendly focus: the user
-                    # clicks it constantly while playing, and boxes vanishing
-                    # every time reads as OCR breaking (VRChat is still on
-                    # screen behind it). Other apps still hide the boxes.
-                    n = user32.GetWindowTextLengthW(fgw)
-                    if n > 0:
-                        buf = ctypes.create_unicode_buffer(n + 1)
-                        user32.GetWindowTextW(fgw, buf, n + 1)
-                        if buf.value.startswith("PuriPulyHeart"):
-                            fg = True
+                    m = user32.GetWindowTextLengthW(fgw)
+                    if m > 0:
+                        b2 = ctypes.create_unicode_buffer(m + 1)
+                        user32.GetWindowTextW(fgw, b2, m + 1)
+                        fg_title = b2.value
+                self._fg_title = fg_title
+                # Our own translator app counts as friendly focus: the user
+                # clicks it constantly while playing, and boxes vanishing every
+                # time reads as OCR breaking (VRChat is still on screen behind
+                # it). Other apps still hide the boxes (after the debounce).
+                if not fg and fg_title.startswith("PuriPulyHeart"):
+                    fg = True
         except Exception as exc:
             logger.debug("[OCR] window poll failed: %s", exc)
         with self._lock:
@@ -312,6 +322,10 @@ class _Target:
     def get(self) -> tuple[tuple[int, int, int, int] | None, bool, int]:
         with self._lock:
             return self._rect, self._fg, self._epoch
+
+    def fg_title(self) -> str:
+        with self._lock:
+            return self._fg_title
 
 
 def _target_loop(target: _Target, stop: threading.Event) -> None:
@@ -612,6 +626,8 @@ def _track_loop(cap: _Capture, target: _Target, anchors: _Anchors,
     cur_epoch = -1
     hb_t = time.monotonic()
     hb_frames = 0
+    away_since: float | None = None
+    away_logged = False
     track_w = track_h = 0
     inv_scale = 1.0
     off_x = off_y = 0
@@ -627,13 +643,38 @@ def _track_loop(cap: _Capture, target: _Target, anchors: _Anchors,
                             target.get()[1])
                 hb_t, hb_frames = now_hb, 0
             rect, fg, epoch = target.get()
-            if rect is None or not fg:
+            if rect is None:
                 if tracked or prev_g is not None:
                     tracked = []
                     prev_g = None
                     state.set([])
                 time.sleep(0.05)
                 continue
+            # Focus-loss debounce: ignore sub-_FG_GRACE_S blips entirely (the
+            # app's own overlay re-asserting topmost, OS transitions). Only a
+            # sustained focus change hides the boxes; returning re-detects
+            # immediately instead of waiting out the cycle.
+            if not fg:
+                if away_since is None:
+                    away_since = time.monotonic()
+                if time.monotonic() - away_since >= _FG_GRACE_S:
+                    if not away_logged:
+                        away_logged = True
+                        logger.info("[OCR] hidden: focus lost >%.1fs to %r",
+                                    _FG_GRACE_S, target.fg_title())
+                    if tracked or prev_g is not None:
+                        tracked = []
+                        prev_g = None
+                        state.set([])
+                    time.sleep(0.05)
+                    continue
+                # inside grace: keep tracking straight through the blip
+            else:
+                if away_logged:
+                    logger.info("[OCR] resumed: focus back on target")
+                    wake.set()  # repopulate without waiting for the next cycle
+                away_since = None
+                away_logged = False
             if epoch != cur_epoch:
                 cur_epoch = epoch
                 x1, y1, x2, y2 = rect

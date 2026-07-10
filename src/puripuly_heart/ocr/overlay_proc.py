@@ -248,7 +248,10 @@ class _Capture:
 class _Target:
     """Tracks the capture region: a specific window's client area (VRChat
     mode) or the whole monitor (global mode). epoch increments whenever the
-    region changes so both loops can resynchronize."""
+    region changes so both loops can resynchronize. Also computes OCCLUSIONS:
+    regions of the target covered by other windows (chat apps, file explorer,
+    the translator itself) — those pixels belong to other apps and must never
+    be scanned or boxed."""
 
     def __init__(self, title: str | None, cap: _Capture) -> None:
         self._title = title or None
@@ -259,8 +262,56 @@ class _Target:
         self._fg_title = ""
         self._epoch = 0
         self._warned = False
+        self._occl: list[tuple[int, int, int, int]] = []
         if self._title:
             self._rect = None  # resolved by poll()
+
+    @staticmethod
+    def _occlusions_for(hwnd: int, sx1: int, sy1: int, sx2: int, sy2: int
+                        ) -> list[tuple[int, int, int, int]]:
+        """Screen rects of visible windows ABOVE hwnd that overlap it, in
+        target-local coordinates. EnumWindows yields top-to-bottom z-order."""
+        user32 = ctypes.windll.user32
+        GWL_EXSTYLE = -20
+        WS_EX_TRANSPARENT = 0x00000020
+        DWMWA_CLOAKED = 14
+        order: list[int] = []
+
+        @ctypes.WINFUNCTYPE(wintypes.BOOL, wintypes.HWND, wintypes.LPARAM)
+        def _cb(hw, _lp):
+            order.append(int(hw))
+            return True
+
+        user32.EnumWindows(_cb, 0)
+        occl: list[tuple[int, int, int, int]] = []
+        for hw in order:
+            if hw == hwnd:
+                break  # everything after is beneath the target
+            try:
+                if not user32.IsWindowVisible(hw):
+                    continue
+                if user32.GetWindowLongW(hw, GWL_EXSTYLE) & WS_EX_TRANSPARENT:
+                    continue  # click-through overlays (incl. our own boxes)
+                cloaked = wintypes.DWORD(0)
+                try:
+                    ctypes.windll.dwmapi.DwmGetWindowAttribute(
+                        hw, DWMWA_CLOAKED, ctypes.byref(cloaked),
+                        ctypes.sizeof(cloaked))
+                except Exception:
+                    pass
+                if cloaked.value:
+                    continue  # invisible UWP shells report visible otherwise
+                r = wintypes.RECT()
+                user32.GetWindowRect(hw, ctypes.byref(r))
+                ix1, iy1 = max(sx1, r.left), max(sy1, r.top)
+                ix2, iy2 = min(sx2, r.right), min(sy2, r.bottom)
+                if ix2 - ix1 > 8 and iy2 - iy1 > 8:
+                    occl.append((ix1 - sx1, iy1 - sy1, ix2 - sx1, iy2 - sy1))
+                if len(occl) >= 12:
+                    break
+            except Exception:
+                continue
+        return occl
 
     @staticmethod
     def _find_window(title: str) -> int:
@@ -296,6 +347,7 @@ class _Target:
             return
         user32 = ctypes.windll.user32
         rect_new: tuple[int, int, int, int] | None = None
+        occl_new: list[tuple[int, int, int, int]] = []
         fg = False
         try:
             # FOREGROUND-FIRST: with multiple same-titled windows (the user
@@ -326,6 +378,12 @@ class _Target:
                 y2 = max(0, min(self._cap.height, y2))
                 if x2 - x1 >= 64 and y2 - y1 >= 64:
                     rect_new = (x1, y1, x2, y2)
+                    occl_new = self._occlusions_for(
+                        hwnd,
+                        x1 + self._cap.left, y1 + self._cap.top,
+                        x2 + self._cap.left, y2 + self._cap.top)
+                else:
+                    occl_new = []
                 fgw = user32.GetForegroundWindow()
                 fg = fgw == hwnd
                 fg_title = ""
@@ -349,6 +407,7 @@ class _Target:
                 self._rect = rect_new
                 self._epoch += 1
             self._fg = fg
+            self._occl = occl_new if rect_new is not None else []
         if rect_new is None and not self._warned:
             self._warned = True
             logger.info("[OCR] window '%s' not found — boxes hidden until it appears",
@@ -363,6 +422,10 @@ class _Target:
     def fg_title(self) -> str:
         with self._lock:
             return self._fg_title
+
+    def occlusions(self) -> list[tuple[int, int, int, int]]:
+        with self._lock:
+            return list(self._occl)
 
 
 def _target_loop(target: _Target, stop: threading.Event) -> None:
@@ -426,6 +489,13 @@ def _detect_loop(cap: _Capture, target: _Target, anchors: _Anchors,
             d_scale = min(1.0, _DETECT_SIDE / float(max(cw, ch)))
             det_w, det_h = max(1, int(cw * d_scale)), max(1, int(ch * d_scale))
             det_bgr = cv2.resize(frame, (det_w, det_h), interpolation=cv2.INTER_AREA)
+            # Blank regions covered by other windows so their text is never
+            # even detected (they aren't VRChat content).
+            for ox1, oy1, ox2, oy2 in target.occlusions():
+                dx1 = max(0, int(ox1 * d_scale)); dy1 = max(0, int(oy1 * d_scale))
+                dx2 = min(det_w, int(ox2 * d_scale)); dy2 = min(det_h, int(oy2 * d_scale))
+                if dx2 > dx1 and dy2 > dy1:
+                    det_bgr[dy1:dy2, dx1:dx2] = 0
             raw = detector.detect(det_bgr)
             t_scale = min(1.0, _TRACK_SIDE / float(max(cw, ch)))
             track_w, track_h = max(1, int(cw * t_scale)), max(1, int(ch * t_scale))
@@ -744,6 +814,18 @@ def _track_loop(cap: _Capture, target: _Target, anchors: _Anchors,
                 continue
             cur_g = cv2.resize(np.ascontiguousarray(crop_g),
                                (track_w, track_h), interpolation=cv2.INTER_LINEAR)
+            # Blank pixels covered by OTHER windows (chat apps, explorer, the
+            # translator): they are not VRChat content and must not be scanned,
+            # tracked, or boxed. Masked-out boxes die via the checks below.
+            occl = target.occlusions()
+            t_s = 1.0 / inv_scale if inv_scale else 1.0
+            occl_wk = []
+            for ox1, oy1, ox2, oy2 in occl:
+                wx1 = max(0, int(ox1 * t_s)); wy1 = max(0, int(oy1 * t_s))
+                wx2 = min(track_w, int(ox2 * t_s)); wy2 = min(track_h, int(oy2 * t_s))
+                if wx2 > wx1 and wy2 > wy1:
+                    cur_g[wy1:wy2, wx1:wx2] = 0
+                    occl_wk.append((wx1, wy1, wx2, wy2))
             if prev_g is None or prev_g.shape != cur_g.shape:
                 prev_g = cur_g
                 continue
@@ -795,6 +877,10 @@ def _track_loop(cap: _Capture, target: _Target, anchors: _Anchors,
                 # flat surfaces, so this is the only thing that catches them.
                 if _is_cursor_box(tr.x1, tr.y1, tr.x2, tr.y2, cursor_wk):
                     continue  # tiny box riding the pointer — it IS the cursor
+                bcx, bcy = (tr.x1 + tr.x2) / 2, (tr.y1 + tr.y2) / 2
+                if any(ox1 <= bcx <= ox2 and oy1 <= bcy <= oy2
+                       for ox1, oy1, ox2, oy2 in occl_wk):
+                    continue  # box sits on another window's area — drop
                 if not cursor_on_box and not tr.check_texture(cur_g):
                     continue
                 # Appearance check ONLY for frozen boxes under a still camera
@@ -832,6 +918,11 @@ def _track_loop(cap: _Capture, target: _Target, anchors: _Anchors,
                                 if _is_cursor_box(tr.x1, tr.y1, tr.x2, tr.y2,
                                                   cursor_wk):
                                     continue  # never adopt the pointer glyph
+                                ncx = (tr.x1 + tr.x2) / 2
+                                ncy = (tr.y1 + tr.y2) / 2
+                                if any(ox1 <= ncx <= ox2 and oy1 <= ncy <= oy2
+                                       for ox1, oy1, ox2, oy2 in occl_wk):
+                                    continue  # on another window's area
                                 # Baseline fingerprint NOW, while the content
                                 # under the box is verified text.
                                 tr.check_signature(cur_g)

@@ -11,6 +11,7 @@ from __future__ import annotations
 
 import logging
 import os
+import threading
 from dataclasses import dataclass
 
 import numpy as np
@@ -44,8 +45,16 @@ class TextDetector:
     def __init__(self, max_side: int = 960) -> None:
         self._max_side = max_side
         self._engine = None
+        self._init_lock = threading.Lock()
 
     def _ensure_engine(self) -> None:
+        # Detection and recognition run on DIFFERENT threads sharing this
+        # instance; the lock stops a double engine load. Session.run itself
+        # is thread-safe (separate det/rec sessions).
+        with self._init_lock:
+            self._ensure_engine_locked()
+
+    def _ensure_engine_locked(self) -> None:
         if self._engine is None:
             from rapidocr_onnxruntime import RapidOCR
 
@@ -73,25 +82,29 @@ class TextDetector:
             import onnxruntime as ort
 
             if "DmlExecutionProvider" not in ort.get_available_providers():
-                logger.info("[OCR] DirectML not available — detection on CPU")
+                logger.info("[OCR] DirectML not available — OCR on CPU")
                 return
-            infer = self._engine.text_detector.infer
-            path = getattr(infer.session, "_model_path", None)
-            if not path or not os.path.exists(path):
-                logger.info("[OCR] det model path unknown — detection on CPU")
-                return
-            so = ort.SessionOptions()
-            so.log_severity_level = 4
-            so.graph_optimization_level = (
-                ort.GraphOptimizationLevel.ORT_ENABLE_ALL
-            )
-            so.enable_mem_pattern = False  # required off for DML
-            infer.session = ort.InferenceSession(
-                path, sess_options=so,
-                providers=[("DmlExecutionProvider", {"device_id": 0}),
-                           "CPUExecutionProvider"])
-            logger.info("[OCR] detection inference provider: %s",
-                        infer.session.get_providers()[0])
+            for name, infer in (
+                ("detection", self._engine.text_detector.infer),
+                ("recognition", self._engine.text_recognizer.session),
+            ):
+                path = getattr(infer.session, "_model_path", None)
+                if not path or not os.path.exists(path):
+                    logger.info("[OCR] %s model path unknown — stays on CPU",
+                                name)
+                    continue
+                so = ort.SessionOptions()
+                so.log_severity_level = 4
+                so.graph_optimization_level = (
+                    ort.GraphOptimizationLevel.ORT_ENABLE_ALL
+                )
+                so.enable_mem_pattern = False  # required off for DML
+                infer.session = ort.InferenceSession(
+                    path, sess_options=so,
+                    providers=[("DmlExecutionProvider", {"device_id": 0}),
+                               "CPUExecutionProvider"])
+                logger.info("[OCR] %s inference provider: %s", name,
+                            infer.session.get_providers()[0])
         except Exception as exc:
             logger.warning("[OCR] DirectML init failed — CPU fallback: %s", exc)
 

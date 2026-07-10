@@ -46,19 +46,28 @@ _TRANSPARENT_KEY = "#010203"
 _BOX_COLOR = "#ff2020"
 _BOX_WIDTH = 1
 
-# Hold-to-translate PLACEHOLDER stage: while the bind is held, a pill with
-# "Sample Text N" renders under every box (N = the box's persistent identity,
-# so pill-to-bubble loyalty is visible) to validate position and aesthetics
-# before recognition/translation is wired in. Change the bind without a
-# rebuild via %LOCALAPPDATA%\puripuly-heart\ocr_overlay_config.json:
-#   {"translate_key": "E"}    (single letter or digit)
+# SUBTITLE stage (recognition, no translation yet): Alt+T toggles in-place
+# subtitles — each box fills and shows the text the LOCAL RapidOCR recognizer
+# read from it (free, no API). Validates recognition accuracy before the
+# translation stage swaps these strings for translated ones. Change the
+# letter without a rebuild via
+# %LOCALAPPDATA%\puripuly-heart\ocr_overlay_config.json:
+#   {"translate_key": "T"}    (bind is Alt+<letter>)
 _PILL_BG = "#14161a"
-_PILL_BORDER = "#3a3e46"
 _PILL_TEXT = "#ffffff"
-_DEFAULT_TRANSLATE_KEY = "E"
+_DEFAULT_TRANSLATE_KEY = "T"
+_VK_MENU = 0x12  # Alt
 _CONFIG_PATH = os.path.join(os.path.expanduser("~"), "AppData", "Local",
                             "puripuly-heart", "ocr_overlay_config.json")
 _TRANSLATE_VK = [ord(_DEFAULT_TRANSLATE_KEY)]
+_SUBTITLE_ON = [False]
+
+# Recognition handoff between the track loop (owns the boxes) and the rec
+# worker (runs the model): uid -> full-res rect in, uid -> text out.
+_REC_LOCK = threading.Lock()
+_REC_REQ: dict[int, tuple[int, int, int, int]] = {}
+_REC_OUT: dict[int, str] = {}
+_REC_BATCH = 8
 
 _TRACK_SIDE = 1280
 _DETECT_SIDE = 960
@@ -545,15 +554,51 @@ def _text_plausible(b: TextBox, det_w: int, det_h: int) -> bool:
     return True
 
 
+def _rec_loop(cap: _Capture, detector: TextDetector,
+              stop: threading.Event) -> None:
+    """Recognition worker (subtitle mode): reads the requested boxes' text
+    with the LOCAL RapidOCR recognizer — free, no API. Crops come from the
+    full-res frame so glyphs are sharp. Small batches keep results flowing
+    onto screen incrementally instead of one big stall."""
+    while not stop.is_set():
+        if not _SUBTITLE_ON[0]:
+            time.sleep(0.1)
+            continue
+        with _REC_LOCK:
+            batch = list(_REC_REQ.items())[:_REC_BATCH]
+        if not batch:
+            time.sleep(0.05)
+            continue
+        try:
+            frame = cap.last()
+            H, W = frame.shape[:2]
+            crops, uids = [], []
+            for uid, (x1, y1, x2, y2) in batch:
+                x1p, y1p = max(0, x1 - 3), max(0, y1 - 2)
+                x2p, y2p = min(W, x2 + 3), min(H, y2 + 2)
+                if x2p - x1p < 8 or y2p - y1p < 6:
+                    with _REC_LOCK:
+                        _REC_REQ.pop(uid, None)
+                        _REC_OUT[uid] = ""
+                    continue
+                crops.append(np.ascontiguousarray(frame[y1p:y2p, x1p:x2p]))
+                uids.append(uid)
+            if crops:
+                res = detector.recognize(crops)
+                with _REC_LOCK:
+                    for uid, (text, _score) in zip(uids, res):
+                        _REC_REQ.pop(uid, None)
+                        _REC_OUT[uid] = (text or "").strip()
+        except Exception as exc:
+            logger.debug("[OCR] rec loop error: %s", exc)
+            time.sleep(0.1)
+
+
 def _detect_loop(cap: _Capture, target: _Target, anchors: _Anchors,
-                 wake: threading.Event, stop: threading.Event) -> None:
+                 wake: threading.Event, stop: threading.Event,
+                 detector: TextDetector) -> None:
     import cv2
 
-    # max_side here only raises the engine's internal cap; the actual working
-    # resolution is chosen per-pass below, scaled to the region (a fixed 960
-    # turned 4K text into ~4px shards — fragmented boxes, missed lines,
-    # pass-to-pass flashing; the accurate ~5pm build ran 1280).
-    detector = TextDetector(max_side=1664)
     det_pass = [0]
     last_epoch = -1
     while not stop.is_set():
@@ -686,7 +731,7 @@ class _Tracked:
     __slots__ = ("x1", "y1", "x2", "y2", "ax", "ay", "vx", "vy",
                  "moving", "calm_frames", "miss", "sig", "sig_bad", "tex_bad",
                  "last_confirm", "confirms", "jump_dx", "jump_dy", "jump_n",
-                 "uid")
+                 "uid", "text")
 
     def __init__(self, b: TextBox) -> None:
         self.x1, self.y1 = float(b.x1), float(b.y1)
@@ -704,7 +749,8 @@ class _Tracked:
         self.jump_dx = self.jump_dy = 0.0  # pending unconfirmed motion jump
         self.jump_n = 0
         _NEXT_UID[0] += 1
-        self.uid = _NEXT_UID[0]  # persistent identity (pill demo shows it)
+        self.uid = _NEXT_UID[0]  # persistent identity keys recognition
+        self.text = ""  # what the local recognizer read (subtitle mode)
 
     def advance(self, dx: float, dy: float, dt: float,
                 gx: float, gy: float) -> None:
@@ -1304,6 +1350,31 @@ def _track_loop(cap: _Capture, target: _Target, anchors: _Anchors,
                         wake.set()  # ask for a cleaner pass immediately
 
             prev_g = cur_g
+            # Subtitle mode: claim finished recognitions, request text for
+            # stable boxes that don't have any yet, drop orphaned entries.
+            if _SUBTITLE_ON[0]:
+                with _REC_LOCK:
+                    live = set()
+                    pending = len(_REC_REQ)
+                    for tr in tracked:
+                        live.add(tr.uid)
+                        if tr.uid in _REC_OUT:
+                            tr.text = _REC_OUT.pop(tr.uid) or "·"
+                        elif (not tr.text and tr.confirms >= 2
+                              and tr.uid not in _REC_REQ and pending < 24):
+                            bx1, by1, bx2, by2 = tr.rect()
+                            _REC_REQ[tr.uid] = (
+                                int(bx1 * inv_scale + off_x),
+                                int(by1 * inv_scale + off_y),
+                                int(bx2 * inv_scale + off_x),
+                                int(by2 * inv_scale + off_y))
+                            pending += 1
+                    for k in list(_REC_OUT):
+                        if k not in live:
+                            del _REC_OUT[k]
+                    for k in list(_REC_REQ):
+                        if k not in live:
+                            del _REC_REQ[k]
             items = []
             for tr in tracked:
                 bx1, by1, bx2, by2 = tr.rect()
@@ -1313,7 +1384,7 @@ def _track_loop(cap: _Capture, target: _Target, anchors: _Anchors,
                     (by1 * inv_scale + off_y) + cap.top,
                     (bx2 * inv_scale + off_x) + cap.left,
                     (by2 * inv_scale + off_y) + cap.top,
-                    vx * inv_scale, vy * inv_scale, tr.uid))
+                    vx * inv_scale, vy * inv_scale, tr.uid, tr.text))
             state.set(items)
         except Exception as exc:
             logger.debug("[OCR] track iteration error: %s", exc)
@@ -1330,8 +1401,12 @@ def _save_debug_shot(cap: _Capture, boxes, pills: bool = False) -> None:
             bx1, by1, bx2, by2 = it[0], it[1], it[2], it[3]
             x1, y1 = int(bx1 - cap.left), int(by1 - cap.top)
             x2, y2 = int(bx2 - cap.left), int(by2 - cap.top)
-            if pills and len(it) > 6:
-                label = f"Sample Text {it[6]}"
+            if pills and len(it) > 7:
+                # cv2.putText is ASCII-only: CJK renders as '?' in the
+                # composite. The LIVE overlay (Tk) draws CJK correctly —
+                # judge accuracy on screen, use composites for layout.
+                raw = it[7] or "…"
+                label = raw.encode("ascii", "replace").decode("ascii")
                 scale = max(0.35, min(1.5, (y2 - y1) / 34.0))
                 (tw, th), _b = cv2.getTextSize(
                     label, cv2.FONT_HERSHEY_SIMPLEX, scale, 2)
@@ -1365,20 +1440,29 @@ def _prtscn_loop(cap: _Capture, state: _BoxState, stop: threading.Event) -> None
     without touching the keyboard (the user's ShareX intercepts PrtScn with a
     focus-stealing capture UI)."""
     was_down = False
+    was_combo = False
+    user32 = ctypes.windll.user32
     while not stop.is_set():
         try:
-            down = bool(ctypes.windll.user32.GetAsyncKeyState(_VK_SNAPSHOT) & 0x8000)
+            down = bool(user32.GetAsyncKeyState(_VK_SNAPSHOT) & 0x8000)
             fire = down and not was_down
             was_down = down
+            # Alt+<letter> toggles subtitle mode (edge-triggered).
+            combo = (bool(user32.GetAsyncKeyState(_VK_MENU) & 0x8000)
+                     and bool(user32.GetAsyncKeyState(_TRANSLATE_VK[0])
+                              & 0x8000))
+            if combo and not was_combo:
+                _SUBTITLE_ON[0] = not _SUBTITLE_ON[0]
+                logger.info("[OCR] subtitle mode %s",
+                            "ON" if _SUBTITLE_ON[0] else "OFF")
+            was_combo = combo
             if not fire and os.path.exists(_SHOT_TRIGGER):
                 with contextlib_suppress():
                     os.remove(_SHOT_TRIGGER)
                 fire = True
             if fire:
                 _v, _s, boxes = state.get()
-                held = bool(ctypes.windll.user32.GetAsyncKeyState(
-                    _TRANSLATE_VK[0]) & 0x8000)
-                _save_debug_shot(cap, boxes, pills=held)
+                _save_debug_shot(cap, boxes, pills=_SUBTITLE_ON[0])
         except Exception:
             pass
         time.sleep(0.03)
@@ -1427,9 +1511,15 @@ def run(monitor_index: int = 1, fps: float = 0.0, max_side: int = _TRACK_SIDE,
     anchors = _Anchors()
     wake = threading.Event()
     stop = threading.Event()
+    # max_side only raises the engine's internal cap; the working resolution
+    # is chosen per detection pass. Shared with the rec worker (subtitles).
+    detector = TextDetector(max_side=1664)
     threading.Thread(target=_target_loop, args=(target, stop), daemon=True).start()
     threading.Thread(target=_detect_loop,
-                     args=(cap, target, anchors, wake, stop), daemon=True).start()
+                     args=(cap, target, anchors, wake, stop, detector),
+                     daemon=True).start()
+    threading.Thread(target=_rec_loop, args=(cap, detector, stop),
+                     daemon=True).start()
     threading.Thread(target=_track_loop,
                      args=(cap, target, anchors, wake, state, stop),
                      daemon=True).start()
@@ -1471,8 +1561,7 @@ def run(monitor_index: int = 1, fps: float = 0.0, max_side: int = _TRACK_SIDE,
             _version, stamp, items = state.get()
             age = time.monotonic() - stamp
             ext = min(age, _RENDER_EXTRAP_CAP_S) + _RENDER_LEAD_S
-            held = bool(ctypes.windll.user32.GetAsyncKeyState(
-                _TRANSLATE_VK[0]) & 0x8000)
+            held = _SUBTITLE_ON[0]
             while len(pool) < len(items):
                 pool.append(canvas.create_rectangle(
                     0, 0, 0, 0, outline=_BOX_COLOR, width=_BOX_WIDTH,
@@ -1488,7 +1577,7 @@ def run(monitor_index: int = 1, fps: float = 0.0, max_side: int = _TRACK_SIDE,
                 pill_meta.append(("", 0))
             for i, item in enumerate(pool):
                 if i < len(items):
-                    bx1, by1, bx2, by2, vx, vy, _uid = items[i]
+                    bx1, by1, bx2, by2, vx, vy = items[i][:6]
                     ex, ey = vx * ext, vy * ext
                     canvas.coords(item,
                                   (bx1 + ex - left) * sx, (by1 + ey - top) * sy,
@@ -1499,16 +1588,16 @@ def run(monitor_index: int = 1, fps: float = 0.0, max_side: int = _TRACK_SIDE,
             for i, (rid, tid) in enumerate(pill_pool):
                 if held and i < len(items):
                     # IN-PLACE SUBTITLE: fill the detected bounds and draw
-                    # the replacement text INSIDE them, hiding the original
-                    # (release the key to read it). Font is sized to the box
+                    # the RECOGNIZED text INSIDE them, hiding the original
+                    # (toggle off to read it). Font is sized to the box
                     # height, then shrunk if the label would overflow width.
-                    bx1, by1, bx2, by2, vx, vy, uid = items[i]
+                    bx1, by1, bx2, by2, vx, vy, uid, text = items[i]
                     ex, ey = vx * ext, vy * ext
                     x1 = (bx1 + ex - left) * sx
                     y1 = (by1 + ey - top) * sy
                     x2 = (bx2 + ex - left) * sx
                     y2 = (by2 + ey - top) * sy
-                    label = f"Sample Text {uid}"
+                    label = text or "…"
                     px = max(9, min(46, int((y2 - y1) * 0.62)))
                     f = _font_px(px)
                     bw = x2 - x1

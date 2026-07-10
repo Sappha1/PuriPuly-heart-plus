@@ -104,3 +104,23 @@ class TextDetector:
             except Exception:
                 continue
         return boxes
+
+    def recognize(self, crops: list[np.ndarray]) -> list[tuple[str, float]]:
+        """Read text from BGR crops (batch). Returns (text, score) per crop.
+        FAIL-OPEN: engine trouble returns high-score empties so callers don't
+        nuke everything on a transient error."""
+        if not crops:
+            return []
+        try:
+            self._ensure_engine()
+            res, _elapse = self._engine.text_recognizer(crops)
+            out: list[tuple[str, float]] = []
+            for r in res:
+                try:
+                    out.append((str(r[0]), float(r[1])))
+                except Exception:
+                    out.append(("", 0.0))
+            return out
+        except Exception as exc:
+            logger.debug("[OCR] recognize failed: %s", exc)
+            return [("?", 1.0)] * len(crops)

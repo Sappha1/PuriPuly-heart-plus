@@ -74,12 +74,18 @@ _MIN_OK_RATIO = 0.34
 # match more loosely so extent wobble updates the box instead of replacing it.
 _MERGE_IOU = 0.25
 _MERGE_BLEND = 0.60
-# Asymmetric persistence: blanket tolerance made ONE-OFF false detections
-# (roof tiles, icons) linger ~2s. A box seen only once dies after a single
-# missed pass (junk rarely repeats in place); a box confirmed twice+ is real
-# text and rides out detector nondeterminism without blinking.
-_MAX_MISSES_CONFIRMED = 4
-_MAX_MISSES_UNPROVEN = 1
+# RECOGNITION GATE: a detected region must actually READ as text before it is
+# allowed a box (what established OCR translators do). Kills icons, lattice
+# patterns, foliage — anything that doesn't produce legible characters.
+_REC_MIN_SCORE = 0.50
+_REC_MAX_BOXES = 25          # rec budget per detection pass
+import re as _re
+_REC_TEXTY = _re.compile(r"[0-9A-Za-z一-鿿぀-ヿ가-힯]")
+
+# Persistence: every displayed box has already passed recognition, so err on
+# the side of KEEPING it — flicker hurts more than a briefly stale box.
+_MAX_MISSES_CONFIRMED = 6
+_MAX_MISSES_UNPROVEN = 3
 _CONFIRMED_AT = 2
 
 # Appearance signature: sample grid inside each box; if the mean abs gray
@@ -497,13 +503,28 @@ def _detect_loop(cap: _Capture, target: _Target, anchors: _Anchors,
                 if dx2 > dx1 and dy2 > dy1:
                     det_bgr[dy1:dy2, dx1:dx2] = 0
             raw = detector.detect(det_bgr)
+            shaped = [b for b in raw if _text_plausible(b, det_w, det_h)]
+            # RECOGNITION GATE: actually READ each candidate; only regions
+            # producing legible characters at decent confidence earn a box.
+            crops, keep = [], []
+            for b in shaped[:_REC_MAX_BOXES]:
+                cx1, cy1 = max(0, b.x1 - 2), max(0, b.y1 - 2)
+                cx2, cy2 = min(det_w, b.x2 + 2), min(det_h, b.y2 + 2)
+                if cx2 - cx1 < 8 or cy2 - cy1 < 6:
+                    continue
+                crops.append(np.ascontiguousarray(det_bgr[cy1:cy2, cx1:cx2]))
+                keep.append(b)
+            verified = [
+                b for b, (text, score) in zip(keep, detector.recognize(crops))
+                if score >= _REC_MIN_SCORE and _REC_TEXTY.search(text)
+            ]
             t_scale = min(1.0, _TRACK_SIDE / float(max(cw, ch)))
             track_w, track_h = max(1, int(cw * t_scale)), max(1, int(ch * t_scale))
             sx = track_w / float(det_w)
             sy = track_h / float(det_h)
             boxes = [
                 TextBox(int(b.x1 * sx), int(b.y1 * sy), int(b.x2 * sx), int(b.y2 * sy))
-                for b in raw if _text_plausible(b, det_w, det_h)
+                for b in verified
             ]
             gray = cv2.resize(cv2.extractChannel(frame, 1), (track_w, track_h),
                               interpolation=cv2.INTER_LINEAR)
@@ -781,6 +802,12 @@ def _track_loop(cap: _Capture, target: _Target, anchors: _Anchors,
             else:
                 if away_logged:
                     logger.info("[OCR] resumed: focus back on target")
+                    # Discard any detection made before/during the hide — it
+                    # describes the OLD view and briefly painted misplaced
+                    # boxes on tab-back. A fresh scan is requested instead.
+                    stale_fresh = anchors.take(last_stamp)
+                    if stale_fresh is not None:
+                        last_stamp = stale_fresh[0]
                     wake.set()  # repopulate without waiting for the next cycle
                 away_since = None
                 away_logged = False

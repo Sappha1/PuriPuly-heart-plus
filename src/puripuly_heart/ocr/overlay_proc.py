@@ -66,6 +66,19 @@ _CUT_GRID_RATIO = 0.5
 _DET_STALE = 45.0
 _MIN_OK_RATIO = 0.34
 
+# SCROLL/PAN PROTECTION. Text lines look alike, so optical flow over a large
+# content shift aliases: it lands a box on the WRONG line (or worse) with a
+# confident score — the "boxes snap to places that never had text" bug when
+# scrolling. Two gates:
+#  * A detection pass whose content has shifted more than this (track px)
+#    since it was captured may only VOUCH for existing boxes (keep them
+#    alive) — it may not move them and may not add new ones.
+_DET_VOUCH_SHIFT = 12.0
+#  * A per-frame box motion that disagrees with the global motion by more
+#    than this is an aliasing jump, not real motion (real relative motion
+#    between consecutive frames is tiny) — the box follows the world instead.
+_FLOW_JUMP_PX = 18.0
+
 # Merge/miss tolerance. The detector is nondeterministic on borderline text —
 # it can find a line on one pass and miss it on the next, or alternate the
 # box extents. A strict match + fast miss-delete made such boxes blink at the
@@ -600,15 +613,24 @@ def _detect_loop(cap: _Capture, target: _Target, anchors: _Anchors,
                         np.ascontiguousarray(now_crop[:, :, 1]),
                         (track_w, track_h), interpolation=cv2.INTER_LINEAR)
                     tmp = [_Tracked(b) for b in boxes]
-                    adv, _g = _flow_all(gray, now_gray, tmp,
-                                        _make_grid(track_w, track_h),
-                                        win=25, levels=4)
+                    adv, (agx, agy, agr) = _flow_all(
+                        gray, now_gray, tmp, _make_grid(track_w, track_h),
+                        win=25, levels=4)
                     fresh_boxes = []
                     for tb, (adx, ady, ar) in zip(tmp, adv):
-                        if ar >= _MIN_OK_RATIO:
-                            fresh_boxes.append(TextBox(
-                                int(tb.x1 + adx), int(tb.y1 + ady),
-                                int(tb.x2 + adx), int(tb.y2 + ady)))
+                        if ar < _MIN_OK_RATIO:
+                            continue
+                        # Advance that disagrees with the global shift is
+                        # line-aliased flow (similar-looking lines) — the box
+                        # would land somewhere text never was. Drop it; the
+                        # next pass re-detects it at the true position.
+                        if (agr >= _MIN_OK_RATIO
+                                and ((adx - agx) ** 2 + (ady - agy) ** 2) ** 0.5
+                                > _FLOW_JUMP_PX):
+                            continue
+                        fresh_boxes.append(TextBox(
+                            int(tb.x1 + adx), int(tb.y1 + ady),
+                            int(tb.x2 + adx), int(tb.y2 + ady)))
                     boxes = fresh_boxes
                     gray = now_gray
             anchors.publish(boxes, gray, epoch)
@@ -687,6 +709,14 @@ class _Tracked:
         if not self.moving:
             self.ax, self.ay = self.x1, self.y1
         self.sig = None  # re-fingerprint at the corrected position
+        self.sig_bad = 0
+        self.last_confirm = time.monotonic()
+        self.confirms = min(10, self.confirms + 1)
+
+    def confirm_only(self) -> None:
+        """Detection vouches this box still exists, but its positions are
+        motion-stale (scroll/pan during the pass): refresh liveness only,
+        keep our own tracked position untouched."""
         self.sig_bad = 0
         self.last_confirm = time.monotonic()
         self.confirms = min(10, self.confirms + 1)
@@ -973,7 +1003,15 @@ def _track_loop(cap: _Capture, target: _Target, anchors: _Anchors,
             kept: list[_Tracked] = []
             for tr, (dx, dy, ratio) in zip(tracked, flows):
                 if ratio < _MIN_OK_RATIO:
-                    continue
+                    if not (camera_moving and grid_ratio >= _MIN_OK_RATIO):
+                        continue
+                    # Points lost mid-pan: ride the world instead of dying —
+                    # detection settles the box's fate at the next pass.
+                    dx, dy = gx, gy
+                elif ((dx - gx) ** 2 + (dy - gy) ** 2) ** 0.5 > _FLOW_JUMP_PX:
+                    # Aliasing jump (text lines look alike): a box cannot
+                    # really move this far against the world in one frame.
+                    dx, dy = gx, gy
                 tr.advance(dx, dy, dt, agx, agy)
                 # Content checks are suspended while the cursor touches the
                 # box — the game-drawn pointer legitimately changes the pixels.
@@ -1021,25 +1059,38 @@ def _track_loop(cap: _Capture, target: _Target, anchors: _Anchors,
                         wake.set()
                 if usable:
                     fresh_tracked: list[_Tracked] = []
+                    vouch_only = False
                     if det_boxes:
                         cands = [_Tracked(b) for b in det_boxes]
-                        adv, _g = _flow_all(det_gray, cur_g, cands, grid,
-                                            win=25, levels=4)
+                        adv, (mgx, mgy, mgr) = _flow_all(det_gray, cur_g,
+                                                         cands, grid,
+                                                         win=25, levels=4)
+                        # Content shifted a lot since this pass was captured
+                        # (scroll/pan mid-pass), or the bridge flow itself is
+                        # unreliable: the advanced positions cannot be trusted
+                        # — the pass may only VOUCH for existing boxes.
+                        det_shift = (mgx * mgx + mgy * mgy) ** 0.5
+                        vouch_only = (det_shift > _DET_VOUCH_SHIFT
+                                      or mgr < _MIN_OK_RATIO)
                         for tr, (dx, dy, ratio) in zip(cands, adv):
-                            if ratio >= _MIN_OK_RATIO:
-                                tr.advance(dx, dy, dt, agx, agy)
-                                if _is_cursor_box(tr.x1, tr.y1, tr.x2, tr.y2,
-                                                  cursor_wk):
-                                    continue  # never adopt the pointer glyph
-                                ncx = (tr.x1 + tr.x2) / 2
-                                ncy = (tr.y1 + tr.y2) / 2
-                                if any(ox1 <= ncx <= ox2 and oy1 <= ncy <= oy2
-                                       for ox1, oy1, ox2, oy2 in occl_wk):
-                                    continue  # on another window's area
-                                # Baseline fingerprint NOW, while the content
-                                # under the box is verified text.
-                                tr.check_signature(cur_g)
-                                fresh_tracked.append(tr)
+                            if ratio < _MIN_OK_RATIO:
+                                continue
+                            if ((dx - mgx) ** 2 + (dy - mgy) ** 2) ** 0.5 \
+                                    > _FLOW_JUMP_PX:
+                                continue  # line-aliased advance — wrong spot
+                            tr.advance(dx, dy, dt, agx, agy)
+                            if _is_cursor_box(tr.x1, tr.y1, tr.x2, tr.y2,
+                                              cursor_wk):
+                                continue  # never adopt the pointer glyph
+                            ncx = (tr.x1 + tr.x2) / 2
+                            ncy = (tr.y1 + tr.y2) / 2
+                            if any(ox1 <= ncx <= ox2 and oy1 <= ncy <= oy2
+                                   for ox1, oy1, ox2, oy2 in occl_wk):
+                                continue  # on another window's area
+                            # Baseline fingerprint NOW, while the content
+                            # under the box is verified text.
+                            tr.check_signature(cur_g)
+                            fresh_tracked.append(tr)
                     merged: list[_Tracked] = []
                     used = [False] * len(fresh_tracked)
                     n_prior = len(tracked)
@@ -1054,14 +1105,22 @@ def _track_loop(cap: _Capture, target: _Target, anchors: _Anchors,
                                 best, best_iou = i, iou
                         if best >= 0:
                             used[best] = True
-                            # Still camera => detections are exact: snap ~fully
-                            # so alignment settles in 1-2 passes (was ~5 passes
-                            # / 15s of visible creep). Softer during motion
-                            # where detections carry staleness.
-                            tr.blend_toward(fresh_tracked[best],
-                                            0.55 if camera_moving else 0.95)
+                            if vouch_only:
+                                # Motion-stale pass: liveness only — never
+                                # drag a well-tracked box toward stale coords.
+                                tr.confirm_only()
+                            else:
+                                # Still camera => detections are exact: snap
+                                # ~fully so alignment settles in 1-2 passes.
+                                # Softer during motion (some staleness).
+                                tr.blend_toward(fresh_tracked[best],
+                                                0.55 if camera_moving else 0.95)
                             tr.miss = 0
                             n_matched += 1
+                            merged.append(tr)
+                        elif vouch_only:
+                            # The pass was compromised — a no-match proves
+                            # nothing. No miss penalty.
                             merged.append(tr)
                         else:
                             tr.miss += 1
@@ -1070,18 +1129,23 @@ def _track_loop(cap: _Capture, target: _Target, anchors: _Anchors,
                                        else _MAX_MISSES_UNPROVEN)
                             if tr.miss <= allowed:
                                 merged.append(tr)
-                    for i, nb in enumerate(fresh_tracked):
-                        if not used[i]:
-                            merged.append(nb)
+                    if not vouch_only:
+                        # New boxes only from trustworthy passes — motion-stale
+                        # ones put boxes where text never existed ("snapping").
+                        for i, nb in enumerate(fresh_tracked):
+                            if not used[i]:
+                                merged.append(nb)
                     # Coherence: a still-camera detection that corroborates
                     # almost none of the current boxes means the VIEW CHANGED
                     # (app switch) — keep only what it confirmed + the fresh
                     # set, instead of letting stale boxes ride out misses
                     # ("existing boxes fling all over" after tab-back).
-                    if (not camera_moving and n_prior >= 4
+                    if (not vouch_only and not camera_moving and n_prior >= 4
                             and n_matched / n_prior < _COHERENCE_MIN):
                         merged = ([tr for tr in merged if tr.miss == 0])
                     tracked = merged
+                    if vouch_only:
+                        wake.set()  # ask for a cleaner pass immediately
 
             prev_g = cur_g
             items = []

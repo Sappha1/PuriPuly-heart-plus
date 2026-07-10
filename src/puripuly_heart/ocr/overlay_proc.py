@@ -69,6 +69,16 @@ _REC_REQ: dict[int, tuple[int, int, int, int]] = {}
 _REC_OUT: dict[int, str] = {}
 _REC_BATCH = 12
 _REC_WORKERS = 3  # parallel CPU rec: session.run releases the GIL
+# Pre-warm: recognize in the background while subtitles are OFF so Alt+T is
+# instant. Costs bursts of CPU while new text is on screen; the app's OCR
+# right-click menu exposes it (--prewarm 0 disables: recognition then only
+# runs while subtitle mode is on).
+_PREWARM = [True]
+# Reborn-box text inheritance: the detector blinks on borderline text (tiny
+# chips like "..."), killing and re-creating its box every second or two —
+# each rebirth used to visibly reset to pending and re-recognize. A box born
+# where a just-read box lived inherits that text instantly.
+_TEXT_CACHE_TTL = 8.0
 
 _TRACK_SIDE = 1280
 _DETECT_SIDE = 960
@@ -992,6 +1002,7 @@ def _track_loop(cap: _Capture, target: _Target, anchors: _Anchors,
 
     prev_g: np.ndarray | None = None
     tracked: list[_Tracked] = []
+    text_cache: dict[tuple[int, int, int, int], tuple[str, float]] = {}
     last_stamp = 0
     last_t = time.monotonic()
     gx_ema = gy_ema = 0.0
@@ -1123,6 +1134,7 @@ def _track_loop(cap: _Capture, target: _Target, anchors: _Anchors,
                 if diff > _CUT_DIFF_HARD or (diff > _CUT_DIFF_SOFT
                                              and grid_ratio < _CUT_GRID_RATIO):
                     tracked = []
+                    text_cache.clear()  # view changed — texts are stale
                     state.set([])
                     wake.set()
                     prev_g = cur_g
@@ -1374,6 +1386,7 @@ def _track_loop(cap: _Capture, target: _Target, anchors: _Anchors,
                     if (not vouch_only and not camera_moving and n_prior >= 4
                             and n_matched / n_prior < _COHERENCE_MIN):
                         merged = ([tr for tr in merged if tr.miss == 0])
+                        text_cache.clear()  # view changed — texts are stale
                     tracked = merged
                     if vouch_only:
                         wake.set()  # ask for a cleaner pass immediately
@@ -1388,6 +1401,12 @@ def _track_loop(cap: _Capture, target: _Target, anchors: _Anchors,
                 pending = len(_REC_REQ)
                 for tr in tracked:
                     live.add(tr.uid)
+                    ckey = (int(tr.x1) // 6, int(tr.y1) // 6,
+                            int(tr.x2) // 6, int(tr.y2) // 6)
+                    if not tr.text:
+                        hit = text_cache.get(ckey)
+                        if hit is not None and now - hit[1] < _TEXT_CACHE_TTL:
+                            tr.text = hit[0]  # reborn box inherits its text
                     if tr.uid in _REC_OUT:
                         text, rrect = _REC_OUT.pop(tr.uid)
                         tr.text = text or "-"
@@ -1406,7 +1425,10 @@ def _track_loop(cap: _Capture, target: _Target, anchors: _Anchors,
                                 tr.x1, tr.y1, tr.x2, tr.y2 = nx1, ny1, nx2, ny2
                                 tr.ax, tr.ay = nx1, ny1
                                 tr.refined = True
-                    elif (not tr.text and tr.confirms >= 2
+                    if tr.text and tr.text != "-":
+                        text_cache[ckey] = (tr.text, now)
+                    elif ((_PREWARM[0] or _SUBTITLE_ON[0]) and not tr.text
+                          and tr.confirms >= 2
                           and tr.uid not in _REC_REQ and pending < 48):
                         bx1, by1, bx2, by2 = tr.rect()
                         _REC_REQ[tr.uid] = (
@@ -1415,6 +1437,11 @@ def _track_loop(cap: _Capture, target: _Target, anchors: _Anchors,
                             int(bx2 * inv_scale + off_x),
                             int(by2 * inv_scale + off_y))
                         pending += 1
+                if len(text_cache) > 500:
+                    cutoff = now - _TEXT_CACHE_TTL
+                    for k in [k for k, v in text_cache.items()
+                              if v[1] < cutoff]:
+                        del text_cache[k]
                 for k in list(_REC_OUT):
                     if k not in live:
                         del _REC_OUT[k]
@@ -1809,7 +1836,12 @@ def main() -> None:
                     help="restrict to this window title (e.g. VRChat); empty = whole screen")
     ap.add_argument("--parent-pid", type=int, default=0,
                     help="exit when this process dies (no orphan overlays)")
+    ap.add_argument("--prewarm", type=int, default=1,
+                    help="1 = recognize in background while subtitles are off"
+                         " (instant Alt+T, bursts of CPU); 0 = recognize only"
+                         " while subtitle mode is on")
     args = ap.parse_args()
+    _PREWARM[0] = bool(args.prewarm)
     # Log to a file: the subprocess runs windowless, so stderr goes nowhere.
     log_path = os.path.join(os.path.expanduser("~"), "AppData", "Local",
                             "puripuly-heart", "ocr_overlay.log")

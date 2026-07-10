@@ -48,6 +48,18 @@ class OcrOverlayManager:
         # Default OFF per user preference: whole-screen OCR unless the
         # right-click option enables VRChat-window scoping.
         self.vrchat_only = False
+        # Pre-warm recognition: read text in the background while subtitles
+        # are toggled off — instant Alt+T at the cost of CPU bursts.
+        self.prewarm = True
+
+    def set_prewarm(self, enabled: bool) -> None:
+        enabled = bool(enabled)
+        if enabled == self.prewarm:
+            return
+        self.prewarm = enabled
+        if self.running:
+            self.stop()
+            self.start()
 
     def set_vrchat_only(self, enabled: bool) -> None:
         enabled = bool(enabled)
@@ -69,7 +81,8 @@ class OcrOverlayManager:
         _shutdown_event(False)  # clear any previous OFF signal before spawning
         args = ["-m", "puripuly_heart.ocr.overlay_proc",
                 "--fps", str(self._fps), "--monitor", str(self._monitor),
-                "--parent-pid", str(os.getpid())]
+                "--parent-pid", str(os.getpid()),
+                "--prewarm", "1" if self.prewarm else "0"]
         if self.vrchat_only:
             args += ["--window", "VRChat"]
         env = dict(os.environ)

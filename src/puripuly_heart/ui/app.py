@@ -2784,28 +2784,34 @@ async def main_gui(page: ft.Page, *, config_path, debug_ui_preview: bool = False
     except Exception:
         pass
 
-    # Check for updates in background
-    update_kwargs = {"log_detailed": app._log_detailed}
-    try:
-        update_parameters = inspect.signature(_check_and_notify_update).parameters
-    except (TypeError, ValueError):
-        update_parameters = {}
-    if "on_launch_snackbar_shown" in update_parameters or any(
-        parameter.kind == inspect.Parameter.VAR_KEYWORD for parameter in update_parameters.values()
-    ):
-        update_kwargs["on_launch_snackbar_shown"] = (
-            lambda snackbar: app._mark_launch_high_priority_feedback_shown("update", snackbar)
-        )
-    await _check_and_notify_update(page, **update_kwargs)
+    # OCR PROTOTYPE BRANCH: update checks are DISABLED. This test build runs
+    # alongside the release install; an auto-download would swap release files
+    # over this build and silently remove the OCR feature under test.
+    _OCR_PROTO_NO_UPDATES = True
+    if not _OCR_PROTO_NO_UPDATES:
+        # Check for updates in background
+        update_kwargs = {"log_detailed": app._log_detailed}
+        try:
+            update_parameters = inspect.signature(_check_and_notify_update).parameters
+        except (TypeError, ValueError):
+            update_parameters = {}
+        if "on_launch_snackbar_shown" in update_parameters or any(
+            parameter.kind == inspect.Parameter.VAR_KEYWORD
+            for parameter in update_parameters.values()
+        ):
+            update_kwargs["on_launch_snackbar_shown"] = (
+                lambda snackbar: app._mark_launch_high_priority_feedback_shown("update", snackbar)
+            )
+        await _check_and_notify_update(page, **update_kwargs)
 
-    # Silent build-number check → sidebar update button (shared flow with the
-    # About card; no-op in source runs, quiet on network failure).
-    try:
-        from puripuly_heart.ui.update_flow import get_update_flow
+        # Silent build-number check → sidebar update button (shared flow with
+        # the About card; no-op in source runs, quiet on network failure).
+        try:
+            from puripuly_heart.ui.update_flow import get_update_flow
 
-        page.run_task(get_update_flow().check_silently)
-    except Exception:
-        pass
+            page.run_task(get_update_flow().check_silently)
+        except Exception:
+            pass
 
     # Re-verify saved API keys whose persisted flag went stale-false, so the
     # dashboard pickers don't grey out working providers until the user visits

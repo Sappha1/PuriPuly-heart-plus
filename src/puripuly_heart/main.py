@@ -217,8 +217,10 @@ def _acquire_single_instance_lock() -> bool:
     try:
         import ctypes
 
+        # OCR PROTOTYPE BRANCH: distinct mutex name so this test build can run
+        # ALONGSIDE the release install (which holds ".SingleInstance").
         handle = ctypes.windll.kernel32.CreateMutexW(
-            None, False, "PuriPulyHeartPlus.SingleInstance"
+            None, False, "PuriPulyHeartPlus.SingleInstance.OCRProto"
         )
         if not handle:
             return True  # can't tell — don't block startup

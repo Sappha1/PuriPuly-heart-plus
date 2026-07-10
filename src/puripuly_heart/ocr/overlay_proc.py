@@ -371,13 +371,35 @@ class _Target:
             if not hwnd:
                 hwnd = self._find_window(self._title)
             if hwnd:
-                r = wintypes.RECT()
-                user32.GetClientRect(hwnd, ctypes.byref(r))
-                pt = wintypes.POINT(0, 0)
-                user32.ClientToScreen(hwnd, ctypes.byref(pt))
-                x1 = pt.x - self._cap.left
-                y1 = pt.y - self._cap.top
-                x2, y2 = x1 + r.right, y1 + r.bottom
+                # DWM extended frame bounds: PHYSICAL screen pixels, immune to
+                # DPI virtualization. GetClientRect/ClientToScreen return the
+                # game's LOGICAL coords when it runs windowed under display
+                # scaling (measured: 1920x1080 reported for a screen-filling
+                # window) — the scan then covered a corner of the game and
+                # every box landed offset.
+                x1 = y1 = x2 = y2 = 0
+                got = False
+                try:
+                    eb = wintypes.RECT()
+                    DWMWA_EXTENDED_FRAME_BOUNDS = 9
+                    if ctypes.windll.dwmapi.DwmGetWindowAttribute(
+                            hwnd, DWMWA_EXTENDED_FRAME_BOUNDS,
+                            ctypes.byref(eb), ctypes.sizeof(eb)) == 0:
+                        x1 = eb.left - self._cap.left
+                        y1 = eb.top - self._cap.top
+                        x2 = eb.right - self._cap.left
+                        y2 = eb.bottom - self._cap.top
+                        got = True
+                except Exception:
+                    pass
+                if not got:
+                    r = wintypes.RECT()
+                    user32.GetClientRect(hwnd, ctypes.byref(r))
+                    pt = wintypes.POINT(0, 0)
+                    user32.ClientToScreen(hwnd, ctypes.byref(pt))
+                    x1 = pt.x - self._cap.left
+                    y1 = pt.y - self._cap.top
+                    x2, y2 = x1 + r.right, y1 + r.bottom
                 x1 = max(0, min(self._cap.width, x1))
                 y1 = max(0, min(self._cap.height, y1))
                 x2 = max(0, min(self._cap.width, x2))

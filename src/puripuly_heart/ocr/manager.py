@@ -30,9 +30,9 @@ class OcrOverlayManager:
         self._proc: subprocess.Popen | None = None
         self._fps = fps
         self._monitor = monitor
-        # Default: only the VRChat window is scanned/boxed (hidden when VRChat
-        # isn't focused). Disabled => whole-screen OCR.
-        self.vrchat_only = True
+        # Default OFF per user preference: whole-screen OCR unless the
+        # right-click option enables VRChat-window scoping.
+        self.vrchat_only = False
 
     def set_vrchat_only(self, enabled: bool) -> None:
         enabled = bool(enabled)

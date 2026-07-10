@@ -675,8 +675,7 @@ class _Tracked:
                 self.x2 = self.x1 + w
                 self.y2 = self.y1 + h
 
-    def blend_toward(self, b: "_Tracked") -> None:
-        k = _MERGE_BLEND
+    def blend_toward(self, b: "_Tracked", k: float = _MERGE_BLEND) -> None:
         self.x1 += (b.x1 - self.x1) * k
         self.y1 += (b.y1 - self.y1) * k
         self.x2 += (b.x2 - self.x2) * k
@@ -1049,7 +1048,12 @@ def _track_loop(cap: _Capture, target: _Target, anchors: _Anchors,
                                 best, best_iou = i, iou
                         if best >= 0:
                             used[best] = True
-                            tr.blend_toward(fresh_tracked[best])
+                            # Still camera => detections are exact: snap ~fully
+                            # so alignment settles in 1-2 passes (was ~5 passes
+                            # / 15s of visible creep). Softer during motion
+                            # where detections carry staleness.
+                            tr.blend_toward(fresh_tracked[best],
+                                            0.55 if camera_moving else 0.95)
                             tr.miss = 0
                             merged.append(tr)
                         else:

@@ -463,7 +463,7 @@ class DashboardView(ft.Row):
         self.on_toggle_ocr = None  # (prototype) callback(enabled: bool)
         self.on_ocr_scope_change = None  # (prototype) callback(vrchat_only: bool)
         self._ocr_on = False
-        self._ocr_vrchat_only = True
+        self._ocr_vrchat_only = False  # default global per user preference
         self.on_language_change = None
         self.on_recent_languages_change = None
         self.on_nav_change: Callable[[int], None] | None = None

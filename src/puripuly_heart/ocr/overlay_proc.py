@@ -299,12 +299,12 @@ class _Target:
                         user32.GetWindowTextW(fgw, b2, m + 1)
                         fg_title = b2.value
                 self._fg_title = fg_title
-                # Our own translator app counts as friendly focus: the user
-                # clicks it constantly while playing, and boxes vanishing every
-                # time reads as OCR breaking (VRChat is still on screen behind
-                # it). Other apps still hide the boxes (after the debounce).
-                if not fg and fg_title.startswith("PuriPulyHeart"):
-                    fg = True
+                # NOTE: no "friendly focus" for our own app. With the app in
+                # front, the scanned region contains the app's UI — whose
+                # blinking caret/spinners are REAL appearing/disappearing text
+                # to the detector, i.e. permanently flashing boxes. VRChat
+                # focused = scan; anything else focused = idle. (Short blips
+                # are still absorbed by the debounce in the track loop.)
         except Exception as exc:
             logger.debug("[OCR] window poll failed: %s", exc)
         with self._lock:

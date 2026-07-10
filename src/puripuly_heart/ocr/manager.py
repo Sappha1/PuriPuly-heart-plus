@@ -30,6 +30,19 @@ class OcrOverlayManager:
         self._proc: subprocess.Popen | None = None
         self._fps = fps
         self._monitor = monitor
+        # Default: only the VRChat window is scanned/boxed (hidden when VRChat
+        # isn't focused). Disabled => whole-screen OCR.
+        self.vrchat_only = True
+
+    def set_vrchat_only(self, enabled: bool) -> None:
+        enabled = bool(enabled)
+        if enabled == self.vrchat_only:
+            return
+        self.vrchat_only = enabled
+        if self.running:
+            # Apply immediately: relaunch the overlay with the new scope.
+            self.stop()
+            self.start()
 
     @property
     def running(self) -> bool:
@@ -40,6 +53,8 @@ class OcrOverlayManager:
             return True
         args = ["-m", "puripuly_heart.ocr.overlay_proc",
                 "--fps", str(self._fps), "--monitor", str(self._monitor)]
+        if self.vrchat_only:
+            args += ["--window", "VRChat"]
         env = dict(os.environ)
         if getattr(sys, "frozen", False):
             # Packaged app: shell out to the source venv that has the OCR libs.

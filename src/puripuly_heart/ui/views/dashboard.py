@@ -461,7 +461,9 @@ class DashboardView(ft.Row):
         self.on_toggle_overlay = None
         self.on_toggle_peer_translation = None
         self.on_toggle_ocr = None  # (prototype) callback(enabled: bool)
+        self.on_ocr_scope_change = None  # (prototype) callback(vrchat_only: bool)
         self._ocr_on = False
+        self._ocr_vrchat_only = True
         self.on_language_change = None
         self.on_recent_languages_change = None
         self.on_nav_change: Callable[[int], None] | None = None
@@ -1219,7 +1221,8 @@ class DashboardView(ft.Row):
         self._ocr_btn = ft.Container(
             content=ft.Text("OCR", size=9, color=_TEXT_FAINT, weight=ft.FontWeight.W_600),
             on_click=self._on_ocr_btn_click,
-            tooltip="Detect on-screen text and outline it (prototype)",
+            tooltip="Detect on-screen text and outline it (prototype).\n"
+                    "Right-click: scope options.",
             padding=ft.padding.symmetric(horizontal=7, vertical=3),
             border_radius=10,
             bgcolor=ft.Colors.TRANSPARENT,
@@ -1251,7 +1254,10 @@ class DashboardView(ft.Row):
                     on_secondary_tap_down=self._on_loopback_right_click,
                 ),
                 ft.Container(width=4),
-                self._ocr_btn,
+                ft.GestureDetector(
+                    content=self._ocr_btn,
+                    on_secondary_tap_down=self._on_ocr_right_click,
+                ),
                 ft.Container(width=4),
                 self._overlay_header_btn,
                 ft.Container(width=4),
@@ -1498,6 +1504,18 @@ class DashboardView(ft.Row):
             self._ocr_btn.update()
         if callable(self.on_toggle_ocr):
             self.on_toggle_ocr(on)
+
+    def _on_ocr_right_click(self, e) -> None:
+        x, y = self._tap_xy(e)
+        self._open_context_menu(
+            x, y,
+            [("VRChat window only", self._ocr_vrchat_only, self._toggle_ocr_scope)],
+        )
+
+    def _toggle_ocr_scope(self) -> None:
+        self._ocr_vrchat_only = not self._ocr_vrchat_only
+        if callable(self.on_ocr_scope_change):
+            self.on_ocr_scope_change(self._ocr_vrchat_only)
 
     def _toggle_peer_translation(self) -> None:
         self._peer_showing_error = False

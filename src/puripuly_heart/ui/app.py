@@ -160,6 +160,7 @@ class TranslatorApp:
         from puripuly_heart.ocr.manager import OcrOverlayManager
         self._ocr_manager = OcrOverlayManager()
         self.view_dashboard.on_toggle_ocr = self._ocr_manager.toggle
+        self.view_dashboard.on_ocr_scope_change = self._ocr_manager.set_vrchat_only
         self.view_dashboard.on_overlay_lock_change = self._on_dashboard_overlay_lock_change
         self.view_dashboard.on_overlay_transparency_change = self._on_overlay_transparency_change
         self.view_dashboard.on_chatbox_send_peer_toggle = self._on_dashboard_chatbox_send_peer_toggle

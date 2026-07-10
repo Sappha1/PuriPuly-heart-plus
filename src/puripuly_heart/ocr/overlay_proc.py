@@ -74,8 +74,11 @@ _MAX_MISSES = 1
 # difference vs the remembered fingerprint exceeds this for a few consecutive
 # frames, the content is gone (menu closed / bubble expired) — drop the box.
 _SIG_X, _SIG_Y = 6, 2
-_SIG_DIFF = 36.0
-_SIG_BAD_FRAMES = 3
+_SIG_DIFF = 42.0
+_SIG_BAD_FRAMES = 4
+# A box detection re-confirmed this recently is REAL text — never sig-kill it
+# (stops the kill/re-detect flash loop on high-contrast text).
+_SIG_CONFIRM_GRACE_S = 0.7
 
 # Texture check: text has strong local contrast. A box whose content's std
 # stays below this is sitting on a featureless surface (floor/wall a ghost
@@ -217,6 +220,35 @@ class _Target:
         if self._title:
             self._rect = None  # resolved by poll()
 
+    @staticmethod
+    def _find_window(title: str) -> int:
+        """Largest VISIBLE window with this exact title. FindWindowW returns
+        the first title match, which can be one of the game's hidden helper
+        windows — that intermittently blanked VRChat-only mode."""
+        user32 = ctypes.windll.user32
+        matches: list[tuple[int, int]] = []
+
+        @ctypes.WINFUNCTYPE(wintypes.BOOL, wintypes.HWND, wintypes.LPARAM)
+        def _cb(hwnd, _lp):
+            try:
+                if not user32.IsWindowVisible(hwnd):
+                    return True
+                n = user32.GetWindowTextLengthW(hwnd)
+                if n <= 0:
+                    return True
+                buf = ctypes.create_unicode_buffer(n + 1)
+                user32.GetWindowTextW(hwnd, buf, n + 1)
+                if buf.value == title:
+                    r = wintypes.RECT()
+                    user32.GetClientRect(hwnd, ctypes.byref(r))
+                    matches.append((int(r.right) * int(r.bottom), int(hwnd)))
+            except Exception:
+                pass
+            return True
+
+        user32.EnumWindows(_cb, 0)
+        return max(matches)[1] if matches else 0
+
     def poll(self) -> None:
         if not self._title:
             return
@@ -224,8 +256,8 @@ class _Target:
         rect_new: tuple[int, int, int, int] | None = None
         fg = False
         try:
-            hwnd = user32.FindWindowW(None, self._title)
-            if hwnd and user32.IsWindowVisible(hwnd):
+            hwnd = self._find_window(self._title)
+            if hwnd:
                 r = wintypes.RECT()
                 user32.GetClientRect(hwnd, ctypes.byref(r))
                 pt = wintypes.POINT(0, 0)
@@ -341,7 +373,8 @@ def _detect_loop(cap: _Capture, target: _Target, anchors: _Anchors,
 
 class _Tracked:
     __slots__ = ("x1", "y1", "x2", "y2", "ax", "ay", "vx", "vy",
-                 "moving", "calm_frames", "miss", "sig", "sig_bad", "tex_bad")
+                 "moving", "calm_frames", "miss", "sig", "sig_bad", "tex_bad",
+                 "last_confirm")
 
     def __init__(self, b: TextBox) -> None:
         self.x1, self.y1 = float(b.x1), float(b.y1)
@@ -354,6 +387,7 @@ class _Tracked:
         self.sig: np.ndarray | None = None
         self.sig_bad = 0
         self.tex_bad = 0
+        self.last_confirm = time.monotonic()
 
     def advance(self, dx: float, dy: float, dt: float,
                 gx: float, gy: float) -> None:
@@ -404,6 +438,7 @@ class _Tracked:
             self.ax, self.ay = self.x1, self.y1
         self.sig = None  # re-fingerprint at the corrected position
         self.sig_bad = 0
+        self.last_confirm = time.monotonic()
 
     def rect(self) -> tuple[float, float, float, float]:
         if not self.moving:
@@ -629,10 +664,11 @@ def _track_loop(cap: _Capture, target: _Target, anchors: _Anchors,
                 if not tr.check_texture(cur_g):
                     continue
                 # Appearance check ONLY for frozen boxes under a still camera
-                # (the menu-close case). During motion a few px of tracking
-                # error over contrasty text would misread as "content gone"
-                # and flicker boxes — motion cleanup is flow-health's job.
+                # (the menu-close case), and only when detection hasn't
+                # re-confirmed the box recently — a repeatedly-confirmed box is
+                # real text; sig-killing it caused an on/off flash loop.
                 if (not camera_moving and not tr.moving
+                        and (now - tr.last_confirm) > _SIG_CONFIRM_GRACE_S
                         and not tr.check_signature(cur_g)):
                     continue
                 kept.append(tr)

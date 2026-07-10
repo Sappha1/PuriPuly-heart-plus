@@ -80,6 +80,11 @@ _SIG_BAD_FRAMES = 4
 # (stops the kill/re-detect flash loop on high-contrast text).
 _SIG_CONFIRM_GRACE_S = 0.7
 
+# The game renders its own mouse cursor INTO the frame; pixels under it really
+# change. Flow points within this radius (track px) of the cursor are skipped
+# and content checks are suspended for boxes the cursor is touching.
+_CURSOR_RADIUS = 18.0
+
 # Texture check: text has strong local contrast. A box whose content's std
 # stays below this is sitting on a featureless surface (floor/wall a ghost
 # drifted onto) — kill it. Applies even during motion, since flat is flat.
@@ -509,17 +514,25 @@ def _make_grid(w: int, h: int) -> np.ndarray:
 
 
 def _flow_all(prev_g: np.ndarray, cur_g: np.ndarray, tracked: list["_Tracked"],
-              grid: np.ndarray, win: int = 21, levels: int = 3):
+              grid: np.ndarray, win: int = 21, levels: int = 3,
+              cursor: tuple[float, float] | None = None):
     import cv2
 
     H, W = cur_g.shape[:2]
     pts: list[list[float]] = [p.tolist() for p in grid]
     n_grid = len(pts)
     spans = []
+    r2 = _CURSOR_RADIUS * _CURSOR_RADIUS
     for tr in tracked:
         gx = np.linspace(max(1.0, tr.x1 + 2), min(W - 2.0, tr.x2 - 2), _PTS_X)
         gy = np.linspace(max(1.0, tr.y1 + 2), min(H - 2.0, tr.y2 - 2), _PTS_Y)
         p = [[x, y] for y in gy for x in gx]
+        if cursor is not None:
+            cx, cy = cursor
+            filtered = [q for q in p
+                        if (q[0] - cx) ** 2 + (q[1] - cy) ** 2 > r2]
+            if len(filtered) >= 4:
+                p = filtered  # drop cursor-contaminated points
         spans.append((len(pts), len(pts) + len(p)))
         pts.extend(p)
     p0 = np.asarray(pts, dtype=np.float32).reshape(-1, 1, 2)
@@ -637,7 +650,20 @@ def _track_loop(cap: _Capture, target: _Target, anchors: _Anchors,
                 prev_g = cur_g
                 continue
 
-            flows, (gx, gy, grid_ratio) = _flow_all(prev_g, cur_g, tracked, grid)
+            # In-game cursor position in track coords (game draws its own
+            # pointer into the frame; OS position matches in desktop mode).
+            cursor_wk: tuple[float, float] | None = None
+            try:
+                cpt = wintypes.POINT()
+                ctypes.windll.user32.GetCursorPos(ctypes.byref(cpt))
+                scale = 1.0 / inv_scale if inv_scale else 1.0
+                cursor_wk = ((cpt.x - cap.left - off_x) * scale,
+                             (cpt.y - cap.top - off_y) * scale)
+            except Exception:
+                pass
+
+            flows, (gx, gy, grid_ratio) = _flow_all(prev_g, cur_g, tracked, grid,
+                                                    cursor=cursor_wk)
             gx_ema = 0.7 * gx_ema + 0.3 * gx
             gy_ema = 0.7 * gy_ema + 0.3 * gy
             camera_moving = (gx_ema ** 2 + gy_ema ** 2) ** 0.5 > _GLOBAL_MOVE_PX
@@ -658,16 +684,24 @@ def _track_loop(cap: _Capture, target: _Target, anchors: _Anchors,
                 if ratio < _MIN_OK_RATIO:
                     continue
                 tr.advance(dx, dy, dt, agx, agy)
+                # Content checks are suspended while the cursor touches the
+                # box — the game-drawn pointer legitimately changes the pixels.
+                cursor_on_box = False
+                if cursor_wk is not None:
+                    cx, cy = cursor_wk
+                    m = _CURSOR_RADIUS
+                    cursor_on_box = (tr.x1 - m <= cx <= tr.x2 + m
+                                     and tr.y1 - m <= cy <= tr.y2 + m)
                 # Texture check ALWAYS: a box on featureless content (floor,
                 # wall) is a ghost regardless of motion — flow reports OK on
                 # flat surfaces, so this is the only thing that catches them.
-                if not tr.check_texture(cur_g):
+                if not cursor_on_box and not tr.check_texture(cur_g):
                     continue
                 # Appearance check ONLY for frozen boxes under a still camera
                 # (the menu-close case), and only when detection hasn't
                 # re-confirmed the box recently — a repeatedly-confirmed box is
                 # real text; sig-killing it caused an on/off flash loop.
-                if (not camera_moving and not tr.moving
+                if (not cursor_on_box and not camera_moving and not tr.moving
                         and (now - tr.last_confirm) > _SIG_CONFIRM_GRACE_S
                         and not tr.check_signature(cur_g)):
                     continue

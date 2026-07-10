@@ -819,6 +819,32 @@ def run(monitor_index: int = 1, fps: float = 0.0, max_side: int = _TRACK_SIDE,
         stop.set()
 
 
+def _parent_watch_loop(parent_pid: int) -> None:
+    """Exit when the parent app dies. Without this the overlay survives app
+    close as an orphan, drawing boxes with no app running (and its capture
+    session then fights any new overlay's)."""
+    PROCESS_QUERY_LIMITED_INFORMATION = 0x1000
+    STILL_ACTIVE = 259
+    kernel32 = ctypes.windll.kernel32
+    while True:
+        time.sleep(1.0)
+        try:
+            h = kernel32.OpenProcess(PROCESS_QUERY_LIMITED_INFORMATION, False,
+                                     parent_pid)
+            if not h:
+                break
+            code = wintypes.DWORD()
+            alive = (kernel32.GetExitCodeProcess(h, ctypes.byref(code))
+                     and code.value == STILL_ACTIVE)
+            kernel32.CloseHandle(h)
+            if not alive:
+                break
+        except Exception:
+            break
+    logger.info("[OCR] parent app (pid %s) exited — shutting down", parent_pid)
+    os._exit(0)
+
+
 def _acquire_single_instance() -> bool:
     """Named mutex: only ONE OCR overlay may run. Two capture sessions fight
     over DXGI desktop duplication and randomly kill each other."""
@@ -838,6 +864,8 @@ def main() -> None:
     ap.add_argument("--max-side", type=int, default=_TRACK_SIDE)
     ap.add_argument("--window", type=str, default="",
                     help="restrict to this window title (e.g. VRChat); empty = whole screen")
+    ap.add_argument("--parent-pid", type=int, default=0,
+                    help="exit when this process dies (no orphan overlays)")
     args = ap.parse_args()
     # Log to a file: the subprocess runs windowless, so stderr goes nowhere.
     log_path = os.path.join(os.path.expanduser("~"), "AppData", "Local",
@@ -853,7 +881,11 @@ def main() -> None:
     if not _acquire_single_instance():
         logger.warning("[OCR] another OCR overlay is already running — exiting")
         return
-    logger.info("[OCR] starting: window=%r", args.window or None)
+    if args.parent_pid:
+        threading.Thread(target=_parent_watch_loop, args=(args.parent_pid,),
+                         daemon=True).start()
+    logger.info("[OCR] starting: window=%r parent=%s",
+                args.window or None, args.parent_pid or "none")
     run(monitor_index=args.monitor, fps=args.fps, max_side=args.max_side,
         window_title=args.window or None)
 

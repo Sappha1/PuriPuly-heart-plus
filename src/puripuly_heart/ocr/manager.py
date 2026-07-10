@@ -52,7 +52,8 @@ class OcrOverlayManager:
         if self.running:
             return True
         args = ["-m", "puripuly_heart.ocr.overlay_proc",
-                "--fps", str(self._fps), "--monitor", str(self._monitor)]
+                "--fps", str(self._fps), "--monitor", str(self._monitor),
+                "--parent-pid", str(os.getpid())]
         if self.vrchat_only:
             args += ["--window", "VRChat"]
         env = dict(os.environ)

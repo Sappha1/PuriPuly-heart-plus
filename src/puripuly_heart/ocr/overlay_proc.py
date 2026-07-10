@@ -544,12 +544,22 @@ def _track_loop(cap: _Capture, target: _Target, anchors: _Anchors,
     last_t = time.monotonic()
     gx_ema = gy_ema = 0.0
     cur_epoch = -1
+    hb_t = time.monotonic()
+    hb_frames = 0
     track_w = track_h = 0
     inv_scale = 1.0
     off_x = off_y = 0
     grid = _make_grid(8, 5)
     while not stop.is_set():
         try:
+            # Heartbeat: with a windowless subprocess this log line is the only
+            # way to see whether tracking is alive and at what rate.
+            now_hb = time.monotonic()
+            if now_hb - hb_t >= 5.0:
+                logger.info("[OCR] heartbeat: %.0f fps, boxes=%d, fg=%s",
+                            hb_frames / max(1e-6, now_hb - hb_t), len(tracked),
+                            target.get()[1])
+                hb_t, hb_frames = now_hb, 0
             rect, fg, epoch = target.get()
             if rect is None or not fg:
                 if tracked or prev_g is not None:
@@ -575,6 +585,7 @@ def _track_loop(cap: _Capture, target: _Target, anchors: _Anchors,
             if frame is None:
                 time.sleep(0.001)
                 continue
+            hb_frames += 1
             now = time.monotonic()
             dt = min(0.1, max(1e-4, now - last_t))
             last_t = now
@@ -808,6 +819,18 @@ def run(monitor_index: int = 1, fps: float = 0.0, max_side: int = _TRACK_SIDE,
         stop.set()
 
 
+def _acquire_single_instance() -> bool:
+    """Named mutex: only ONE OCR overlay may run. Two capture sessions fight
+    over DXGI desktop duplication and randomly kill each other."""
+    ERROR_ALREADY_EXISTS = 183
+    try:
+        ctypes.windll.kernel32.CreateMutexW(None, False,
+                                            "PuriPulyHeart_OCR_Overlay")
+        return ctypes.windll.kernel32.GetLastError() != ERROR_ALREADY_EXISTS
+    except Exception:
+        return True
+
+
 def main() -> None:
     ap = argparse.ArgumentParser()
     ap.add_argument("--monitor", type=int, default=1)
@@ -816,7 +839,21 @@ def main() -> None:
     ap.add_argument("--window", type=str, default="",
                     help="restrict to this window title (e.g. VRChat); empty = whole screen")
     args = ap.parse_args()
-    logging.basicConfig(level=logging.INFO)
+    # Log to a file: the subprocess runs windowless, so stderr goes nowhere.
+    log_path = os.path.join(os.path.expanduser("~"), "AppData", "Local",
+                            "puripuly-heart", "ocr_overlay.log")
+    handlers = [logging.StreamHandler()]
+    try:
+        os.makedirs(os.path.dirname(log_path), exist_ok=True)
+        handlers.append(logging.FileHandler(log_path, mode="w", encoding="utf-8"))
+    except Exception:
+        pass
+    logging.basicConfig(level=logging.INFO, handlers=handlers,
+                        format="%(asctime)s %(levelname)s %(message)s")
+    if not _acquire_single_instance():
+        logger.warning("[OCR] another OCR overlay is already running — exiting")
+        return
+    logger.info("[OCR] starting: window=%r", args.window or None)
     run(monitor_index=args.monitor, fps=args.fps, max_side=args.max_side,
         window_title=args.window or None)
 

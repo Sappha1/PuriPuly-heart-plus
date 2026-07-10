@@ -67,7 +67,7 @@ _DET_STALE = 45.0
 _MIN_OK_RATIO = 0.34
 
 _MERGE_IOU = 0.35
-_MERGE_BLEND = 0.45
+_MERGE_BLEND = 0.60
 _MAX_MISSES = 1
 
 # Appearance signature: sample grid inside each box; if the mean abs gray
@@ -77,8 +77,12 @@ _SIG_X, _SIG_Y = 6, 2
 _SIG_DIFF = 32.0
 _SIG_BAD_FRAMES = 3
 
-_RENDER_LEAD_S = 0.010
+_RENDER_LEAD_S = 0.016
 _RENDER_EXTRAP_CAP_S = 0.06
+
+# Capture watchdog: recreate the DXGI camera if no frame arrives this long
+# (PrintScreen/snipping tools can invalidate desktop duplication silently).
+_CAPTURE_STALL_S = 3.0
 
 _VK_SNAPSHOT = 0x2C
 _SHOT_DIR = os.path.join(os.path.expanduser("~"), "Desktop", "puripuly_ocr_shots")
@@ -137,6 +141,7 @@ class _Capture:
                 raise RuntimeError("dxcam produced no frame")
             self.height, self.width = frame.shape[:2]
             self._last = frame
+            self._last_ok = time.monotonic()
             logger.info("[OCR] capture: dxcam %dx%d", self.width, self.height)
         except Exception as exc:
             logger.warning("[OCR] dxcam unavailable (%s); using mss", exc)
@@ -150,14 +155,41 @@ class _Capture:
 
     def grab(self) -> np.ndarray | None:
         if self._cam is not None:
-            f = self._cam.grab()
+            try:
+                f = self._cam.grab()
+            except Exception as exc:
+                logger.warning("[OCR] dxcam grab failed (%s); reinitializing", exc)
+                self._reinit()
+                return None
             if f is not None:
                 self._last = f
+                self._last_ok = time.monotonic()
                 return f
+            # Watchdog: PrintScreen/snipping tools can silently invalidate the
+            # DXGI duplication session — grab() then returns None forever even
+            # though the screen is changing. Recreate the camera after a stall.
+            if time.monotonic() - getattr(self, "_last_ok", 0.0) > _CAPTURE_STALL_S:
+                logger.info("[OCR] capture stalled %.1fs — recreating camera",
+                            _CAPTURE_STALL_S)
+                self._reinit()
             return None
         f = np.asarray(self._sct.grab(self._mon))[:, :, :3]
         self._last = f
         return f
+
+    def _reinit(self) -> None:
+        self._last_ok = time.monotonic()
+        try:
+            del self._cam
+        except Exception:
+            pass
+        self._cam = None
+        try:
+            import dxcam
+
+            self._cam = dxcam.create(output_color="BGR")
+        except Exception as exc:
+            logger.warning("[OCR] dxcam recreate failed: %s", exc)
 
     def last(self) -> np.ndarray:
         return self._last
@@ -321,7 +353,7 @@ class _Tracked:
         self.x1 += dx; self.x2 += dx
         self.y1 += dy; self.y2 += dy
         if dt > 0:
-            a = 0.4
+            a = 0.55  # responsive velocity for the extrapolating renderer
             self.vx = (1 - a) * self.vx + a * (dx / dt)
             self.vy = (1 - a) * self.vy + a * (dy / dt)
 
@@ -333,6 +365,7 @@ class _Tracked:
                 if self.calm_frames >= _STILL_FRAMES:
                     self.moving = False
                     self.vx = self.vy = 0.0
+                    self.sig = None  # fresh fingerprint at the settled position
             else:
                 self.calm_frames = 0
         else:
@@ -343,6 +376,8 @@ class _Tracked:
                 self.moving = True
                 self.calm_frames = 0
                 self.ax, self.ay = self.x1, self.y1
+                self.sig = None
+                self.sig_bad = 0
             else:
                 w = self.x2 - self.x1
                 h = self.y2 - self.y1
@@ -521,11 +556,13 @@ def _track_loop(cap: _Capture, target: _Target, anchors: _Anchors,
             dt = min(0.1, max(1e-4, now - last_t))
             last_t = now
             x1, y1, x2, y2 = rect
-            crop = frame[y1:y2, x1:x2]
-            if crop.size == 0:
+            # Copy ONLY the green plane of the crop (8 MB at 4K, not the 24 MB
+            # BGR copy — that hidden copy was costing real frame rate).
+            crop_g = frame[y1:y2, x1:x2, 1]
+            if crop_g.size == 0:
                 time.sleep(0.01)
                 continue
-            cur_g = cv2.resize(cv2.extractChannel(np.ascontiguousarray(crop), 1),
+            cur_g = cv2.resize(np.ascontiguousarray(crop_g),
                                (track_w, track_h), interpolation=cv2.INTER_LINEAR)
             if prev_g is None or prev_g.shape != cur_g.shape:
                 prev_g = cur_g
@@ -552,9 +589,12 @@ def _track_loop(cap: _Capture, target: _Target, anchors: _Anchors,
                 if ratio < _MIN_OK_RATIO:
                     continue
                 tr.advance(dx, dy, dt, agx, agy)
-                # Appearance check: content gone (menu closed, bubble expired)
-                # kills the box within a few frames.
-                if not tr.check_signature(cur_g):
+                # Appearance check ONLY for frozen boxes under a still camera
+                # (the menu-close case). During motion a few px of tracking
+                # error over contrasty text would misread as "content gone"
+                # and flicker boxes — motion cleanup is flow-health's job.
+                if (not camera_moving and not tr.moving
+                        and not tr.check_signature(cur_g)):
                     continue
                 kept.append(tr)
             tracked = kept

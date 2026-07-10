@@ -17,6 +17,14 @@ import numpy as np
 
 logger = logging.getLogger(__name__)
 
+# Trim threshold: a column/row of a text box whose std is below this carries
+# no contrast — bare background. Detected boxes occasionally come out with a
+# long empty tail (text at one edge, background for the rest, usually from a
+# mid-scroll frame); they are shrunk to their contrasted extent at birth so a
+# box never stretches over empty area. Interior word gaps are NOT trimmed —
+# only leading/trailing flat runs.
+_TRIM_STD = 6.0
+
 
 @dataclass(slots=True)
 class TextBox:
@@ -125,15 +133,31 @@ class TextDetector:
             logger.debug("[OCR] detect call failed: %s", exc)
             return []
 
+        gframe = frame[:, :, 1] if frame.ndim == 3 else frame
+        fh, fw = gframe.shape[:2]
         boxes: list[TextBox] = []
         for quad in det_boxes if det_boxes is not None else []:
             try:
                 pts = np.asarray(quad, dtype=float)
-                xs_, ys_ = pts[:, 0] / scale, pts[:, 1] / scale
+                bx1 = max(0, int(pts[:, 0].min()))
+                by1 = max(0, int(pts[:, 1].min()))
+                bx2 = min(fw, int(pts[:, 0].max()))
+                by2 = min(fh, int(pts[:, 1].max()))
+                if bx2 - bx1 < 3 or by2 - by1 < 2:
+                    continue
+                patch = gframe[by1:by2, bx1:bx2].astype(np.float32)
+                keep_c = np.flatnonzero(patch.std(axis=0) > _TRIM_STD)
+                keep_r = np.flatnonzero(patch.std(axis=1) > _TRIM_STD)
+                if keep_c.size == 0 or keep_r.size == 0:
+                    continue  # no contrast anywhere — not text
+                nx1 = bx1 + max(0, int(keep_c[0]) - 2)
+                nx2 = bx1 + min(patch.shape[1], int(keep_c[-1]) + 3)
+                ny1 = by1 + max(0, int(keep_r[0]) - 1)
+                ny2 = by1 + min(patch.shape[0], int(keep_r[-1]) + 2)
                 boxes.append(
                     TextBox(
-                        x1=int(xs_.min()), y1=int(ys_.min()),
-                        x2=int(xs_.max()), y2=int(ys_.max()),
+                        x1=int(nx1 / scale), y1=int(ny1 / scale),
+                        x2=int(nx2 / scale), y2=int(ny2 / scale),
                     )
                 )
             except Exception:

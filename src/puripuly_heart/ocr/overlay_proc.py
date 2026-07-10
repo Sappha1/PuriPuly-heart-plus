@@ -641,6 +641,15 @@ def _detect_loop(cap: _Capture, target: _Target, anchors: _Anchors,
                                 and ((adx - agx) ** 2 + (ady - agy) ** 2) ** 0.5
                                 > _FLOW_JUMP_PX):
                             continue
+                        # Landing-spot check: the pixels where the box lands
+                        # must still look like the pixels it was detected on
+                        # (a stalled advance otherwise publishes a box onto
+                        # the area its text already scrolled away from).
+                        s0 = _grid_sample(gray, tb.x1, tb.y1, tb.x2, tb.y2)
+                        s1 = _grid_sample(now_gray, tb.x1 + adx, tb.y1 + ady,
+                                          tb.x2 + adx, tb.y2 + ady)
+                        if float(np.mean(np.abs(s1 - s0))) > _SIG_DIFF:
+                            continue
                         fresh_boxes.append(TextBox(
                             int(tb.x1 + adx), int(tb.y1 + ady),
                             int(tb.x2 + adx), int(tb.y2 + ady)))
@@ -1094,12 +1103,34 @@ def _track_loop(cap: _Capture, target: _Target, anchors: _Anchors,
                     fx2 = int(min(float(track_w), tr.x2))
                     fy2 = int(min(float(track_h), tr.y2))
                     if fx2 - fx1 >= 4 and fy2 - fy1 >= 2:
-                        if float(cur_g[fy1:fy2, fx1:fx2].std()) < _FLAT_KILL_STD:
+                        patch = cur_g[fy1:fy2, fx1:fx2]
+                        kc = np.flatnonzero(patch.std(axis=0) > _FLAT_KILL_STD)
+                        kr = np.flatnonzero(patch.std(axis=1) > _FLAT_KILL_STD)
+                        if kc.size == 0 or kr.size == 0:
                             tr.tex_bad += 1
                             if tr.tex_bad >= _FLAT_BAD_FRAMES:
                                 continue
                         else:
                             tr.tex_bad = 0
+                            # LIVE TRIM: a ghost that PARTIALLY overlaps text
+                            # (wide box, text sliver at one edge) beats the
+                            # flat-kill. Shrink it every frame to the extent
+                            # that has contrast, so it hugs whatever text it
+                            # actually covers instead of stretching across
+                            # empty background. Only substantial shrinks are
+                            # applied — settled boxes never jitter.
+                            w, h = fx2 - fx1, fy2 - fy1
+                            nx1 = fx1 + max(0, int(kc[0]) - 2)
+                            nx2 = fx1 + min(w, int(kc[-1]) + 3)
+                            ny1 = fy1 + max(0, int(kr[0]) - 1)
+                            ny2 = fy1 + min(h, int(kr[-1]) + 2)
+                            if ((nx2 - nx1) < 0.85 * w
+                                    or (ny2 - ny1) < 0.8 * h):
+                                tr.x1, tr.y1 = float(nx1), float(ny1)
+                                tr.x2, tr.y2 = float(nx2), float(ny2)
+                                if not tr.moving:
+                                    tr.ax, tr.ay = tr.x1, tr.y1
+                                tr.sig = None  # content basis changed
                 if (_TEXTURE_KILL_ENABLED and not cursor_on_box
                         and not tr.check_texture(cur_g)):
                     continue

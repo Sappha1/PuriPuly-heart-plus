@@ -480,6 +480,8 @@ class DashboardView(ft.Row):
         self._ocr_vrchat_only = bool(_ocr_p.get("vrchat_only", True))
         self._ocr_foreign_only = bool(_ocr_p.get("foreign_only", True))
         self._ocr_ignore_names = bool(_ocr_p.get("ignore_names", True))
+        self._ocr_ignore_pronouns = bool(_ocr_p.get("ignore_pronouns", True))
+        self.on_ocr_ignore_pronouns_change = None  # (prototype) callback
         self._ocr_translate = bool(_ocr_p.get("translate", True))
         self.on_ocr_translate_change = None  # (prototype) callback(bool)
         self.ocr_log_chat = bool(_ocr_p.get("log_chat", True))
@@ -1543,6 +1545,8 @@ class DashboardView(ft.Row):
               self._toggle_ocr_foreign_only),
              (t("dashboard.ocr.menu.ignore_names"), self._ocr_ignore_names,
               self._toggle_ocr_ignore_names),
+             (t("dashboard.ocr.menu.ignore_pronouns"),
+              self._ocr_ignore_pronouns, self._toggle_ocr_ignore_pronouns),
              (t("dashboard.ocr.menu.translate"), self._ocr_translate,
               self._toggle_ocr_translate),
              (t("dashboard.ocr.menu.prewarm"), self._ocr_prewarm,
@@ -1570,6 +1574,11 @@ class DashboardView(ft.Row):
         self._ocr_ignore_names = not self._ocr_ignore_names
         if callable(self.on_ocr_ignore_names_change):
             self.on_ocr_ignore_names_change(self._ocr_ignore_names)
+
+    def _toggle_ocr_ignore_pronouns(self) -> None:
+        self._ocr_ignore_pronouns = not self._ocr_ignore_pronouns
+        if callable(self.on_ocr_ignore_pronouns_change):
+            self.on_ocr_ignore_pronouns_change(self._ocr_ignore_pronouns)
 
     def _toggle_ocr_translate(self) -> None:
         self._ocr_translate = not self._ocr_translate

@@ -126,6 +126,7 @@ _FOREIGN_ONLY = [True]
 # that merely CONTAINS a name ("how are you doing <name>") is unaffected —
 # only whole-box matches drop.
 _IGNORE_NAMES = [True]
+_IGNORE_PRONOUNS = [True]
 _NAMES_LOCK = threading.Lock()
 _PLAYER_NAMES: set[str] = set()
 _NAMES_VER = [0]  # bumped when the roster grows (cached verdicts refresh)
@@ -162,16 +163,20 @@ def _looks_truncated_bio(t: str) -> bool:
     return 0 < len(core) <= 16
 
 
+def _ignore_active() -> bool:
+    return _IGNORE_NAMES[0] or _IGNORE_PRONOUNS[0]
+
+
 def _is_ignored_name(text: str) -> bool:
-    if not _IGNORE_NAMES[0]:
-        return False
     t = text.strip()
     if not t:
         return False
-    if _is_pronoun_text(t):
+    # Pronoun sets and truncated bio fields — their own toggle.
+    if _IGNORE_PRONOUNS[0] and (_is_pronoun_text(t)
+                                or _looks_truncated_bio(t)):
         return True
-    if _looks_truncated_bio(t):
-        return True
+    if not _IGNORE_NAMES[0]:
+        return False
     n = _norm_name(t)
     if not n:
         return False
@@ -1926,7 +1931,7 @@ def _track_loop(cap: _Capture, target: _Target, anchors: _Anchors,
             # pronouns, bio) and is suppressed with it, whatever it says —
             # content matching can't catch "INTP /<name>&…" bios, geometry can.
             name_rects: list[tuple[float, float, float, float]] = []
-            if _IGNORE_NAMES[0]:
+            if _ignore_active():
                 for tr in tracked:
                     if tr.text and tr.text != "-":
                         if tr.namever != _NAMES_VER[0]:
@@ -1962,7 +1967,7 @@ def _track_loop(cap: _Capture, target: _Target, anchors: _Anchors,
                     if (_FOREIGN_ONLY[0]
                             and _is_own_language(_t, _XLAT_TARGET[0])):
                         continue
-                    if _IGNORE_NAMES[0] and tr.namehit:
+                    if _ignore_active() and tr.namehit:
                         continue  # verdict cached in pass 1
                     if (_IGNORE_NAMES[0] and len(_t) <= 24
                             and now - tr.text_at < 0.8):
@@ -1971,7 +1976,7 @@ def _track_loop(cap: _Capture, target: _Target, anchors: _Anchors,
                         # before their OnPlayerJoined line is parsed — give
                         # the roster the chance to veto.
                         continue
-                elif not tr.text and (_FOREIGN_ONLY[0] or _IGNORE_NAMES[0]):
+                elif not tr.text and (_FOREIGN_ONLY[0] or _ignore_active()):
                     # Content filters active + text not yet read: draw NOTHING
                     # until recognition classifies the box. Drawing first and
                     # erasing later flashed a red outline on every nameplate
@@ -2496,8 +2501,11 @@ def main() -> None:
                     help="1 = hide boxes whose recognized text is already in"
                          " the user's language")
     ap.add_argument("--ignore-names", type=int, default=1,
-                    help="1 = hide boxes that are purely a player name (from"
-                         " VRChat's log roster) or a pronoun set")
+                    help="1 = hide boxes that are purely a player name"
+                         " (VRChat log roster)")
+    ap.add_argument("--ignore-pronouns", type=int, default=1,
+                    help="1 = hide boxes that are pronoun sets or truncated"
+                         " bio fields")
     ap.add_argument("--translate", type=int, default=1,
                     help="0 = subtitle mode shows raw recognized text only"
                          " (no translation calls; debugging aid)")
@@ -2507,6 +2515,7 @@ def main() -> None:
     _BUBBLES_ONLY[0] = bool(args.bubbles_only)
     _FOREIGN_ONLY[0] = bool(args.foreign_only)
     _IGNORE_NAMES[0] = bool(args.ignore_names)
+    _IGNORE_PRONOUNS[0] = bool(args.ignore_pronouns)
     _load_translation_prefs()
     # Log to a file: the subprocess runs windowless, so stderr goes nowhere.
     log_path = os.path.join(os.path.expanduser("~"), "AppData", "Local",

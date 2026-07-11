@@ -168,6 +168,7 @@ class TranslatorApp:
         self.view_dashboard.on_ocr_scope_change = self._ocr_manager.set_vrchat_only
         self.view_dashboard.on_ocr_foreign_change = self._ocr_manager.set_foreign_only
         self.view_dashboard.on_ocr_ignore_names_change = self._ocr_manager.set_ignore_names
+        self.view_dashboard.on_ocr_translate_change = self._ocr_manager.set_translate
         self.view_dashboard.on_overlay_lock_change = self._on_dashboard_overlay_lock_change
         self.view_dashboard.on_overlay_transparency_change = self._on_overlay_transparency_change
         self.view_dashboard.on_chatbox_send_peer_toggle = self._on_dashboard_chatbox_send_peer_toggle

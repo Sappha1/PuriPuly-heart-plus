@@ -535,6 +535,7 @@
   "dashboard.ocr.menu.bubbles_only": "VRChat bubbles only",
   "dashboard.ocr.menu.foreign_only": "Foreign text only",
   "dashboard.ocr.menu.ignore_names": "Ignore player names & pronouns",
+  "dashboard.ocr.menu.translate": "Translate captured text",
   "dashboard.ocr.menu.prewarm": "Pre-warm recognition (extra CPU)",
   "dashboard.ocr.menu.log_chat": "Log OCR to chat",
   "dashboard.ocr.menu.region_lock": "🔒 Lock to region",

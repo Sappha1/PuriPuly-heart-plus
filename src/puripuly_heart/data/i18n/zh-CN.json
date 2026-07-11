@@ -489,6 +489,7 @@
   "dashboard.ocr.menu.bubbles_only": "仅 VRChat 气泡",
   "dashboard.ocr.menu.foreign_only": "仅外语文本",
   "dashboard.ocr.menu.ignore_names": "忽略玩家名称和代词",
+  "dashboard.ocr.menu.translate": "翻译捕获的文本",
   "dashboard.ocr.menu.prewarm": "预热识别（额外占用 CPU）",
   "dashboard.ocr.menu.log_chat": "将 OCR 记录到聊天",
   "dashboard.ocr.menu.region_lock": "🔒 锁定到区域",

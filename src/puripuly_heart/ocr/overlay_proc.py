@@ -110,6 +110,9 @@ _XLAT_TRIES: dict[str, int] = {}
 _XLAT_TARGET = ["en"]
 _XLAT_SVC = ["bing"]
 _XLAT_WORKERS = 2
+# Master translation switch (debug aid): off = Alt+T shows the RAW recognized
+# text, nothing is queued, no network traffic, no chat-feed entries.
+_XLAT_ENABLED = [True]
 # Foreign-only: once recognition shows a box's text is already in the user's
 # language, hide the box entirely — only text the user can't read gets boxed
 # (and translated). Detection itself is language-blind, so an own-language
@@ -1830,7 +1833,7 @@ def _track_loop(cap: _Capture, target: _Target, anchors: _Anchors,
                         text_cache[ckey] = (tr.text, now,
                                             tr.x2 - tr.x1, tr.y2 - tr.y1)
                         # Translation: once per unique string per session.
-                        if not tr.xlat:
+                        if not tr.xlat and _XLAT_ENABLED[0]:
                             norm = tr.text.strip()
                             if (_is_own_language(norm, _XLAT_TARGET[0])
                                     or _is_ignored_name(norm)):
@@ -2396,7 +2399,11 @@ def main() -> None:
     ap.add_argument("--ignore-names", type=int, default=1,
                     help="1 = hide boxes that are purely a player name (from"
                          " VRChat's log roster) or a pronoun set")
+    ap.add_argument("--translate", type=int, default=1,
+                    help="0 = subtitle mode shows raw recognized text only"
+                         " (no translation calls; debugging aid)")
     args = ap.parse_args()
+    _XLAT_ENABLED[0] = bool(args.translate)
     _PREWARM[0] = bool(args.prewarm)
     _BUBBLES_ONLY[0] = bool(args.bubbles_only)
     _FOREIGN_ONLY[0] = bool(args.foreign_only)

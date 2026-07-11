@@ -173,6 +173,8 @@ class OcrOverlayManager:
         """Checkbox behavior: flip the lock on/off, REMEMBERING the last
         dragged rectangle. Only falls back to drag-selection when no
         rectangle has ever been set."""
+        logger.info("[OCR] toggle_region (enabled=%s, has=%s, running=%s)",
+                    self.region_enabled(), self.has_region(), self.running)
         if self.region_enabled():
             if self.running:
                 _fire_event(_CLEAR_REGION_EVENT)
@@ -189,9 +191,11 @@ class OcrOverlayManager:
 
     def select_region(self) -> None:
         """Always start a fresh drag (the 'Set region' menu item)."""
+        logger.info("[OCR] select_region requested (running=%s)", self.running)
         if not self.running:
             self.start()
         _fire_event(_SELECT_REGION_EVENT)
+        logger.info("[OCR] select_region event fired")
 
     def set_vrchat_only(self, enabled: bool) -> None:
         enabled = bool(enabled)
@@ -257,6 +261,7 @@ class OcrOverlayManager:
         logger.info("[OCR] overlay stop signaled")
 
     def toggle(self, enabled: bool) -> bool:
+        logger.info("[OCR] toggle(%s) (running=%s)", enabled, self.running)
         if enabled:
             return self.start()
         self.stop()

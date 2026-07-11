@@ -2283,8 +2283,24 @@ class DashboardView(ft.Row):
         has_check = any(checked is not None for (_l, checked, _cb) in options)
         width = min(420.0, max(132.0, longest_px + (22.0 if has_check else 0.0) + 30.0))
         holder: dict = {}
+
+        def _guard(fn):
+            # Menu callbacks run inside flet's async machinery, which
+            # swallows exceptions into never-retrieved futures — actions
+            # then silently do nothing. Surface them in the app log.
+            def _inner():
+                try:
+                    fn()
+                except Exception:
+                    import logging
+
+                    logging.getLogger(__name__).exception(
+                        "[OCR] context-menu action failed")
+            return _inner
+
         rows = [
-            self._menu_item(lbl, checked, cb, lambda: holder.get("close", lambda: None)())
+            self._menu_item(lbl, checked, _guard(cb),
+                            lambda: holder.get("close", lambda: None)())
             for (lbl, checked, cb) in options
         ]
         close = self._open_popover_at(x, y, ft.Column(rows, spacing=1, tight=True), width=width)

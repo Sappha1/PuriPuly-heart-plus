@@ -93,6 +93,18 @@ class OcrOverlayManager:
         self.bubbles_only = bool(_p.get("bubbles_only", True))
         # Hide boxes whose text is already in the user's language.
         self.foreign_only = bool(_p.get("foreign_only", True))
+        # Hide boxes that are purely a player name or pronoun set.
+        self.ignore_names = bool(_p.get("ignore_names", True))
+
+    def set_ignore_names(self, enabled: bool) -> None:
+        enabled = bool(enabled)
+        if enabled == self.ignore_names:
+            return
+        self.ignore_names = enabled
+        save_ocr_pref("ignore_names", enabled)
+        if self.running:
+            self.stop()
+            self.start()
 
     def set_foreign_only(self, enabled: bool) -> None:
         enabled = bool(enabled)
@@ -181,7 +193,8 @@ class OcrOverlayManager:
                 "--parent-pid", str(os.getpid()),
                 "--prewarm", "1" if self.prewarm else "0",
                 "--bubbles-only", "1" if self.bubbles_only else "0",
-                "--foreign-only", "1" if self.foreign_only else "0"]
+                "--foreign-only", "1" if self.foreign_only else "0",
+                "--ignore-names", "1" if self.ignore_names else "0"]
         if self.vrchat_only:
             args += ["--window", "VRChat"]
         env = dict(os.environ)

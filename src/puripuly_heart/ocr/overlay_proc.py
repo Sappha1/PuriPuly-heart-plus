@@ -117,6 +117,90 @@ _XLAT_WORKERS = 2
 _FOREIGN_ONLY = [True]
 
 
+# Ignore player names & pronouns: VRChat logs 'OnPlayerJoined <name>' to its
+# output log (the same source VRCX reads). A box whose ENTIRE text is a known
+# player name or a pronoun set is neither shown nor translated. A message
+# that merely CONTAINS a name ("how are you doing <name>") is unaffected —
+# only whole-box matches drop.
+_IGNORE_NAMES = [True]
+_NAMES_LOCK = threading.Lock()
+_PLAYER_NAMES: set[str] = set()
+_VRC_LOG_DIR = os.path.join(os.path.expanduser("~"), "AppData", "LocalLow",
+                            "VRChat", "VRChat")
+_PRONOUN_TOKENS = {
+    "he", "him", "his", "she", "her", "hers", "they", "them", "theirs",
+    "it", "its", "any", "all", "ask", "none", "fae", "faer", "xe", "xem",
+    "ze", "zir", "hir", "ey", "em", "pronouns"}
+
+
+def _norm_name(s: str) -> str:
+    return "".join(s.split()).replace("_", "").replace("-", "").casefold()
+
+
+def _is_pronoun_text(text: str) -> bool:
+    toks = [w for w in _re.split(r"[\s/|,&+·~]+", text.strip().lower()) if w]
+    return bool(toks) and all(t in _PRONOUN_TOKENS for t in toks)
+
+
+def _is_ignored_name(text: str) -> bool:
+    if not _IGNORE_NAMES[0]:
+        return False
+    t = text.strip()
+    if not t:
+        return False
+    if _is_pronoun_text(t):
+        return True
+    n = _norm_name(t)
+    if not n:
+        return False
+    with _NAMES_LOCK:
+        return n in _PLAYER_NAMES
+
+
+def _players_loop(stop: threading.Event) -> None:
+    """Tail VRChat's output log for OnPlayerJoined lines (VRCX's technique)
+    to keep the roster of names to ignore. Reads the whole newest log first
+    (players who joined before OCR started), then follows appended lines."""
+    import glob
+
+    cur_path = None
+    fh = None
+    join_re = _re.compile(r"OnPlayerJoined\s+(.+?)(?:\s+\(usr_[^)]*\))?\s*$")
+    while not stop.is_set():
+        try:
+            logs = glob.glob(os.path.join(_VRC_LOG_DIR, "output_log_*.txt"))
+            if logs:
+                newest = max(logs, key=os.path.getmtime)
+                if newest != cur_path:
+                    if fh is not None:
+                        with contextlib_suppress():
+                            fh.close()
+                    cur_path = newest
+                    fh = open(newest, "r", encoding="utf-8", errors="ignore")
+                    logger.info("[OCR] tailing VRChat log for player names: %s",
+                                os.path.basename(newest))
+                if fh is not None:
+                    added = 0
+                    for line in fh.read().splitlines():
+                        if "OnPlayerJoined" not in line:
+                            continue
+                        m = join_re.search(line)
+                        if m:
+                            name = m.group(1).strip()
+                            if 0 < len(name) <= 64:
+                                with _NAMES_LOCK:
+                                    _PLAYER_NAMES.add(_norm_name(name))
+                                added += 1
+                    if added:
+                        with _NAMES_LOCK:
+                            total = len(_PLAYER_NAMES)
+                        logger.info("[OCR] player roster +%d (known: %d)",
+                                    added, total)
+        except Exception as exc:
+            logger.debug("[OCR] player log tail error: %s", exc)
+        stop.wait(2.0)
+
+
 def _is_own_language(text: str, tgt: str) -> bool:
     """Script-level check: is this text already readable for the target
     language? Rough by design — it gates cosmetics and API-call skips."""
@@ -1748,8 +1832,9 @@ def _track_loop(cap: _Capture, target: _Target, anchors: _Anchors,
                         # Translation: once per unique string per session.
                         if not tr.xlat:
                             norm = tr.text.strip()
-                            if _is_own_language(norm, _XLAT_TARGET[0]):
-                                tr.xlat = norm  # already readable, no call
+                            if (_is_own_language(norm, _XLAT_TARGET[0])
+                                    or _is_ignored_name(norm)):
+                                tr.xlat = norm  # readable/ignored — no call
                             else:
                                 with _XLAT_LOCK:
                                     hit = _XLAT_CACHE.get(norm)
@@ -1782,13 +1867,16 @@ def _track_loop(cap: _Capture, target: _Target, anchors: _Anchors,
                         del _REC_REQ[k]
             items = []
             for tr in tracked:
-                # Foreign-only: a box whose text is known to already be in
-                # the user's language is invisible (still tracked, so it
-                # never re-triggers recognition).
-                if (_FOREIGN_ONLY[0] and tr.text and tr.text != "-"
-                        and _is_own_language(tr.text.strip(),
-                                             _XLAT_TARGET[0])):
-                    continue
+                # Hide (still tracked, never re-recognized): boxes whose text
+                # is already in the user's language (foreign-only mode), and
+                # boxes that are purely a player name or pronoun set.
+                if tr.text and tr.text != "-":
+                    _t = tr.text.strip()
+                    if (_FOREIGN_ONLY[0]
+                            and _is_own_language(_t, _XLAT_TARGET[0])):
+                        continue
+                    if _is_ignored_name(_t):
+                        continue
                 bx1, by1, bx2, by2 = tr.rect()
                 vx, vy = tr.velocity()
                 items.append((
@@ -2028,6 +2116,8 @@ def run(monitor_index: int = 1, fps: float = 0.0, max_side: int = _TRACK_SIDE,
     for _w in range(_XLAT_WORKERS):
         threading.Thread(target=_xlat_loop, args=(stop,),
                          daemon=True).start()
+    threading.Thread(target=_players_loop, args=(stop,),
+                     daemon=True).start()
 
     # Hold-to-translate bind: overridable without a rebuild via the config
     # file (a real settings-page bind picker comes with the app-side stage).
@@ -2303,10 +2393,14 @@ def main() -> None:
     ap.add_argument("--foreign-only", type=int, default=1,
                     help="1 = hide boxes whose recognized text is already in"
                          " the user's language")
+    ap.add_argument("--ignore-names", type=int, default=1,
+                    help="1 = hide boxes that are purely a player name (from"
+                         " VRChat's log roster) or a pronoun set")
     args = ap.parse_args()
     _PREWARM[0] = bool(args.prewarm)
     _BUBBLES_ONLY[0] = bool(args.bubbles_only)
     _FOREIGN_ONLY[0] = bool(args.foreign_only)
+    _IGNORE_NAMES[0] = bool(args.ignore_names)
     _load_translation_prefs()
     # Log to a file: the subprocess runs windowless, so stderr goes nowhere.
     log_path = os.path.join(os.path.expanduser("~"), "AppData", "Local",

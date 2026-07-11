@@ -479,8 +479,10 @@ class DashboardView(ft.Row):
         self._ocr_bubbles_only = bool(_ocr_p.get("bubbles_only", True))
         self._ocr_vrchat_only = bool(_ocr_p.get("vrchat_only", True))
         self._ocr_foreign_only = bool(_ocr_p.get("foreign_only", True))
+        self._ocr_ignore_names = bool(_ocr_p.get("ignore_names", True))
         self.ocr_log_chat = bool(_ocr_p.get("log_chat", True))
         self.on_ocr_foreign_change = None  # (prototype) callback(bool)
+        self.on_ocr_ignore_names_change = None  # (prototype) callback(bool)
         self.on_ocr_region_set = None  # (prototype) callback() — fresh drag
         self.on_language_change = None
         self.on_recent_languages_change = None
@@ -1537,6 +1539,8 @@ class DashboardView(ft.Row):
               self._toggle_ocr_bubbles),
              (t("dashboard.ocr.menu.foreign_only"), self._ocr_foreign_only,
               self._toggle_ocr_foreign_only),
+             (t("dashboard.ocr.menu.ignore_names"), self._ocr_ignore_names,
+              self._toggle_ocr_ignore_names),
              (t("dashboard.ocr.menu.prewarm"), self._ocr_prewarm,
               self._toggle_ocr_prewarm),
              (t("dashboard.ocr.menu.log_chat"), self.ocr_log_chat,
@@ -1557,6 +1561,11 @@ class DashboardView(ft.Row):
         self._ocr_foreign_only = not self._ocr_foreign_only
         if callable(self.on_ocr_foreign_change):
             self.on_ocr_foreign_change(self._ocr_foreign_only)
+
+    def _toggle_ocr_ignore_names(self) -> None:
+        self._ocr_ignore_names = not self._ocr_ignore_names
+        if callable(self.on_ocr_ignore_names_change):
+            self.on_ocr_ignore_names_change(self._ocr_ignore_names)
 
     def _toggle_ocr_log_chat(self) -> None:
         self.ocr_log_chat = not self.ocr_log_chat

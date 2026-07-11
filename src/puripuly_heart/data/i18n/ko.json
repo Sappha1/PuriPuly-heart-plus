@@ -488,6 +488,7 @@
   "dashboard.ocr.menu.vrchat_only": "VRChat이 포커스일 때만",
   "dashboard.ocr.menu.bubbles_only": "VRChat 말풍선만",
   "dashboard.ocr.menu.foreign_only": "외국어 텍스트만",
+  "dashboard.ocr.menu.ignore_names": "플레이어 이름·대명사 무시",
   "dashboard.ocr.menu.prewarm": "인식 사전 준비 (CPU 추가 사용)",
   "dashboard.ocr.menu.log_chat": "OCR을 채팅에 기록",
   "dashboard.ocr.menu.region_lock": "🔒 영역 잠금",

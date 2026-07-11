@@ -283,6 +283,30 @@ _VK_SNAPSHOT = 0x2C
 _SHOT_DIR = os.path.join(os.path.expanduser("~"), "Desktop", "puripuly_ocr_shots")
 
 
+def _hwnd_exe(hwnd: int) -> str:
+    """Basename of the process image owning hwnd (lowercase), '' on failure.
+    Lets window targeting require the real vrchat.exe, not just the title."""
+    PROCESS_QUERY_LIMITED_INFORMATION = 0x1000
+    try:
+        pid = wintypes.DWORD(0)
+        ctypes.windll.user32.GetWindowThreadProcessId(hwnd, ctypes.byref(pid))
+        h = ctypes.windll.kernel32.OpenProcess(
+            PROCESS_QUERY_LIMITED_INFORMATION, False, pid.value)
+        if not h:
+            return ""
+        try:
+            buf = ctypes.create_unicode_buffer(4096)
+            size = wintypes.DWORD(4096)
+            if ctypes.windll.kernel32.QueryFullProcessImageNameW(
+                    h, 0, buf, ctypes.byref(size)):
+                return os.path.basename(buf.value).lower()
+        finally:
+            ctypes.windll.kernel32.CloseHandle(h)
+    except Exception:
+        pass
+    return ""
+
+
 def _set_dpi_aware() -> None:
     try:
         ctypes.windll.user32.SetProcessDPIAware()
@@ -400,6 +424,8 @@ class _Target:
 
     def __init__(self, title: str | None, cap: _Capture) -> None:
         self._title = title or None
+        # Title alone is spoofable; for the game we demand the actual exe.
+        self._exe = "vrchat.exe" if (title or "").lower() == "vrchat" else ""
         self._cap = cap
         self._lock = threading.Lock()
         self._rect: tuple[int, int, int, int] | None = (0, 0, cap.width, cap.height)
@@ -480,12 +506,13 @@ class _Target:
                 continue
         return occl
 
-    @staticmethod
-    def _find_window(title: str) -> int:
-        """Largest VISIBLE window with this exact title. FindWindowW returns
-        the first title match, which can be one of the game's hidden helper
-        windows — that intermittently blanked VRChat-only mode."""
+    def _find_window(self, title: str) -> int:
+        """Largest VISIBLE window with this exact title (and, when set, the
+        required exe). FindWindowW returns the first title match, which can
+        be one of the game's hidden helper windows — that intermittently
+        blanked VRChat-only mode."""
         user32 = ctypes.windll.user32
+        need_exe = self._exe
         matches: list[tuple[int, int]] = []
 
         @ctypes.WINFUNCTYPE(wintypes.BOOL, wintypes.HWND, wintypes.LPARAM)
@@ -499,6 +526,8 @@ class _Target:
                 buf = ctypes.create_unicode_buffer(n + 1)
                 user32.GetWindowTextW(hwnd, buf, n + 1)
                 if buf.value == title:
+                    if need_exe and _hwnd_exe(hwnd) != need_exe:
+                        return True
                     r = wintypes.RECT()
                     user32.GetClientRect(hwnd, ctypes.byref(r))
                     matches.append((int(r.right) * int(r.bottom), int(hwnd)))
@@ -541,7 +570,8 @@ class _Target:
                 if n > 0:
                     b = ctypes.create_unicode_buffer(n + 1)
                     user32.GetWindowTextW(fgw, b, n + 1)
-                    if b.value == self._title:
+                    if b.value == self._title and (
+                            not self._exe or _hwnd_exe(fgw) == self._exe):
                         hwnd = fgw
             if not hwnd:
                 hwnd = self._find_window(self._title)

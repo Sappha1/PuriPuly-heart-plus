@@ -128,6 +128,7 @@ _FOREIGN_ONLY = [True]
 _IGNORE_NAMES = [True]
 _NAMES_LOCK = threading.Lock()
 _PLAYER_NAMES: set[str] = set()
+_NAMES_VER = [0]  # bumped when the roster grows (cached verdicts refresh)
 _VRC_LOG_DIR = os.path.join(os.path.expanduser("~"), "AppData", "LocalLow",
                             "VRChat", "VRChat")
 _PRONOUN_TOKENS = {
@@ -163,7 +164,21 @@ def _is_ignored_name(text: str) -> bool:
     if not n:
         return False
     with _NAMES_LOCK:
-        return n in _PLAYER_NAMES
+        if n in _PLAYER_NAMES:
+            return True
+        names = list(_PLAYER_NAMES)
+    # FUZZY: OCR misreads stylized glyphs (especially CJK in names), so an
+    # exact roster match is brittle. A whole-box string ~75% similar to a
+    # known player, at comparable length, is that player.
+    if len(n) >= 4:
+        import difflib
+
+        for cand in names:
+            if (abs(len(cand) - len(n)) <= 2
+                    and difflib.SequenceMatcher(None, n, cand).ratio()
+                    >= 0.75):
+                return True
+    return False
 
 
 def _players_loop(stop: threading.Event) -> None:
@@ -201,6 +216,7 @@ def _players_loop(stop: threading.Event) -> None:
                                     _PLAYER_NAMES.add(_norm_name(name))
                                 added += 1
                     if added:
+                        _NAMES_VER[0] += 1
                         with _NAMES_LOCK:
                             total = len(_PLAYER_NAMES)
                         logger.info("[OCR] player roster +%d (known: %d)",
@@ -1164,7 +1180,7 @@ class _Tracked:
     __slots__ = ("x1", "y1", "x2", "y2", "ax", "ay", "vx", "vy",
                  "moving", "calm_frames", "miss", "sig", "sig_bad", "tex_bad",
                  "last_confirm", "confirms", "jump_dx", "jump_dy", "jump_n",
-                 "uid", "text", "refined", "xlat")
+                 "uid", "text", "refined", "xlat", "namever", "namehit")
 
     def __init__(self, b: TextBox) -> None:
         self.x1, self.y1 = float(b.x1), float(b.y1)
@@ -1186,6 +1202,8 @@ class _Tracked:
         self.text = ""  # what the local recognizer read (subtitle mode)
         self.refined = False  # edges snapped to full-res glyph extents
         self.xlat = ""  # translated text (subtitle mode shows this)
+        self.namever = -1  # roster version the namehit verdict was cached at
+        self.namehit = False  # cached "this box is a player name" verdict
 
     def advance(self, dx: float, dy: float, dt: float,
                 gx: float, gy: float) -> None:
@@ -1884,8 +1902,14 @@ def _track_loop(cap: _Capture, target: _Target, anchors: _Anchors,
                     if (_FOREIGN_ONLY[0]
                             and _is_own_language(_t, _XLAT_TARGET[0])):
                         continue
-                    if _is_ignored_name(_t):
-                        continue
+                    if _IGNORE_NAMES[0]:
+                        # Fuzzy roster check is O(roster) — cache the verdict
+                        # per box, refresh when the roster grows.
+                        if tr.namever != _NAMES_VER[0]:
+                            tr.namehit = _is_ignored_name(_t)
+                            tr.namever = _NAMES_VER[0]
+                        if tr.namehit:
+                            continue
                 elif not tr.text and (_FOREIGN_ONLY[0] or _IGNORE_NAMES[0]):
                     # Content filters active + text not yet read: draw NOTHING
                     # until recognition classifies the box. Drawing first and

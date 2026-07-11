@@ -57,14 +57,14 @@ class OcrOverlayManager:
         self._proc: subprocess.Popen | None = None
         self._fps = fps
         self._monitor = monitor
-        # Default OFF per user preference: whole-screen OCR unless the
-        # right-click option enables VRChat-window scoping.
-        self.vrchat_only = False
+        # Defaults per user preference: scan only the focused VRChat window,
+        # and only bubble-shaped text (both toggleable via right-click).
+        self.vrchat_only = True
         # Pre-warm recognition: read text in the background while subtitles
         # are toggled off — instant Alt+T at the cost of CPU bursts.
         self.prewarm = True
         # Only box text that looks like a VRChat chat bubble / nameplate.
-        self.bubbles_only = False
+        self.bubbles_only = True
 
     def set_prewarm(self, enabled: bool) -> None:
         enabled = bool(enabled)

@@ -95,6 +95,75 @@ _BUBBLE_SPREAD_MAX = 60.0  # channel spread cap: pills are desaturated
 # where a just-read box lived inherits that text instantly.
 _TEXT_CACHE_TTL = 12.0
 
+# ── Translation stage ──
+# Alt+T shows TRANSLATED text. Cost model: each unique string is translated
+# exactly ONCE per session (cache below), requests only fire while subtitle
+# mode is ON, text already in the target language never leaves the machine,
+# and the provider is the FREE web translator — the user's DeepL quota is
+# never touched by OCR. Target language comes from the app's settings
+# (languages.source_language — same as peer speech translations).
+_XLAT_LOCK = threading.Lock()
+_XLAT_CACHE: dict[str, str] = {}
+_XLAT_PENDING: list[str] = []
+_XLAT_QUEUED: set[str] = set()
+_XLAT_TRIES: dict[str, int] = {}
+_XLAT_TARGET = ["en"]
+_XLAT_SVC = ["bing"]
+_XLAT_WORKERS = 2
+
+
+def _load_translation_prefs() -> None:
+    try:
+        import json
+
+        p = os.path.join(os.path.expanduser("~"), "AppData", "Local",
+                         "puripuly-heart", "settings.json")
+        with open(p, encoding="utf-8") as fh:
+            data = json.load(fh)
+        lang = str(data.get("languages", {}).get("source_language") or "en")
+        _XLAT_TARGET[0] = lang
+        logger.info("[OCR] translation target: %s", lang)
+    except Exception as exc:
+        logger.debug("[OCR] settings read failed (target stays en): %s", exc)
+
+
+def _xlat_loop(stop: threading.Event) -> None:
+    """Translation worker: unique strings only, free web provider, results
+    cached for the session. Uses the app's own language-code mapping."""
+    try:
+        from translators import translate_text
+    except Exception as exc:
+        logger.warning("[OCR] translators lib unavailable: %s", exc)
+        return
+    try:
+        from puripuly_heart.providers.llm.free_web import _to_translator_lang
+    except Exception:
+        def _to_translator_lang(code: str) -> str:  # type: ignore
+            return code
+    while not stop.is_set():
+        with _XLAT_LOCK:
+            text = _XLAT_PENDING.pop(0) if _XLAT_PENDING else None
+        if text is None:
+            time.sleep(0.1)
+            continue
+        tgt = _to_translator_lang(_XLAT_TARGET[0]) or "en"
+        try:
+            out = str(translate_text(
+                query_text=text, translator=_XLAT_SVC[0],
+                from_language="auto", to_language=tgt)).strip()
+            with _XLAT_LOCK:
+                _XLAT_CACHE[text] = out or text
+                _XLAT_QUEUED.discard(text)
+        except Exception as exc:
+            logger.debug("[OCR] translate failed (%r): %s", text[:40], exc)
+            with _XLAT_LOCK:
+                n = _XLAT_TRIES.get(text, 0) + 1
+                _XLAT_TRIES[text] = n
+                if n >= 2:
+                    _XLAT_CACHE[text] = text  # give up — show the original
+                _XLAT_QUEUED.discard(text)
+            time.sleep(1.0)
+
 # Region lock: OCR restricted to a user-dragged rectangle (config-persisted).
 # The app signals these named events; selection happens in-overlay (the
 # window temporarily becomes clickable and dims while the user drags).
@@ -944,7 +1013,7 @@ class _Tracked:
     __slots__ = ("x1", "y1", "x2", "y2", "ax", "ay", "vx", "vy",
                  "moving", "calm_frames", "miss", "sig", "sig_bad", "tex_bad",
                  "last_confirm", "confirms", "jump_dx", "jump_dy", "jump_n",
-                 "uid", "text", "refined")
+                 "uid", "text", "refined", "xlat")
 
     def __init__(self, b: TextBox) -> None:
         self.x1, self.y1 = float(b.x1), float(b.y1)
@@ -965,6 +1034,7 @@ class _Tracked:
         self.uid = _NEXT_UID[0]  # persistent identity keys recognition
         self.text = ""  # what the local recognizer read (subtitle mode)
         self.refined = False  # edges snapped to full-res glyph extents
+        self.xlat = ""  # translated text (subtitle mode shows this)
 
     def advance(self, dx: float, dy: float, dt: float,
                 gx: float, gy: float) -> None:
@@ -1617,6 +1687,22 @@ def _track_loop(cap: _Capture, target: _Target, anchors: _Anchors,
                     if tr.text and tr.text != "-":
                         text_cache[ckey] = (tr.text, now,
                                             tr.x2 - tr.x1, tr.y2 - tr.y1)
+                        # Translation: once per unique string per session.
+                        if not tr.xlat:
+                            norm = tr.text.strip()
+                            tgt = _XLAT_TARGET[0].lower()
+                            if (tgt.startswith("en")
+                                    and all(ord(c) < 128 for c in norm)):
+                                tr.xlat = norm  # already readable, no call
+                            else:
+                                with _XLAT_LOCK:
+                                    hit = _XLAT_CACHE.get(norm)
+                                    if hit is not None:
+                                        tr.xlat = hit
+                                    elif (_SUBTITLE_ON[0] and norm
+                                          and norm not in _XLAT_QUEUED):
+                                        _XLAT_QUEUED.add(norm)
+                                        _XLAT_PENDING.append(norm)
                     elif ((_PREWARM[0] or _SUBTITLE_ON[0]) and not tr.text
                           and tr.confirms >= 2
                           and tr.uid not in _REC_REQ and pending < 48):
@@ -1647,7 +1733,8 @@ def _track_loop(cap: _Capture, target: _Target, anchors: _Anchors,
                     (by1 * inv_scale + off_y) + cap.top,
                     (bx2 * inv_scale + off_x) + cap.left,
                     (by2 * inv_scale + off_y) + cap.top,
-                    vx * inv_scale, vy * inv_scale, tr.uid, tr.text))
+                    vx * inv_scale, vy * inv_scale, tr.uid,
+                    tr.xlat or tr.text))
             state.set(items)
         except Exception as exc:
             logger.debug("[OCR] track iteration error: %s", exc)
@@ -1871,6 +1958,9 @@ def run(monitor_index: int = 1, fps: float = 0.0, max_side: int = _TRACK_SIDE,
                      args=(_CLEAR_REGION_EVENT,
                            lambda: target.set_region(None)),
                      daemon=True).start()
+    for _w in range(_XLAT_WORKERS):
+        threading.Thread(target=_xlat_loop, args=(stop,),
+                         daemon=True).start()
 
     # Hold-to-translate bind: overridable without a rebuild via the config
     # file (a real settings-page bind picker comes with the app-side stage).
@@ -2146,6 +2236,7 @@ def main() -> None:
     args = ap.parse_args()
     _PREWARM[0] = bool(args.prewarm)
     _BUBBLES_ONLY[0] = bool(args.bubbles_only)
+    _load_translation_prefs()
     # Log to a file: the subprocess runs windowless, so stderr goes nowhere.
     log_path = os.path.join(os.path.expanduser("~"), "AppData", "Local",
                             "puripuly-heart", "ocr_overlay.log")

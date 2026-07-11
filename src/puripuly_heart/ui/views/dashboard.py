@@ -468,8 +468,8 @@ class DashboardView(ft.Row):
         self.on_ocr_scope_change = None  # (prototype) callback(bool)
         self._ocr_on = False
         self._ocr_prewarm = True  # background recognition (extra CPU)
-        self._ocr_bubbles_only = False  # only VRChat-bubble-shaped text
-        self._ocr_vrchat_only = False  # scan only the focused VRChat window
+        self._ocr_bubbles_only = True  # only VRChat-bubble-shaped text
+        self._ocr_vrchat_only = True  # scan only the focused VRChat window
         self.on_language_change = None
         self.on_recent_languages_change = None
         self.on_nav_change: Callable[[int], None] | None = None
@@ -1519,12 +1519,12 @@ class DashboardView(ft.Row):
                 region_on = bool(self.on_ocr_region_state())
         self._open_context_menu(
             x, y,
-            [("Pre-warm recognition (extra CPU)", self._ocr_prewarm,
-              self._toggle_ocr_prewarm),
+            [("Only while VRChat is focused", self._ocr_vrchat_only,
+              self._toggle_ocr_vrchat_only),
              ("VRChat bubbles only", self._ocr_bubbles_only,
               self._toggle_ocr_bubbles),
-             ("Only while VRChat is focused", self._ocr_vrchat_only,
-              self._toggle_ocr_vrchat_only),
+             ("Pre-warm recognition (extra CPU)", self._ocr_prewarm,
+              self._toggle_ocr_prewarm),
              ("🔒 Lock to region (drag to set)", region_on,
               self._toggle_ocr_region)],
         )

@@ -3929,44 +3929,89 @@ class DashboardView(ft.Row):
         # everything applies in place, menu stays open.
         x, y = self._tap_xy(e)
 
-        mode_pills: dict[bool, ft.Container] = {}
+        # ── mode: summary button + inline radio expansion (mirrors the
+        # overlay menu's Display/Size controls) ──
+        def _mode_summary() -> str:
+            return (t("dashboard.loopback.menu.mode.selected_short")
+                    if self._loopback_selected_only
+                    else t("dashboard.loopback.menu.mode.all_short"))
 
-        def _style_mode_pill(pill: ft.Container, active: bool) -> None:
-            pill.content.color = _TOGGLE_ON if active else _TEXT_MUTED
-            pill.bgcolor = "#1a2e2a" if active else ft.Colors.TRANSPARENT
-            pill.border = ft.border.all(
-                1, _TOGGLE_ON if active else "#3a3b3f")
+        _mode_btn_text = ft.Text(
+            _mode_summary(), size=11, color=_TOGGLE_ON,
+            weight=ft.FontWeight.W_600, no_wrap=True,
+            overflow=ft.TextOverflow.ELLIPSIS,
+        )
+        _mode_btn = ft.Container(
+            content=_mode_btn_text,
+            padding=ft.padding.symmetric(horizontal=8, vertical=4),
+            border_radius=6,
+            bgcolor="#1a2e2a",
+            border=ft.border.all(1, _TOGGLE_ON),
+        )
 
-        def _make_mode_pill(selected_only: bool, label: str) -> ft.Container:
-            active = self._loopback_selected_only == selected_only
-            pill = ft.Container(
-                content=ft.Text(label, size=11,
-                                color=_TOGGLE_ON if active else _TEXT_MUTED,
-                                weight=ft.FontWeight.W_600, no_wrap=True),
-                padding=ft.padding.symmetric(horizontal=8, vertical=4),
-                border_radius=6,
-                bgcolor="#1a2e2a" if active else ft.Colors.TRANSPARENT,
-                border=ft.border.all(1, _TOGGLE_ON if active else "#3a3b3f"),
+        _mode_icons: dict[bool, ft.Icon] = {}
+        _mode_rows: list[ft.Container] = []
+        for _sel, _key in ((False, "dashboard.loopback.menu.all"),
+                           (True, "dashboard.loopback.menu.selected")):
+            _active = self._loopback_selected_only == _sel
+            _icon = ft.Icon(
+                ft.Icons.RADIO_BUTTON_CHECKED if _active
+                else ft.Icons.RADIO_BUTTON_UNCHECKED,
+                size=15, color=_TOGGLE_ON if _active else _TEXT_FAINT,
             )
+            _mode_icons[_sel] = _icon
 
-            def _click(_ev, _sel=selected_only):
-                if self._loopback_selected_only == _sel:
+            def _on_mode_row(_ev, _s=_sel):
+                if self._loopback_selected_only == _s:
                     return
                 try:
-                    self._set_loopback_mode(_sel)
+                    self._set_loopback_mode(_s)
                 except Exception:
                     import logging
 
                     logging.getLogger(__name__).exception(
                         "[Loopback] mode change failed")
-                for key, p in mode_pills.items():
-                    _style_mode_pill(p, key == _sel)
-                    with contextlib.suppress(Exception):
-                        p.update()
+                for _k, _ic in _mode_icons.items():
+                    _on = _k == _s
+                    _ic.name = (ft.Icons.RADIO_BUTTON_CHECKED if _on
+                                else ft.Icons.RADIO_BUTTON_UNCHECKED)
+                    _ic.color = _TOGGLE_ON if _on else _TEXT_FAINT
+                _mode_btn_text.value = _mode_summary()
+                with contextlib.suppress(Exception):
+                    _mode_btn_text.update()
+                    for _ic in _mode_icons.values():
+                        _ic.update()
 
-            pill.on_click = _click
-            mode_pills[selected_only] = pill
-            return pill
+            _mode_rows.append(ft.Container(
+                content=ft.Row(
+                    [_icon,
+                     ft.Text(t(_key), size=12, color=_TEXT_PRIMARY,
+                             expand=True)],
+                    spacing=8,
+                    vertical_alignment=ft.CrossAxisAlignment.CENTER,
+                ),
+                padding=ft.padding.only(left=18, right=10, top=6, bottom=6),
+                border_radius=5,
+                on_click=_on_mode_row,
+                on_hover=lambda e: (
+                    setattr(e.control, "bgcolor",
+                            "#2a3040" if e.data == "true"
+                            else ft.Colors.TRANSPARENT)
+                    or (e.control.update() if e.control.page else None)
+                ),
+            ))
+
+        _mode_rows_col = ft.Column(_mode_rows, spacing=0, tight=True,
+                                   visible=False)
+        _mode_expanded = [False]
+
+        def _toggle_mode(_ev):
+            _mode_expanded[0] = not _mode_expanded[0]
+            _mode_rows_col.visible = _mode_expanded[0]
+            with contextlib.suppress(Exception):
+                _mode_rows_col.update()
+
+        _mode_btn.on_click = _toggle_mode
 
         to_state = [self._loopback_translation_only]
         to_lbl = ft.Text(
@@ -4006,17 +4051,17 @@ class DashboardView(ft.Row):
             content=ft.Column(
                 [
                     ft.Container(
-                        content=_make_mode_pill(
-                            False, t("dashboard.loopback.menu.all")),
+                        content=ft.Row(
+                            [ft.Text(t("dashboard.loopback.menu.mode"),
+                                     size=11, color=_TEXT_MUTED, expand=True),
+                             _mode_btn],
+                            spacing=8,
+                            vertical_alignment=ft.CrossAxisAlignment.CENTER,
+                        ),
                         padding=ft.padding.only(left=10, right=10, top=8,
                                                 bottom=2),
                     ),
-                    ft.Container(
-                        content=_make_mode_pill(
-                            True, t("dashboard.loopback.menu.selected")),
-                        padding=ft.padding.only(left=10, right=10, top=2,
-                                                bottom=2),
-                    ),
+                    _mode_rows_col,
                     ft.Container(
                         content=ft.Row(
                             [ft.Text(t("dashboard.loopback.menu.translation_only"),

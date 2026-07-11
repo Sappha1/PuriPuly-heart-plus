@@ -81,7 +81,7 @@ _PREWARM = [True]
 _BUBBLES_ONLY = [False]
 _BUBBLE_RING_STD = 20.0
 _BUBBLE_CONTRAST = 40.0
-_BUBBLE_MIN_ASPECT = 1.35
+_BUBBLE_MIN_ASPECT = 1.2
 # Reborn-box text inheritance: the detector blinks on borderline text (tiny
 # chips like "..."), killing and re-creating its box every second or two —
 # each rebirth used to visibly reset to pending and re-recognize. A box born
@@ -665,34 +665,36 @@ def _text_plausible(b: TextBox, det_w: int, det_h: int) -> bool:
 
 
 def _looks_like_bubble(bgr: np.ndarray, b: TextBox) -> bool:
-    """Chat bubble test: uniform pill padding around the text + white-on-pill
-    (or dark-on-pill) contrast + wide aspect. Judged on the detection image
-    where the box was found."""
+    """Chat bubble test: at least ONE side of the text line is uniform pill
+    fill, and the text contrasts strongly against that fill. Sides only —
+    in a multi-line bubble the pixels above/below a line are OTHER TEXT
+    (demanding a fully uniform ring rejected every middle line), and a
+    nameplate's profile icon ruins one side, so one clean side suffices."""
     H, W = bgr.shape[:2]
     bw, bh = b.x2 - b.x1, b.y2 - b.y1
     if bh <= 0 or bw < _BUBBLE_MIN_ASPECT * bh:
         return False
-    m = max(3, bh // 3)
-    x1, y1 = max(0, b.x1 - m), max(0, b.y1 - m)
-    x2, y2 = min(W, b.x2 + m), min(H, b.y2 + m)
-    if x2 - x1 < 8 or y2 - y1 < 8:
+    m = max(4, bh // 2)
+    y1, y2 = max(0, b.y1), min(H, b.y2)
+    if y2 - y1 < 3:
         return False
-    patch = bgr[y1:y2, x1:x2].astype(np.float32)
-    iy1, iy2 = b.y1 - y1, b.y2 - y1
-    ix1, ix2 = b.x1 - x1, b.x2 - x1
-    strips = [patch[:iy1], patch[iy2:], patch[iy1:iy2, :ix1],
-              patch[iy1:iy2, ix2:]]
-    ring = np.concatenate([s.reshape(-1, 3) for s in strips if s.size > 0])
-    if ring.shape[0] < 24:
+    ring_lum = None
+    for sx1, sx2 in ((max(0, b.x1 - m), b.x1), (b.x2, min(W, b.x2 + m))):
+        if sx2 - sx1 < 3:
+            continue
+        strip = bgr[y1:y2, sx1:sx2].astype(np.float32).reshape(-1, 3)
+        if (strip.shape[0] >= 12
+                and float(strip.std(axis=0).max()) <= _BUBBLE_RING_STD):
+            ring_lum = float(strip.mean())
+            break
+    if ring_lum is None:
+        return False  # neither side sits on a solid pill fill
+    inner = bgr[y1:y2, max(0, b.x1):min(W, b.x2)].astype(np.float32)
+    if inner.size < 48:
         return False
-    if float(ring.std(axis=0).max()) > _BUBBLE_RING_STD:
-        return False  # padding isn't a solid pill fill
-    ring_lum = float(ring.mean())
-    inner = patch[iy1:iy2, ix1:ix2].mean(axis=2)
-    if inner.size < 16:
-        return False
-    bright = float(np.percentile(inner, 92))
-    dark = float(np.percentile(inner, 8))
+    lum = inner.mean(axis=2)
+    bright = float(np.percentile(lum, 92))
+    dark = float(np.percentile(lum, 8))
     return (bright - ring_lum > _BUBBLE_CONTRAST
             or ring_lum - dark > _BUBBLE_CONTRAST)
 

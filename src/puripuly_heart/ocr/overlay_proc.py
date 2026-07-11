@@ -179,6 +179,14 @@ def _is_ignored_name(text: str) -> bool:
         if n in _PLAYER_NAMES:
             return True
         names = list(_PLAYER_NAMES)
+    # FRAGMENT: the detector splits long mixed-script nameplates into pieces
+    # ('AL1S__（劳kei联结）' -> 'AL1S__' + '（劳kei联结）'). A box whose whole
+    # text is a contiguous piece of a roster name is that name's fragment —
+    # real sentences are never substrings of a display name.
+    if len(n) >= 4:
+        for cand in names:
+            if n in cand:
+                return True
     # FUZZY: OCR misreads stylized glyphs (especially CJK in names), so an
     # exact roster match is brittle. A whole-box string ~75% similar to a
     # known player, at comparable length, is that player.

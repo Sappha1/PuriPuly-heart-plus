@@ -2560,8 +2560,11 @@ def main() -> None:
                          daemon=True).start()
     threading.Thread(target=_source_watch_loop, daemon=True).start()
     threading.Thread(target=_shutdown_listener, daemon=True).start()
-    logger.info("[OCR] starting: window=%r parent=%s",
-                args.window or None, args.parent_pid or "none")
+    logger.info("[OCR] starting: window=%r parent=%s prewarm=%d bubbles=%d "
+                "foreign=%d names=%d pronouns=%d translate=%d",
+                args.window or None, args.parent_pid or "none",
+                _PREWARM[0], _BUBBLES_ONLY[0], _FOREIGN_ONLY[0],
+                _IGNORE_NAMES[0], _IGNORE_PRONOUNS[0], _XLAT_ENABLED[0])
     run(monitor_index=args.monitor, fps=args.fps, max_side=args.max_side,
         window_title=args.window or None)
 

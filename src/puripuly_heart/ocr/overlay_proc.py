@@ -152,6 +152,16 @@ def _is_pronoun_text(text: str) -> bool:
     return bool(toks) and all(t in _PRONOUN_TOKENS for t in toks)
 
 
+def _looks_truncated_bio(t: str) -> bool:
+    """VRChat machine-truncates long bio/pronoun fields with a trailing
+    ellipsis; chat bubbles are never cut that way. A SHORT text ending in a
+    truncation mark is nameplate bio ('microwave ov…', 'INTP /…')."""
+    if not (t.endswith("...") or t.endswith("..") or t.endswith("…")):
+        return False
+    core = _norm_name(t.rstrip(".…"))
+    return 0 < len(core) <= 16
+
+
 def _is_ignored_name(text: str) -> bool:
     if not _IGNORE_NAMES[0]:
         return False
@@ -159,6 +169,8 @@ def _is_ignored_name(text: str) -> bool:
     if not t:
         return False
     if _is_pronoun_text(t):
+        return True
+    if _looks_truncated_bio(t):
         return True
     n = _norm_name(t)
     if not n:

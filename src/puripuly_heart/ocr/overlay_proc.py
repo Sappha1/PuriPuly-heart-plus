@@ -238,7 +238,9 @@ def _players_loop(stop: threading.Event) -> None:
                                     added, total)
         except Exception as exc:
             logger.debug("[OCR] player log tail error: %s", exc)
-        stop.wait(2.0)
+        # Fast poll: a joining player's nameplate can be detected and
+        # recognized within ~1s — the roster must win that race.
+        stop.wait(0.5)
 
 
 def _is_own_language(text: str, tgt: str) -> bool:
@@ -1195,7 +1197,8 @@ class _Tracked:
     __slots__ = ("x1", "y1", "x2", "y2", "ax", "ay", "vx", "vy",
                  "moving", "calm_frames", "miss", "sig", "sig_bad", "tex_bad",
                  "last_confirm", "confirms", "jump_dx", "jump_dy", "jump_n",
-                 "uid", "text", "refined", "xlat", "namever", "namehit")
+                 "uid", "text", "refined", "xlat", "namever", "namehit",
+                 "text_at")
 
     def __init__(self, b: TextBox) -> None:
         self.x1, self.y1 = float(b.x1), float(b.y1)
@@ -1219,6 +1222,7 @@ class _Tracked:
         self.xlat = ""  # translated text (subtitle mode shows this)
         self.namever = -1  # roster version the namehit verdict was cached at
         self.namehit = False  # cached "this box is a player name" verdict
+        self.text_at = 0.0  # when recognition first delivered the text
 
     def advance(self, dx: float, dy: float, dt: float,
                 gx: float, gy: float) -> None:
@@ -1850,9 +1854,11 @@ def _track_loop(cap: _Capture, target: _Target, anchors: _Anchors,
                                 and abs((tr.x2 - tr.x1) - hit[2])
                                 < 0.3 * hit[2] + 8):
                             tr.text = hit[0]  # reborn box inherits its text
+                            tr.text_at = 0.0  # shown before — no first-hold
                     if tr.uid in _REC_OUT:
                         text, rrect = _REC_OUT.pop(tr.uid)
                         tr.text = text or "-"
+                        tr.text_at = now
                         # Apply the full-res edge refinement when the box is
                         # settled and the correction is within detection's
                         # quantization slop (a large delta means the box
@@ -1944,6 +1950,13 @@ def _track_loop(cap: _Capture, target: _Target, anchors: _Anchors,
                         continue
                     if _IGNORE_NAMES[0] and tr.namehit:
                         continue  # verdict cached in pass 1
+                    if (_IGNORE_NAMES[0] and len(_t) <= 24
+                            and now - tr.text_at < 0.8):
+                        # SHORT texts hold one roster beat before first
+                        # display: a just-joined player's name can be read
+                        # before their OnPlayerJoined line is parsed — give
+                        # the roster the chance to veto.
+                        continue
                 elif not tr.text and (_FOREIGN_ONLY[0] or _IGNORE_NAMES[0]):
                     # Content filters active + text not yet read: draw NOTHING
                     # until recognition classifies the box. Drawing first and

@@ -1530,33 +1530,170 @@ class DashboardView(ft.Row):
             self.on_toggle_ocr(on)
 
     def _on_ocr_right_click(self, e) -> None:
+        # Styled like the overlay right-click menu: label left, ON/OFF pill
+        # right, toggles apply in place (menu stays open).
         x, y = self._tap_xy(e)
         region_on = False
         if callable(self.on_ocr_region_state):
             with contextlib.suppress(Exception):
                 region_on = bool(self.on_ocr_region_state())
-        self._open_context_menu(
-            x, y,
-            [(t("dashboard.ocr.menu.vrchat_only"), self._ocr_vrchat_only,
-              self._toggle_ocr_vrchat_only),
-             (t("dashboard.ocr.menu.bubbles_only"), self._ocr_bubbles_only,
-              self._toggle_ocr_bubbles),
-             (t("dashboard.ocr.menu.foreign_only"), self._ocr_foreign_only,
-              self._toggle_ocr_foreign_only),
-             (t("dashboard.ocr.menu.ignore_names"), self._ocr_ignore_names,
-              self._toggle_ocr_ignore_names),
-             (t("dashboard.ocr.menu.ignore_pronouns"),
-              self._ocr_ignore_pronouns, self._toggle_ocr_ignore_pronouns),
-             (t("dashboard.ocr.menu.translate"), self._ocr_translate,
-              self._toggle_ocr_translate),
-             (t("dashboard.ocr.menu.prewarm"), self._ocr_prewarm,
-              self._toggle_ocr_prewarm),
-             (t("dashboard.ocr.menu.log_chat"), self.ocr_log_chat,
-              self._toggle_ocr_log_chat),
-             (t("dashboard.ocr.menu.region_set"), None,
-              self._set_ocr_region,
-              (region_on, self._toggle_ocr_region))],
+
+        def _section_row(label: str, control, top: int = 4) -> ft.Container:
+            return ft.Container(
+                content=ft.Row(
+                    [ft.Text(label, size=11, color=_TEXT_MUTED, expand=True),
+                     control],
+                    spacing=8,
+                    vertical_alignment=ft.CrossAxisAlignment.CENTER,
+                ),
+                padding=ft.padding.only(left=10, right=10, top=top, bottom=2),
+            )
+
+        def _guarded(fn, val):
+            try:
+                if callable(fn):
+                    fn(val)
+            except Exception:
+                import logging
+
+                logging.getLogger(__name__).exception(
+                    "[OCR] menu toggle failed")
+
+        def _bool_pill(initial: bool, on_change) -> ft.Container:
+            state = [bool(initial)]
+            lbl = ft.Text(
+                t("settings.option.on") if state[0]
+                else t("settings.option.off"),
+                size=11,
+                color=_TOGGLE_ON if state[0] else _TEXT_FAINT,
+                weight=ft.FontWeight.W_600,
+            )
+            box = ft.Container(
+                content=lbl,
+                padding=ft.padding.symmetric(horizontal=8, vertical=4),
+                border_radius=6,
+                border=ft.border.all(1, _TOGGLE_ON if state[0] else "#3a3b3f"),
+            )
+
+            def _click(_ev, _s=state, _l=lbl, _b=box):
+                _s[0] = not _s[0]
+                _l.value = (t("settings.option.on") if _s[0]
+                            else t("settings.option.off"))
+                _l.color = _TOGGLE_ON if _s[0] else _TEXT_FAINT
+                _b.border = ft.border.all(
+                    1, _TOGGLE_ON if _s[0] else "#3a3b3f")
+                with contextlib.suppress(Exception):
+                    _l.update()
+                    _b.update()
+                _guarded(on_change, _s[0])
+
+            box.on_click = _click
+            return box
+
+        def _on_vrchat(v: bool) -> None:
+            self._ocr_vrchat_only = v
+            self._save_ocr_pref("vrchat_only", v)
+            if callable(self.on_ocr_scope_change):
+                self.on_ocr_scope_change(v)
+
+        def _on_bubbles(v: bool) -> None:
+            self._ocr_bubbles_only = v
+            if callable(self.on_ocr_bubbles_change):
+                self.on_ocr_bubbles_change(v)
+
+        def _on_foreign(v: bool) -> None:
+            self._ocr_foreign_only = v
+            if callable(self.on_ocr_foreign_change):
+                self.on_ocr_foreign_change(v)
+
+        def _on_names(v: bool) -> None:
+            self._ocr_ignore_names = v
+            if callable(self.on_ocr_ignore_names_change):
+                self.on_ocr_ignore_names_change(v)
+
+        def _on_pronouns(v: bool) -> None:
+            self._ocr_ignore_pronouns = v
+            if callable(self.on_ocr_ignore_pronouns_change):
+                self.on_ocr_ignore_pronouns_change(v)
+
+        def _on_translate(v: bool) -> None:
+            self._ocr_translate = v
+            if callable(self.on_ocr_translate_change):
+                self.on_ocr_translate_change(v)
+
+        def _on_prewarm(v: bool) -> None:
+            self._ocr_prewarm = v
+            if callable(self.on_ocr_prewarm_change):
+                self.on_ocr_prewarm_change(v)
+
+        def _on_log(v: bool) -> None:
+            self.ocr_log_chat = v
+            self._save_ocr_pref("log_chat", v)
+
+        def _on_lock(_v: bool) -> None:
+            if callable(self.on_ocr_region_toggle):
+                self.on_ocr_region_toggle()
+
+        def _on_set_region(_ev) -> None:
+            _close = getattr(self, "_ocr_popover_close", None)
+            if callable(_close):
+                _close()
+            try:
+                self._set_ocr_region()
+            except Exception:
+                import logging
+
+                logging.getLogger(__name__).exception(
+                    "[OCR] region select failed")
+
+        set_btn = ft.Container(
+            content=ft.Icon(ft.Icons.HIGHLIGHT_ALT, size=15,
+                            color=_TEXT_PRIMARY),
+            padding=ft.padding.symmetric(horizontal=8, vertical=3),
+            border_radius=6,
+            border=ft.border.all(1, "#3a3b3f"),
+            on_click=_on_set_region,
         )
+        lock_pill = _bool_pill(region_on, _on_lock)
+
+        content = ft.Container(
+            content=ft.Column(
+                [
+                    _section_row(t("dashboard.ocr.menu.vrchat_only"),
+                                 _bool_pill(self._ocr_vrchat_only,
+                                            _on_vrchat), top=8),
+                    _section_row(t("dashboard.ocr.menu.bubbles_only"),
+                                 _bool_pill(self._ocr_bubbles_only,
+                                            _on_bubbles)),
+                    _section_row(t("dashboard.ocr.menu.foreign_only"),
+                                 _bool_pill(self._ocr_foreign_only,
+                                            _on_foreign)),
+                    _section_row(t("dashboard.ocr.menu.ignore_names"),
+                                 _bool_pill(self._ocr_ignore_names,
+                                            _on_names)),
+                    _section_row(t("dashboard.ocr.menu.ignore_pronouns"),
+                                 _bool_pill(self._ocr_ignore_pronouns,
+                                            _on_pronouns)),
+                    _section_row(t("dashboard.ocr.menu.translate"),
+                                 _bool_pill(self._ocr_translate,
+                                            _on_translate)),
+                    _section_row(t("dashboard.ocr.menu.prewarm"),
+                                 _bool_pill(self._ocr_prewarm, _on_prewarm)),
+                    _section_row(t("dashboard.ocr.menu.log_chat"),
+                                 _bool_pill(self.ocr_log_chat, _on_log)),
+                    _section_row(
+                        t("dashboard.ocr.menu.region_set"),
+                        ft.Row([set_btn, lock_pill], spacing=6, tight=True),
+                    ),
+                    ft.Container(height=6),
+                ],
+                spacing=0,
+                tight=True,
+                horizontal_alignment=ft.CrossAxisAlignment.STRETCH,
+            ),
+        )
+        self._ocr_popover_close = self._open_popover_at(
+            x, y, content, width=300.0)
 
     def _set_ocr_region(self) -> None:
         if not self._ocr_on:

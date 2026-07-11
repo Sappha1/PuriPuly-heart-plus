@@ -137,7 +137,13 @@ _PRONOUN_TOKENS = {
 
 
 def _norm_name(s: str) -> str:
-    return "".join(s.split()).replace("_", "").replace("-", "").casefold()
+    """Punctuation- and width-blind: '是伊花哦~' must match the logged
+    '是伊花哦～' (full-width tilde) and any OCR punctuation wobble. Only
+    letters/digits survive, full-width folded to half-width."""
+    import unicodedata
+
+    s = unicodedata.normalize("NFKC", s).casefold()
+    return "".join(c for c in s if c.isalnum())
 
 
 def _is_pronoun_text(text: str) -> bool:

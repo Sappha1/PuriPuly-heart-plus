@@ -533,6 +533,7 @@
   "dashboard.chat.received_ocr": "Received OCR",
   "dashboard.ocr.menu.vrchat_only": "Only while VRChat is focused",
   "dashboard.ocr.menu.bubbles_only": "VRChat bubbles only",
+  "dashboard.ocr.menu.foreign_only": "Foreign text only",
   "dashboard.ocr.menu.prewarm": "Pre-warm recognition (extra CPU)",
   "dashboard.ocr.menu.log_chat": "Log OCR to chat",
   "dashboard.ocr.menu.region_lock": "🔒 Lock to region (drag to set)",

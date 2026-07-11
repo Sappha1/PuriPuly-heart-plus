@@ -110,6 +110,28 @@ _XLAT_TRIES: dict[str, int] = {}
 _XLAT_TARGET = ["en"]
 _XLAT_SVC = ["bing"]
 _XLAT_WORKERS = 2
+# Foreign-only: once recognition shows a box's text is already in the user's
+# language, hide the box entirely — only text the user can't read gets boxed
+# (and translated). Detection itself is language-blind, so an own-language
+# box is visible for the ~1s until its text is first read.
+_FOREIGN_ONLY = [True]
+
+
+def _is_own_language(text: str, tgt: str) -> bool:
+    """Script-level check: is this text already readable for the target
+    language? Rough by design — it gates cosmetics and API-call skips."""
+    han = any("一" <= c <= "鿿" for c in text)
+    kana = any("぀" <= c <= "ヿ" for c in text)
+    hangul = any("가" <= c <= "힯" for c in text)
+    cyr = any("Ѐ" <= c <= "ӿ" for c in text)
+    t = (tgt or "en").lower()
+    if t.startswith("zh"):
+        return han and not kana
+    if t.startswith("ja"):
+        return kana or han
+    if t.startswith("ko"):
+        return hangul
+    return not (han or kana or hangul or cyr)  # latin-script targets
 # Feed for the app's chat panel: each completed translation is appended here
 # once; the app tails it and logs 'Received OCR' entries.
 _FEED_PATH = os.path.join(os.path.expanduser("~"), "AppData", "Local",
@@ -1704,9 +1726,7 @@ def _track_loop(cap: _Capture, target: _Target, anchors: _Anchors,
                         # Translation: once per unique string per session.
                         if not tr.xlat:
                             norm = tr.text.strip()
-                            tgt = _XLAT_TARGET[0].lower()
-                            if (tgt.startswith("en")
-                                    and all(ord(c) < 128 for c in norm)):
+                            if _is_own_language(norm, _XLAT_TARGET[0]):
                                 tr.xlat = norm  # already readable, no call
                             else:
                                 with _XLAT_LOCK:
@@ -1740,6 +1760,13 @@ def _track_loop(cap: _Capture, target: _Target, anchors: _Anchors,
                         del _REC_REQ[k]
             items = []
             for tr in tracked:
+                # Foreign-only: a box whose text is known to already be in
+                # the user's language is invisible (still tracked, so it
+                # never re-triggers recognition).
+                if (_FOREIGN_ONLY[0] and tr.text and tr.text != "-"
+                        and _is_own_language(tr.text.strip(),
+                                             _XLAT_TARGET[0])):
+                    continue
                 bx1, by1, bx2, by2 = tr.rect()
                 vx, vy = tr.velocity()
                 items.append((
@@ -2247,9 +2274,13 @@ def main() -> None:
     ap.add_argument("--bubbles-only", type=int, default=0,
                     help="1 = only box text that looks like a VRChat chat"
                          " bubble/nameplate (uniform pill + contrast)")
+    ap.add_argument("--foreign-only", type=int, default=1,
+                    help="1 = hide boxes whose recognized text is already in"
+                         " the user's language")
     args = ap.parse_args()
     _PREWARM[0] = bool(args.prewarm)
     _BUBBLES_ONLY[0] = bool(args.bubbles_only)
+    _FOREIGN_ONLY[0] = bool(args.foreign_only)
     _load_translation_prefs()
     # Log to a file: the subprocess runs windowless, so stderr goes nowhere.
     log_path = os.path.join(os.path.expanduser("~"), "AppData", "Local",

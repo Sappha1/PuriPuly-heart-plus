@@ -165,6 +165,7 @@ class TranslatorApp:
         self.view_dashboard.on_ocr_region_state = self._ocr_manager.has_region
         self.view_dashboard.on_ocr_bubbles_change = self._ocr_manager.set_bubbles_only
         self.view_dashboard.on_ocr_scope_change = self._ocr_manager.set_vrchat_only
+        self.view_dashboard.on_ocr_foreign_change = self._ocr_manager.set_foreign_only
         self.view_dashboard.on_overlay_lock_change = self._on_dashboard_overlay_lock_change
         self.view_dashboard.on_overlay_transparency_change = self._on_overlay_transparency_change
         self.view_dashboard.on_chatbox_send_peer_toggle = self._on_dashboard_chatbox_send_peer_toggle

@@ -487,6 +487,7 @@
   "dashboard.chat.received_ocr": "OCR 已接收",
   "dashboard.ocr.menu.vrchat_only": "仅在 VRChat 处于焦点时",
   "dashboard.ocr.menu.bubbles_only": "仅 VRChat 气泡",
+  "dashboard.ocr.menu.foreign_only": "仅外语文本",
   "dashboard.ocr.menu.prewarm": "预热识别（额外占用 CPU）",
   "dashboard.ocr.menu.log_chat": "将 OCR 记录到聊天",
   "dashboard.ocr.menu.region_lock": "🔒 锁定到区域（拖动设置）",

@@ -90,6 +90,18 @@ class OcrOverlayManager:
         self.prewarm = bool(_p.get("prewarm", True))
         # Only box text that looks like a VRChat chat bubble / nameplate.
         self.bubbles_only = bool(_p.get("bubbles_only", True))
+        # Hide boxes whose text is already in the user's language.
+        self.foreign_only = bool(_p.get("foreign_only", True))
+
+    def set_foreign_only(self, enabled: bool) -> None:
+        enabled = bool(enabled)
+        if enabled == self.foreign_only:
+            return
+        self.foreign_only = enabled
+        save_ocr_pref("foreign_only", enabled)
+        if self.running:
+            self.stop()
+            self.start()
 
     def set_prewarm(self, enabled: bool) -> None:
         enabled = bool(enabled)
@@ -163,7 +175,8 @@ class OcrOverlayManager:
                 "--fps", str(self._fps), "--monitor", str(self._monitor),
                 "--parent-pid", str(os.getpid()),
                 "--prewarm", "1" if self.prewarm else "0",
-                "--bubbles-only", "1" if self.bubbles_only else "0"]
+                "--bubbles-only", "1" if self.bubbles_only else "0",
+                "--foreign-only", "1" if self.foreign_only else "0"]
         if self.vrchat_only:
             args += ["--window", "VRChat"]
         env = dict(os.environ)

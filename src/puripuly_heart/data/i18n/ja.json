@@ -488,6 +488,7 @@
   "dashboard.chat.received_ocr": "OCR受信",
   "dashboard.ocr.menu.vrchat_only": "VRChatがフォーカス中のみ",
   "dashboard.ocr.menu.bubbles_only": "VRChatバブルのみ",
+  "dashboard.ocr.menu.foreign_only": "外国語テキストのみ",
   "dashboard.ocr.menu.prewarm": "認識のプリウォーム（CPU使用増）",
   "dashboard.ocr.menu.log_chat": "OCRをチャットに記録",
   "dashboard.ocr.menu.region_lock": "🔒 領域にロック（ドラッグで設定）",

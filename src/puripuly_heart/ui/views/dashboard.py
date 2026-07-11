@@ -1553,10 +1553,9 @@ class DashboardView(ft.Row):
               self._toggle_ocr_prewarm),
              (t("dashboard.ocr.menu.log_chat"), self.ocr_log_chat,
               self._toggle_ocr_log_chat),
-             (t("dashboard.ocr.menu.region_lock"), region_on,
-              self._toggle_ocr_region),
-             (t("dashboard.ocr.menu.region_set"), False,
-              self._set_ocr_region)],
+             (t("dashboard.ocr.menu.region_set"), None,
+              self._set_ocr_region,
+              (region_on, self._toggle_ocr_region))],
         )
 
     def _set_ocr_region(self) -> None:
@@ -2280,8 +2279,10 @@ class DashboardView(ft.Row):
             return sum(13.5 if ord(ch) > 0x2E7F else 6.6 for ch in lbl)
 
         longest_px = max((_label_px(lbl) for (lbl, *_rest) in options), default=66.0)
-        has_check = any(checked is not None for (_l, checked, _cb) in options)
-        width = min(420.0, max(132.0, longest_px + (22.0 if has_check else 0.0) + 30.0))
+        has_check = any(opt[1] is not None for opt in options)
+        has_trail = any(len(opt) > 3 and opt[3] is not None for opt in options)
+        width = min(420.0, max(132.0, longest_px + (22.0 if has_check else 0.0)
+                               + (28.0 if has_trail else 0.0) + 30.0))
         holder: dict = {}
 
         def _guard(fn):
@@ -2298,11 +2299,32 @@ class DashboardView(ft.Row):
                         "[OCR] context-menu action failed")
             return _inner
 
-        rows = [
-            self._menu_item(lbl, checked, _guard(cb),
-                            lambda: holder.get("close", lambda: None)())
-            for (lbl, checked, cb) in options
-        ]
+        def _close():
+            holder.get("close", lambda: None)()
+
+        rows = []
+        for opt in options:
+            lbl, checked, cb = opt[0], opt[1], opt[2]
+            row = self._menu_item(lbl, checked, _guard(cb), _close)
+            trail = opt[3] if len(opt) > 3 else None
+            if trail is not None:
+                # Trailing toggle icon on the same row (e.g. the region
+                # lock beside "Set OCR region") — one line, two actions.
+                t_on, t_cb = trail
+                t_fn = _guard(t_cb)
+                row.content.tight = False
+                row.content.controls.append(ft.Container(expand=True))
+                row.content.controls.append(ft.Container(
+                    content=ft.Icon(
+                        ft.Icons.LOCK if t_on else ft.Icons.LOCK_OPEN,
+                        size=14,
+                        color=_TOGGLE_ON if t_on else _TEXT_FAINT,
+                    ),
+                    padding=ft.padding.symmetric(horizontal=5, vertical=1),
+                    border_radius=4,
+                    on_click=lambda _e, f=t_fn: (_close(), f()),
+                ))
+            rows.append(row)
         close = self._open_popover_at(x, y, ft.Column(rows, spacing=1, tight=True), width=width)
         holder["close"] = close
 

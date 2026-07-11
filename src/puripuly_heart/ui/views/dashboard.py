@@ -700,7 +700,18 @@ class DashboardView(ft.Row):
             alignment=ft.MainAxisAlignment.CENTER,
         )
         self._lbl_translate_to = ft.Text(t("dashboard.translate_to"), size=10, color="#c8c9cc")
-        _translate_to_label = self._lbl_translate_to
+        _translate_to_info = ft.Container(
+            content=ft.Icon(ft.Icons.INFO_OUTLINE, size=11, color=_TEXT_FAINT),
+            tooltip=t("dashboard.tooltip.translate_to"),
+            padding=ft.padding.only(left=2),
+        )
+        self._static_tooltip_registry.append(
+            (_translate_to_info, "dashboard.tooltip.translate_to"))
+        _translate_to_label = ft.Row(
+            [self._lbl_translate_to, _translate_to_info],
+            spacing=0,
+            vertical_alignment=ft.CrossAxisAlignment.CENTER,
+        )
         lang_panel = ft.Container(
             content=ft.Column(
                 [

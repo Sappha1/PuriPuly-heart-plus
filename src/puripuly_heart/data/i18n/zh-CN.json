@@ -603,6 +603,7 @@
   "settings.filter_peer_by_target_languages.off": "关",
   "dashboard.your_language": "你的语言",
   "dashboard.translate_to": "翻译为",
+  "dashboard.tooltip.translate_to": "您的文本将被翻译成的语言。使用 + 添加更多目标语言。",
   "dashboard.you_speak": "翻译至",
   "dashboard.peer_translate_to": "翻译成",
   "dashboard.download": "下载",

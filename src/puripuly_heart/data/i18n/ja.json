@@ -603,6 +603,7 @@
   "settings.filter_peer_by_target_languages.off": "オフ",
   "dashboard.your_language": "あなたの言語",
   "dashboard.translate_to": "翻訳先",
+  "dashboard.tooltip.translate_to": "テキストの翻訳先の言語。+ で対象言語を追加できます。",
   "dashboard.you_speak": "翻訳先",
   "dashboard.peer_translate_to": "翻訳先",
   "dashboard.download": "ダウンロード",

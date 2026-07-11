@@ -603,6 +603,7 @@
   "settings.filter_peer_by_target_languages.off": "꺼짐",
   "dashboard.your_language": "내 언어",
   "dashboard.translate_to": "번역 대상",
+  "dashboard.tooltip.translate_to": "텍스트가 번역될 언어입니다. +로 대상 언어를 추가할 수 있습니다.",
   "dashboard.you_speak": "번역 대상",
   "dashboard.peer_translate_to": "번역할 언어",
   "dashboard.download": "다운로드",

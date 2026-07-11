@@ -1848,7 +1848,7 @@ def _track_loop(cap: _Capture, target: _Target, anchors: _Anchors,
                                         _XLAT_QUEUED.add(norm)
                                         _XLAT_PENDING.append(norm)
                     elif ((_PREWARM[0] or _SUBTITLE_ON[0]) and not tr.text
-                          and tr.confirms >= 2
+                          and tr.confirms >= 1
                           and tr.uid not in _REC_REQ and pending < 48):
                         bx1, by1, bx2, by2 = tr.rect()
                         _REC_REQ[tr.uid] = (
@@ -1880,6 +1880,12 @@ def _track_loop(cap: _Capture, target: _Target, anchors: _Anchors,
                         continue
                     if _is_ignored_name(_t):
                         continue
+                elif not tr.text and (_FOREIGN_ONLY[0] or _IGNORE_NAMES[0]):
+                    # Content filters active + text not yet read: draw NOTHING
+                    # until recognition classifies the box. Drawing first and
+                    # erasing later flashed a red outline on every nameplate
+                    # for the ~1s classification gap.
+                    continue
                 bx1, by1, bx2, by2 = tr.rect()
                 vx, vy = tr.velocity()
                 items.append((

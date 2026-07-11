@@ -4457,15 +4457,10 @@ class DashboardView(ft.Row):
         status = self._local_stt_notice_status
         if status is None:
             return None, None
-        # A model warm-up while every voice channel is off shows no banner —
-        # the grey MIC/PEER dots say "off", so "loading speech model" reads
-        # wrong. The banner (re)appears via _sync_notice if a channel turns on
-        # mid-load; downloads stay visible regardless (rare and actionable).
-        if (
-            status == "loading"
-            and not getattr(self, "is_stt_on", False)
-            and not self._peer_intent_enabled()
-        ):
+        # "Loading speech model" shows NO banner at all anymore — the PEER
+        # row's loading ring already communicates it (user preference).
+        # Downloads/errors stay visible (rare and actionable).
+        if status == "loading":
             return None, None
         notice_key_by_status = {
             "missing": "dashboard.local_stt_notice_missing",

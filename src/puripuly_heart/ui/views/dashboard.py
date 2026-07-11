@@ -3924,15 +3924,119 @@ class DashboardView(ft.Row):
             self.on_chatbox_send_peer_toggle(self._chatbox_send_peer)
 
     def _on_loopback_right_click(self, e=None) -> None:
+        # Same pill style as the OCR/overlay menus: option pills for the
+        # all/selected pair (radio), On/Off pill for translation-only —
+        # everything applies in place, menu stays open.
         x, y = self._tap_xy(e)
-        self._open_context_menu(x, y, [
-            (t("dashboard.loopback.menu.all"), not self._loopback_selected_only,
-             lambda: self._set_loopback_mode(False)),
-            (t("dashboard.loopback.menu.selected"), self._loopback_selected_only,
-             lambda: self._set_loopback_mode(True)),
-            (t("dashboard.loopback.menu.translation_only"), self._loopback_translation_only,
-             self._toggle_loopback_translation_only),
-        ])
+
+        mode_pills: dict[bool, ft.Container] = {}
+
+        def _style_mode_pill(pill: ft.Container, active: bool) -> None:
+            pill.content.color = _TOGGLE_ON if active else _TEXT_MUTED
+            pill.bgcolor = "#1a2e2a" if active else ft.Colors.TRANSPARENT
+            pill.border = ft.border.all(
+                1, _TOGGLE_ON if active else "#3a3b3f")
+
+        def _make_mode_pill(selected_only: bool, label: str) -> ft.Container:
+            active = self._loopback_selected_only == selected_only
+            pill = ft.Container(
+                content=ft.Text(label, size=11,
+                                color=_TOGGLE_ON if active else _TEXT_MUTED,
+                                weight=ft.FontWeight.W_600, no_wrap=True),
+                padding=ft.padding.symmetric(horizontal=8, vertical=4),
+                border_radius=6,
+                bgcolor="#1a2e2a" if active else ft.Colors.TRANSPARENT,
+                border=ft.border.all(1, _TOGGLE_ON if active else "#3a3b3f"),
+            )
+
+            def _click(_ev, _sel=selected_only):
+                if self._loopback_selected_only == _sel:
+                    return
+                try:
+                    self._set_loopback_mode(_sel)
+                except Exception:
+                    import logging
+
+                    logging.getLogger(__name__).exception(
+                        "[Loopback] mode change failed")
+                for key, p in mode_pills.items():
+                    _style_mode_pill(p, key == _sel)
+                    with contextlib.suppress(Exception):
+                        p.update()
+
+            pill.on_click = _click
+            mode_pills[selected_only] = pill
+            return pill
+
+        to_state = [self._loopback_translation_only]
+        to_lbl = ft.Text(
+            t("settings.option.on") if to_state[0] else t("settings.option.off"),
+            size=11,
+            color=_TOGGLE_ON if to_state[0] else _TEXT_FAINT,
+            weight=ft.FontWeight.W_600,
+        )
+        to_pill = ft.Container(
+            content=to_lbl,
+            padding=ft.padding.symmetric(horizontal=8, vertical=4),
+            border_radius=6,
+            border=ft.border.all(1, _TOGGLE_ON if to_state[0] else "#3a3b3f"),
+        )
+
+        def _to_click(_ev):
+            to_state[0] = not to_state[0]
+            to_lbl.value = (t("settings.option.on") if to_state[0]
+                            else t("settings.option.off"))
+            to_lbl.color = _TOGGLE_ON if to_state[0] else _TEXT_FAINT
+            to_pill.border = ft.border.all(
+                1, _TOGGLE_ON if to_state[0] else "#3a3b3f")
+            with contextlib.suppress(Exception):
+                to_lbl.update()
+                to_pill.update()
+            try:
+                self._toggle_loopback_translation_only()
+            except Exception:
+                import logging
+
+                logging.getLogger(__name__).exception(
+                    "[Loopback] translation-only toggle failed")
+
+        to_pill.on_click = _to_click
+
+        content = ft.Container(
+            content=ft.Column(
+                [
+                    ft.Container(
+                        content=_make_mode_pill(
+                            False, t("dashboard.loopback.menu.all")),
+                        padding=ft.padding.only(left=10, right=10, top=8,
+                                                bottom=2),
+                    ),
+                    ft.Container(
+                        content=_make_mode_pill(
+                            True, t("dashboard.loopback.menu.selected")),
+                        padding=ft.padding.only(left=10, right=10, top=2,
+                                                bottom=2),
+                    ),
+                    ft.Container(
+                        content=ft.Row(
+                            [ft.Text(t("dashboard.loopback.menu.translation_only"),
+                                     size=11, color=_TEXT_MUTED, expand=True),
+                             to_pill],
+                            spacing=8,
+                            vertical_alignment=ft.CrossAxisAlignment.CENTER,
+                        ),
+                        padding=ft.padding.only(left=10, right=10, top=4,
+                                                bottom=2),
+                    ),
+                    ft.Container(height=6),
+                ],
+                spacing=0,
+                tight=True,
+                horizontal_alignment=ft.CrossAxisAlignment.STRETCH,
+            ),
+        )
+        self._loopback_popover_close = self._open_popover_at(
+            x, y, content, width=300.0)
 
     def _set_loopback_mode(self, selected_only: bool) -> None:
         self._loopback_selected_only = bool(selected_only)

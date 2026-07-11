@@ -2826,6 +2826,57 @@ async def main_gui(page: ft.Page, *, config_path, debug_ui_preview: bool = False
     except Exception:
         pass
 
+    # OCR chat feed: the overlay appends each completed OCR translation to a
+    # jsonl file; tail it and log 'Received OCR' chat entries (toggleable via
+    # the OCR pill's right-click menu).
+    async def _ocr_feed_poller() -> None:
+        import asyncio as _aio
+        import json as _json
+        import os as _os
+
+        feed = _os.path.join(_os.path.expanduser("~"), "AppData", "Local",
+                             "puripuly-heart", "ocr_feed.jsonl")
+        try:  # start at the end — don't replay previous sessions
+            pos = _os.path.getsize(feed)
+        except Exception:
+            pos = 0
+        while True:
+            await _aio.sleep(1.0)
+            try:
+                size = _os.path.getsize(feed)
+            except Exception:
+                continue
+            if size < pos:
+                pos = 0  # a new overlay session truncated/recreated the file
+            if size == pos:
+                continue
+            try:
+                with open(feed, encoding="utf-8") as fh:
+                    fh.seek(pos)
+                    chunk = fh.read()
+                    pos = fh.tell()
+                for line in chunk.splitlines():
+                    line = line.strip()
+                    if not line:
+                        continue
+                    try:
+                        d = _json.loads(line)
+                    except Exception:
+                        continue
+                    if not getattr(app.view_dashboard, "ocr_log_chat", True):
+                        continue
+                    app.view_dashboard.append_chat_entry(
+                        channel="ocr", source="ocr",
+                        source_text=str(d.get("src", "")),
+                        translated_text=str(d.get("dst", "")))
+            except Exception:
+                pass
+
+    try:
+        page.run_task(_ocr_feed_poller)
+    except Exception:
+        pass
+
     # Warn at launch when a SAVED channel language isn't supported by that
     # channel's STT provider (e.g. an Indonesian preset restored onto the local
     # Qwen model). Interactive changes already warn; a bad saved combo didn't.

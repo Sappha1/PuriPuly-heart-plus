@@ -470,6 +470,7 @@ class DashboardView(ft.Row):
         self._ocr_prewarm = True  # background recognition (extra CPU)
         self._ocr_bubbles_only = True  # only VRChat-bubble-shaped text
         self._ocr_vrchat_only = True  # scan only the focused VRChat window
+        self.ocr_log_chat = True  # log translated OCR captures to the chat
         self.on_language_change = None
         self.on_recent_languages_change = None
         self.on_nav_change: Callable[[int], None] | None = None
@@ -1519,15 +1520,20 @@ class DashboardView(ft.Row):
                 region_on = bool(self.on_ocr_region_state())
         self._open_context_menu(
             x, y,
-            [("Only while VRChat is focused", self._ocr_vrchat_only,
+            [(t("dashboard.ocr.menu.vrchat_only"), self._ocr_vrchat_only,
               self._toggle_ocr_vrchat_only),
-             ("VRChat bubbles only", self._ocr_bubbles_only,
+             (t("dashboard.ocr.menu.bubbles_only"), self._ocr_bubbles_only,
               self._toggle_ocr_bubbles),
-             ("Pre-warm recognition (extra CPU)", self._ocr_prewarm,
+             (t("dashboard.ocr.menu.prewarm"), self._ocr_prewarm,
               self._toggle_ocr_prewarm),
-             ("🔒 Lock to region (drag to set)", region_on,
+             (t("dashboard.ocr.menu.log_chat"), self.ocr_log_chat,
+              self._toggle_ocr_log_chat),
+             (t("dashboard.ocr.menu.region_lock"), region_on,
               self._toggle_ocr_region)],
         )
+
+    def _toggle_ocr_log_chat(self) -> None:
+        self.ocr_log_chat = not self.ocr_log_chat
 
     def _toggle_ocr_vrchat_only(self) -> None:
         self._ocr_vrchat_only = not self._ocr_vrchat_only
@@ -2320,10 +2326,19 @@ class DashboardView(ft.Row):
         import datetime as _dt
         timestamp = _dt.datetime.now().strftime("%H:%M")
         is_peer = channel == "peer"
-        label_color = _RECV_COLOR if is_peer else _SENT_COLOR
-        direction = t("dashboard.chat.received") if is_peer else t("dashboard.chat.sent")
+        is_ocr = channel == "ocr"
+        if is_ocr:
+            label_color = "#6ab7e8"  # light blue — OCR capture entries
+            direction = t("dashboard.chat.received_ocr")
+        else:
+            label_color = _RECV_COLOR if is_peer else _SENT_COLOR
+            direction = (t("dashboard.chat.received") if is_peer
+                         else t("dashboard.chat.sent"))
         # Determine source/target language for transliteration
-        if is_peer:
+        if is_ocr:
+            src_lang = ""  # OCR can't know the speaker's language — auto
+            tgt_lang = self._source_lang_code  # translated into user's lang
+        elif is_peer:
             src_lang = self._peer_source_lang_code  # may be "" (auto detect)
             tgt_lang = self._effective_peer_target_lang_code()  # always has a value
         else:
@@ -2375,7 +2390,7 @@ class DashboardView(ft.Row):
         )
 
         # If a pending sent entry exists and this is a self-channel result, update it in-place
-        if not is_peer and self._pending_sent_col is not None:
+        if not is_peer and not is_ocr and self._pending_sent_col is not None:
             self._pending_version += 1  # cancel timeout
             col = self._pending_sent_col
             self._pending_sent_col = None

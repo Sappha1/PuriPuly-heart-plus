@@ -110,6 +110,10 @@ _XLAT_TRIES: dict[str, int] = {}
 _XLAT_TARGET = ["en"]
 _XLAT_SVC = ["bing"]
 _XLAT_WORKERS = 2
+# Feed for the app's chat panel: each completed translation is appended here
+# once; the app tails it and logs 'Received OCR' entries.
+_FEED_PATH = os.path.join(os.path.expanduser("~"), "AppData", "Local",
+                          "puripuly-heart", "ocr_feed.jsonl")
 
 
 def _load_translation_prefs() -> None:
@@ -154,6 +158,16 @@ def _xlat_loop(stop: threading.Event) -> None:
             with _XLAT_LOCK:
                 _XLAT_CACHE[text] = out or text
                 _XLAT_QUEUED.discard(text)
+            if out and out.strip() != text.strip():
+                try:
+                    import json as _json
+
+                    with open(_FEED_PATH, "a", encoding="utf-8") as fh:
+                        fh.write(_json.dumps(
+                            {"src": text, "dst": out},
+                            ensure_ascii=False) + "\n")
+                except Exception:
+                    pass
         except Exception as exc:
             logger.debug("[OCR] translate failed (%r): %s", text[:40], exc)
             with _XLAT_LOCK:

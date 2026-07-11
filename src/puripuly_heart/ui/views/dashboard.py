@@ -467,10 +467,18 @@ class DashboardView(ft.Row):
         self.on_ocr_bubbles_change = None  # (prototype) callback(bool)
         self.on_ocr_scope_change = None  # (prototype) callback(bool)
         self._ocr_on = False
-        self._ocr_prewarm = True  # background recognition (extra CPU)
-        self._ocr_bubbles_only = True  # only VRChat-bubble-shaped text
-        self._ocr_vrchat_only = True  # scan only the focused VRChat window
-        self.ocr_log_chat = True  # log translated OCR captures to the chat
+        # OCR menu preferences persist in the overlay config file (shared
+        # with the manager, which reads the same keys for launch args).
+        try:
+            from puripuly_heart.ocr.manager import load_ocr_prefs
+
+            _ocr_p = load_ocr_prefs()
+        except Exception:
+            _ocr_p = {}
+        self._ocr_prewarm = bool(_ocr_p.get("prewarm", True))
+        self._ocr_bubbles_only = bool(_ocr_p.get("bubbles_only", True))
+        self._ocr_vrchat_only = bool(_ocr_p.get("vrchat_only", True))
+        self.ocr_log_chat = bool(_ocr_p.get("log_chat", True))
         self.on_language_change = None
         self.on_recent_languages_change = None
         self.on_nav_change: Callable[[int], None] | None = None
@@ -1534,9 +1542,18 @@ class DashboardView(ft.Row):
 
     def _toggle_ocr_log_chat(self) -> None:
         self.ocr_log_chat = not self.ocr_log_chat
+        self._save_ocr_pref("log_chat", self.ocr_log_chat)
+
+    @staticmethod
+    def _save_ocr_pref(key: str, value) -> None:
+        with contextlib.suppress(Exception):
+            from puripuly_heart.ocr.manager import save_ocr_pref
+
+            save_ocr_pref(key, value)
 
     def _toggle_ocr_vrchat_only(self) -> None:
         self._ocr_vrchat_only = not self._ocr_vrchat_only
+        self._save_ocr_pref("vrchat_only", self._ocr_vrchat_only)
         if callable(self.on_ocr_scope_change):
             self.on_ocr_scope_change(self._ocr_vrchat_only)
 

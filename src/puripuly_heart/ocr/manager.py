@@ -36,6 +36,30 @@ def _shutdown_event(set_it: bool) -> None:
             kernel32.ResetEvent(evt)
 
 
+def load_ocr_prefs() -> dict:
+    """OCR menu preferences, persisted in the overlay config file so they
+    survive app restarts. Shared by the manager and the dashboard menu."""
+    try:
+        import json
+
+        with open(_CONFIG_PATH, encoding="utf-8") as fh:
+            cfg = json.load(fh)
+        return cfg if isinstance(cfg, dict) else {}
+    except Exception:
+        return {}
+
+
+def save_ocr_pref(key: str, value) -> None:
+    with contextlib.suppress(Exception):
+        import json
+
+        cfg = load_ocr_prefs()
+        cfg[key] = value
+        os.makedirs(os.path.dirname(_CONFIG_PATH), exist_ok=True)
+        with open(_CONFIG_PATH, "w", encoding="utf-8") as fh:
+            json.dump(cfg, fh)
+
+
 def _fire_event(name: str) -> None:
     with contextlib.suppress(Exception):
         kernel32 = ctypes.windll.kernel32
@@ -58,19 +82,21 @@ class OcrOverlayManager:
         self._fps = fps
         self._monitor = monitor
         # Defaults per user preference: scan only the focused VRChat window,
-        # and only bubble-shaped text (both toggleable via right-click).
-        self.vrchat_only = True
+        # and only bubble-shaped text — persisted across restarts.
+        _p = load_ocr_prefs()
+        self.vrchat_only = bool(_p.get("vrchat_only", True))
         # Pre-warm recognition: read text in the background while subtitles
         # are toggled off — instant Alt+T at the cost of CPU bursts.
-        self.prewarm = True
+        self.prewarm = bool(_p.get("prewarm", True))
         # Only box text that looks like a VRChat chat bubble / nameplate.
-        self.bubbles_only = True
+        self.bubbles_only = bool(_p.get("bubbles_only", True))
 
     def set_prewarm(self, enabled: bool) -> None:
         enabled = bool(enabled)
         if enabled == self.prewarm:
             return
         self.prewarm = enabled
+        save_ocr_pref("prewarm", enabled)
         if self.running:
             self.stop()
             self.start()
@@ -80,6 +106,7 @@ class OcrOverlayManager:
         if enabled == self.bubbles_only:
             return
         self.bubbles_only = enabled
+        save_ocr_pref("bubbles_only", enabled)
         if self.running:
             self.stop()
             self.start()

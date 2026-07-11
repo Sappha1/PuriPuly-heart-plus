@@ -1929,12 +1929,18 @@ def _track_loop(cap: _Capture, target: _Target, anchors: _Anchors,
 
             def _under_name(bx1: float, by1: float, bx2: float,
                             by2: float) -> bool:
+                # TIGHT window: real status/pronoun lines hug their name and
+                # center under it. A generous window swallowed an actual chat
+                # bubble that happened to hang below a suppressed nameplate.
                 for ax1, ay1, ax2, ay2 in name_rects:
                     ah = max(1.0, ay2 - ay1)
-                    if not (-0.3 * ah <= by1 - ay2 <= 1.3 * ah):
+                    if not (-0.3 * ah <= by1 - ay2 <= 0.6 * ah):
                         continue
                     ov = min(bx2, ax2) - max(bx1, ax1)
-                    if ov > 0.25 * max(1.0, bx2 - bx1):
+                    if ov <= 0.25 * max(1.0, bx2 - bx1):
+                        continue
+                    coff = abs((bx1 + bx2) - (ax1 + ax2)) / 2.0
+                    if coff <= 0.5 * max(ax2 - ax1, bx2 - bx1):
                         return True
                 return False
 

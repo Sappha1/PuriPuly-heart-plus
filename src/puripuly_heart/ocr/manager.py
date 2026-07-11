@@ -96,6 +96,8 @@ class OcrOverlayManager:
         # Hide boxes that are purely a player name / a pronoun-bio field.
         self.ignore_names = bool(_p.get("ignore_names", True))
         self.ignore_pronouns = bool(_p.get("ignore_pronouns", True))
+        # Master OCR translation switch (off = raw recognized text, no calls).
+        self.translate = bool(_p.get("translate", True))
 
     def set_ignore_pronouns(self, enabled: bool) -> None:
         enabled = bool(enabled)
@@ -106,8 +108,6 @@ class OcrOverlayManager:
         if self.running:
             self.stop()
             self.start()
-        # Master OCR translation switch (off = raw recognized text, no calls).
-        self.translate = bool(_p.get("translate", True))
 
     def set_translate(self, enabled: bool) -> None:
         enabled = bool(enabled)

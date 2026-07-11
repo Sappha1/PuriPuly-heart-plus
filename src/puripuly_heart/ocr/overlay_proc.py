@@ -875,6 +875,16 @@ class _Target:
                 y1 = max(0, min(self._cap.height, y1))
                 x2 = max(0, min(self._cap.width, x2))
                 y2 = max(0, min(self._cap.height, y2))
+                # Region lock applies in window mode too: scan only where
+                # the VRChat window and the user's rectangle agree (it was
+                # silently ignored here — dragging "did nothing").
+                with self._lock:
+                    r = self._region if self._region_on else None
+                if r is not None:
+                    ix1, iy1 = max(x1, r[0]), max(y1, r[1])
+                    ix2, iy2 = min(x2, r[2]), min(y2, r[3])
+                    if ix2 - ix1 >= 64 and iy2 - iy1 >= 64:
+                        x1, y1, x2, y2 = ix1, iy1, ix2, iy2
                 if x2 - x1 >= 64 and y2 - y1 >= 64:
                     rect_new = (x1, y1, x2, y2)
                     occl_new = self._occlusions_for(
@@ -2146,6 +2156,17 @@ def run(monitor_index: int = 1, fps: float = 0.0, max_side: int = _TRACK_SIDE,
         # clicks, so the veil is what makes the drag land on us.
         canvas.configure(bg="#161616")
         root.attributes("-alpha", 0.35)
+        # Screen-center crosshair: a reference point for aiming the region
+        # (e.g. around the game's own crosshair).
+        cxp, cyp = win_w / 2, win_h / 2
+        canvas.create_line(cxp - 20, cyp, cxp + 20, cyp,
+                           fill=_BOX_COLOR, width=2, tags="selaid")
+        canvas.create_line(cxp, cyp - 20, cxp, cyp + 20,
+                           fill=_BOX_COLOR, width=2, tags="selaid")
+        canvas.create_oval(cxp - 4, cyp - 4, cxp + 4, cyp + 4,
+                           fill="#ffffff", outline=_BOX_COLOR,
+                           tags="selaid")
+        logger.info("[OCR] region selection active — drag to set, Esc cancels")
         with contextlib_suppress():
             root.focus_force()
 
@@ -2153,11 +2174,14 @@ def run(monitor_index: int = 1, fps: float = 0.0, max_side: int = _TRACK_SIDE,
         sel["active"] = False
         sel["start"] = None
         canvas.delete("selrect")
+        canvas.delete("selaid")
         canvas.configure(bg=_TRANSPARENT_KEY)
         root.attributes("-alpha", 1.0)
         _set_click_through(True)
         if region is not None:
             target.set_region(region)
+        else:
+            logger.info("[OCR] region selection cancelled")
 
     def _sel_press(ev) -> None:
         if sel["active"]:

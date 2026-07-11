@@ -174,9 +174,12 @@ def _is_ignored_name(text: str) -> bool:
         import difflib
 
         for cand in names:
+            # 0.70 admits two misread glyphs in a 7-char name (measured:
+            # OCR read 娧渶hargo for 婲淉hargo = 0.714) while the length
+            # guard and whole-box scope keep real sentences out.
             if (abs(len(cand) - len(n)) <= 2
                     and difflib.SequenceMatcher(None, n, cand).ratio()
-                    >= 0.75):
+                    >= 0.70):
                 return True
     return False
 
@@ -1892,6 +1895,31 @@ def _track_loop(cap: _Capture, target: _Target, anchors: _Anchors,
                 for k in list(_REC_REQ):
                     if k not in live:
                         del _REC_REQ[k]
+            # Pass 1 — suppressed-name rects. Anything sitting directly
+            # BENEATH a suppressed name is nameplate chrome (status line,
+            # pronouns, bio) and is suppressed with it, whatever it says —
+            # content matching can't catch "INTP /<name>&…" bios, geometry can.
+            name_rects: list[tuple[float, float, float, float]] = []
+            if _IGNORE_NAMES[0]:
+                for tr in tracked:
+                    if tr.text and tr.text != "-":
+                        if tr.namever != _NAMES_VER[0]:
+                            tr.namehit = _is_ignored_name(tr.text.strip())
+                            tr.namever = _NAMES_VER[0]
+                        if tr.namehit:
+                            name_rects.append(tr.rect())
+
+            def _under_name(bx1: float, by1: float, bx2: float,
+                            by2: float) -> bool:
+                for ax1, ay1, ax2, ay2 in name_rects:
+                    ah = max(1.0, ay2 - ay1)
+                    if not (-0.3 * ah <= by1 - ay2 <= 1.3 * ah):
+                        continue
+                    ov = min(bx2, ax2) - max(bx1, ax1)
+                    if ov > 0.25 * max(1.0, bx2 - bx1):
+                        return True
+                return False
+
             items = []
             for tr in tracked:
                 # Hide (still tracked, never re-recognized): boxes whose text
@@ -1902,14 +1930,8 @@ def _track_loop(cap: _Capture, target: _Target, anchors: _Anchors,
                     if (_FOREIGN_ONLY[0]
                             and _is_own_language(_t, _XLAT_TARGET[0])):
                         continue
-                    if _IGNORE_NAMES[0]:
-                        # Fuzzy roster check is O(roster) — cache the verdict
-                        # per box, refresh when the roster grows.
-                        if tr.namever != _NAMES_VER[0]:
-                            tr.namehit = _is_ignored_name(_t)
-                            tr.namever = _NAMES_VER[0]
-                        if tr.namehit:
-                            continue
+                    if _IGNORE_NAMES[0] and tr.namehit:
+                        continue  # verdict cached in pass 1
                 elif not tr.text and (_FOREIGN_ONLY[0] or _IGNORE_NAMES[0]):
                     # Content filters active + text not yet read: draw NOTHING
                     # until recognition classifies the box. Drawing first and
@@ -1917,6 +1939,8 @@ def _track_loop(cap: _Capture, target: _Target, anchors: _Anchors,
                     # for the ~1s classification gap.
                     continue
                 bx1, by1, bx2, by2 = tr.rect()
+                if name_rects and _under_name(bx1, by1, bx2, by2):
+                    continue  # nameplate chrome under a suppressed name
                 vx, vy = tr.velocity()
                 items.append((
                     (bx1 * inv_scale + off_x) + cap.left,

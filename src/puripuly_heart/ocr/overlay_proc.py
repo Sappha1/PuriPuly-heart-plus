@@ -127,7 +127,8 @@ _FOREIGN_ONLY = [True]
 # only whole-box matches drop.
 _IGNORE_NAMES = [True]
 _NAMES_LOCK = threading.Lock()
-_PLAYER_NAMES: set[str] = set()
+_PLAYER_NAMES: set[str] = set()  # exact-match roster (VRCX seed + session)
+_PLAYER_NAMES_FUZZY: set[str] = set()  # current session only (fuzzy pool)
 _NAMES_VER = [0]  # bumped when the roster grows (cached verdicts refresh)
 _VRC_LOG_DIR = os.path.join(os.path.expanduser("~"), "AppData", "LocalLow",
                             "VRChat", "VRChat")
@@ -178,7 +179,10 @@ def _is_ignored_name(text: str) -> bool:
     with _NAMES_LOCK:
         if n in _PLAYER_NAMES:
             return True
-        names = list(_PLAYER_NAMES)
+        # Fuzzy only against the CURRENT session's small roster — the VRCX
+        # seed can hold tens of thousands of names, too many to scan and
+        # too risky for similarity matching.
+        names = list(_PLAYER_NAMES_FUZZY)
     # FUZZY: OCR misreads stylized glyphs (especially CJK in names), so an
     # exact roster match is brittle. A whole-box string ~75% similar to a
     # known player, at comparable length, is that player.
@@ -201,6 +205,29 @@ def _players_loop(stop: threading.Event) -> None:
     to keep the roster of names to ignore. Reads the whole newest log first
     (players who joined before OCR started), then follows appended lines."""
     import glob
+
+    # One-time seed from VRCX's gamelog (if the user runs VRCX): every player
+    # name ever encountered, so names still suppress after VRChat's own log
+    # rotates. Exact matching only; absence of VRCX is silently fine.
+    try:
+        import sqlite3
+
+        db = os.path.join(os.environ.get("APPDATA", ""), "VRCX",
+                          "VRCX.sqlite3")
+        if os.path.exists(db):
+            con = sqlite3.connect(f"file:{db}?mode=ro", uri=True)
+            rows = con.execute(
+                "select distinct display_name from gamelog_join_leave"
+            ).fetchall()
+            con.close()
+            with _NAMES_LOCK:
+                for (nm,) in rows:
+                    if nm and 0 < len(nm) <= 64:
+                        _PLAYER_NAMES.add(_norm_name(nm))
+            _NAMES_VER[0] += 1
+            logger.info("[OCR] VRCX roster seed: %d names", len(rows))
+    except Exception as exc:
+        logger.debug("[OCR] VRCX roster seed skipped: %s", exc)
 
     cur_path = None
     fh = None
@@ -227,8 +254,10 @@ def _players_loop(stop: threading.Event) -> None:
                         if m:
                             name = m.group(1).strip()
                             if 0 < len(name) <= 64:
+                                nn = _norm_name(name)
                                 with _NAMES_LOCK:
-                                    _PLAYER_NAMES.add(_norm_name(name))
+                                    _PLAYER_NAMES.add(nn)
+                                    _PLAYER_NAMES_FUZZY.add(nn)
                                 added += 1
                     if added:
                         _NAMES_VER[0] += 1

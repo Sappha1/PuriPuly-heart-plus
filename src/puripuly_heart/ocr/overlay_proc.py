@@ -82,6 +82,13 @@ _BUBBLES_ONLY = [False]
 _BUBBLE_RING_STD = 20.0
 _BUBBLE_CONTRAST = 40.0
 _BUBBLE_MIN_ASPECT = 1.2
+# VRChat pill color gate: bubbles/nameplates are mid-brightness with a
+# neutral-to-BLUE tint. Excludes the solid panels that beat the uniformity
+# test — near-black leaderboards, near-white screens, warm wood/cream walls.
+_BUBBLE_LUM_MIN = 45.0
+_BUBBLE_LUM_MAX = 215.0
+_BUBBLE_WARM_MAX = 6.0   # red may exceed blue by at most this
+_BUBBLE_SPREAD_MAX = 60.0  # channel spread cap: pills are desaturated
 # Reborn-box text inheritance: the detector blinks on borderline text (tiny
 # chips like "..."), killing and re-creating its box every second or two —
 # each rebirth used to visibly reset to pending and re-recognize. A box born
@@ -683,10 +690,19 @@ def _looks_like_bubble(bgr: np.ndarray, b: TextBox) -> bool:
         if sx2 - sx1 < 3:
             continue
         strip = bgr[y1:y2, sx1:sx2].astype(np.float32).reshape(-1, 3)
-        if (strip.shape[0] >= 12
-                and float(strip.std(axis=0).max()) <= _BUBBLE_RING_STD):
-            ring_lum = float(strip.mean())
-            break
+        if (strip.shape[0] < 12
+                or float(strip.std(axis=0).max()) > _BUBBLE_RING_STD):
+            continue
+        mbgr = strip.mean(axis=0)  # B, G, R
+        lum = float(mbgr.mean())
+        if not (_BUBBLE_LUM_MIN <= lum <= _BUBBLE_LUM_MAX):
+            continue  # near-black panel / near-white screen
+        if float(mbgr[2] - mbgr[0]) > _BUBBLE_WARM_MAX:
+            continue  # warm fill (wood, cream, paper) — not a VRChat pill
+        if float(mbgr.max() - mbgr.min()) > _BUBBLE_SPREAD_MAX:
+            continue  # saturated world material
+        ring_lum = lum
+        break
     if ring_lum is None:
         return False  # neither side sits on a solid pill fill
     inner = bgr[y1:y2, max(0, b.x1):min(W, b.x2)].astype(np.float32)

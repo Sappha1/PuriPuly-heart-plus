@@ -481,6 +481,7 @@ class DashboardView(ft.Row):
         self._ocr_foreign_only = bool(_ocr_p.get("foreign_only", True))
         self.ocr_log_chat = bool(_ocr_p.get("log_chat", True))
         self.on_ocr_foreign_change = None  # (prototype) callback(bool)
+        self.on_ocr_region_set = None  # (prototype) callback() — fresh drag
         self.on_language_change = None
         self.on_recent_languages_change = None
         self.on_nav_change: Callable[[int], None] | None = None
@@ -1541,8 +1542,16 @@ class DashboardView(ft.Row):
              (t("dashboard.ocr.menu.log_chat"), self.ocr_log_chat,
               self._toggle_ocr_log_chat),
              (t("dashboard.ocr.menu.region_lock"), region_on,
-              self._toggle_ocr_region)],
+              self._toggle_ocr_region),
+             (t("dashboard.ocr.menu.region_set"), False,
+              self._set_ocr_region)],
         )
+
+    def _set_ocr_region(self) -> None:
+        if not self._ocr_on:
+            self._on_ocr_btn_click(None)
+        if callable(self.on_ocr_region_set):
+            self.on_ocr_region_set()
 
     def _toggle_ocr_foreign_only(self) -> None:
         self._ocr_foreign_only = not self._ocr_foreign_only

@@ -22,6 +22,7 @@ _SHUTDOWN_EVENT = "PuriPulyHeart_OCR_Shutdown"
 # Region lock control (handled by the overlay): start drag-selection / clear.
 _SELECT_REGION_EVENT = "PuriPulyHeart_OCR_SelectRegion"
 _CLEAR_REGION_EVENT = "PuriPulyHeart_OCR_ClearRegion"
+_ENABLE_REGION_EVENT = "PuriPulyHeart_OCR_EnableRegion"
 _CONFIG_PATH = os.path.join(os.path.expanduser("~"), "AppData", "Local",
                             "puripuly-heart", "ocr_overlay_config.json")
 
@@ -124,31 +125,35 @@ class OcrOverlayManager:
             self.start()
 
     def has_region(self) -> bool:
-        try:
-            import json
+        r = load_ocr_prefs().get("region")
+        return isinstance(r, list) and len(r) == 4
 
-            with open(_CONFIG_PATH, encoding="utf-8") as fh:
-                r = json.load(fh).get("region")
-            return isinstance(r, list) and len(r) == 4
-        except Exception:
-            return False
+    def region_enabled(self) -> bool:
+        p = load_ocr_prefs()
+        r = p.get("region")
+        return (isinstance(r, list) and len(r) == 4
+                and bool(p.get("region_enabled", True)))
 
     def toggle_region(self) -> None:
-        """No region set: start drag-selection in the overlay (starting it if
-        needed). Region set: clear back to whole screen."""
-        if self.has_region():
+        """Checkbox behavior: flip the lock on/off, REMEMBERING the last
+        dragged rectangle. Only falls back to drag-selection when no
+        rectangle has ever been set."""
+        if self.region_enabled():
             if self.running:
                 _fire_event(_CLEAR_REGION_EVENT)
             else:
-                with contextlib.suppress(Exception):
-                    import json
-
-                    with open(_CONFIG_PATH, encoding="utf-8") as fh:
-                        cfg = json.load(fh)
-                    cfg["region"] = None
-                    with open(_CONFIG_PATH, "w", encoding="utf-8") as fh:
-                        json.dump(cfg, fh)
+                save_ocr_pref("region_enabled", False)
             return
+        if self.has_region():
+            if self.running:
+                _fire_event(_ENABLE_REGION_EVENT)
+            else:
+                save_ocr_pref("region_enabled", True)
+            return
+        self.select_region()
+
+    def select_region(self) -> None:
+        """Always start a fresh drag (the 'Set region' menu item)."""
         if not self.running:
             self.start()
         _fire_event(_SELECT_REGION_EVENT)

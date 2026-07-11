@@ -204,7 +204,8 @@ def _xlat_loop(stop: threading.Event) -> None:
 # The app signals these named events; selection happens in-overlay (the
 # window temporarily becomes clickable and dims while the user drags).
 _SELECT_REGION_EVENT = "PuriPulyHeart_OCR_SelectRegion"
-_CLEAR_REGION_EVENT = "PuriPulyHeart_OCR_ClearRegion"
+_CLEAR_REGION_EVENT = "PuriPulyHeart_OCR_ClearRegion"  # disables, keeps rect
+_ENABLE_REGION_EVENT = "PuriPulyHeart_OCR_EnableRegion"  # re-arm saved rect
 _SELECT_REQ = [False]
 
 
@@ -542,27 +543,48 @@ class _Target:
         # Region lock (whole-screen mode only): restrict OCR to a
         # user-dragged rectangle, persisted in the config file.
         self._region: tuple[int, int, int, int] | None = None
+        self._region_on = False
         try:
-            r = _load_config().get("region")
+            cfg = _load_config()
+            r = cfg.get("region")
             if (isinstance(r, list) and len(r) == 4
                     and r[2] - r[0] >= 64 and r[3] - r[1] >= 64):
                 self._region = (int(r[0]), int(r[1]), int(r[2]), int(r[3]))
-                logger.info("[OCR] region lock restored: %s", self._region)
+                self._region_on = bool(cfg.get("region_enabled", True))
+                logger.info("[OCR] region restored: %s (enabled=%s)",
+                            self._region, self._region_on)
         except Exception:
             pass
         if self._title:
             self._rect = None  # resolved by poll()
 
     def set_region(self, rect: tuple[int, int, int, int] | None) -> None:
+        """A fresh drag: store the rect AND arm the lock."""
+        if rect is None:
+            self.set_region_enabled(False)
+            return
         with self._lock:
             self._region = rect
-        _save_config_key("region", list(rect) if rect else None)
-        logger.info("[OCR] region lock %s", rect if rect else "cleared")
+            self._region_on = True
+        _save_config_key("region", list(rect))
+        _save_config_key("region_enabled", True)
+        logger.info("[OCR] region set: %s", rect)
+        self.poll()
+
+    def set_region_enabled(self, enabled: bool) -> None:
+        """Toggle the lock without forgetting the saved rectangle."""
+        with self._lock:
+            if enabled and self._region is None:
+                return  # nothing saved to re-arm
+            self._region_on = bool(enabled)
+        _save_config_key("region_enabled", bool(enabled))
+        logger.info("[OCR] region lock %s (rect kept)",
+                    "enabled" if enabled else "disabled")
         self.poll()
 
     def region(self) -> tuple[int, int, int, int] | None:
         with self._lock:
-            return self._region
+            return self._region if self._region_on else None
 
     @staticmethod
     def _occlusions_for(hwnd: int, sx1: int, sy1: int, sx2: int, sy2: int
@@ -648,7 +670,7 @@ class _Target:
             # Whole-screen mode: the "window" is the monitor, or the locked
             # region when one is set. Epoch bumps resync both loops.
             with self._lock:
-                r = self._region
+                r = self._region if self._region_on else None
                 rect_new = r if r else (0, 0, self._cap.width,
                                         self._cap.height)
                 rect_new = (max(0, rect_new[0]), max(0, rect_new[1]),
@@ -1997,7 +2019,11 @@ def run(monitor_index: int = 1, fps: float = 0.0, max_side: int = _TRACK_SIDE,
                      daemon=True).start()
     threading.Thread(target=_wait_event_loop,
                      args=(_CLEAR_REGION_EVENT,
-                           lambda: target.set_region(None)),
+                           lambda: target.set_region_enabled(False)),
+                     daemon=True).start()
+    threading.Thread(target=_wait_event_loop,
+                     args=(_ENABLE_REGION_EVENT,
+                           lambda: target.set_region_enabled(True)),
                      daemon=True).start()
     for _w in range(_XLAT_WORKERS):
         threading.Thread(target=_xlat_loop, args=(stop,),

@@ -162,7 +162,8 @@ class TranslatorApp:
         self.view_dashboard.on_toggle_ocr = self._ocr_manager.toggle
         self.view_dashboard.on_ocr_prewarm_change = self._ocr_manager.set_prewarm
         self.view_dashboard.on_ocr_region_toggle = self._ocr_manager.toggle_region
-        self.view_dashboard.on_ocr_region_state = self._ocr_manager.has_region
+        self.view_dashboard.on_ocr_region_state = self._ocr_manager.region_enabled
+        self.view_dashboard.on_ocr_region_set = self._ocr_manager.select_region
         self.view_dashboard.on_ocr_bubbles_change = self._ocr_manager.set_bubbles_only
         self.view_dashboard.on_ocr_scope_change = self._ocr_manager.set_vrchat_only
         self.view_dashboard.on_ocr_foreign_change = self._ocr_manager.set_foreign_only

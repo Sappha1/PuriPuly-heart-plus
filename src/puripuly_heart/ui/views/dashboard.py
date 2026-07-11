@@ -464,8 +464,10 @@ class DashboardView(ft.Row):
         self.on_ocr_prewarm_change = None  # (prototype) callback(bool)
         self.on_ocr_region_toggle = None  # (prototype) callback()
         self.on_ocr_region_state = None  # (prototype) -> bool (region set?)
+        self.on_ocr_bubbles_change = None  # (prototype) callback(bool)
         self._ocr_on = False
         self._ocr_prewarm = True  # background recognition (extra CPU)
+        self._ocr_bubbles_only = False  # only VRChat-bubble-shaped text
         self.on_language_change = None
         self.on_recent_languages_change = None
         self.on_nav_change: Callable[[int], None] | None = None
@@ -1517,9 +1519,16 @@ class DashboardView(ft.Row):
             x, y,
             [("Pre-warm recognition (extra CPU)", self._ocr_prewarm,
               self._toggle_ocr_prewarm),
+             ("VRChat bubbles only", self._ocr_bubbles_only,
+              self._toggle_ocr_bubbles),
              ("🔒 Lock to region (drag to set)", region_on,
               self._toggle_ocr_region)],
         )
+
+    def _toggle_ocr_bubbles(self) -> None:
+        self._ocr_bubbles_only = not self._ocr_bubbles_only
+        if callable(self.on_ocr_bubbles_change):
+            self.on_ocr_bubbles_change(self._ocr_bubbles_only)
 
     def _toggle_ocr_prewarm(self) -> None:
         self._ocr_prewarm = not self._ocr_prewarm

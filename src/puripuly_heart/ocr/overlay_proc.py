@@ -74,6 +74,14 @@ _REC_WORKERS = 3  # parallel CPU rec: session.run releases the GIL
 # right-click menu exposes it (--prewarm 0 disables: recognition then only
 # runs while subtitle mode is on).
 _PREWARM = [True]
+# Bubble filter (--bubbles-only): keep only boxes that look like VRChat chat
+# bubbles / nameplates — a text line sitting on a UNIFORM semi-opaque pill
+# with strong text contrast. World text (signs, posters, HUD junk) sits on
+# varied pixels and fails the ring test; the square mute icon fails aspect.
+_BUBBLES_ONLY = [False]
+_BUBBLE_RING_STD = 20.0
+_BUBBLE_CONTRAST = 40.0
+_BUBBLE_MIN_ASPECT = 1.35
 # Reborn-box text inheritance: the detector blinks on borderline text (tiny
 # chips like "..."), killing and re-creating its box every second or two —
 # each rebirth used to visibly reset to pending and re-recognize. A box born
@@ -656,6 +664,39 @@ def _text_plausible(b: TextBox, det_w: int, det_h: int) -> bool:
     return True
 
 
+def _looks_like_bubble(bgr: np.ndarray, b: TextBox) -> bool:
+    """Chat bubble test: uniform pill padding around the text + white-on-pill
+    (or dark-on-pill) contrast + wide aspect. Judged on the detection image
+    where the box was found."""
+    H, W = bgr.shape[:2]
+    bw, bh = b.x2 - b.x1, b.y2 - b.y1
+    if bh <= 0 or bw < _BUBBLE_MIN_ASPECT * bh:
+        return False
+    m = max(3, bh // 3)
+    x1, y1 = max(0, b.x1 - m), max(0, b.y1 - m)
+    x2, y2 = min(W, b.x2 + m), min(H, b.y2 + m)
+    if x2 - x1 < 8 or y2 - y1 < 8:
+        return False
+    patch = bgr[y1:y2, x1:x2].astype(np.float32)
+    iy1, iy2 = b.y1 - y1, b.y2 - y1
+    ix1, ix2 = b.x1 - x1, b.x2 - x1
+    strips = [patch[:iy1], patch[iy2:], patch[iy1:iy2, :ix1],
+              patch[iy1:iy2, ix2:]]
+    ring = np.concatenate([s.reshape(-1, 3) for s in strips if s.size > 0])
+    if ring.shape[0] < 24:
+        return False
+    if float(ring.std(axis=0).max()) > _BUBBLE_RING_STD:
+        return False  # padding isn't a solid pill fill
+    ring_lum = float(ring.mean())
+    inner = patch[iy1:iy2, ix1:ix2].mean(axis=2)
+    if inner.size < 16:
+        return False
+    bright = float(np.percentile(inner, 92))
+    dark = float(np.percentile(inner, 8))
+    return (bright - ring_lum > _BUBBLE_CONTRAST
+            or ring_lum - dark > _BUBBLE_CONTRAST)
+
+
 def _rec_loop(cap: _Capture, detector: TextDetector,
               stop: threading.Event) -> None:
     """Recognition worker: reads the requested boxes' text with the LOCAL
@@ -752,6 +793,9 @@ def _detect_loop(cap: _Capture, target: _Target, anchors: _Anchors,
                     det_bgr[dy1:dy2, dx1:dx2] = 0
             raw = detector.detect(det_bgr)
             shaped = [b for b in raw if _text_plausible(b, det_w, det_h)]
+            if _BUBBLES_ONLY[0]:
+                shaped = [b for b in shaped
+                          if _looks_like_bubble(det_bgr, b)]
             # RECOGNITION GATE: actually READ each candidate; only regions
             # producing legible characters at decent confidence earn a box.
             # Crops come from the FULL-RES frame (not the downscaled detection
@@ -2048,8 +2092,12 @@ def main() -> None:
                     help="1 = recognize in background while subtitles are off"
                          " (instant Alt+T, bursts of CPU); 0 = recognize only"
                          " while subtitle mode is on")
+    ap.add_argument("--bubbles-only", type=int, default=0,
+                    help="1 = only box text that looks like a VRChat chat"
+                         " bubble/nameplate (uniform pill + contrast)")
     args = ap.parse_args()
     _PREWARM[0] = bool(args.prewarm)
+    _BUBBLES_ONLY[0] = bool(args.bubbles_only)
     # Log to a file: the subprocess runs windowless, so stderr goes nowhere.
     log_path = os.path.join(os.path.expanduser("~"), "AppData", "Local",
                             "puripuly-heart", "ocr_overlay.log")

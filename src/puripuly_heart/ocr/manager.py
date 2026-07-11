@@ -63,12 +63,23 @@ class OcrOverlayManager:
         # Pre-warm recognition: read text in the background while subtitles
         # are toggled off — instant Alt+T at the cost of CPU bursts.
         self.prewarm = True
+        # Only box text that looks like a VRChat chat bubble / nameplate.
+        self.bubbles_only = False
 
     def set_prewarm(self, enabled: bool) -> None:
         enabled = bool(enabled)
         if enabled == self.prewarm:
             return
         self.prewarm = enabled
+        if self.running:
+            self.stop()
+            self.start()
+
+    def set_bubbles_only(self, enabled: bool) -> None:
+        enabled = bool(enabled)
+        if enabled == self.bubbles_only:
+            return
+        self.bubbles_only = enabled
         if self.running:
             self.stop()
             self.start()
@@ -124,7 +135,8 @@ class OcrOverlayManager:
         args = ["-m", "puripuly_heart.ocr.overlay_proc",
                 "--fps", str(self._fps), "--monitor", str(self._monitor),
                 "--parent-pid", str(os.getpid()),
-                "--prewarm", "1" if self.prewarm else "0"]
+                "--prewarm", "1" if self.prewarm else "0",
+                "--bubbles-only", "1" if self.bubbles_only else "0"]
         if self.vrchat_only:
             args += ["--window", "VRChat"]
         env = dict(os.environ)

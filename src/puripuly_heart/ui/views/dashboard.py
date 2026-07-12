@@ -511,6 +511,8 @@ class DashboardView(ft.Row):
             "ocr_color_trans": str(_ocr_p.get("ocr_color_trans", "")),
             "ocr_color_pinyin": str(_ocr_p.get("ocr_color_pinyin", "")),
             "ocr_color_pronoun": str(_ocr_p.get("ocr_color_pronoun", "")),
+            "ocr_pinyin_tone": str(_ocr_p.get("ocr_pinyin_tone", 1)),
+            "ocr_pinyin_group": str(_ocr_p.get("ocr_pinyin_group", 1)),
         }
         self.on_ocr_style_change = None  # (prototype) callback(key, value)
         self.ocr_log_chat = bool(_ocr_p.get("log_chat", True))
@@ -1963,6 +1965,20 @@ class DashboardView(ft.Row):
                 return t("dashboard.ocr.match_original")
             return _color_name(v)
 
+        def _mk_style_bool(pref_key: str,
+                           default_on: bool = True) -> ft.Container:
+            cur = str(self._ocr_style.get(
+                pref_key, "1" if default_on else "0")) \
+                not in ("0", "False", "false")
+
+            def _cb(v: bool) -> None:
+                self._ocr_style[pref_key] = "1" if v else "0"
+                if callable(self.on_ocr_style_change):
+                    _guarded(lambda vv: self.on_ocr_style_change(
+                        pref_key, vv), 1 if v else 0)
+
+            return _bool_pill(cur, _cb)
+
         def _mk_line_color_row(pref_key: str, title: str,
                                inherit_label: str) -> ft.Container:
             def _lbl(v) -> str:
@@ -2060,6 +2076,10 @@ class DashboardView(ft.Row):
                 _mk_line_color_row("ocr_color_pronoun",
                                    t("dashboard.ocr.color.pronoun"),
                                    t("dashboard.ocr.color.inherit")),
+                _mk_row(t("dashboard.ocr.pinyin.tones"),
+                        _mk_style_bool("ocr_pinyin_tone")),
+                _mk_row(t("dashboard.ocr.pinyin.group"),
+                        _mk_style_bool("ocr_pinyin_group")),
                 ft.Container(height=6),
             ]
             self._ocr_style_popover_close = self._open_popover_at(

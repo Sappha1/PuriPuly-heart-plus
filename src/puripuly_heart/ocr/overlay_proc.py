@@ -165,15 +165,52 @@ def _line_color(kind: str, base: str, tcol: str, pron: str) -> str:
     return v
 
 
+_PY_TONE = [True]  # tone marks (nǐ hǎo) — matches the chat log's pinyin
+_PY_GROUP = [True]  # jieba word grouping (nǐhǎo ma vs nǐ hǎo ma)
+_JIEBA_OK = [False]  # set once the ~1s dictionary load finished (warm thread)
+
+
 def _pinyin_of(text: str) -> str:
     try:
-        if any("一" <= c <= "鿿" for c in text):
-            from pypinyin import lazy_pinyin
+        if not any("一" <= c <= "鿿" for c in text):
+            return ""
+        from pypinyin import Style, lazy_pinyin
 
-            return " ".join(lazy_pinyin(text))
+        style = Style.TONE if _PY_TONE[0] else Style.NORMAL
+        if _PY_GROUP[0] and _JIEBA_OK[0]:
+            # Word-grouped like the chat log: 朋友 -> péngyǒu. Only once
+            # jieba is warm — its first cut loads a 5MB dict and this runs
+            # under the rec claim lock.
+            try:
+                import jieba
+
+                toks = ["".join(lazy_pinyin(w, style=style))
+                        for w in jieba.cut(text) if w.strip()]
+                return " ".join(tk for tk in toks if tk)
+            except Exception:
+                pass
+        return " ".join(lazy_pinyin(text, style=style))
     except Exception:
         pass
     return ""
+
+
+def _warm_pinyin() -> None:
+    """Background: load pypinyin + jieba dictionaries so the first real
+    subtitle doesn't stall the track loop."""
+    try:
+        from pypinyin import Style, lazy_pinyin
+
+        lazy_pinyin("你好", style=Style.TONE)
+    except Exception:
+        pass
+    try:
+        import jieba
+
+        list(jieba.cut("你好世界"))
+        _JIEBA_OK[0] = True
+    except Exception:
+        pass
 _DEFAULT_TRANSLATE_KEY = "T"
 _VK_MENU = 0x12  # Alt
 _CONFIG_PATH = os.path.join(os.path.expanduser("~"), "AppData", "Local",
@@ -559,6 +596,14 @@ def _apply_prefs(cfg: dict) -> None:
             v = str(cfg.get(key) or "")
             if v in ("", "auto") or _re.fullmatch(r"#[0-9a-fA-F]{6}", v):
                 ref[0] = v
+    for key, ref in (("ocr_pinyin_tone", _PY_TONE),
+                     ("ocr_pinyin_group", _PY_GROUP)):
+        if key in cfg:
+            try:
+                ref[0] = bool(int(cfg.get(key))) \
+                    if str(cfg.get(key)).isdigit() else bool(cfg.get(key))
+            except Exception:
+                pass
     logger.info("[OCR] prefs applied live: prewarm=%d bubbles=%d foreign=%d "
                 "names=%d pronouns=%d translate=%d",
                 _PREWARM[0], _BUBBLES_ONLY[0], _FOREIGN_ONLY[0],
@@ -2815,6 +2860,7 @@ def run(monitor_index: int = 1, fps: float = 0.0, max_side: int = _TRACK_SIDE,
                      daemon=True).start()
     threading.Thread(target=_prtscn_loop, args=(cap, state, stop),
                      daemon=True).start()
+    threading.Thread(target=_warm_pinyin, daemon=True).start()
     threading.Thread(target=_wait_event_loop,
                      args=(_SELECT_REGION_EVENT,
                            lambda: _SELECT_REQ.__setitem__(0, True)),

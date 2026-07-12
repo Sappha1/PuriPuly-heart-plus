@@ -558,6 +558,8 @@
   "dashboard.ocr.color.pronoun": "Pronoun color",
   "dashboard.ocr.color.inherit": "Same as text color",
   "dashboard.ocr.color.default": "Default",
+  "dashboard.ocr.pinyin.tones": "Pinyin tone marks",
+  "dashboard.ocr.pinyin.group": "Group pinyin words",
   "dashboard.ocr.state": "Status",
   "dashboard.ocr.state.on": "Scanning",
   "dashboard.ocr.state.idle": "Not scanning",

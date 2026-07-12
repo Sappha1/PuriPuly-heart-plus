@@ -512,6 +512,8 @@
   "dashboard.ocr.color.pronoun": "代词颜色",
   "dashboard.ocr.color.inherit": "与文字颜色相同",
   "dashboard.ocr.color.default": "默认",
+  "dashboard.ocr.pinyin.tones": "拼音声调符号",
+  "dashboard.ocr.pinyin.group": "拼音按词分组",
   "dashboard.ocr.state": "状态",
   "dashboard.ocr.state.on": "扫描中",
   "dashboard.ocr.state.idle": "未在扫描",

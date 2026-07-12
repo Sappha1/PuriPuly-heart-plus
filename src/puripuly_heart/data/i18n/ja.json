@@ -513,6 +513,8 @@
   "dashboard.ocr.color.pronoun": "代名詞の色",
   "dashboard.ocr.color.inherit": "テキスト色と同じ",
   "dashboard.ocr.color.default": "デフォルト",
+  "dashboard.ocr.pinyin.tones": "ピンイン声調記号",
+  "dashboard.ocr.pinyin.group": "ピンインを単語でまとめる",
   "dashboard.ocr.state": "状態",
   "dashboard.ocr.state.on": "スキャン中",
   "dashboard.ocr.state.idle": "スキャンしていません",

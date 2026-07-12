@@ -796,9 +796,15 @@ class _Target:
             elif isinstance(cfg.get("region"), list):
                 r = cfg["region"]
                 if len(r) == 4 and r[2] - r[0] >= 64 and r[3] - r[1] >= 64:
-                    self._regions[""] = {
-                        "rect": [int(v) for v in r],
-                        "on": bool(cfg.get("region_enabled", True))}
+                    entry = {"rect": [int(v) for v in r],
+                             "on": bool(cfg.get("region_enabled", True))}
+                    # Legacy single region: seed BOTH the whole-screen slot
+                    # and the configured target window's slot, so the old
+                    # rectangle keeps working after per-window migration.
+                    self._regions[""] = dict(entry)
+                    wt = str(cfg.get("window_title") or "") or (title or "")
+                    if wt:
+                        self._regions[wt] = dict(entry)
             if self._regions:
                 logger.info("[OCR] regions restored: %s",
                             {k: v["on"] for k, v in self._regions.items()})
@@ -876,6 +882,7 @@ class _Target:
         user32 = ctypes.windll.user32
         GWL_EXSTYLE = -20
         WS_EX_TRANSPARENT = 0x00000020
+        WS_EX_LAYERED = 0x00080000
         DWMWA_CLOAKED = 14
         order: list[int] = []
 
@@ -892,8 +899,17 @@ class _Target:
             try:
                 if not user32.IsWindowVisible(hw):
                     continue
-                if user32.GetWindowLongW(hw, GWL_EXSTYLE) & WS_EX_TRANSPARENT:
+                exs = user32.GetWindowLongW(hw, GWL_EXSTYLE)
+                if exs & WS_EX_TRANSPARENT:
                     continue  # click-through overlays (incl. our own boxes)
+                if exs & WS_EX_LAYERED:
+                    # Toasts and game-overlay hosts (Discord/Steam popups,
+                    # notification banners) are layered windows; several
+                    # keep a screen-sized 'visible' host alive after the
+                    # toast, which blanked the ENTIRE scan region and made
+                    # OCR 'randomly die'. Real occluding app windows are
+                    # not layered.
+                    continue
                 cloaked = wintypes.DWORD(0)
                 try:
                     ctypes.windll.dwmapi.DwmGetWindowAttribute(
@@ -1059,7 +1075,11 @@ class _Target:
                 self._rect = rect_new
                 self._epoch += 1
             self._fg = fg
-            self._occl = occl_new if rect_new is not None else []
+            new_occl = occl_new if rect_new is not None else []
+            if len(new_occl) != len(self._occl):
+                logger.info("[OCR] occlusions: %d -> %d %s",
+                            len(self._occl), len(new_occl), new_occl[:4])
+            self._occl = new_occl
         if rect_new is None and not self._warned:
             self._warned = True
             logger.info("[OCR] window '%s' not found — boxes hidden until it appears",

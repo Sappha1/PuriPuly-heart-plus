@@ -1934,13 +1934,91 @@ class DashboardView(ft.Row):
             [OptionItem(value=k, label=v, description="", disabled=False)
              for k, v in _scan_mode_labels.items()],
             "scan_mode", lambda v: _scan_mode_labels.get(v, v))
-        _bind_letters = [chr(c) for c in range(ord("A"), ord("Z") + 1)]
-        scan_bind_btn = _modal_row_btn(
-            str(self._ocr_style.get("scan_bind", "E")),
-            t("dashboard.ocr.scan.bind"),
-            [OptionItem(value=c, label=c, description="", disabled=False)
-             for c in _bind_letters],
-            "scan_bind", lambda v: str(v))
+        # Bind RECORDER: click, then press the actual combo (modifiers
+        # included, e.g. Alt+E). Escape clears the bind (= always active).
+        _bind_txt = ft.Text(
+            str(self._ocr_style.get("scan_bind", "E")) or "—",
+            size=11, color=_TOGGLE_ON, weight=ft.FontWeight.W_600,
+            no_wrap=True, overflow=ft.TextOverflow.ELLIPSIS,
+        )
+        scan_bind_btn = _summary_btn(_bind_txt)
+
+        def _start_bind_record(_ev) -> None:
+            if not self.page:
+                return
+            _bind_txt.value = "…"
+            with contextlib.suppress(Exception):
+                _bind_txt.update()
+            prev_handler = self.page.on_keyboard_event
+
+            def _finish(combo: str) -> None:
+                self.page.on_keyboard_event = prev_handler
+                self._ocr_style["scan_bind"] = combo
+                _bind_txt.value = combo or "—"
+                with contextlib.suppress(Exception):
+                    _bind_txt.update()
+                if callable(self.on_ocr_style_change):
+                    _guarded(lambda v: self.on_ocr_style_change(
+                        "scan_bind", v), combo)
+
+            def _capture(e) -> None:
+                try:
+                    k = str(getattr(e, "key", "") or "").strip()
+                    if k in ("Alt", "Control", "Shift", "Meta", "AltGraph"):
+                        return  # wait for the actual key
+                    if k == "Escape":
+                        _finish("")  # cleared: scanning always active
+                        return
+                    key = k.upper()
+                    import re as _re2
+
+                    if not (len(key) == 1 and key.isalnum()) \
+                            and not _re2.fullmatch(r"F([1-9]|1[0-2])", key):
+                        return  # unsupported key — keep recording
+                    parts = []
+                    if getattr(e, "ctrl", False):
+                        parts.append("CTRL")
+                    if getattr(e, "alt", False):
+                        parts.append("ALT")
+                    if getattr(e, "shift", False):
+                        parts.append("SHIFT")
+                    parts.append(key)
+                    _finish("+".join(parts))
+                except Exception:
+                    _finish(str(self._ocr_style.get("scan_bind", "E")))
+
+            self.page.on_keyboard_event = _capture
+
+        scan_bind_btn.on_click = _start_bind_record
+
+        # Region border visibility (the dashed rectangle on screen).
+        _border_on = str(self._ocr_style.get(
+            "ocr_region_border", "1")) not in ("0", "False", "false")
+        border_icon = ft.Icon(
+            ft.Icons.VISIBILITY if _border_on else ft.Icons.VISIBILITY_OFF,
+            size=15, color=_TOGGLE_ON if _border_on else _TEXT_FAINT)
+        border_btn = ft.Container(
+            content=border_icon,
+            padding=ft.padding.symmetric(horizontal=6, vertical=3),
+            border_radius=6,
+            border=ft.border.all(1, "#3a3b3f"),
+        )
+
+        def _toggle_border(_ev) -> None:
+            cur = str(self._ocr_style.get(
+                "ocr_region_border", "1")) not in ("0", "False", "false")
+            new = not cur
+            self._ocr_style["ocr_region_border"] = "1" if new else "0"
+            border_icon.name = (ft.Icons.VISIBILITY if new
+                                else ft.Icons.VISIBILITY_OFF)
+            border_icon.color = _TOGGLE_ON if new else _TEXT_FAINT
+            with contextlib.suppress(Exception):
+                border_icon.update()
+            if callable(self.on_ocr_style_change):
+                _guarded(lambda v: self.on_ocr_style_change(
+                    "ocr_region_border", v), 1 if new else 0)
+
+        border_btn.on_click = _toggle_border
 
         content = ft.Container(
             content=ft.Column(
@@ -1977,7 +2055,8 @@ class DashboardView(ft.Row):
                                  _bool_pill(self.ocr_log_chat, _on_log)),
                     _section_row(
                         t("dashboard.ocr.menu.region_set"),
-                        ft.Row([set_btn, lock_pill], spacing=6, tight=True),
+                        ft.Row([set_btn, border_btn, lock_pill], spacing=6,
+                               tight=True),
                     ),
                     ft.Container(height=6),
                 ],

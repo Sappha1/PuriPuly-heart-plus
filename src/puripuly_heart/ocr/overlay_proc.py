@@ -64,8 +64,35 @@ _C_BG = ["#14161a"]
 _BG_ALPHA = [100]  # 100/75/50/25 via stipple, 0 = no backdrop (shadow text)
 _C_TEXT = ["#ffffff"]
 _SCAN_MODE = ["hold"]  # hold | toggle — gates ALL scanning/drawing
-_SCAN_VK = [ord("E")]
+_SCAN_VK = [ord("E")]  # legacy single-key path (combo below preferred)
 _SCAN_ACTIVE = [False]
+_REGION_BORDER = [True]  # show the dashed region rectangle
+
+
+def _parse_bind(s: str):
+    """'ALT+E' / 'CTRL+SHIFT+F5' / 'E' -> (modifier VKs, key VK).
+    Empty/invalid -> None = no bind = scanning always active."""
+    s = (s or "").strip().upper()
+    if not s:
+        return None
+    mods: list[int] = []
+    key = None
+    for part in s.split("+"):
+        p = part.strip()
+        if p == "CTRL":
+            mods.append(0x11)
+        elif p == "ALT":
+            mods.append(0x12)
+        elif p == "SHIFT":
+            mods.append(0x10)
+        elif len(p) == 1 and p.isalnum():
+            key = ord(p)
+        elif _re.fullmatch(r"F([1-9]|1[0-2])", p):
+            key = 0x70 + int(p[1:]) - 1
+    return (tuple(mods), key) if key is not None else None
+
+
+_SCAN_COMBO: list = [_parse_bind("E")]
 
 
 def _fmt_lines(text: str, xlat: str, pinyin: str) -> list[str]:
@@ -435,9 +462,12 @@ def _apply_prefs(cfg: dict) -> None:
     mode = str(cfg.get("scan_mode", _SCAN_MODE[0]))
     if mode in ("hold", "toggle"):
         _SCAN_MODE[0] = mode
-    bind = str(cfg.get("scan_bind", "") or "").strip().upper()
-    if len(bind) == 1 and bind.isalnum():
-        _SCAN_VK[0] = ord(bind)
+    if "scan_bind" in cfg:
+        _SCAN_COMBO[0] = _parse_bind(str(cfg.get("scan_bind") or ""))
+    if "ocr_region_border" in cfg:
+        _REGION_BORDER[0] = bool(int(cfg.get("ocr_region_border") or 0)) \
+            if str(cfg.get("ocr_region_border")).isdigit() \
+            else bool(cfg.get("ocr_region_border"))
     logger.info("[OCR] prefs applied live: prewarm=%d bubbles=%d foreign=%d "
                 "names=%d pronouns=%d translate=%d",
                 _PREWARM[0], _BUBBLES_ONLY[0], _FOREIGN_ONLY[0],
@@ -2080,11 +2110,11 @@ def _track_loop(cap: _Capture, target: _Target, anchors: _Anchors,
                                     hit = _XLAT_CACHE.get(norm)
                                     if hit is not None:
                                         tr.xlat = hit
-                                    elif (_SUBTITLE_ON[0] and norm
+                                    elif (norm
                                           and norm not in _XLAT_QUEUED):
                                         _XLAT_QUEUED.add(norm)
                                         _XLAT_PENDING.append(norm)
-                    elif ((_PREWARM[0] or _SUBTITLE_ON[0] or _FOREIGN_ONLY[0]
+                    elif ((_PREWARM[0] or _SCAN_ACTIVE[0] or _FOREIGN_ONLY[0]
                            or _ignore_active()) and not tr.text
                           and tr.confirms >= 1
                           and tr.uid not in _REC_REQ and pending < 48):
@@ -2252,33 +2282,34 @@ def _prtscn_loop(cap: _Capture, state: _BoxState, stop: threading.Event) -> None
             down = bool(user32.GetAsyncKeyState(_VK_SNAPSHOT) & 0x8000)
             fire = down and not was_down
             was_down = down
-            # Scan activation: hold = active while the bind is down;
-            # toggle = press flips. Gates all scanning and drawing.
-            skey = bool(user32.GetAsyncKeyState(_SCAN_VK[0]) & 0x8000)
-            if _SCAN_MODE[0] == "toggle":
-                if skey and not was_scan:
-                    _SCAN_ACTIVE[0] = not _SCAN_ACTIVE[0]
-                    logger.info("[OCR] scan %s",
-                                "ON" if _SCAN_ACTIVE[0] else "OFF")
+            # Scan activation: hold = active while the recorded combo is
+            # down; toggle = press flips; no bind = always active. Gates
+            # ALL scanning and drawing (subtitles follow the scan — there
+            # is no separate subtitle key anymore).
+            cb = _SCAN_COMBO[0]
+            if cb is None:
+                _SCAN_ACTIVE[0] = True
+                was_scan = False
             else:
-                _SCAN_ACTIVE[0] = skey
-            was_scan = skey
-            # Alt+<letter> toggles subtitle mode (edge-triggered).
-            combo = (bool(user32.GetAsyncKeyState(_VK_MENU) & 0x8000)
-                     and bool(user32.GetAsyncKeyState(_TRANSLATE_VK[0])
-                              & 0x8000))
-            if combo and not was_combo:
-                _SUBTITLE_ON[0] = not _SUBTITLE_ON[0]
-                logger.info("[OCR] subtitle mode %s",
-                            "ON" if _SUBTITLE_ON[0] else "OFF")
-            was_combo = combo
+                mods, keyvk = cb
+                skey = (all(user32.GetAsyncKeyState(m) & 0x8000
+                            for m in mods)
+                        and bool(user32.GetAsyncKeyState(keyvk) & 0x8000))
+                if _SCAN_MODE[0] == "toggle":
+                    if skey and not was_scan:
+                        _SCAN_ACTIVE[0] = not _SCAN_ACTIVE[0]
+                        logger.info("[OCR] scan %s",
+                                    "ON" if _SCAN_ACTIVE[0] else "OFF")
+                else:
+                    _SCAN_ACTIVE[0] = skey
+                was_scan = skey
             if not fire and os.path.exists(_SHOT_TRIGGER):
                 with contextlib_suppress():
                     os.remove(_SHOT_TRIGGER)
                 fire = True
             if fire:
                 _v, _s, boxes = state.get()
-                _save_debug_shot(cap, boxes, pills=_SUBTITLE_ON[0])
+                _save_debug_shot(cap, boxes, pills=_SCAN_ACTIVE[0])
         except Exception:
             pass
         time.sleep(0.03)
@@ -2489,7 +2520,7 @@ def run(monitor_index: int = 1, fps: float = 0.0, max_side: int = _TRACK_SIDE,
                 _SELECT_REQ[0] = False
                 _begin_select()
             rgn = target.region()
-            if rgn is not None and not sel["active"]:
+            if rgn is not None and not sel["active"] and _REGION_BORDER[0]:
                 canvas.coords(region_border, rgn[0] * sx, rgn[1] * sy,
                               rgn[2] * sx, rgn[3] * sy)
                 canvas.itemconfigure(region_border, state="normal")
@@ -2498,7 +2529,8 @@ def run(monitor_index: int = 1, fps: float = 0.0, max_side: int = _TRACK_SIDE,
             _version, stamp, items = state.get()
             age = time.monotonic() - stamp
             ext = min(age, _RENDER_EXTRAP_CAP_S) + _RENDER_LEAD_S
-            held = _SUBTITLE_ON[0]
+            held = True  # subtitles follow the scan gate; items only exist
+            # while scanning is active, so visible box = show its format.
             while len(pool) < len(items):
                 pool.append(canvas.create_rectangle(
                     0, 0, 0, 0, outline=_BOX_COLOR, width=_BOX_WIDTH,

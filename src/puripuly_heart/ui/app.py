@@ -166,6 +166,8 @@ class TranslatorApp:
         self.view_dashboard.on_ocr_region_set = self._ocr_manager.select_region
         self.view_dashboard.on_ocr_bubbles_change = self._ocr_manager.set_bubbles_only
         self.view_dashboard.on_ocr_scope_change = self._ocr_manager.set_vrchat_only
+        self.view_dashboard.on_ocr_window_change = self._ocr_manager.set_window_title
+        self.view_dashboard.on_ocr_window_list = self._ocr_manager.list_windows
         self.view_dashboard.on_ocr_foreign_change = self._ocr_manager.set_foreign_only
         self.view_dashboard.on_ocr_ignore_names_change = self._ocr_manager.set_ignore_names
         self.view_dashboard.on_ocr_ignore_pronouns_change = self._ocr_manager.set_ignore_pronouns

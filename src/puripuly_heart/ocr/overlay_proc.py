@@ -345,6 +345,24 @@ def _xlat_loop(stop: threading.Event) -> None:
 _SELECT_REGION_EVENT = "PuriPulyHeart_OCR_SelectRegion"
 _CLEAR_REGION_EVENT = "PuriPulyHeart_OCR_ClearRegion"  # disables, keeps rect
 _ENABLE_REGION_EVENT = "PuriPulyHeart_OCR_EnableRegion"  # re-arm saved rect
+# LIVE settings: the app saves prefs to the config file and fires this event;
+# the running overlay re-reads and applies them in place — no restart, no
+# model reload, instant effect.
+_RELOAD_PREFS_EVENT = "PuriPulyHeart_OCR_ReloadPrefs"
+
+
+def _apply_prefs(cfg: dict) -> None:
+    _PREWARM[0] = bool(cfg.get("prewarm", _PREWARM[0]))
+    _BUBBLES_ONLY[0] = bool(cfg.get("bubbles_only", _BUBBLES_ONLY[0]))
+    _FOREIGN_ONLY[0] = bool(cfg.get("foreign_only", _FOREIGN_ONLY[0]))
+    _IGNORE_NAMES[0] = bool(cfg.get("ignore_names", _IGNORE_NAMES[0]))
+    _IGNORE_PRONOUNS[0] = bool(cfg.get("ignore_pronouns",
+                                       _IGNORE_PRONOUNS[0]))
+    _XLAT_ENABLED[0] = bool(cfg.get("translate", _XLAT_ENABLED[0]))
+    logger.info("[OCR] prefs applied live: prewarm=%d bubbles=%d foreign=%d "
+                "names=%d pronouns=%d translate=%d",
+                _PREWARM[0], _BUBBLES_ONLY[0], _FOREIGN_ONLY[0],
+                _IGNORE_NAMES[0], _IGNORE_PRONOUNS[0], _XLAT_ENABLED[0])
 _SELECT_REQ = [False]
 
 
@@ -696,6 +714,24 @@ class _Target:
             pass
         if self._title:
             self._rect = None  # resolved by poll()
+
+    def set_title(self, title: str | None) -> None:
+        """Live retarget: switch between whole-screen (None/empty) and any
+        window title without restarting the overlay. The epoch bump from the
+        next poll resynchronizes both loops onto the new region."""
+        title = (title or "").strip() or None
+        with self._lock:
+            if title == self._title:
+                return
+            self._title = title
+            self._exe = ("vrchat.exe"
+                         if (title or "").lower() == "vrchat" else "")
+            self._warned = False
+            if title:
+                self._rect = None  # resolved by the next poll
+        logger.info("[OCR] target switched to %r",
+                    title or "whole screen")
+        self.poll()
 
     def set_region(self, rect: tuple[int, int, int, int] | None) -> None:
         """A fresh drag: store the rect AND arm the lock."""
@@ -2244,6 +2280,16 @@ def run(monitor_index: int = 1, fps: float = 0.0, max_side: int = _TRACK_SIDE,
                      args=(_ENABLE_REGION_EVENT,
                            lambda: target.set_region_enabled(True)),
                      daemon=True).start()
+
+    def _reload_prefs() -> None:
+        cfg = _load_config()
+        _apply_prefs(cfg)
+        if "window_title" in cfg:
+            target.set_title(str(cfg.get("window_title") or "") or None)
+
+    threading.Thread(target=_wait_event_loop,
+                     args=(_RELOAD_PREFS_EVENT, _reload_prefs),
+                     daemon=True).start()
     for _w in range(_XLAT_WORKERS):
         threading.Thread(target=_xlat_loop, args=(stop,),
                          daemon=True).start()
@@ -2540,6 +2586,12 @@ def main() -> None:
     _FOREIGN_ONLY[0] = bool(args.foreign_only)
     _IGNORE_NAMES[0] = bool(args.ignore_names)
     _IGNORE_PRONOUNS[0] = bool(args.ignore_pronouns)
+    # Config file is the persisted truth (live toggles write it) — apply it
+    # over the CLI defaults at startup too, including the target window.
+    _startup_cfg = _load_config()
+    _apply_prefs(_startup_cfg)
+    if "window_title" in _startup_cfg:
+        args.window = str(_startup_cfg.get("window_title") or "")
     _load_translation_prefs()
     # Log to a file: the subprocess runs windowless, so stderr goes nowhere.
     log_path = os.path.join(os.path.expanduser("~"), "AppData", "Local",

@@ -532,6 +532,8 @@
   "dashboard.chat.received": "Received",
   "dashboard.chat.received_ocr": "Received OCR",
   "dashboard.ocr.menu.vrchat_only": "Only while VRChat is focused",
+  "dashboard.ocr.menu.window": "Target window",
+  "dashboard.ocr.menu.window.whole": "Whole screen",
   "dashboard.ocr.menu.bubbles_only": "VRChat bubbles only",
   "dashboard.ocr.menu.foreign_only": "Foreign text only",
   "dashboard.ocr.menu.ignore_names": "Ignore player names",

@@ -487,6 +487,8 @@
   "dashboard.chat.received": "受信済み",
   "dashboard.chat.received_ocr": "OCR受信",
   "dashboard.ocr.menu.vrchat_only": "VRChatがフォーカス中のみ",
+  "dashboard.ocr.menu.window": "対象ウィンドウ",
+  "dashboard.ocr.menu.window.whole": "画面全体",
   "dashboard.ocr.menu.bubbles_only": "VRChatバブルのみ",
   "dashboard.ocr.menu.foreign_only": "外国語テキストのみ",
   "dashboard.ocr.menu.ignore_names": "プレイヤー名を無視",

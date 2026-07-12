@@ -478,6 +478,12 @@ class DashboardView(ft.Row):
         self._ocr_prewarm = bool(_ocr_p.get("prewarm", True))
         self._ocr_bubbles_only = bool(_ocr_p.get("bubbles_only", True))
         self._ocr_vrchat_only = bool(_ocr_p.get("vrchat_only", True))
+        _wt = _ocr_p.get("window_title")
+        self._ocr_window_title = (str(_wt) if _wt is not None
+                                  else ("VRChat" if self._ocr_vrchat_only
+                                        else ""))
+        self.on_ocr_window_change = None  # (prototype) callback(title)
+        self.on_ocr_window_list = None  # (prototype) -> list[str]
         self._ocr_foreign_only = bool(_ocr_p.get("foreign_only", True))
         self._ocr_ignore_names = bool(_ocr_p.get("ignore_names", True))
         self._ocr_ignore_pronouns = bool(_ocr_p.get("ignore_pronouns", True))
@@ -1603,11 +1609,91 @@ class DashboardView(ft.Row):
             box.on_click = _click
             return box
 
-        def _on_vrchat(v: bool) -> None:
-            self._ocr_vrchat_only = v
-            self._save_ocr_pref("vrchat_only", v)
-            if callable(self.on_ocr_scope_change):
-                self.on_ocr_scope_change(v)
+        # ── target window: summary button + inline radio expansion ──
+        def _win_summary() -> str:
+            return (self._ocr_window_title
+                    or t("dashboard.ocr.menu.window.whole"))
+
+        _win_btn_text = ft.Text(
+            _win_summary(), size=11, color=_TOGGLE_ON,
+            weight=ft.FontWeight.W_600, no_wrap=True,
+            overflow=ft.TextOverflow.ELLIPSIS,
+        )
+        _win_btn = ft.Container(
+            content=_win_btn_text,
+            padding=ft.padding.symmetric(horizontal=8, vertical=4),
+            border_radius=6,
+            bgcolor="#1a2e2a",
+            border=ft.border.all(1, _TOGGLE_ON),
+            width=150,
+        )
+        _win_rows_col = ft.Column([], spacing=0, tight=True, visible=False)
+        _win_expanded = [False]
+
+        def _pick_window(title: str) -> None:
+            self._ocr_window_title = title
+            _win_btn_text.value = _win_summary()
+            _win_expanded[0] = False
+            _win_rows_col.visible = False
+            with contextlib.suppress(Exception):
+                _win_btn_text.update()
+                _win_rows_col.update()
+            _guarded(self.on_ocr_window_change, title)
+
+        def _build_win_rows() -> list[ft.Container]:
+            titles: list[str] = []
+            try:
+                if callable(self.on_ocr_window_list):
+                    titles = list(self.on_ocr_window_list() or [])
+            except Exception:
+                titles = []
+            cur = self._ocr_window_title
+            options = [("", t("dashboard.ocr.menu.window.whole")),
+                       ("VRChat", "VRChat")]
+            for w in titles:
+                if w != "VRChat" and all(w != o[0] for o in options):
+                    options.append((w, w))
+            if cur and all(cur != o[0] for o in options):
+                options.append((cur, cur))
+            out: list[ft.Container] = []
+            for value, label in options:
+                active = value == cur
+                icon = ft.Icon(
+                    ft.Icons.RADIO_BUTTON_CHECKED if active
+                    else ft.Icons.RADIO_BUTTON_UNCHECKED,
+                    size=15, color=_TOGGLE_ON if active else _TEXT_FAINT,
+                )
+                out.append(ft.Container(
+                    content=ft.Row(
+                        [icon,
+                         ft.Text(label, size=12, color=_TEXT_PRIMARY,
+                                 expand=True, no_wrap=True,
+                                 overflow=ft.TextOverflow.ELLIPSIS)],
+                        spacing=8,
+                        vertical_alignment=ft.CrossAxisAlignment.CENTER,
+                    ),
+                    padding=ft.padding.only(left=18, right=10, top=6,
+                                            bottom=6),
+                    border_radius=5,
+                    on_click=lambda _e, _v=value: _pick_window(_v),
+                    on_hover=lambda e: (
+                        setattr(e.control, "bgcolor",
+                                "#2a3040" if e.data == "true"
+                                else ft.Colors.TRANSPARENT)
+                        or (e.control.update() if e.control.page else None)
+                    ),
+                ))
+            return out
+
+        def _toggle_win(_ev):
+            _win_expanded[0] = not _win_expanded[0]
+            if _win_expanded[0]:
+                _win_rows_col.controls = _build_win_rows()
+            _win_rows_col.visible = _win_expanded[0]
+            with contextlib.suppress(Exception):
+                _win_rows_col.update()
+
+        _win_btn.on_click = _toggle_win
 
         def _on_bubbles(v: bool) -> None:
             self._ocr_bubbles_only = v
@@ -1672,9 +1758,9 @@ class DashboardView(ft.Row):
         content = ft.Container(
             content=ft.Column(
                 [
-                    _section_row(t("dashboard.ocr.menu.vrchat_only"),
-                                 _bool_pill(self._ocr_vrchat_only,
-                                            _on_vrchat), top=8),
+                    _section_row(t("dashboard.ocr.menu.window"),
+                                 _win_btn, top=8),
+                    _win_rows_col,
                     _section_row(t("dashboard.ocr.menu.bubbles_only"),
                                  _bool_pill(self._ocr_bubbles_only,
                                             _on_bubbles)),

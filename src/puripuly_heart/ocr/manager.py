@@ -23,6 +23,7 @@ _SHUTDOWN_EVENT = "PuriPulyHeart_OCR_Shutdown"
 _SELECT_REGION_EVENT = "PuriPulyHeart_OCR_SelectRegion"
 _CLEAR_REGION_EVENT = "PuriPulyHeart_OCR_ClearRegion"
 _ENABLE_REGION_EVENT = "PuriPulyHeart_OCR_EnableRegion"
+_RELOAD_PREFS_EVENT = "PuriPulyHeart_OCR_ReloadPrefs"
 _CONFIG_PATH = os.path.join(os.path.expanduser("~"), "AppData", "Local",
                             "puripuly-heart", "ocr_overlay_config.json")
 
@@ -86,6 +87,11 @@ class OcrOverlayManager:
         # and only bubble-shaped text — persisted across restarts.
         _p = load_ocr_prefs()
         self.vrchat_only = bool(_p.get("vrchat_only", True))
+        # Target window ('' = whole screen). Migrates from the old
+        # vrchat_only bool; any window title works (Roblox, browsers, ...).
+        _wt = _p.get("window_title")
+        self.window_title = (str(_wt) if _wt is not None
+                             else ("VRChat" if self.vrchat_only else ""))
         # Pre-warm recognition: read text in the background while subtitles
         # are toggled off — instant Alt+T at the cost of CPU bursts.
         self.prewarm = bool(_p.get("prewarm", True))
@@ -99,15 +105,64 @@ class OcrOverlayManager:
         # Master OCR translation switch (off = raw recognized text, no calls).
         self.translate = bool(_p.get("translate", True))
 
+    def _reload_live(self) -> None:
+        """Push saved prefs into the RUNNING overlay — no restart needed."""
+        if self.running:
+            _fire_event(_RELOAD_PREFS_EVENT)
+
+    def set_window_title(self, title: str) -> None:
+        title = (title or "").strip()
+        if title == self.window_title:
+            return
+        self.window_title = title
+        save_ocr_pref("window_title", title)
+        save_ocr_pref("vrchat_only", title.lower() == "vrchat")
+        self.vrchat_only = title.lower() == "vrchat"
+        logger.info("[OCR] target window -> %r", title or "whole screen")
+        self._reload_live()
+
+    @staticmethod
+    def list_windows(limit: int = 10) -> list[str]:
+        """Titles of visible top-level windows (for the target picker)."""
+        titles: list[str] = []
+        try:
+            user32 = ctypes.windll.user32
+            GWL_EXSTYLE = -20
+            WS_EX_TOOLWINDOW = 0x00000080
+
+            @ctypes.WINFUNCTYPE(ctypes.c_int, ctypes.c_void_p,
+                                ctypes.c_void_p)
+            def _cb(hwnd, _lp):
+                try:
+                    if not user32.IsWindowVisible(hwnd):
+                        return True
+                    if user32.GetWindowLongW(hwnd, GWL_EXSTYLE) & WS_EX_TOOLWINDOW:
+                        return True
+                    n = user32.GetWindowTextLengthW(hwnd)
+                    if n <= 0:
+                        return True
+                    buf = ctypes.create_unicode_buffer(n + 1)
+                    user32.GetWindowTextW(hwnd, buf, n + 1)
+                    t = buf.value.strip()
+                    if (t and t not in titles
+                            and not t.startswith("PuriPulyHeart")):
+                        titles.append(t)
+                except Exception:
+                    pass
+                return True
+
+            user32.EnumWindows(_cb, 0)
+        except Exception:
+            pass
+        return titles[:limit]
+
     def set_ignore_pronouns(self, enabled: bool) -> None:
         enabled = bool(enabled)
         if enabled == self.ignore_pronouns:
             return
         self.ignore_pronouns = enabled
         save_ocr_pref("ignore_pronouns", enabled)
-        if self.running:
-            self.stop()
-            self.start()
+        self._reload_live()
 
     def set_translate(self, enabled: bool) -> None:
         enabled = bool(enabled)
@@ -115,9 +170,7 @@ class OcrOverlayManager:
             return
         self.translate = enabled
         save_ocr_pref("translate", enabled)
-        if self.running:
-            self.stop()
-            self.start()
+        self._reload_live()
 
     def set_ignore_names(self, enabled: bool) -> None:
         enabled = bool(enabled)
@@ -125,9 +178,7 @@ class OcrOverlayManager:
             return
         self.ignore_names = enabled
         save_ocr_pref("ignore_names", enabled)
-        if self.running:
-            self.stop()
-            self.start()
+        self._reload_live()
 
     def set_foreign_only(self, enabled: bool) -> None:
         enabled = bool(enabled)
@@ -135,9 +186,7 @@ class OcrOverlayManager:
             return
         self.foreign_only = enabled
         save_ocr_pref("foreign_only", enabled)
-        if self.running:
-            self.stop()
-            self.start()
+        self._reload_live()
 
     def set_prewarm(self, enabled: bool) -> None:
         enabled = bool(enabled)
@@ -145,9 +194,7 @@ class OcrOverlayManager:
             return
         self.prewarm = enabled
         save_ocr_pref("prewarm", enabled)
-        if self.running:
-            self.stop()
-            self.start()
+        self._reload_live()
 
     def set_bubbles_only(self, enabled: bool) -> None:
         enabled = bool(enabled)
@@ -198,14 +245,8 @@ class OcrOverlayManager:
         logger.info("[OCR] select_region event fired")
 
     def set_vrchat_only(self, enabled: bool) -> None:
-        enabled = bool(enabled)
-        if enabled == self.vrchat_only:
-            return
-        self.vrchat_only = enabled
-        if self.running:
-            # Apply immediately: relaunch the overlay with the new scope.
-            self.stop()
-            self.start()
+        # Legacy shim: routes through the generalized window targeting.
+        self.set_window_title("VRChat" if enabled else "")
 
     @property
     def running(self) -> bool:
@@ -224,8 +265,8 @@ class OcrOverlayManager:
                 "--ignore-names", "1" if self.ignore_names else "0",
                 "--ignore-pronouns", "1" if self.ignore_pronouns else "0",
                 "--translate", "1" if self.translate else "0"]
-        if self.vrchat_only:
-            args += ["--window", "VRChat"]
+        if self.window_title:
+            args += ["--window", self.window_title]
         env = dict(os.environ)
         if getattr(sys, "frozen", False):
             # Packaged app: shell out to the source venv that has the OCR libs.

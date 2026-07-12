@@ -492,6 +492,18 @@ class DashboardView(ft.Row):
         self.on_ocr_translate_change = None  # (prototype) callback(bool)
         self._ocr_xlat_service = str(_ocr_p.get("xlat_service", "bing"))
         self.on_ocr_xlat_service_change = None  # (prototype) callback(str)
+        # Style/behavior prefs surfaced in the OCR menu (persisted, live).
+        self._ocr_style = {
+            "ocr_format": str(_ocr_p.get("ocr_format", "trans_only")),
+            "ocr_place": str(_ocr_p.get("ocr_place", "cover")),
+            "ocr_outline": str(_ocr_p.get("ocr_outline", "#ff2020")),
+            "ocr_bg": str(_ocr_p.get("ocr_bg", "#14161a")),
+            "ocr_bg_alpha": str(_ocr_p.get("ocr_bg_alpha", 100)),
+            "ocr_text": str(_ocr_p.get("ocr_text", "#ffffff")),
+            "scan_mode": str(_ocr_p.get("scan_mode", "hold")),
+            "scan_bind": str(_ocr_p.get("scan_bind", "E")),
+        }
+        self.on_ocr_style_change = None  # (prototype) callback(key, value)
         self.ocr_log_chat = bool(_ocr_p.get("log_chat", True))
         self.on_ocr_foreign_change = None  # (prototype) callback(bool)
         self.on_ocr_ignore_names_change = None  # (prototype) callback(bool)
@@ -1769,28 +1781,196 @@ class DashboardView(ft.Row):
         )
         lock_pill = _bool_pill(region_on, _on_lock)
 
+        def _summary_btn(text_ctrl) -> ft.Container:
+            return ft.Container(
+                content=text_ctrl,
+                padding=ft.padding.symmetric(horizontal=8, vertical=4),
+                border_radius=6,
+                bgcolor="#1a2e2a",
+                border=ft.border.all(1, _TOGGLE_ON),
+            )
+
+        def _modal_row_btn(current_label: str, title: str,
+                           options: list, pref_key: str,
+                           label_of) -> ft.Container:
+            btxt = ft.Text(current_label, size=11, color=_TOGGLE_ON,
+                           weight=ft.FontWeight.W_600, no_wrap=True,
+                           overflow=ft.TextOverflow.ELLIPSIS)
+            btn = _summary_btn(btxt)
+
+            def _open(_ev):
+                if not self.page:
+                    return
+                cur = str(self._ocr_style.get(pref_key, ""))
+
+                def _sel(value: str) -> None:
+                    self._ocr_style[pref_key] = value
+                    btxt.value = label_of(value)
+                    with contextlib.suppress(Exception):
+                        btxt.update()
+                    if callable(self.on_ocr_style_change):
+                        _guarded(lambda v: self.on_ocr_style_change(
+                            pref_key, v), value)
+
+                SettingsModal(self.page, title, options, _sel).open(cur)
+
+            btn.on_click = _open
+            return btn
+
+        # ── output format (mirrors the chatbox Output Format options) ──
+        _fmt_labels = {
+            "orig_trans": t("dashboard.translit.fmt.orig_trans"),
+            "orig_pinyin_trans": t("dashboard.translit.fmt.orig_read_trans",
+                                   system="Pinyin"),
+            "pinyin_trans": t("dashboard.translit.fmt.read_trans",
+                              system="Pinyin"),
+            "pinyin_only": t("dashboard.translit.fmt.read_only",
+                             system="Pinyin"),
+            "trans_only": t("dashboard.translit.fmt.trans_only"),
+        }
+        fmt_btn = _modal_row_btn(
+            _fmt_labels.get(self._ocr_style.get("ocr_format", "trans_only"),
+                            _fmt_labels["trans_only"]),
+            t("dashboard.ocr.menu.format"),
+            [OptionItem(value=k, label=v, description="", disabled=False)
+             for k, v in _fmt_labels.items()],
+            "ocr_format", lambda v: _fmt_labels.get(v, v))
+
+        # ── style sub-menu ──
+        _color_opts = [("#ff2020", "Red"), ("#2dd4bf", "Teal"),
+                       ("#ffffff", "White"), ("#ffd21e", "Yellow"),
+                       ("#3b82f6", "Blue"), ("#22c55e", "Green"),
+                       ("#ff5df1", "Magenta"), ("#ff8c00", "Orange"),
+                       ("#14161a", "Dark"), ("#000000", "Black")]
+        _alpha_labels = {"100": "100%", "75": "75%", "50": "50%",
+                         "25": "25%",
+                         "0": t("dashboard.ocr.opacity.none")}
+        _place_labels = {"cover": t("dashboard.ocr.place.cover"),
+                         "above": t("dashboard.ocr.place.above")}
+
+        def _color_name(v: str) -> str:
+            for hexv, name in _color_opts:
+                if hexv == v:
+                    return name
+            return v
+
+        def _open_style_menu(_ev) -> None:
+            rows = [
+                _mk_row(t("dashboard.ocr.style.outline"),
+                        _modal_row_btn(
+                            _color_name(self._ocr_style.get(
+                                "ocr_outline", "#ff2020")),
+                            t("dashboard.ocr.style.outline"),
+                            [OptionItem(value=h, label=n, description="",
+                                        disabled=False)
+                             for h, n in _color_opts],
+                            "ocr_outline", _color_name), top=8),
+                _mk_row(t("dashboard.ocr.style.background"),
+                        _modal_row_btn(
+                            _color_name(self._ocr_style.get(
+                                "ocr_bg", "#14161a")),
+                            t("dashboard.ocr.style.background"),
+                            [OptionItem(value=h, label=n, description="",
+                                        disabled=False)
+                             for h, n in _color_opts],
+                            "ocr_bg", _color_name)),
+                _mk_row(t("dashboard.ocr.style.opacity"),
+                        _modal_row_btn(
+                            _alpha_labels.get(str(self._ocr_style.get(
+                                "ocr_bg_alpha", 100)), "100%"),
+                            t("dashboard.ocr.style.opacity"),
+                            [OptionItem(value=k, label=v, description="",
+                                        disabled=False)
+                             for k, v in _alpha_labels.items()],
+                            "ocr_bg_alpha",
+                            lambda v: _alpha_labels.get(str(v), str(v)))),
+                _mk_row(t("dashboard.ocr.style.text"),
+                        _modal_row_btn(
+                            _color_name(self._ocr_style.get(
+                                "ocr_text", "#ffffff")),
+                            t("dashboard.ocr.style.text"),
+                            [OptionItem(value=h, label=n, description="",
+                                        disabled=False)
+                             for h, n in _color_opts],
+                            "ocr_text", _color_name)),
+                _mk_row(t("dashboard.ocr.style.placement"),
+                        _modal_row_btn(
+                            _place_labels.get(self._ocr_style.get(
+                                "ocr_place", "cover"), ""),
+                            t("dashboard.ocr.style.placement"),
+                            [OptionItem(value=k, label=v, description="",
+                                        disabled=False)
+                             for k, v in _place_labels.items()],
+                            "ocr_place",
+                            lambda v: _place_labels.get(v, v))),
+                ft.Container(height=6),
+            ]
+            self._ocr_style_popover_close = self._open_popover_at(
+                x + 40, y + 40,
+                ft.Container(content=ft.Column(
+                    rows, spacing=0, tight=True,
+                    horizontal_alignment=ft.CrossAxisAlignment.STRETCH)),
+                width=280.0)
+
+        def _mk_row(label: str, control, top: int = 4) -> ft.Container:
+            return _section_row(label, control, top)
+
+        style_btn = ft.Container(
+            content=ft.Icon(ft.Icons.PALETTE_OUTLINED, size=15,
+                            color=_TEXT_PRIMARY),
+            padding=ft.padding.symmetric(horizontal=8, vertical=3),
+            border_radius=6,
+            border=ft.border.all(1, "#3a3b3f"),
+            on_click=_open_style_menu,
+        )
+
+        # ── scan activation: mode + bind ──
+        _scan_mode_labels = {"hold": t("dashboard.ocr.scan.hold"),
+                             "toggle": t("dashboard.ocr.scan.toggle")}
+        scan_mode_btn = _modal_row_btn(
+            _scan_mode_labels.get(self._ocr_style.get("scan_mode", "hold"),
+                                  ""),
+            t("dashboard.ocr.menu.scan"),
+            [OptionItem(value=k, label=v, description="", disabled=False)
+             for k, v in _scan_mode_labels.items()],
+            "scan_mode", lambda v: _scan_mode_labels.get(v, v))
+        _bind_letters = [chr(c) for c in range(ord("A"), ord("Z") + 1)]
+        scan_bind_btn = _modal_row_btn(
+            str(self._ocr_style.get("scan_bind", "E")),
+            t("dashboard.ocr.scan.bind"),
+            [OptionItem(value=c, label=c, description="", disabled=False)
+             for c in _bind_letters],
+            "scan_bind", lambda v: str(v))
+
         content = ft.Container(
             content=ft.Column(
                 [
                     _section_row(t("dashboard.ocr.menu.window"),
                                  _win_btn, top=8),
-                    _section_row(t("dashboard.ocr.menu.bubbles_only"),
-                                 _bool_pill(self._ocr_bubbles_only,
-                                            _on_bubbles)),
                     _section_row(t("dashboard.ocr.menu.foreign_only"),
                                  _bool_pill(self._ocr_foreign_only,
                                             _on_foreign)),
+                    _section_row(t("dashboard.ocr.menu.translate"),
+                                 _bool_pill(self._ocr_translate,
+                                            _on_translate)),
+                    _section_row(t("dashboard.ocr.menu.xlat_model"),
+                                 _svc_btn),
+                    _section_row(t("dashboard.ocr.menu.format"), fmt_btn),
+                    _section_row(t("dashboard.ocr.menu.style"), style_btn),
+                    _section_row(
+                        t("dashboard.ocr.menu.scan"),
+                        ft.Row([scan_mode_btn, scan_bind_btn], spacing=6,
+                               tight=True),
+                    ),
+                    _section_row(t("dashboard.ocr.menu.bubbles_only"),
+                                 _bool_pill(self._ocr_bubbles_only,
+                                            _on_bubbles)),
                     _section_row(t("dashboard.ocr.menu.ignore_names"),
                                  _bool_pill(self._ocr_ignore_names,
                                             _on_names)),
                     _section_row(t("dashboard.ocr.menu.ignore_pronouns"),
                                  _bool_pill(self._ocr_ignore_pronouns,
                                             _on_pronouns)),
-                    _section_row(t("dashboard.ocr.menu.translate"),
-                                 _bool_pill(self._ocr_translate,
-                                            _on_translate)),
-                    _section_row(t("dashboard.ocr.menu.xlat_model"),
-                                 _svc_btn),
                     _section_row(t("dashboard.ocr.menu.prewarm"),
                                  _bool_pill(self._ocr_prewarm, _on_prewarm)),
                     _section_row(t("dashboard.ocr.menu.log_chat"),

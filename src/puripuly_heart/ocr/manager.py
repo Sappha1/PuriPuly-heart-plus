@@ -217,15 +217,34 @@ class OcrOverlayManager:
             self.stop()
             self.start()
 
+    def set_style(self, key: str, value) -> None:
+        """Generic persisted style/behavior pref (ocr_format, ocr_place,
+        ocr_outline, ocr_bg, ocr_bg_alpha, ocr_text, scan_mode, scan_bind).
+        Applies live to the running overlay."""
+        save_ocr_pref(key, value)
+        logger.info("[OCR] style %s -> %r", key, value)
+        self._reload_live()
+
+    def _region_entry(self) -> dict | None:
+        p = load_ocr_prefs()
+        regs = p.get("regions")
+        key = self.window_title or ""
+        if isinstance(regs, dict) and isinstance(regs.get(key), dict):
+            return regs[key]
+        # Legacy single-region fallback (pre per-window storage).
+        if key == "" and isinstance(p.get("region"), list):
+            return {"rect": p.get("region"),
+                    "on": bool(p.get("region_enabled", True))}
+        return None
+
     def has_region(self) -> bool:
-        r = load_ocr_prefs().get("region")
-        return isinstance(r, list) and len(r) == 4
+        e = self._region_entry()
+        return bool(e and isinstance(e.get("rect"), list))
 
     def region_enabled(self) -> bool:
-        p = load_ocr_prefs()
-        r = p.get("region")
-        return (isinstance(r, list) and len(r) == 4
-                and bool(p.get("region_enabled", True)))
+        e = self._region_entry()
+        return bool(e and isinstance(e.get("rect"), list)
+                    and e.get("on", True))
 
     def toggle_region(self) -> None:
         """Checkbox behavior: flip the lock on/off, REMEMBERING the last
@@ -233,17 +252,29 @@ class OcrOverlayManager:
         rectangle has ever been set."""
         logger.info("[OCR] toggle_region (enabled=%s, has=%s, running=%s)",
                     self.region_enabled(), self.has_region(), self.running)
+        def _set_on(flag: bool) -> None:
+            p = load_ocr_prefs()
+            regs = p.get("regions") if isinstance(p.get("regions"), dict) else {}
+            key = self.window_title or ""
+            e = regs.get(key)
+            if not isinstance(e, dict) and key == "" and p.get("region"):
+                e = {"rect": p.get("region")}
+            if isinstance(e, dict):
+                e["on"] = flag
+                regs[key] = e
+                save_ocr_pref("regions", regs)
+
         if self.region_enabled():
             if self.running:
                 _fire_event(_CLEAR_REGION_EVENT)
             else:
-                save_ocr_pref("region_enabled", False)
+                _set_on(False)
             return
         if self.has_region():
             if self.running:
                 _fire_event(_ENABLE_REGION_EVENT)
             else:
-                save_ocr_pref("region_enabled", True)
+                _set_on(True)
             return
         self.select_region()
 

@@ -55,6 +55,44 @@ _BOX_WIDTH = 1
 #   {"translate_key": "T"}    (bind is Alt+<letter>)
 _PILL_BG = "#14161a"
 _PILL_TEXT = "#ffffff"
+
+# ── Subtitle appearance / activation (all live-configurable) ──
+_FMT = ["trans_only"]  # orig_trans|orig_pinyin_trans|pinyin_trans|pinyin_only|trans_only
+_PLACE = ["cover"]  # cover (fill the box) | above (stack above the text)
+_C_OUTLINE = ["#ff2020"]
+_C_BG = ["#14161a"]
+_BG_ALPHA = [100]  # 100/75/50/25 via stipple, 0 = no backdrop (shadow text)
+_C_TEXT = ["#ffffff"]
+_SCAN_MODE = ["hold"]  # hold | toggle — gates ALL scanning/drawing
+_SCAN_VK = [ord("E")]
+_SCAN_ACTIVE = [False]
+
+
+def _fmt_lines(text: str, xlat: str, pinyin: str) -> list[str]:
+    f = _FMT[0]
+    orig, tr, py = text or "", xlat or "", pinyin or ""
+    if f == "orig_trans":
+        lines = [orig, tr]
+    elif f == "orig_pinyin_trans":
+        lines = [orig, py, tr]
+    elif f == "pinyin_trans":
+        lines = [py or orig, tr]
+    elif f == "pinyin_only":
+        lines = [py or orig]
+    else:
+        lines = [tr or orig]
+    return [ln for ln in lines if ln and ln.strip()]
+
+
+def _pinyin_of(text: str) -> str:
+    try:
+        if any("一" <= c <= "鿿" for c in text):
+            from pypinyin import lazy_pinyin
+
+            return " ".join(lazy_pinyin(text))
+    except Exception:
+        pass
+    return ""
 _DEFAULT_TRANSLATE_KEY = "T"
 _VK_MENU = 0x12  # Alt
 _CONFIG_PATH = os.path.join(os.path.expanduser("~"), "AppData", "Local",
@@ -376,6 +414,30 @@ def _apply_prefs(cfg: dict) -> None:
     svc = str(cfg.get("xlat_service", _XLAT_SVC[0]) or "bing").lower()
     if svc in ("bing", "google", "papago"):
         _XLAT_SVC[0] = svc
+    fmt = str(cfg.get("ocr_format", _FMT[0]))
+    if fmt in ("orig_trans", "orig_pinyin_trans", "pinyin_trans",
+               "pinyin_only", "trans_only"):
+        _FMT[0] = fmt
+    place = str(cfg.get("ocr_place", _PLACE[0]))
+    if place in ("cover", "above"):
+        _PLACE[0] = place
+    for key, ref in (("ocr_outline", _C_OUTLINE), ("ocr_bg", _C_BG),
+                     ("ocr_text", _C_TEXT)):
+        v = str(cfg.get(key, ref[0]) or "")
+        if _re.fullmatch(r"#[0-9a-fA-F]{6}", v):
+            ref[0] = v
+    try:
+        a = int(cfg.get("ocr_bg_alpha", _BG_ALPHA[0]))
+        if a in (0, 25, 50, 75, 100):
+            _BG_ALPHA[0] = a
+    except Exception:
+        pass
+    mode = str(cfg.get("scan_mode", _SCAN_MODE[0]))
+    if mode in ("hold", "toggle"):
+        _SCAN_MODE[0] = mode
+    bind = str(cfg.get("scan_bind", "") or "").strip().upper()
+    if len(bind) == 1 and bind.isalnum():
+        _SCAN_VK[0] = ord(bind)
     logger.info("[OCR] prefs applied live: prewarm=%d bubbles=%d foreign=%d "
                 "names=%d pronouns=%d translate=%d",
                 _PREWARM[0], _BUBBLES_ONLY[0], _FOREIGN_ONLY[0],
@@ -716,21 +778,47 @@ class _Target:
         self._occl: list[tuple[int, int, int, int]] = []
         # Region lock (whole-screen mode only): restrict OCR to a
         # user-dragged rectangle, persisted in the config file.
-        self._region: tuple[int, int, int, int] | None = None
-        self._region_on = False
+        # Regions are PER TARGET WINDOW: {'': whole-screen, 'VRChat': ...}.
+        # Each entry: {'rect': [x1,y1,x2,y2], 'on': bool}. Legacy single
+        # 'region' key migrates into the '' slot.
+        self._regions: dict[str, dict] = {}
         try:
             cfg = _load_config()
-            r = cfg.get("region")
-            if (isinstance(r, list) and len(r) == 4
-                    and r[2] - r[0] >= 64 and r[3] - r[1] >= 64):
-                self._region = (int(r[0]), int(r[1]), int(r[2]), int(r[3]))
-                self._region_on = bool(cfg.get("region_enabled", True))
-                logger.info("[OCR] region restored: %s (enabled=%s)",
-                            self._region, self._region_on)
+            regs = cfg.get("regions")
+            if isinstance(regs, dict):
+                for k, e in regs.items():
+                    r = (e or {}).get("rect")
+                    if (isinstance(r, list) and len(r) == 4
+                            and r[2] - r[0] >= 64 and r[3] - r[1] >= 64):
+                        self._regions[str(k)] = {
+                            "rect": [int(v) for v in r],
+                            "on": bool((e or {}).get("on", True))}
+            elif isinstance(cfg.get("region"), list):
+                r = cfg["region"]
+                if len(r) == 4 and r[2] - r[0] >= 64 and r[3] - r[1] >= 64:
+                    self._regions[""] = {
+                        "rect": [int(v) for v in r],
+                        "on": bool(cfg.get("region_enabled", True))}
+            if self._regions:
+                logger.info("[OCR] regions restored: %s",
+                            {k: v["on"] for k, v in self._regions.items()})
         except Exception:
             pass
         if self._title:
             self._rect = None  # resolved by poll()
+
+    def _rkey(self) -> str:
+        return self._title or ""
+
+    def _save_regions(self) -> None:
+        _save_config_key("regions", self._regions)
+
+    def _active_region(self) -> tuple[int, int, int, int] | None:
+        e = self._regions.get(self._rkey())
+        if e and e.get("on") and e.get("rect"):
+            r = e["rect"]
+            return (r[0], r[1], r[2], r[3])
+        return None
 
     def set_title(self, title: str | None) -> None:
         """Live retarget: switch between whole-screen (None/empty) and any
@@ -751,32 +839,34 @@ class _Target:
         self.poll()
 
     def set_region(self, rect: tuple[int, int, int, int] | None) -> None:
-        """A fresh drag: store the rect AND arm the lock."""
+        """A fresh drag: store the rect for the CURRENT target and arm it."""
         if rect is None:
             self.set_region_enabled(False)
             return
         with self._lock:
-            self._region = rect
-            self._region_on = True
-        _save_config_key("region", list(rect))
-        _save_config_key("region_enabled", True)
-        logger.info("[OCR] region set: %s", rect)
+            key = self._rkey()
+            self._regions[key] = {"rect": [int(v) for v in rect], "on": True}
+            self._save_regions()
+        logger.info("[OCR] region set for %r: %s", key or "whole screen",
+                    rect)
         self.poll()
 
     def set_region_enabled(self, enabled: bool) -> None:
-        """Toggle the lock without forgetting the saved rectangle."""
+        """Toggle the CURRENT target's lock, keeping its rectangle."""
         with self._lock:
-            if enabled and self._region is None:
-                return  # nothing saved to re-arm
-            self._region_on = bool(enabled)
-        _save_config_key("region_enabled", bool(enabled))
-        logger.info("[OCR] region lock %s (rect kept)",
+            e = self._regions.get(self._rkey())
+            if e is None:
+                return  # nothing saved for this target
+            e["on"] = bool(enabled)
+            self._save_regions()
+        logger.info("[OCR] region lock for %r %s (rect kept)",
+                    self._rkey() or "whole screen",
                     "enabled" if enabled else "disabled")
         self.poll()
 
     def region(self) -> tuple[int, int, int, int] | None:
         with self._lock:
-            return self._region if self._region_on else None
+            return self._active_region()
 
     @staticmethod
     def _occlusions_for(hwnd: int, sx1: int, sy1: int, sx2: int, sy2: int
@@ -862,7 +952,7 @@ class _Target:
             # Whole-screen mode: the "window" is the monitor, or the locked
             # region when one is set. Epoch bumps resync both loops.
             with self._lock:
-                r = self._region if self._region_on else None
+                r = self._active_region()
                 rect_new = r if r else (0, 0, self._cap.width,
                                         self._cap.height)
                 rect_new = (max(0, rect_new[0]), max(0, rect_new[1]),
@@ -932,7 +1022,7 @@ class _Target:
                 # the VRChat window and the user's rectangle agree (it was
                 # silently ignored here — dragging "did nothing").
                 with self._lock:
-                    r = self._region if self._region_on else None
+                    r = self._active_region()
                 if r is not None:
                     ix1, iy1 = max(x1, r[0]), max(y1, r[1])
                     ix2, iy2 = min(x2, r[2]), min(y2, r[3])
@@ -1147,7 +1237,7 @@ def _detect_loop(cap: _Capture, target: _Target, anchors: _Anchors,
             if epoch != last_epoch:
                 last_epoch = epoch
                 logger.info("[OCR] target region: %s (epoch %d)", rect, epoch)
-            if rect is None or not fg:
+            if rect is None or not fg or not _SCAN_ACTIVE[0]:
                 wake.wait(0.2)
                 wake.clear()
                 continue
@@ -1274,7 +1364,7 @@ class _Tracked:
                  "moving", "calm_frames", "miss", "sig", "sig_bad", "tex_bad",
                  "last_confirm", "confirms", "jump_dx", "jump_dy", "jump_n",
                  "uid", "text", "refined", "xlat", "namever", "namehit",
-                 "text_at")
+                 "text_at", "pinyin")
 
     def __init__(self, b: TextBox) -> None:
         self.x1, self.y1 = float(b.x1), float(b.y1)
@@ -1299,6 +1389,7 @@ class _Tracked:
         self.namever = -1  # roster version the namehit verdict was cached at
         self.namehit = False  # cached "this box is a player name" verdict
         self.text_at = 0.0  # when recognition first delivered the text
+        self.pinyin = ""  # transliteration of Han text (display formats)
 
     def advance(self, dx: float, dy: float, dt: float,
                 gx: float, gy: float) -> None:
@@ -1543,7 +1634,7 @@ def _track_loop(cap: _Capture, target: _Target, anchors: _Anchors,
                             target.get()[1])
                 hb_t, hb_frames = now_hb, 0
             rect, fg, epoch = target.get()
-            if rect is None:
+            if rect is None or not _SCAN_ACTIVE[0]:
                 if tracked or prev_g is not None:
                     tracked = []
                     prev_g = None
@@ -1931,10 +2022,12 @@ def _track_loop(cap: _Capture, target: _Target, anchors: _Anchors,
                                 < 0.3 * hit[2] + 8):
                             tr.text = hit[0]  # reborn box inherits its text
                             tr.text_at = 0.0  # shown before — no first-hold
+                            tr.pinyin = _pinyin_of(tr.text)
                     if tr.uid in _REC_OUT:
                         text, rrect = _REC_OUT.pop(tr.uid)
                         tr.text = text or "-"
                         tr.text_at = now
+                        tr.pinyin = _pinyin_of(tr.text)
                         # Apply the full-res edge refinement when the box is
                         # settled and the correction is within detection's
                         # quantization slop (a large delta means the box
@@ -2065,7 +2158,7 @@ def _track_loop(cap: _Capture, target: _Target, anchors: _Anchors,
                     (bx2 * inv_scale + off_x) + cap.left,
                     (by2 * inv_scale + off_y) + cap.top,
                     vx * inv_scale, vy * inv_scale, tr.uid,
-                    tr.xlat or tr.text))
+                    tr.text, tr.xlat, tr.pinyin))
             state.set(items)
         except Exception as exc:
             logger.debug("[OCR] track iteration error: %s", exc)
@@ -2083,10 +2176,11 @@ def _save_debug_shot(cap: _Capture, boxes, pills: bool = False) -> None:
             bx1, by1, bx2, by2 = it[0], it[1], it[2], it[3]
             x1, y1 = int(bx1 - cap.left), int(by1 - cap.top)
             x2, y2 = int(bx2 - cap.left), int(by2 - cap.top)
-            if pills and len(it) > 7:
+            if pills and len(it) > 9:
                 cv2.rectangle(frame, (x1, y1), (x2, y2), (26, 22, 20), -1)
                 cv2.rectangle(frame, (x1, y1), (x2, y2), (0, 0, 255), 1)
-                texted.append((x1, y1, x2, y2, it[7] or "..."))
+                label = "\n".join(_fmt_lines(it[7], it[8], it[9])) or "..."
+                texted.append((x1, y1, x2, y2, label))
             else:
                 cv2.rectangle(frame, (x1, y1), (x2, y2), (0, 0, 255), 2)
         if texted:
@@ -2099,17 +2193,19 @@ def _save_debug_shot(cap: _Capture, boxes, pills: bool = False) -> None:
             d = ImageDraw.Draw(img)
             for x1, y1, x2, y2, label in texted:
                 bw, bh = x2 - x1, y2 - y1
-                px = max(9, min(46, int(bh * 0.62)))
+                n = max(1, label.count("\n") + 1)
+                px = max(9, min(46, int(bh / n * 0.62)))
                 font = _pil_font(px)
                 try:
-                    tw = d.textlength(label, font=font)
+                    tw = max(d.textlength(ln, font=font)
+                             for ln in label.split("\n"))
                     if tw > bw - 4 and bw > 24 and tw > 0:
                         px = max(8, int(px * (bw - 4) / tw))
                         font = _pil_font(px)
                 except Exception:
                     pass
-                d.text((x1 + 2, (y1 + y2) // 2), label, font=font,
-                       fill=(255, 255, 255), anchor="lm")
+                d.multiline_text((x1 + 2, y1 + 2), label, font=font,
+                                 fill=(255, 255, 255))
             frame = np.asarray(img)[:, :, ::-1].copy()
         path = os.path.join(_SHOT_DIR, time.strftime("shot_%H%M%S.png"))
         cv2.imwrite(path, frame)
@@ -2129,12 +2225,24 @@ def _prtscn_loop(cap: _Capture, state: _BoxState, stop: threading.Event) -> None
     focus-stealing capture UI)."""
     was_down = False
     was_combo = False
+    was_scan = False
     user32 = ctypes.windll.user32
     while not stop.is_set():
         try:
             down = bool(user32.GetAsyncKeyState(_VK_SNAPSHOT) & 0x8000)
             fire = down and not was_down
             was_down = down
+            # Scan activation: hold = active while the bind is down;
+            # toggle = press flips. Gates all scanning and drawing.
+            skey = bool(user32.GetAsyncKeyState(_SCAN_VK[0]) & 0x8000)
+            if _SCAN_MODE[0] == "toggle":
+                if skey and not was_scan:
+                    _SCAN_ACTIVE[0] = not _SCAN_ACTIVE[0]
+                    logger.info("[OCR] scan %s",
+                                "ON" if _SCAN_ACTIVE[0] else "OFF")
+            else:
+                _SCAN_ACTIVE[0] = skey
+            was_scan = skey
             # Alt+<letter> toggles subtitle mode (edge-triggered).
             combo = (bool(user32.GetAsyncKeyState(_VK_MENU) & 0x8000)
                      and bool(user32.GetAsyncKeyState(_TRANSLATE_VK[0])
@@ -2379,11 +2487,29 @@ def run(monitor_index: int = 1, fps: float = 0.0, max_side: int = _TRACK_SIDE,
                 r = canvas.create_rectangle(
                     0, 0, 0, 0, fill=_PILL_BG, outline=_BOX_COLOR,
                     width=_BOX_WIDTH, state="hidden")
-                t = canvas.create_text(
-                    0, 0, text="", fill=_PILL_TEXT, anchor="w",
-                    state="hidden")
-                pill_pool.append((r, t))
+                shs = [canvas.create_text(0, 0, text="", fill="#000000",
+                                          anchor="w", state="hidden")
+                       for _ in range(3)]
+                txs = [canvas.create_text(0, 0, text="", fill=_PILL_TEXT,
+                                          anchor="w", state="hidden")
+                       for _ in range(3)]
+                pill_pool.append((r, shs, txs))
                 pill_meta.append(("", 0))
+            # Live style: recolor pooled items when the config changed.
+            style_now = (_C_OUTLINE[0], _C_BG[0], _C_TEXT[0], _BG_ALPHA[0])
+            if getattr(_redraw, "_style", None) != style_now:
+                _redraw._style = style_now
+                stip = {100: "", 75: "gray75", 50: "gray50",
+                        25: "gray25"}.get(_BG_ALPHA[0], "")
+                for bx in pool:
+                    canvas.itemconfigure(bx, outline=_C_OUTLINE[0])
+                for r, shs, txs in pill_pool:
+                    canvas.itemconfigure(
+                        r, outline=_C_OUTLINE[0],
+                        fill="" if _BG_ALPHA[0] == 0 else _C_BG[0],
+                        stipple=stip)
+                    for tid in txs:
+                        canvas.itemconfigure(tid, fill=_C_TEXT[0])
             for i, item in enumerate(pool):
                 if i < len(items):
                     bx1, by1, bx2, by2, vx, vy = items[i][:6]
@@ -2394,40 +2520,69 @@ def run(monitor_index: int = 1, fps: float = 0.0, max_side: int = _TRACK_SIDE,
                     canvas.itemconfigure(item, state="normal")
                 else:
                     canvas.itemconfigure(item, state="hidden")
-            for i, (rid, tid) in enumerate(pill_pool):
+            for i, (rid, shs, txs) in enumerate(pill_pool):
+                shown = False
                 if held and i < len(items):
-                    # IN-PLACE SUBTITLE: fill the detected bounds and draw
-                    # the RECOGNIZED text INSIDE them, hiding the original
-                    # (toggle off to read it). Font is sized to the box
-                    # height, then shrunk if the label would overflow width.
-                    bx1, by1, bx2, by2, vx, vy, uid, text = items[i]
+                    bx1, by1, bx2, by2, vx, vy, uid, text, xlat, py = items[i]
+                    lines = _fmt_lines(text, xlat, py) or ["..."]
+                    lines = lines[:3]
                     ex, ey = vx * ext, vy * ext
                     x1 = (bx1 + ex - left) * sx
                     y1 = (by1 + ey - top) * sy
                     x2 = (bx2 + ex - left) * sx
                     y2 = (by2 + ey - top) * sy
-                    label = text or "..."
-                    px = max(9, min(46, int((y2 - y1) * 0.62)))
-                    f = _font_px(px)
+                    n = len(lines)
+                    if _PLACE[0] == "cover":
+                        # Fill the detected bounds; lines stacked inside.
+                        px_h = max(9, min(46, int((y2 - y1) / n * 0.72)))
+                        ry1, ry2 = y1 - 1, y2 + 1
+                    else:
+                        # Neatly ABOVE the original text — the original
+                        # stays fully readable underneath.
+                        px_h = max(10, min(30, int((y2 - y1) * 0.55)))
+                        block = n * (px_h + 5) + 4
+                        ry2 = y1 - 3
+                        ry1 = ry2 - block
+                    f = _font_px(px_h)
                     bw = x2 - x1
-                    tw = f.measure(label)
-                    if tw > bw - 4 and bw > 24:
-                        px = max(8, int(px * (bw - 4) / max(1, tw)))
-                        f = _font_px(px)
-                    if pill_meta[i] != (label, px):
-                        pill_meta[i] = (label, px)
-                        canvas.itemconfigure(tid, text=label, font=f)
-                    canvas.coords(rid, x1 - 1, y1 - 1, x2 + 1, y2 + 1)
-                    # Left-anchored at the box start: replacement characters
-                    # begin where the original characters began, so the swap
-                    # reads near-1:1 (an exact glyph match is impossible —
-                    # the page's own font is unknown to us).
-                    canvas.coords(tid, x1 + 2, (y1 + y2) / 2)
-                    canvas.itemconfigure(rid, state="normal")
-                    canvas.itemconfigure(tid, state="normal")
-                else:
+                    widest = max(f.measure(ln) for ln in lines)
+                    if widest > bw - 4 and bw > 24:
+                        px_h = max(8, int(px_h * (bw - 4) / max(1, widest)))
+                        f = _font_px(px_h)
+                    key = ("|".join(lines), px_h)
+                    if pill_meta[i] != key:
+                        pill_meta[i] = key
+                        for j in range(3):
+                            ln = lines[j] if j < n else ""
+                            canvas.itemconfigure(txs[j], text=ln, font=f)
+                            canvas.itemconfigure(shs[j], text=ln, font=f)
+                    if _BG_ALPHA[0] > 0:
+                        canvas.coords(rid, x1 - 1, ry1, x2 + 1, ry2)
+                        canvas.itemconfigure(rid, state="normal")
+                    else:
+                        canvas.itemconfigure(rid, state="hidden")
+                    row_h = (ry2 - ry1) / n
+                    for j in range(3):
+                        if j < n:
+                            cy = ry1 + row_h * (j + 0.5)
+                            if _BG_ALPHA[0] == 0:
+                                # No backdrop: black shadow keeps the text
+                                # readable over any scene.
+                                canvas.coords(shs[j], x1 + 3, cy + 1)
+                                canvas.itemconfigure(shs[j], state="normal")
+                            else:
+                                canvas.itemconfigure(shs[j], state="hidden")
+                            canvas.coords(txs[j], x1 + 2, cy)
+                            canvas.itemconfigure(txs[j], state="normal")
+                        else:
+                            canvas.itemconfigure(txs[j], state="hidden")
+                            canvas.itemconfigure(shs[j], state="hidden")
+                    shown = True
+                if not shown:
                     canvas.itemconfigure(rid, state="hidden")
-                    canvas.itemconfigure(tid, state="hidden")
+                    for j in range(3):
+                        canvas.itemconfigure(txs[j], state="hidden")
+                        canvas.itemconfigure(shs[j], state="hidden")
         except Exception as exc:
             logger.debug("[OCR] redraw error: %s", exc)
         finally:

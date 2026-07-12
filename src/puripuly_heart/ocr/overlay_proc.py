@@ -106,7 +106,16 @@ _BIND_VK = {
     "NUM5": 0x65, "NUM6": 0x66, "NUM7": 0x67, "NUM8": 0x68, "NUM9": 0x69,
     "NUMMUL": 0x6A, "NUMADD": 0x6B, "NUMSUB": 0x6D, "NUMDEC": 0x6E,
     "NUMDIV": 0x6F,
+    "SPACE": 0x20, "TAB": 0x09, "ENTER": 0x0D, "BACKSPACE": 0x08,
+    "UP": 0x26, "DOWN": 0x28, "LEFT": 0x25, "RIGHT": 0x27,
+    "HOME": 0x24, "END": 0x23, "PGUP": 0x21, "PGDN": 0x22,
+    "INS": 0x2D, "DEL": 0x2E, "PAUSE": 0x13, "SCROLL": 0x91,
+    "SEMI": 0xBA, "EQUALS": 0xBB, "COMMA": 0xBC, "MINUS": 0xBD,
+    "PERIOD": 0xBE, "SLASH": 0xBF, "GRAVE": 0xC0, "LBRACKET": 0xDB,
+    "BACKSLASH": 0xDC, "RBRACKET": 0xDD, "QUOTE": 0xDE,
 }
+for _fi in range(13, 25):  # F13-F24 (F1-F12 parse via the regex below)
+    _BIND_VK[f"F{_fi}"] = 0x70 + _fi - 1
 
 
 def _parse_bind(s: str):
@@ -594,6 +603,11 @@ def _apply_prefs(cfg: dict) -> None:
         # New dual-bind config: the two keys are independent.
         _HOLD_COMBO[0] = _parse_bind(str(cfg.get("scan_bind") or ""))
         _TOG_COMBO[0] = _parse_bind(str(cfg.get("scan_bind_toggle") or ""))
+        if (_HOLD_COMBO[0] is not None
+                and _HOLD_COMBO[0] == _TOG_COMBO[0]):
+            # Identical binds are nonsensical — toggle wins, hold drops
+            # (the UI prevents this; guards hand-edited configs).
+            _HOLD_COMBO[0] = None
     elif "scan_bind" in cfg:
         # Legacy single bind: scan_mode decides which slot it fills.
         cbb = _parse_bind(str(cfg.get("scan_bind") or ""))

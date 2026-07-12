@@ -2123,13 +2123,26 @@ class DashboardView(ft.Row):
             _REC_VKS[_c] = chr(_c)
         for _c in range(ord("0"), ord("9") + 1):
             _REC_VKS[_c] = chr(_c)
-        for _i in range(12):
+        for _i in range(24):  # F1-F24
             _REC_VKS[0x70 + _i] = f"F{_i + 1}"
         for _i in range(10):
             _REC_VKS[0x60 + _i] = f"NUM{_i}"
         _REC_VKS.update({0x6A: "NUMMUL", 0x6B: "NUMADD", 0x6D: "NUMSUB",
                          0x6E: "NUMDEC", 0x6F: "NUMDIV",
-                         0x04: "MOUSE3", 0x05: "MOUSE4", 0x06: "MOUSE5"})
+                         0x04: "MOUSE3", 0x05: "MOUSE4", 0x06: "MOUSE5",
+                         0x20: "SPACE", 0x09: "TAB", 0x0D: "ENTER",
+                         0x08: "BACKSPACE",
+                         0x26: "UP", 0x28: "DOWN", 0x25: "LEFT",
+                         0x27: "RIGHT",
+                         0x24: "HOME", 0x23: "END", 0x21: "PGUP",
+                         0x22: "PGDN", 0x2D: "INS", 0x2E: "DEL",
+                         0x13: "PAUSE", 0x91: "SCROLL",
+                         0xBA: "SEMI", 0xBB: "EQUALS", 0xBC: "COMMA",
+                         0xBD: "MINUS", 0xBE: "PERIOD", 0xBF: "SLASH",
+                         0xC0: "GRAVE", 0xDB: "LBRACKET",
+                         0xDC: "BACKSLASH", 0xDD: "RBRACKET",
+                         0xDE: "QUOTE"})
+        self._bind_btxts = {}
 
         def _mk_bind_recorder(pref_key: str) -> ft.Container:
             btxt = ft.Text(
@@ -2138,8 +2151,20 @@ class DashboardView(ft.Row):
                 no_wrap=True, overflow=ft.TextOverflow.ELLIPSIS,
             )
             btn = _summary_btn(btxt)
+            self._bind_btxts[pref_key] = btxt
 
             def _finish(combo: str) -> None:
+                # One combo can't drive both mechanisms: recording a bind
+                # already on the OTHER slot steals it (clears it there).
+                other = ("scan_bind_toggle" if pref_key == "scan_bind"
+                         else "scan_bind")
+                if combo and str(self._ocr_style.get(other, "")) == combo:
+                    self._ocr_style[other] = ""
+                    ob = self._bind_btxts.get(other)
+                    if ob is not None:
+                        ob.value = "—"
+                        with contextlib.suppress(Exception):
+                            ob.update()
                 self._ocr_style[pref_key] = combo
                 btxt.value = combo or "—"
                 with contextlib.suppress(Exception):

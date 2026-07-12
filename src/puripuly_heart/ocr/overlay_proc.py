@@ -256,6 +256,20 @@ def _players_loop(stop: threading.Event) -> None:
         stop.wait(0.5)
 
 
+# Translate-icon glyph (文A and variants — Roblox/VRChat stamp it on chat
+# lines). Whole-box match of these signatures in a SQUARE-ish box is the
+# icon, never a message; a real letter 'a' lives in wider boxes with more
+# characters around it, so plain text is untouched.
+_XLAT_ICON_SIGS = {"文a", "a文", "あa", "aあ", "文", "あ", "文字a"}
+
+
+def _is_translate_icon(text: str, w: float, h: float) -> bool:
+    if h <= 0 or w > 1.8 * h:
+        return False  # icons are squarish; text lines are wide
+    n = _norm_name(text)
+    return bool(n) and len(n) <= 3 and n in _XLAT_ICON_SIGS
+
+
 def _is_own_language(text: str, tgt: str) -> bool:
     """Script-level check: is this text already readable for the target
     language? Rough by design — it gates cosmetics and API-call skips."""
@@ -1943,7 +1957,10 @@ def _track_loop(cap: _Capture, target: _Target, anchors: _Anchors,
                         if not tr.xlat and _XLAT_ENABLED[0]:
                             norm = tr.text.strip()
                             if (_is_own_language(norm, _XLAT_TARGET[0])
-                                    or _is_ignored_name(norm)):
+                                    or _is_ignored_name(norm)
+                                    or _is_translate_icon(
+                                        norm, tr.x2 - tr.x1,
+                                        tr.y2 - tr.y1)):
                                 tr.xlat = norm  # readable/ignored — no call
                             else:
                                 with _XLAT_LOCK:
@@ -2018,6 +2035,8 @@ def _track_loop(cap: _Capture, target: _Target, anchors: _Anchors,
                 # boxes that are purely a player name or pronoun set.
                 if tr.text and tr.text != "-":
                     _t = tr.text.strip()
+                    if _is_translate_icon(_t, tr.x2 - tr.x1, tr.y2 - tr.y1):
+                        continue  # UI chrome, never a message
                     if (_FOREIGN_ONLY[0]
                             and _is_own_language(_t, _XLAT_TARGET[0])):
                         continue

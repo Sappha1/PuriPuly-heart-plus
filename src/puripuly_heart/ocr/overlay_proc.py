@@ -265,16 +265,18 @@ _PREWARM = [True]
 # with strong text contrast. World text (signs, posters, HUD junk) sits on
 # varied pixels and fails the ring test; the square mute icon fails aspect.
 _BUBBLES_ONLY = [False]
-_BUBBLE_RING_STD = 20.0
+_BUBBLE_RING_STD = 24.0
 _BUBBLE_CONTRAST = 40.0
 _BUBBLE_MIN_ASPECT = 1.2
+_BUBBLE_WHY = [""]  # last rejection reason (throttled diagnostics)
 # VRChat pill color gate: bubbles/nameplates are mid-brightness with a
 # neutral-to-BLUE tint. Excludes the solid panels that beat the uniformity
 # test — near-black leaderboards, near-white screens, warm wood/cream walls.
-_BUBBLE_LUM_MIN = 45.0
+_BUBBLE_LUM_MIN = 36.0   # post-processed (darkened) worlds tint pills low
 _BUBBLE_LUM_MAX = 215.0
-_BUBBLE_WARM_MAX = 6.0   # red may exceed blue by at most this
-_BUBBLE_SPREAD_MAX = 60.0  # channel spread cap: pills are desaturated
+_BUBBLE_WARM_MAX = 8.0   # red may exceed blue by at most this
+_BUBBLE_SPREAD_MAX = 72.0  # channel spread cap: pills are desaturated
+# (world post-processing tints the whole scene — gates carry headroom)
 # Reborn-box text inheritance: the detector blinks on borderline text (tiny
 # chips like "..."), killing and re-creating its box every second or two —
 # each rebirth used to visibly reset to pending and re-recognize. A box born
@@ -1484,30 +1486,44 @@ def _looks_like_bubble(bgr: np.ndarray, b: TextBox) -> bool:
     H, W = bgr.shape[:2]
     bw, bh = b.x2 - b.x1, b.y2 - b.y1
     if bh <= 0 or bw < _BUBBLE_MIN_ASPECT * bh:
+        _BUBBLE_WHY[0] = "aspect"
         return False
-    m = max(4, bh // 2)
     y1, y2 = max(0, b.y1), min(H, b.y2)
     if y2 - y1 < 3:
+        _BUBBLE_WHY[0] = "tiny"
         return False
     ring_lum = None
-    for sx1, sx2 in ((max(0, b.x1 - m), b.x1), (b.x2, min(W, b.x2 + m))):
-        if sx2 - sx1 < 3:
-            continue
-        strip = bgr[y1:y2, sx1:sx2].astype(np.float32).reshape(-1, 3)
-        if (strip.shape[0] < 12
-                or float(strip.std(axis=0).max()) > _BUBBLE_RING_STD):
-            continue
-        mbgr = strip.mean(axis=0)  # B, G, R
-        lum = float(mbgr.mean())
-        if not (_BUBBLE_LUM_MIN <= lum <= _BUBBLE_LUM_MAX):
-            continue  # near-black panel / near-white screen
-        if float(mbgr[2] - mbgr[0]) > _BUBBLE_WARM_MAX:
-            continue  # warm fill (wood, cream, paper) — not a VRChat pill
-        if float(mbgr.max() - mbgr.min()) > _BUBBLE_SPREAD_MAX:
-            continue  # saturated world material
-        ring_lum = lum
-        break
+    why = "no-uniform-side"
+    # Probe a NARROW strip first, then a wider one: tight-padded bubbles
+    # (big text, small pill margin) fail the wide strip because it crosses
+    # the pill edge onto the world — the narrow strip stays inside.
+    for m in (max(3, bh // 4), max(4, bh // 2)):
+        for sx1, sx2 in ((max(0, b.x1 - m), b.x1),
+                         (b.x2, min(W, b.x2 + m))):
+            if sx2 - sx1 < 3:
+                continue
+            strip = bgr[y1:y2, sx1:sx2].astype(np.float32).reshape(-1, 3)
+            if strip.shape[0] < 12:
+                continue
+            if float(strip.std(axis=0).max()) > _BUBBLE_RING_STD:
+                continue
+            mbgr = strip.mean(axis=0)  # B, G, R
+            lum = float(mbgr.mean())
+            if not (_BUBBLE_LUM_MIN <= lum <= _BUBBLE_LUM_MAX):
+                why = f"lum={lum:.0f}"  # near-black panel / white screen
+                continue
+            if float(mbgr[2] - mbgr[0]) > _BUBBLE_WARM_MAX:
+                why = "warm"  # wood, cream, paper — not a VRChat pill
+                continue
+            if float(mbgr.max() - mbgr.min()) > _BUBBLE_SPREAD_MAX:
+                why = f"sat={mbgr.max() - mbgr.min():.0f}"
+                continue
+            ring_lum = lum
+            break
+        if ring_lum is not None:
+            break
     if ring_lum is None:
+        _BUBBLE_WHY[0] = why
         return False  # neither side sits on a solid pill fill
     inner = bgr[y1:y2, max(0, b.x1):min(W, b.x2)].astype(np.float32)
     if inner.size < 48:
@@ -1515,8 +1531,11 @@ def _looks_like_bubble(bgr: np.ndarray, b: TextBox) -> bool:
     lum = inner.mean(axis=2)
     bright = float(np.percentile(lum, 92))
     dark = float(np.percentile(lum, 8))
-    return (bright - ring_lum > _BUBBLE_CONTRAST
-            or ring_lum - dark > _BUBBLE_CONTRAST)
+    ok = (bright - ring_lum > _BUBBLE_CONTRAST
+          or ring_lum - dark > _BUBBLE_CONTRAST)
+    if not ok:
+        _BUBBLE_WHY[0] = "low-contrast"
+    return ok
 
 
 def _glyph_color(crop: np.ndarray) -> str:
@@ -1653,8 +1672,15 @@ def _detect_loop(cap: _Capture, target: _Target, anchors: _Anchors,
             raw = detector.detect(det_bgr)
             shaped = [b for b in raw if _text_plausible(b, det_w, det_h)]
             if _BUBBLES_ONLY[0]:
-                shaped = [b for b in shaped
-                          if _looks_like_bubble(det_bgr, b)]
+                kept = [b for b in shaped
+                        if _looks_like_bubble(det_bgr, b)]
+                ndrop = len(shaped) - len(kept)
+                if ndrop and time.monotonic() - getattr(
+                        _detect_loop, "_bub_at", 0.0) > 5.0:
+                    _detect_loop._bub_at = time.monotonic()
+                    logger.info("[OCR] bubbles-only dropped %d box(es), "
+                                "last reason: %s", ndrop, _BUBBLE_WHY[0])
+                shaped = kept
             # RECOGNITION GATE: actually READ each candidate; only regions
             # producing legible characters at decent confidence earn a box.
             # Crops come from the FULL-RES frame (not the downscaled detection

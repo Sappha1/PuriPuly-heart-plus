@@ -501,6 +501,8 @@
   "dashboard.ocr.style.placement": "배치",
   "dashboard.ocr.style.font": "글꼴 크기",
   "dashboard.ocr.font.auto": "자동 (박스에 맞춤)",
+  "dashboard.ocr.font.custom": "직접 입력…",
+  "common.cancel": "취소",
   "dashboard.ocr.place.cover": "원문 덮기",
   "dashboard.ocr.place.above": "원문 위",
   "dashboard.ocr.opacity.none": "없음",

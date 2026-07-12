@@ -235,17 +235,11 @@ def _ignore_active() -> bool:
     return _IGNORE_NAMES[0] or _IGNORE_PRONOUNS[0]
 
 
-def _is_ignored_name(text: str) -> bool:
-    t = text.strip()
-    if not t:
-        return False
-    # Pronoun sets and truncated bio fields — their own toggle.
-    if _IGNORE_PRONOUNS[0] and (_is_pronoun_text(t)
-                                or _looks_truncated_bio(t)):
-        return True
-    if not _IGNORE_NAMES[0]:
-        return False
-    n = _norm_name(t)
+def _is_roster_name(text: str) -> bool:
+    """Whole-box match against the player roster (exact/fragment/fuzzy),
+    independent of the ignore toggles — also anchors nameplate-chrome
+    geometry when only the pronoun filter is on."""
+    n = _norm_name(text.strip())
     if not n:
         return False
     with _NAMES_LOCK:
@@ -255,8 +249,11 @@ def _is_ignored_name(text: str) -> bool:
     # FRAGMENT: the detector splits long mixed-script nameplates into pieces
     # ('AL1S__（劳kei联结）' -> 'AL1S__' + '（劳kei联结）'). A box whose whole
     # text is a contiguous piece of a roster name is that name's fragment —
-    # real sentences are never substrings of a display name.
-    if len(n) >= 4:
+    # real sentences are never substrings of a display name. CJK carries far
+    # more per-glyph information, so 2 Han glyphs ('冰陈' of '冰陈oVo')
+    # already identify a fragment; Latin needs 4+.
+    han = sum("一" <= c <= "鿿" for c in n)
+    if len(n) >= 4 or han >= 2:
         for cand in names:
             if n in cand:
                 return True
@@ -275,6 +272,17 @@ def _is_ignored_name(text: str) -> bool:
                     >= 0.70):
                 return True
     return False
+
+
+def _is_ignored_name(text: str) -> bool:
+    t = text.strip()
+    if not t:
+        return False
+    # Pronoun sets and truncated bio fields — their own toggle.
+    if _IGNORE_PRONOUNS[0] and (_is_pronoun_text(t)
+                                or _looks_truncated_bio(t)):
+        return True
+    return _IGNORE_NAMES[0] and _is_roster_name(t)
 
 
 def _players_loop(stop: threading.Event) -> None:
@@ -1423,7 +1431,7 @@ class _Tracked:
                  "moving", "calm_frames", "miss", "sig", "sig_bad", "tex_bad",
                  "last_confirm", "confirms", "jump_dx", "jump_dy", "jump_n",
                  "uid", "text", "refined", "xlat", "namever", "namehit",
-                 "text_at", "pinyin")
+                 "rosterhit", "text_at", "pinyin")
 
     def __init__(self, b: TextBox) -> None:
         self.x1, self.y1 = float(b.x1), float(b.y1)
@@ -1447,6 +1455,7 @@ class _Tracked:
         self.xlat = ""  # translated text (subtitle mode shows this)
         self.namever = -1  # roster version the namehit verdict was cached at
         self.namehit = False  # cached "this box is a player name" verdict
+        self.rosterhit = False  # roster match regardless of ignore toggles
         self.text_at = 0.0  # when recognition first delivered the text
         self.pinyin = ""  # transliteration of Han text (display formats)
 
@@ -2158,25 +2167,34 @@ def _track_loop(cap: _Capture, target: _Target, anchors: _Anchors,
                 for tr in tracked:
                     if tr.text and tr.text != "-":
                         if tr.namever != _NAMES_VER[0]:
-                            tr.namehit = _is_ignored_name(tr.text.strip())
+                            _t1 = tr.text.strip()
+                            tr.namehit = _is_ignored_name(_t1)
+                            # Roster anchors work even when the name itself
+                            # is displayed (pronoun filter on, names off) —
+                            # the status/pronoun pill under it still drops.
+                            tr.rosterhit = tr.namehit or _is_roster_name(_t1)
                             tr.namever = _NAMES_VER[0]
-                        if tr.namehit:
+                        if tr.rosterhit:
                             name_rects.append(tr.rect())
 
             def _under_name(bx1: float, by1: float, bx2: float,
                             by2: float) -> bool:
-                # TIGHT window: real status/pronoun lines hug their name and
-                # center under it. A generous window swallowed an actual chat
-                # bubble that happened to hang below a suppressed nameplate.
+                # Real status/pronoun pills hug their name (VRChat places
+                # them under the plate, often shifted right) and are no
+                # taller than the name line. The size guard is what keeps
+                # actual chat bubbles hanging below a nameplate alive.
+                bh = by2 - by1
                 for ax1, ay1, ax2, ay2 in name_rects:
                     ah = max(1.0, ay2 - ay1)
-                    if not (-0.3 * ah <= by1 - ay2 <= 0.6 * ah):
+                    if not (-0.3 * ah <= by1 - ay2 <= 1.0 * ah):
                         continue
+                    if bh > 1.15 * ah:
+                        continue  # bigger than the name line: not chrome
                     ov = min(bx2, ax2) - max(bx1, ax1)
-                    if ov <= 0.25 * max(1.0, bx2 - bx1):
+                    if ov <= 0:
                         continue
                     coff = abs((bx1 + bx2) - (ax1 + ax2)) / 2.0
-                    if coff <= 0.5 * max(ax2 - ax1, bx2 - bx1):
+                    if coff <= 0.75 * max(ax2 - ax1, bx2 - bx1):
                         return True
                 return False
 
@@ -2254,6 +2272,21 @@ def _save_debug_shot(cap: _Capture, boxes, pills: bool = False) -> None:
             for x1, y1, x2, y2, label in texted:
                 bw, bh = x2 - x1, y2 - y1
                 n = max(1, label.count("\n") + 1)
+                if _FONT_FIX[0] > 0:
+                    # Fixed subtitle size: the shot mirrors the live pills —
+                    # no shrink-to-fit, block centered on the box.
+                    px = _FONT_FIX[0]
+                    font = _pil_font(px)
+                    try:
+                        tw = max(d.textlength(ln, font=font)
+                                 for ln in label.split("\n"))
+                    except Exception:
+                        tw = bw
+                    tx = int((x1 + x2 - tw) / 2)
+                    ty = int((y1 + y2 - n * (px + 5)) / 2) + 2
+                    d.multiline_text((tx, ty), label, font=font,
+                                     fill=(255, 255, 255))
+                    continue
                 px = max(9, min(46, int(bh / n * 0.62)))
                 font = _pil_font(px)
                 try:
@@ -2596,20 +2629,28 @@ def run(monitor_index: int = 1, fps: float = 0.0, max_side: int = _TRACK_SIDE,
                     x2 = (bx2 + ex - left) * sx
                     y2 = (by2 + ey - top) * sy
                     n = len(lines)
+                    line_x = None  # per-line x (fixed mode centers lines)
                     if _FONT_FIX[0] > 0:
                         # Fixed size: text never shrinks to fit the box —
-                        # the pill grows to fit the text instead.
+                        # the pill grows AROUND the box center instead, and
+                        # each line is centered inside it.
                         px_h = _FONT_FIX[0]
                         f = _font_px(px_h)
-                        widest = max(f.measure(ln) for ln, _p in lines)
+                        lws = [f.measure(ln) for ln, _p in lines]
+                        widest = max(lws)
                         block = n * (px_h + 5) + 4
+                        bcx = (x1 + x2) / 2.0
+                        if widest + 6 > x2 - x1:
+                            x1 = bcx - (widest + 6) / 2.0
+                            x2 = bcx + (widest + 6) / 2.0
                         if _PLACE[0] == "cover":
-                            ry1 = y1 - 1
-                            ry2 = max(y2 + 1, ry1 + block)
+                            bcy = (y1 + y2) / 2.0
+                            half = max(block, y2 - y1 + 2) / 2.0
+                            ry1, ry2 = bcy - half, bcy + half
                         else:
                             ry2 = y1 - 3
                             ry1 = ry2 - block
-                        x2 = max(x2, x1 + widest + 6)
+                        line_x = [bcx - w / 2.0 for w in lws]
                     else:
                         if _PLACE[0] == "cover":
                             # Fill the detected bounds; lines stacked inside.
@@ -2648,14 +2689,15 @@ def run(monitor_index: int = 1, fps: float = 0.0, max_side: int = _TRACK_SIDE,
                     for j in range(3):
                         if j < n:
                             cy = ry1 + row_h * (j + 0.5)
+                            lx = line_x[j] if line_x else x1 + 2
                             if _BG_ALPHA[0] == 0:
                                 # No backdrop: black shadow keeps the text
                                 # readable over any scene.
-                                canvas.coords(shs[j], x1 + 3, cy + 1)
+                                canvas.coords(shs[j], lx + 1, cy + 1)
                                 canvas.itemconfigure(shs[j], state="normal")
                             else:
                                 canvas.itemconfigure(shs[j], state="hidden")
-                            canvas.coords(txs[j], x1 + 2, cy)
+                            canvas.coords(txs[j], lx, cy)
                             canvas.itemconfigure(txs[j], state="normal")
                         else:
                             canvas.itemconfigure(txs[j], state="hidden")

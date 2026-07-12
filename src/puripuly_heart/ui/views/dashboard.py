@@ -1855,7 +1855,79 @@ class DashboardView(ft.Row):
             "18": t("settings.overlay.desktop.size.option.medium"),
             "24": t("settings.overlay.desktop.size.option.large"),
             "32": t("settings.overlay.desktop.size.option.xlarge"),
+            "44": t("settings.overlay.desktop.size.option.xlarge") + " +",
         }
+
+        def _font_label_of(v) -> str:
+            s = str(v)
+            return _font_labels.get(s, f"{s} px")
+
+        def _mk_font_btn() -> ft.Container:
+            btxt = ft.Text(
+                _font_label_of(self._ocr_style.get("ocr_font_px", 0)),
+                size=11, color=_TOGGLE_ON, weight=ft.FontWeight.W_600,
+                no_wrap=True, overflow=ft.TextOverflow.ELLIPSIS)
+            btn = _summary_btn(btxt)
+
+            def _apply(px: int) -> None:
+                self._ocr_style["ocr_font_px"] = str(px)
+                btxt.value = _font_label_of(px)
+                with contextlib.suppress(Exception):
+                    btxt.update()
+                if callable(self.on_ocr_style_change):
+                    _guarded(lambda v: self.on_ocr_style_change(
+                        "ocr_font_px", v), px)
+
+            def _ask_custom() -> None:
+                cur = str(self._ocr_style.get("ocr_font_px", 0))
+                tf = ft.TextField(
+                    value=cur if cur not in ("", "0") else "24",
+                    width=110, autofocus=True, suffix_text="px",
+                    keyboard_type=ft.KeyboardType.NUMBER)
+
+                def _ok(_e) -> None:
+                    try:
+                        px = max(8, min(72, int(str(tf.value).strip())))
+                    except Exception:
+                        self.page.close(dlg)
+                        return
+                    self.page.close(dlg)
+                    _apply(px)
+
+                dlg = ft.AlertDialog(
+                    title=ft.Text(t("dashboard.ocr.style.font"), size=14),
+                    content=tf,
+                    actions=[
+                        ft.TextButton(t("common.cancel"),
+                                      on_click=lambda _e:
+                                      self.page.close(dlg)),
+                        ft.TextButton("OK", on_click=_ok),
+                    ])
+                tf.on_submit = _ok
+                self.page.open(dlg)
+
+            def _open(_ev) -> None:
+                if not self.page:
+                    return
+                opts = [OptionItem(value=k, label=v, description="",
+                                   disabled=False)
+                        for k, v in _font_labels.items()]
+                opts.append(OptionItem(
+                    value="custom", label=t("dashboard.ocr.font.custom"),
+                    description="", disabled=False))
+
+                def _sel(value: str) -> None:
+                    if value == "custom":
+                        _ask_custom()
+                        return
+                    _apply(int(value))
+
+                SettingsModal(self.page, t("dashboard.ocr.style.font"),
+                              opts, _sel).open(
+                    str(self._ocr_style.get("ocr_font_px", 0)))
+
+            btn.on_click = _open
+            return btn
 
         def _color_name(v: str) -> str:
             for hexv, name in _color_opts:
@@ -1912,16 +1984,7 @@ class DashboardView(ft.Row):
                              for k, v in _place_labels.items()],
                             "ocr_place",
                             lambda v: _place_labels.get(v, v))),
-                _mk_row(t("dashboard.ocr.style.font"),
-                        _modal_row_btn(
-                            _font_labels.get(str(self._ocr_style.get(
-                                "ocr_font_px", 0)), _font_labels["0"]),
-                            t("dashboard.ocr.style.font"),
-                            [OptionItem(value=k, label=v, description="",
-                                        disabled=False)
-                             for k, v in _font_labels.items()],
-                            "ocr_font_px",
-                            lambda v: _font_labels.get(str(v), str(v)))),
+                _mk_row(t("dashboard.ocr.style.font"), _mk_font_btn()),
                 ft.Container(height=6),
             ]
             self._ocr_style_popover_close = self._open_popover_at(

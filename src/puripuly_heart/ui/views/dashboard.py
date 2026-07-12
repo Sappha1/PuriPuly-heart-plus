@@ -2178,11 +2178,64 @@ class DashboardView(ft.Row):
 
         border_btn.on_click = _toggle_border
 
+        # Live scan status: the overlay writes ocr_state.json on every
+        # scan on/off transition (plus a 2s heartbeat) — poll it while
+        # the menu is open so the toggle bind visibly works.
+        _status_txt = ft.Text("…", size=11, weight=ft.FontWeight.W_600,
+                              color=_TEXT_FAINT, no_wrap=True)
+        _status_pill = ft.Container(
+            content=_status_txt,
+            padding=ft.padding.symmetric(horizontal=8, vertical=4),
+            border_radius=6, bgcolor="#22252b",
+            border=ft.border.all(1, "#3a3b3f"))
+
+        def _read_scan_state():
+            try:
+                import json as _json
+                import os as _os
+                import time as _time
+                p = _os.path.join(_os.path.expanduser("~"), "AppData",
+                                  "Local", "puripuly-heart",
+                                  "ocr_state.json")
+                with open(p, encoding="utf-8") as fh:
+                    st = _json.load(fh)
+                if _time.time() - float(st.get("ts", 0)) > 8:
+                    return None  # stale — overlay not running
+                return st
+            except Exception:
+                return None
+
+        async def _poll_state() -> None:
+            import asyncio
+            gen = getattr(self, "_ocr_state_gen", 0) + 1
+            self._ocr_state_gen = gen
+            while gen == getattr(self, "_ocr_state_gen", 0):
+                st = _read_scan_state()
+                if st is None:
+                    _status_txt.value = t("dashboard.ocr.state.off")
+                    _status_txt.color = _TEXT_FAINT
+                elif st.get("scan"):
+                    _status_txt.value = t("dashboard.ocr.state.on")
+                    _status_txt.color = _TOGGLE_ON
+                else:
+                    _status_txt.value = t("dashboard.ocr.state.idle")
+                    _status_txt.color = _TEXT_FAINT
+                try:
+                    _status_txt.update()
+                except Exception:
+                    return  # menu closed — control detached
+                await asyncio.sleep(0.5)
+
+        with contextlib.suppress(Exception):
+            self.page.run_task(_poll_state)
+
         content = ft.Container(
             content=ft.Column(
                 [
+                    _section_row(t("dashboard.ocr.state"),
+                                 _status_pill, top=8),
                     _section_row(t("dashboard.ocr.menu.window"),
-                                 _win_btn, top=8),
+                                 _win_btn),
                     _section_row(t("dashboard.ocr.menu.foreign_only"),
                                  _bool_pill(self._ocr_foreign_only,
                                             _on_foreign)),

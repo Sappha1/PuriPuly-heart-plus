@@ -76,6 +76,24 @@ _SCAN_MODE = ["hold"]  # hold | toggle — gates ALL scanning/drawing
 _SCAN_VK = [ord("E")]  # legacy single-key path (combo below preferred)
 _SCAN_ACTIVE = [False]
 _REGION_BORDER = [True]  # show the dashed region rectangle
+_TGT_FG = [True]  # live "target window is foreground" (track loop updates)
+_STATE_PATH = os.path.join(os.path.expanduser("~"), "AppData", "Local",
+                           "puripuly-heart", "ocr_state.json")
+
+
+def _write_state() -> None:
+    """Tiny state file the app reads to show live scan status in the OCR
+    menu — written on every scan on/off transition."""
+    try:
+        import json
+
+        with open(_STATE_PATH, "w", encoding="utf-8") as fh:
+            json.dump({"scan": bool(_SCAN_ACTIVE[0]),
+                       "mode": _SCAN_MODE[0],
+                       "fg": bool(_TGT_FG[0]),
+                       "ts": time.time()}, fh)
+    except Exception:
+        pass
 
 
 def _parse_bind(s: str):
@@ -1919,6 +1937,7 @@ def _track_loop(cap: _Capture, target: _Target, anchors: _Anchors,
                             target.get()[1])
                 hb_t, hb_frames = now_hb, 0
             rect, fg, epoch = target.get()
+            _TGT_FG[0] = bool(fg) and rect is not None
             if rect is None or not _SCAN_ACTIVE[0]:
                 if tracked or prev_g is not None:
                     tracked = []
@@ -2616,10 +2635,17 @@ def _prtscn_loop(cap: _Capture, state: _BoxState, stop: threading.Event) -> None
             # down; toggle = press flips; no bind = always active. Gates
             # ALL scanning and drawing (subtitles follow the scan — there
             # is no separate subtitle key anymore).
+            # ONLY while the target window is focused: the bind is a bare
+            # letter for most users, and typing in Discord/a browser was
+            # silently flipping the toggle ("PrintScreen killed OCR" was
+            # really the e's in the chat message they typed after it).
             cb = _SCAN_COMBO[0]
+            prev_active = _SCAN_ACTIVE[0]
             if cb is None:
                 _SCAN_ACTIVE[0] = True
                 was_scan = False
+            elif not _TGT_FG[0]:
+                was_scan = False  # ignore presses made in other apps
             else:
                 mods, keyvk = cb
                 skey = (all(user32.GetAsyncKeyState(m) & 0x8000
@@ -2633,6 +2659,11 @@ def _prtscn_loop(cap: _Capture, state: _BoxState, stop: threading.Event) -> None
                 else:
                     _SCAN_ACTIVE[0] = skey
                 was_scan = skey
+            noww = time.monotonic()
+            if (_SCAN_ACTIVE[0] != prev_active
+                    or noww - getattr(_prtscn_loop, "_state_at", 0.0) > 2.0):
+                _prtscn_loop._state_at = noww
+                _write_state()
             if not fire and os.path.exists(_SHOT_TRIGGER):
                 with contextlib_suppress():
                     os.remove(_SHOT_TRIGGER)

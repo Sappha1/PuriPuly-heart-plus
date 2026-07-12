@@ -487,6 +487,7 @@
   "dashboard.chat.received_ocr": "OCR 수신됨",
   "dashboard.ocr.menu.vrchat_only": "VRChat이 포커스일 때만",
   "dashboard.ocr.menu.window": "대상 창",
+  "dashboard.ocr.menu.xlat_model": "번역 모델",
   "dashboard.ocr.menu.window.whole": "전체 화면",
   "dashboard.ocr.menu.bubbles_only": "VRChat 말풍선만",
   "dashboard.ocr.menu.foreign_only": "외국어 텍스트만",

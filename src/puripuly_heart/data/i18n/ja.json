@@ -488,6 +488,7 @@
   "dashboard.chat.received_ocr": "OCR受信",
   "dashboard.ocr.menu.vrchat_only": "VRChatがフォーカス中のみ",
   "dashboard.ocr.menu.window": "対象ウィンドウ",
+  "dashboard.ocr.menu.xlat_model": "翻訳モデル",
   "dashboard.ocr.menu.window.whole": "画面全体",
   "dashboard.ocr.menu.bubbles_only": "VRChatバブルのみ",
   "dashboard.ocr.menu.foreign_only": "外国語テキストのみ",

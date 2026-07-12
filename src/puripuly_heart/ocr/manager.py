@@ -104,6 +104,17 @@ class OcrOverlayManager:
         self.ignore_pronouns = bool(_p.get("ignore_pronouns", True))
         # Master OCR translation switch (off = raw recognized text, no calls).
         self.translate = bool(_p.get("translate", True))
+        # Free web engine used for OCR translation (never the user's paid
+        # API quota): bing (default) / google / papago.
+        self.xlat_service = str(_p.get("xlat_service", "bing"))
+
+    def set_xlat_service(self, service: str) -> None:
+        service = (service or "bing").lower()
+        if service == self.xlat_service:
+            return
+        self.xlat_service = service
+        save_ocr_pref("xlat_service", service)
+        self._reload_live()
 
     def _reload_live(self) -> None:
         """Push saved prefs into the RUNNING overlay — no restart needed."""

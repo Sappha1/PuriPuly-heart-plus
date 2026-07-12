@@ -359,6 +359,9 @@ def _apply_prefs(cfg: dict) -> None:
     _IGNORE_PRONOUNS[0] = bool(cfg.get("ignore_pronouns",
                                        _IGNORE_PRONOUNS[0]))
     _XLAT_ENABLED[0] = bool(cfg.get("translate", _XLAT_ENABLED[0]))
+    svc = str(cfg.get("xlat_service", _XLAT_SVC[0]) or "bing").lower()
+    if svc in ("bing", "google", "papago"):
+        _XLAT_SVC[0] = svc
     logger.info("[OCR] prefs applied live: prewarm=%d bubbles=%d foreign=%d "
                 "names=%d pronouns=%d translate=%d",
                 _PREWARM[0], _BUBBLES_ONLY[0], _FOREIGN_ONLY[0],

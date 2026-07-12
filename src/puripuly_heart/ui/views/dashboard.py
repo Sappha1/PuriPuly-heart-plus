@@ -490,6 +490,8 @@ class DashboardView(ft.Row):
         self.on_ocr_ignore_pronouns_change = None  # (prototype) callback
         self._ocr_translate = bool(_ocr_p.get("translate", True))
         self.on_ocr_translate_change = None  # (prototype) callback(bool)
+        self._ocr_xlat_service = str(_ocr_p.get("xlat_service", "bing"))
+        self.on_ocr_xlat_service_change = None  # (prototype) callback(str)
         self.ocr_log_chat = bool(_ocr_p.get("log_chat", True))
         self.on_ocr_foreign_change = None  # (prototype) callback(bool)
         self.on_ocr_ignore_names_change = None  # (prototype) callback(bool)
@@ -1718,6 +1720,44 @@ class DashboardView(ft.Row):
                 logging.getLogger(__name__).exception(
                     "[OCR] region select failed")
 
+        # ── OCR translation model (free engines only) ──
+        _svc_names = {"bing": "Bing", "google": "Google", "papago": "Papago"}
+        _svc_btn_text = ft.Text(
+            _svc_names.get(self._ocr_xlat_service, "Bing"),
+            size=11, color=_TOGGLE_ON, weight=ft.FontWeight.W_600,
+            no_wrap=True, overflow=ft.TextOverflow.ELLIPSIS,
+        )
+        _svc_btn = ft.Container(
+            content=_svc_btn_text,
+            padding=ft.padding.symmetric(horizontal=8, vertical=4),
+            border_radius=6,
+            bgcolor="#1a2e2a",
+            border=ft.border.all(1, _TOGGLE_ON),
+        )
+
+        def _open_svc_picker(_ev) -> None:
+            _close = getattr(self, "_ocr_popover_close", None)
+            if callable(_close):
+                _close()
+            if not self.page:
+                return
+            options = [
+                OptionItem(value=k, label=f"{v} (free)", description="",
+                           disabled=False)
+                for k, v in _svc_names.items()
+            ]
+
+            def _sel(value: str) -> None:
+                self._ocr_xlat_service = value
+                self._save_ocr_pref("xlat_service", value)
+                if callable(self.on_ocr_xlat_service_change):
+                    _guarded(self.on_ocr_xlat_service_change, value)
+
+            SettingsModal(self.page, t("dashboard.ocr.menu.xlat_model"),
+                          options, _sel).open(self._ocr_xlat_service)
+
+        _svc_btn.on_click = _open_svc_picker
+
         set_btn = ft.Container(
             content=ft.Icon(ft.Icons.HIGHLIGHT_ALT, size=15,
                             color=_TEXT_PRIMARY),
@@ -1748,6 +1788,8 @@ class DashboardView(ft.Row):
                     _section_row(t("dashboard.ocr.menu.translate"),
                                  _bool_pill(self._ocr_translate,
                                             _on_translate)),
+                    _section_row(t("dashboard.ocr.menu.xlat_model"),
+                                 _svc_btn),
                     _section_row(t("dashboard.ocr.menu.prewarm"),
                                  _bool_pill(self._ocr_prewarm, _on_prewarm)),
                     _section_row(t("dashboard.ocr.menu.log_chat"),

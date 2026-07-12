@@ -253,9 +253,16 @@ def _is_roster_name(text: str) -> bool:
     # more per-glyph information, so 2 Han glyphs ('冰陈' of '冰陈oVo')
     # already identify a fragment; Latin needs 4+.
     han = sum("一" <= c <= "鿿" for c in n)
-    if len(n) >= 4 or han >= 2:
+    if len(n) >= 4:
         for cand in names:
             if n in cand:
+                return True
+    elif han >= 2:
+        # 2 Han glyphs only count at the START or END of a roster name
+        # (nameplate splits break there) — mid-name matching killed real
+        # 2-glyph chat messages that happened to occur inside a name.
+        for cand in names:
+            if cand.startswith(n) or cand.endswith(n):
                 return True
     # FUZZY: OCR misreads stylized glyphs (especially CJK in names), so an
     # exact roster match is brittle. A whole-box string ~75% similar to a
@@ -728,6 +735,72 @@ def _exclude_from_capture(root: tk.Tk) -> None:
         logger.debug("[OCR] exclude-from-capture failed: %s", exc)
 
 
+_PARENT_PID = [0]  # the PuriPuly app process (set from --parent-pid)
+_APP_PIDS: list = [frozenset(), 0.0]  # cached [pids, stamp]
+
+
+def _app_pids() -> frozenset:
+    """PIDs of the parent app and its children (flet renderer hosts the
+    visible windows), EXCLUDING this overlay process and its launcher
+    chain — our own fullscreen tk window must never blank the capture."""
+    now = time.monotonic()
+    if _APP_PIDS[0] and now - _APP_PIDS[1] < 5.0:
+        return _APP_PIDS[0]
+    root = _PARENT_PID[0]
+    if not root:
+        return frozenset()
+    pids: set[int] = {root}
+    try:
+        k32 = ctypes.windll.kernel32
+
+        class _PE32(ctypes.Structure):
+            _fields_ = [("dwSize", wintypes.DWORD),
+                        ("cntUsage", wintypes.DWORD),
+                        ("th32ProcessID", wintypes.DWORD),
+                        ("th32DefaultHeapID", ctypes.POINTER(ctypes.c_ulong)),
+                        ("th32ModuleID", wintypes.DWORD),
+                        ("cntThreads", wintypes.DWORD),
+                        ("th32ParentProcessID", wintypes.DWORD),
+                        ("pcPriClassBase", ctypes.c_long),
+                        ("dwFlags", wintypes.DWORD),
+                        ("szExeFile", ctypes.c_wchar * 260)]
+
+        snap = k32.CreateToolhelp32Snapshot(0x2, 0)  # TH32CS_SNAPPROCESS
+        ppid: dict[int, int] = {}
+        if snap and snap != -1:
+            pe = _PE32()
+            pe.dwSize = ctypes.sizeof(_PE32)
+            if k32.Process32FirstW(snap, ctypes.byref(pe)):
+                while True:
+                    ppid[int(pe.th32ProcessID)] = int(pe.th32ParentProcessID)
+                    if not k32.Process32NextW(snap, ctypes.byref(pe)):
+                        break
+            k32.CloseHandle(snap)
+        # our own launcher chain up to (not including) the app root —
+        # never blank our own fullscreen tk overlay
+        mine: set[int] = set()
+        p = os.getpid()
+        while p and p != root and p not in mine and len(mine) < 32:
+            mine.add(p)
+            p = ppid.get(p, 0)
+        children: dict[int, list[int]] = {}
+        for c, par in ppid.items():
+            children.setdefault(par, []).append(c)
+        queue = [root]
+        while queue:
+            cur = queue.pop()
+            for c in children.get(cur, ()):
+                if c not in pids and c not in mine:
+                    pids.add(c)
+                    queue.append(c)
+        pids -= mine
+    except Exception:
+        pass
+    result = frozenset(pids - {os.getpid()})
+    _APP_PIDS[0], _APP_PIDS[1] = result, now
+    return result
+
+
 class _Capture:
     def __init__(self) -> None:
         self._cam = None
@@ -945,6 +1018,21 @@ class _Target:
                 break  # everything after is beneath the target
             try:
                 if not user32.IsWindowVisible(hw):
+                    continue
+                wpid = wintypes.DWORD(0)
+                user32.GetWindowThreadProcessId(hw, ctypes.byref(wpid))
+                if wpid.value and wpid.value in _app_pids():
+                    # The app's OWN windows (chat overlay floating over the
+                    # game): always blank their rect so OCR never reads our
+                    # own subtitles/chat back — even though they're layered
+                    # click-through windows the skips below would pass.
+                    r = wintypes.RECT()
+                    user32.GetWindowRect(hw, ctypes.byref(r))
+                    ix1, iy1 = max(sx1, r.left), max(sy1, r.top)
+                    ix2, iy2 = min(sx2, r.right), min(sy2, r.bottom)
+                    if ix2 - ix1 > 8 and iy2 - iy1 > 8:
+                        occl.append((ix1 - sx1, iy1 - sy1,
+                                     ix2 - sx1, iy2 - sy1))
                     continue
                 exs = user32.GetWindowLongW(hw, GWL_EXSTYLE)
                 if exs & WS_EX_TRANSPARENT:
@@ -2180,21 +2268,25 @@ def _track_loop(cap: _Capture, target: _Target, anchors: _Anchors,
             def _under_name(bx1: float, by1: float, bx2: float,
                             by2: float) -> bool:
                 # Real status/pronoun pills hug their name (VRChat places
-                # them under the plate, often shifted right) and are no
-                # taller than the name line. The size guard is what keeps
-                # actual chat bubbles hanging below a nameplate alive.
+                # them under the plate, often shifted right), are no taller
+                # than the name line and no wider than the plate. The size
+                # guards keep chat text that merely passes below someone's
+                # nameplate in a crowd alive — a generous window here read
+                # as "OCR stopped scanning things".
                 bh = by2 - by1
+                bw = bx2 - bx1
                 for ax1, ay1, ax2, ay2 in name_rects:
                     ah = max(1.0, ay2 - ay1)
-                    if not (-0.3 * ah <= by1 - ay2 <= 1.0 * ah):
+                    aw = max(1.0, ax2 - ax1)
+                    if not (-0.3 * ah <= by1 - ay2 <= 0.9 * ah):
                         continue
-                    if bh > 1.15 * ah:
-                        continue  # bigger than the name line: not chrome
+                    if bh > 1.05 * ah or bw > 1.5 * aw:
+                        continue  # as big as the name line: not chrome
                     ov = min(bx2, ax2) - max(bx1, ax1)
                     if ov <= 0:
                         continue
                     coff = abs((bx1 + bx2) - (ax1 + ax2)) / 2.0
-                    if coff <= 0.75 * max(ax2 - ax1, bx2 - bx1):
+                    if coff <= 0.6 * max(aw, bw):
                         return True
                 return False
 
@@ -2226,8 +2318,14 @@ def _track_loop(cap: _Capture, target: _Target, anchors: _Anchors,
                     # for the ~1s classification gap.
                     continue
                 bx1, by1, bx2, by2 = tr.rect()
-                if name_rects and _under_name(bx1, by1, bx2, by2):
-                    continue  # nameplate chrome under a suppressed name
+                _txt = (tr.text or "").strip()
+                if (name_rects
+                        and len(_txt) <= 20
+                        and sum("一" <= c <= "鿿" for c in _txt) < 8
+                        and _under_name(bx1, by1, bx2, by2)):
+                    # Nameplate chrome under a name. Long recognized text is
+                    # immune — status/pronoun pills are always short.
+                    continue
                 vx, vy = tr.velocity()
                 items.append((
                     (bx1 * inv_scale + off_x) + cap.left,
@@ -2947,15 +3045,25 @@ def main() -> None:
     handlers = [logging.StreamHandler()]
     try:
         os.makedirs(os.path.dirname(log_path), exist_ok=True)
-        handlers.append(logging.FileHandler(log_path, mode="w", encoding="utf-8"))
+        # APPEND, not truncate: takeover spawns run concurrently for a
+        # moment and mode="w" let the newcomer wipe the active log.
+        try:
+            if os.path.getsize(log_path) > 5 * 1024 * 1024:
+                os.remove(log_path)
+        except OSError:
+            pass
+        handlers.append(logging.FileHandler(log_path, mode="a",
+                                            encoding="utf-8"))
     except Exception:
         pass
     logging.basicConfig(level=logging.INFO, handlers=handlers,
                         format="%(asctime)s %(levelname)s %(message)s")
+    logger.info("[OCR] ===== overlay boot pid=%d =====", os.getpid())
     if not _acquire_single_instance():
         logger.warning("[OCR] another OCR overlay is already running — exiting")
         return
     if args.parent_pid:
+        _PARENT_PID[0] = int(args.parent_pid)
         threading.Thread(target=_parent_watch_loop, args=(args.parent_pid,),
                          daemon=True).start()
     threading.Thread(target=_source_watch_loop, daemon=True).start()

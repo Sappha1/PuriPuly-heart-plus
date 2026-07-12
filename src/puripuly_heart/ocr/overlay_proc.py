@@ -64,7 +64,10 @@ _C_BG = ["#14161a"]
 _BG_ALPHA = [100]  # 100/75/50/25 via stipple, 0 = no backdrop (shadow text)
 _C_TEXT = ["#ffffff"]
 _C_PY = "#5ba8a0"  # pinyin lines — same teal as the chat-log transliteration
-_FONT_FIX = [0]  # fixed subtitle font px; 0 = auto (fit the detected box)
+_FONT_FIX = [0]  # subtitle font px; 0 = auto (fit box), -1 = match original
+_SZ_PY = [0]  # pinyin line px override (0 = same as the main font size)
+_SZ_TR = [0]  # translation line px override (0 = inherit)
+_SZ_PRO = [0]  # pronoun-set boxes px override (0 = inherit)
 _SCAN_MODE = ["hold"]  # hold | toggle — gates ALL scanning/drawing
 _SCAN_VK = [ord("E")]  # legacy single-key path (combo below preferred)
 _SCAN_ACTIVE = [False]
@@ -97,21 +100,34 @@ def _parse_bind(s: str):
 _SCAN_COMBO: list = [_parse_bind("E")]
 
 
-def _fmt_lines(text: str, xlat: str, pinyin: str) -> list[tuple[str, bool]]:
-    """Ordered subtitle lines as (text, is_pinyin). Pinyin always on top."""
+def _fmt_lines(text: str, xlat: str, pinyin: str) -> list[tuple[str, str]]:
+    """Ordered subtitle lines as (text, kind) with kind in py|orig|trans.
+    Pinyin always on top."""
     f = _FMT[0]
     orig, tr, py = text or "", xlat or "", pinyin or ""
     if f == "orig_trans":
-        lines = [(orig, False), (tr, False)]
+        lines = [(orig, "orig"), (tr, "trans")]
     elif f == "orig_pinyin_trans":
-        lines = [(py, True), (orig, False), (tr, False)]
+        lines = [(py, "py"), (orig, "orig"), (tr, "trans")]
     elif f == "pinyin_trans":
-        lines = [(py or orig, bool(py)), (tr, False)]
+        lines = [(py or orig, "py" if py else "orig"), (tr, "trans")]
     elif f == "pinyin_only":
-        lines = [(py or orig, bool(py))]
+        lines = [(py or orig, "py" if py else "orig")]
     else:
-        lines = [(tr or orig, False)]
-    return [(ln, p) for ln, p in lines if ln and ln.strip()]
+        lines = [(tr or orig, "trans")]
+    return [(ln, k) for ln, k in lines if ln and ln.strip()]
+
+
+def _line_px(kind: str, base: int, pron: int) -> int:
+    """Per-line font px: pronoun-box override beats line-kind overrides,
+    which beat the main size."""
+    if pron > 0:
+        return pron
+    if kind == "py" and _SZ_PY[0] > 0:
+        return _SZ_PY[0]
+    if kind == "trans" and _SZ_TR[0] > 0:
+        return _SZ_TR[0]
+    return base
 
 
 def _pinyin_of(text: str) -> str:
@@ -493,6 +509,14 @@ def _apply_prefs(cfg: dict) -> None:
             _FONT_FIX[0] = fp
     except Exception:
         pass
+    for key, ref in (("ocr_size_pinyin", _SZ_PY), ("ocr_size_trans", _SZ_TR),
+                     ("ocr_size_pronoun", _SZ_PRO)):
+        try:
+            v = int(cfg.get(key, ref[0]))
+            if 0 <= v <= 72:
+                ref[0] = v
+        except Exception:
+            pass
     logger.info("[OCR] prefs applied live: prewarm=%d bubbles=%d foreign=%d "
                 "names=%d pronouns=%d translate=%d",
                 _PREWARM[0], _BUBBLES_ONLY[0], _FOREIGN_ONLY[0],
@@ -2446,7 +2470,7 @@ def _save_debug_shot(cap: _Capture, boxes, pills: bool = False) -> None:
             x1, y1 = int(bx1 - cap.left), int(by1 - cap.top)
             x2, y2 = int(bx2 - cap.left), int(by2 - cap.top)
             if pills and len(it) > 9:
-                lines = _fmt_lines(it[7], it[8], it[9]) or [("...", False)]
+                lines = _fmt_lines(it[7], it[8], it[9]) or [("...", "trans")]
                 texted.append((x1, y1, x2, y2, lines[:3],
                                it[10] if len(it) > 10 else ""))
             else:
@@ -2469,17 +2493,29 @@ def _save_debug_shot(cap: _Capture, boxes, pills: bool = False) -> None:
                                if _C_TEXT[0] == "auto" else _C_TEXT[0])
                 od.rectangle([x1, y1, x2, y2], outline=oc + (255,), width=1)
                 n = len(lines)
-                if _FONT_FIX[0] != 0:
-                    px = _FONT_FIX[0] if _FONT_FIX[0] > 0 \
-                        else max(10, min(64, int((y2 - y1) * 0.82)))
-                    font = _pil_font(px)
-                    try:
-                        lws = [od.textlength(ln, font=font)
-                               for ln, _p in lines]
-                    except Exception:
-                        lws = [x2 - x1] * n
-                    widest = max(lws)
-                    block = n * (px + 5) + 4
+                fix = _FONT_FIX[0]
+                if fix > 0:
+                    px = fix
+                elif fix == -1:
+                    px = max(10, min(64, int((y2 - y1) * 0.82)))
+                elif _PLACE[0] == "cover":
+                    px = max(9, min(46, int((y2 - y1) / n * 0.72)))
+                else:
+                    px = max(10, min(30, int((y2 - y1) * 0.55)))
+                txt0 = lines[0][0] if lines else ""
+                pron = _SZ_PRO[0] if (_SZ_PRO[0] > 0
+                                      and _is_pronoun_text(txt0)) else 0
+                pxs = [_line_px(k, px, pron) for _ln, k in lines]
+                fonts = [_pil_font(p) for p in pxs]
+                try:
+                    lws = [od.textlength(ln, font=fonts[j])
+                           for j, (ln, _k) in enumerate(lines)]
+                except Exception:
+                    lws = [x2 - x1] * n
+                widest = max(lws)
+                grow = fix != 0 or any(p != px for p in pxs)
+                if grow:
+                    block = sum(p + 5 for p in pxs) + 4
                     bcx = (x1 + x2) / 2.0
                     if widest + 6 > x2 - x1:
                         x1 = bcx - (widest + 6) / 2.0
@@ -2492,38 +2528,36 @@ def _save_debug_shot(cap: _Capture, boxes, pills: bool = False) -> None:
                         ry2 = y1 - 3
                         ry1 = ry2 - block
                     line_x = [bcx - w / 2.0 for w in lws]
+                    yc = ry1 + ((ry2 - ry1) - block) / 2.0 + 2
+                    centers = []
+                    for p in pxs:
+                        centers.append(yc + (p + 5) / 2.0)
+                        yc += p + 5
                 else:
                     if _PLACE[0] == "cover":
-                        px = max(9, min(46, int((y2 - y1) / n * 0.72)))
                         ry1, ry2 = y1 - 1, y2 + 1
                     else:
-                        px = max(10, min(30, int((y2 - y1) * 0.55)))
                         block = n * (px + 5) + 4
                         ry2 = y1 - 3
                         ry1 = ry2 - block
-                    font = _pil_font(px)
-                    try:
-                        tw = max(od.textlength(ln, font=font)
-                                 for ln, _p in lines)
-                        bw = x2 - x1
-                        if tw > bw - 4 and bw > 24 and tw > 0:
-                            px = max(8, int(px * (bw - 4) / tw))
-                            font = _pil_font(px)
-                    except Exception:
-                        pass
+                    bw = x2 - x1
+                    if widest > bw - 4 and bw > 24 and widest > 0:
+                        px = max(8, int(px * (bw - 4) / widest))
+                        fonts = [_pil_font(px)] * n
                     line_x = [x1 + 2] * n
+                    row_h = (ry2 - ry1) / n
+                    centers = [ry1 + row_h * (j + 0.5) for j in range(n)]
                 if _BG_ALPHA[0] > 0:
                     od.rectangle([x1 - 1, ry1, x2 + 1, ry2],
                                  fill=bg + (alpha,), outline=oc + (255,),
                                  width=1)
-                row_h = (ry2 - ry1) / n
-                for j, (ln, is_py) in enumerate(lines):
-                    cy = ry1 + row_h * (j + 0.5)
+                for j, (ln, kind) in enumerate(lines):
+                    cy = centers[j]
                     if _BG_ALPHA[0] == 0:
-                        od.text((line_x[j] + 1, cy + 1), ln, font=font,
+                        od.text((line_x[j] + 1, cy + 1), ln, font=fonts[j],
                                 fill=(0, 0, 0, 255), anchor="lm")
-                    od.text((line_x[j], cy), ln, font=font,
-                            fill=(pyc if is_py else txc) + (255,),
+                    od.text((line_x[j], cy), ln, font=fonts[j],
+                            fill=(pyc if kind == "py" else txc) + (255,),
                             anchor="lm")
             img = Image.alpha_composite(img, ovl).convert("RGB")
             frame = np.asarray(img)[:, :, ::-1].copy()
@@ -2851,7 +2885,7 @@ def run(monitor_index: int = 1, fps: float = 0.0, max_side: int = _TRACK_SIDE,
                      tcol) = items[i]
                     base = (tcol or "#ffffff") if _C_TEXT[0] == "auto" \
                         else _C_TEXT[0]
-                    lines = _fmt_lines(text, xlat, py) or [("...", False)]
+                    lines = _fmt_lines(text, xlat, py) or [("...", "trans")]
                     lines = lines[:3]
                     ex, ey = vx * ext, vy * ext
                     x1 = (bx1 + ex - left) * sx
@@ -2859,20 +2893,31 @@ def run(monitor_index: int = 1, fps: float = 0.0, max_side: int = _TRACK_SIDE,
                     x2 = (bx2 + ex - left) * sx
                     y2 = (by2 + ey - top) * sy
                     n = len(lines)
-                    line_x = None  # per-line x (fixed mode centers lines)
-                    if _FONT_FIX[0] != 0:
-                        # Fixed or match-original size: text never shrinks
-                        # to fit the box — the pill grows AROUND the box
-                        # center instead, and each line is centered.
-                        # -1 = size from the ORIGINAL text's height, so a
-                        # 50px nameplate renders at ~50px and the smaller
-                        # pronoun field stays proportionally smaller.
-                        px_h = _FONT_FIX[0] if _FONT_FIX[0] > 0 \
-                            else max(10, min(64, int((y2 - y1) * 0.82)))
-                        f = _font_px(px_h)
-                        lws = [f.measure(ln) for ln, _p in lines]
-                        widest = max(lws)
-                        block = n * (px_h + 5) + 4
+                    # Main size: fixed px, match-original (-1: derived from
+                    # THIS box's text height, so a 50px nameplate renders at
+                    # ~50px and a smaller pronoun field stays smaller), or
+                    # auto (fit the box).
+                    fix = _FONT_FIX[0]
+                    if fix > 0:
+                        px_h = fix
+                    elif fix == -1:
+                        px_h = max(10, min(64, int((y2 - y1) * 0.82)))
+                    elif _PLACE[0] == "cover":
+                        px_h = max(9, min(46, int((y2 - y1) / n * 0.72)))
+                    else:
+                        px_h = max(10, min(30, int((y2 - y1) * 0.55)))
+                    pron = _SZ_PRO[0] if (_SZ_PRO[0] > 0 and text
+                                          and _is_pronoun_text(text)) else 0
+                    pxs = [_line_px(k, px_h, pron) for _ln, k in lines]
+                    fonts = [_font_px(p) for p in pxs]
+                    lws = [fonts[j].measure(ln)
+                           for j, (ln, _k) in enumerate(lines)]
+                    widest = max(lws)
+                    grow = fix != 0 or any(p != px_h for p in pxs)
+                    if grow:
+                        # Sized text never shrinks: the pill grows AROUND
+                        # the box center and each line is centered in it.
+                        block = sum(p + 5 for p in pxs) + 4
                         bcx = (x1 + x2) / 2.0
                         if widest + 6 > x2 - x1:
                             x1 = bcx - (widest + 6) / 2.0
@@ -2885,44 +2930,47 @@ def run(monitor_index: int = 1, fps: float = 0.0, max_side: int = _TRACK_SIDE,
                             ry2 = y1 - 3
                             ry1 = ry2 - block
                         line_x = [bcx - w / 2.0 for w in lws]
+                        yc = ry1 + ((ry2 - ry1) - block) / 2.0 + 2
+                        centers = []
+                        for p in pxs:
+                            centers.append(yc + (p + 5) / 2.0)
+                            yc += p + 5
                     else:
+                        # Legacy auto: uniform font, shrink to fit width.
                         if _PLACE[0] == "cover":
-                            # Fill the detected bounds; lines stacked inside.
-                            px_h = max(9, min(46, int((y2 - y1) / n * 0.72)))
                             ry1, ry2 = y1 - 1, y2 + 1
                         else:
-                            # Neatly ABOVE the original text — the original
-                            # stays fully readable underneath.
-                            px_h = max(10, min(30, int((y2 - y1) * 0.55)))
                             block = n * (px_h + 5) + 4
                             ry2 = y1 - 3
                             ry1 = ry2 - block
-                        f = _font_px(px_h)
                         bw = x2 - x1
-                        widest = max(f.measure(ln) for ln, _p in lines)
                         if widest > bw - 4 and bw > 24:
                             px_h = max(8, int(px_h * (bw - 4)
                                               / max(1, widest)))
-                            f = _font_px(px_h)
-                    key = ("|".join(("»" if p else "") + ln
-                                    for ln, p in lines), px_h, base)
+                            pxs = [px_h] * n
+                            fonts = [_font_px(px_h)] * n
+                        line_x = None
+                        row_h = (ry2 - ry1) / n
+                        centers = [ry1 + row_h * (j + 0.5) for j in range(n)]
+                    key = ("|".join(("»" if k == "py" else "") + ln
+                                    for ln, k in lines), tuple(pxs), base)
                     if pill_meta[i] != key:
                         pill_meta[i] = key
                         for j in range(3):
-                            ln, is_py = lines[j] if j < n else ("", False)
+                            ln, kind = lines[j] if j < n else ("", "trans")
+                            fj = fonts[j] if j < n else fonts[0]
                             canvas.itemconfigure(
-                                txs[j], text=ln, font=f,
-                                fill=_C_PY if is_py else base)
-                            canvas.itemconfigure(shs[j], text=ln, font=f)
+                                txs[j], text=ln, font=fj,
+                                fill=_C_PY if kind == "py" else base)
+                            canvas.itemconfigure(shs[j], text=ln, font=fj)
                     if _BG_ALPHA[0] > 0:
                         canvas.coords(rid, x1 - 1, ry1, x2 + 1, ry2)
                         canvas.itemconfigure(rid, state="normal")
                     else:
                         canvas.itemconfigure(rid, state="hidden")
-                    row_h = (ry2 - ry1) / n
                     for j in range(3):
                         if j < n:
-                            cy = ry1 + row_h * (j + 0.5)
+                            cy = centers[j]
                             lx = line_x[j] if line_x else x1 + 2
                             if _BG_ALPHA[0] == 0:
                                 # No backdrop: black shadow keeps the text

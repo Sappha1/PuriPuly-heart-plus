@@ -77,6 +77,8 @@ _SCAN_VK = [ord("E")]  # legacy single-key path (combo below preferred)
 _SCAN_ACTIVE = [False]
 _REGION_BORDER = [True]  # show the dashed region rectangle
 _TGT_FG = [True]  # live "target window is foreground" (track loop updates)
+_FLASH = [0.0]  # show the on-screen scan-state flash until this monotonic
+_FLASH_TXT = [""]
 _STATE_PATH = os.path.join(os.path.expanduser("~"), "AppData", "Local",
                            "puripuly-heart", "ocr_state.json")
 
@@ -2697,10 +2699,25 @@ def _prtscn_loop(cap: _Capture, state: _BoxState, stop: threading.Event) -> None
                             for m in mods)
                         and bool(user32.GetAsyncKeyState(keyvk) & 0x8000))
                 if _SCAN_MODE[0] == "toggle":
+                    # Deliberate 0.3s HOLD flips the toggle — a typing tap
+                    # (~100ms) does nothing. With a bare-letter bind, the
+                    # VRChat CHATBOX was silently flipping scanning off
+                    # mid-message; focus gating can't catch that (the game
+                    # legitimately has focus while typing).
                     if skey and not was_scan:
-                        _SCAN_ACTIVE[0] = not _SCAN_ACTIVE[0]
-                        logger.info("[OCR] scan %s",
-                                    "ON" if _SCAN_ACTIVE[0] else "OFF")
+                        _prtscn_loop._press_at = time.monotonic()
+                    elif skey and was_scan:
+                        pa = getattr(_prtscn_loop, "_press_at", 0.0)
+                        if pa and time.monotonic() - pa >= 0.3:
+                            _prtscn_loop._press_at = 0.0
+                            _SCAN_ACTIVE[0] = not _SCAN_ACTIVE[0]
+                            logger.info("[OCR] scan %s (bind held)",
+                                        "ON" if _SCAN_ACTIVE[0] else "OFF")
+                            _FLASH_TXT[0] = ("OCR ON" if _SCAN_ACTIVE[0]
+                                             else "OCR OFF")
+                            _FLASH[0] = time.monotonic() + 1.6
+                    else:
+                        _prtscn_loop._press_at = 0.0
                 else:
                     _SCAN_ACTIVE[0] = skey
                 was_scan = skey
@@ -2933,6 +2950,30 @@ def run(monitor_index: int = 1, fps: float = 0.0, max_side: int = _TRACK_SIDE,
                 canvas.itemconfigure(region_border, state="normal")
             else:
                 canvas.itemconfigure(region_border, state="hidden")
+            # Scan-state flash: brief "OCR ON/OFF" pill top-center so a
+            # toggle is visible in-game (state changes used to be silent —
+            # a flipped-off toggle read as "OCR died").
+            fl = getattr(_redraw, "_flash", None)
+            if fl is None:
+                fl = (canvas.create_rectangle(
+                          0, 0, 0, 0, fill=_PILL_BG, outline="#3a3b3f",
+                          width=1, state="hidden"),
+                      canvas.create_text(
+                          0, 0, text="", fill="#ffffff", anchor="c",
+                          state="hidden", font=_font_px(26)))
+                _redraw._flash = fl
+            if time.monotonic() < _FLASH[0]:
+                fcx = (canvas.winfo_width() or 800) / 2.0
+                canvas.coords(fl[0], fcx - 120, 36, fcx + 120, 92)
+                canvas.coords(fl[1], fcx, 64)
+                canvas.itemconfigure(fl[1], text=_FLASH_TXT[0],
+                                     state="normal")
+                canvas.itemconfigure(fl[0], state="normal")
+                canvas.tag_raise(fl[0])
+                canvas.tag_raise(fl[1])
+            else:
+                canvas.itemconfigure(fl[0], state="hidden")
+                canvas.itemconfigure(fl[1], state="hidden")
             _version, stamp, items = state.get()
             age = time.monotonic() - stamp
             ext = min(age, _RENDER_EXTRAP_CAP_S) + _RENDER_LEAD_S

@@ -98,9 +98,20 @@ def _write_state() -> None:
         pass
 
 
+# Named non-alphanumeric bind keys: numpad + extra mouse buttons.
+# GetAsyncKeyState reads mouse VKs exactly like keyboard ones.
+_BIND_VK = {
+    "MOUSE3": 0x04, "MOUSE4": 0x05, "MOUSE5": 0x06,
+    "NUM0": 0x60, "NUM1": 0x61, "NUM2": 0x62, "NUM3": 0x63, "NUM4": 0x64,
+    "NUM5": 0x65, "NUM6": 0x66, "NUM7": 0x67, "NUM8": 0x68, "NUM9": 0x69,
+    "NUMMUL": 0x6A, "NUMADD": 0x6B, "NUMSUB": 0x6D, "NUMDEC": 0x6E,
+    "NUMDIV": 0x6F,
+}
+
+
 def _parse_bind(s: str):
-    """'ALT+E' / 'CTRL+SHIFT+F5' / 'E' -> (modifier VKs, key VK).
-    Empty/invalid -> None = no bind = scanning always active."""
+    """'ALT+E' / 'CTRL+SHIFT+F5' / 'MOUSE4' / 'NUM5' -> (modifier VKs,
+    key VK). Empty/invalid -> None = no bind = scanning always active."""
     s = (s or "").strip().upper()
     if not s:
         return None
@@ -114,6 +125,8 @@ def _parse_bind(s: str):
             mods.append(0x12)
         elif p == "SHIFT":
             mods.append(0x10)
+        elif p in _BIND_VK:
+            key = _BIND_VK[p]
         elif len(p) == 1 and p.isalnum():
             key = ord(p)
         elif _re.fullmatch(r"F([1-9]|1[0-2])", p):

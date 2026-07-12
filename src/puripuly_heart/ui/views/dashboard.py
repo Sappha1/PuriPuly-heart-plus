@@ -2115,6 +2115,22 @@ class DashboardView(ft.Row):
             else:
                 self._ocr_style["scan_bind_toggle"] = ""
 
+        # Recorder candidates: letters, digits, F-keys, NUMPAD, mouse 3/4/5.
+        # Polled via GetAsyncKeyState — flet's keyboard events never see
+        # mouse buttons and mangle numpad keys.
+        _REC_VKS: dict[int, str] = {}
+        for _c in range(ord("A"), ord("Z") + 1):
+            _REC_VKS[_c] = chr(_c)
+        for _c in range(ord("0"), ord("9") + 1):
+            _REC_VKS[_c] = chr(_c)
+        for _i in range(12):
+            _REC_VKS[0x70 + _i] = f"F{_i + 1}"
+        for _i in range(10):
+            _REC_VKS[0x60 + _i] = f"NUM{_i}"
+        _REC_VKS.update({0x6A: "NUMMUL", 0x6B: "NUMADD", 0x6D: "NUMSUB",
+                         0x6E: "NUMDEC", 0x6F: "NUMDIV",
+                         0x04: "MOUSE3", 0x05: "MOUSE4", 0x06: "MOUSE5"})
+
         def _mk_bind_recorder(pref_key: str) -> ft.Container:
             btxt = ft.Text(
                 str(self._ocr_style.get(pref_key, "")) or "—",
@@ -2123,58 +2139,74 @@ class DashboardView(ft.Row):
             )
             btn = _summary_btn(btxt)
 
+            def _finish(combo: str) -> None:
+                self._ocr_style[pref_key] = combo
+                btxt.value = combo or "—"
+                with contextlib.suppress(Exception):
+                    btxt.update()
+                if callable(self.on_ocr_style_change):
+                    # Write BOTH keys so the overlay switches to the
+                    # dual-bind config (scan_bind_toggle present) and
+                    # stops applying the legacy scan_mode migration.
+                    for k2 in ("scan_bind", "scan_bind_toggle"):
+                        _guarded(lambda v, kk=k2:
+                                 self.on_ocr_style_change(kk, v),
+                                 str(self._ocr_style.get(k2, "")))
+
             def _record(_ev) -> None:
                 if not self.page:
                     return
                 btxt.value = "…"
                 with contextlib.suppress(Exception):
                     btxt.update()
-                prev_handler = self.page.on_keyboard_event
+                gen = getattr(self, "_bind_rec_gen", 0) + 1
+                self._bind_rec_gen = gen
 
-                def _finish(combo: str) -> None:
-                    self.page.on_keyboard_event = prev_handler
-                    self._ocr_style[pref_key] = combo
-                    btxt.value = combo or "—"
-                    with contextlib.suppress(Exception):
-                        btxt.update()
-                    if callable(self.on_ocr_style_change):
-                        # Write BOTH keys so the overlay switches to the
-                        # dual-bind config (scan_bind_toggle present) and
-                        # stops applying the legacy scan_mode migration.
-                        for k2 in ("scan_bind", "scan_bind_toggle"):
-                            _guarded(lambda v, kk=k2:
-                                     self.on_ocr_style_change(kk, v),
-                                     str(self._ocr_style.get(k2, "")))
+                async def _poll() -> None:
+                    import asyncio
+                    import ctypes
+                    import time as _time
+                    u32 = ctypes.windll.user32
+                    deadline = _time.monotonic() + 15.0
+                    # Wait until every candidate is UP so the click that
+                    # armed the recorder (or a lingering Enter) isn't read.
+                    while _time.monotonic() < deadline \
+                            and gen == getattr(self, "_bind_rec_gen", 0):
+                        if not any(u32.GetAsyncKeyState(vk) & 0x8000
+                                   for vk in _REC_VKS) \
+                                and not (u32.GetAsyncKeyState(0x1B)
+                                         & 0x8000):
+                            break
+                        await asyncio.sleep(0.02)
+                    combo = None
+                    while _time.monotonic() < deadline \
+                            and gen == getattr(self, "_bind_rec_gen", 0):
+                        if u32.GetAsyncKeyState(0x1B) & 0x8000:  # Esc
+                            combo = ""
+                            break
+                        hit = next(
+                            (nm for vk, nm in _REC_VKS.items()
+                             if u32.GetAsyncKeyState(vk) & 0x8000), None)
+                        if hit is not None:
+                            parts = []
+                            if u32.GetAsyncKeyState(0x11) & 0x8000:
+                                parts.append("CTRL")
+                            if u32.GetAsyncKeyState(0x12) & 0x8000:
+                                parts.append("ALT")
+                            if u32.GetAsyncKeyState(0x10) & 0x8000:
+                                parts.append("SHIFT")
+                            parts.append(hit)
+                            combo = "+".join(parts)
+                            break
+                        await asyncio.sleep(0.02)
+                    if gen != getattr(self, "_bind_rec_gen", 0):
+                        return  # a newer recording superseded this one
+                    if combo is None:  # timed out — keep the old bind
+                        combo = str(self._ocr_style.get(pref_key, ""))
+                    _finish(combo)
 
-                def _capture(e) -> None:
-                    try:
-                        k = str(getattr(e, "key", "") or "").strip()
-                        if k in ("Alt", "Control", "Shift", "Meta",
-                                 "AltGraph"):
-                            return  # wait for the actual key
-                        if k == "Escape":
-                            _finish("")  # cleared: mechanism disabled
-                            return
-                        key = k.upper()
-                        import re as _re2
-
-                        if not (len(key) == 1 and key.isalnum()) \
-                                and not _re2.fullmatch(r"F([1-9]|1[0-2])",
-                                                       key):
-                            return  # unsupported key — keep recording
-                        parts = []
-                        if getattr(e, "ctrl", False):
-                            parts.append("CTRL")
-                        if getattr(e, "alt", False):
-                            parts.append("ALT")
-                        if getattr(e, "shift", False):
-                            parts.append("SHIFT")
-                        parts.append(key)
-                        _finish("+".join(parts))
-                    except Exception:
-                        _finish(str(self._ocr_style.get(pref_key, "")))
-
-                self.page.on_keyboard_event = _capture
+                with contextlib.suppress(Exception):
+                    self.page.run_task(_poll)
 
             btn.on_click = _record
             return btn

@@ -1954,9 +1954,14 @@ def _track_loop(cap: _Capture, target: _Target, anchors: _Anchors,
                                           and norm not in _XLAT_QUEUED):
                                         _XLAT_QUEUED.add(norm)
                                         _XLAT_PENDING.append(norm)
-                    elif ((_PREWARM[0] or _SUBTITLE_ON[0]) and not tr.text
+                    elif ((_PREWARM[0] or _SUBTITLE_ON[0] or _FOREIGN_ONLY[0]
+                           or _ignore_active()) and not tr.text
                           and tr.confirms >= 1
                           and tr.uid not in _REC_REQ and pending < 48):
+                        # Content filters NEED text to classify — they imply
+                        # recognition even with pre-warm off (otherwise
+                        # foreign-only + prewarm-off = every box invisible
+                        # forever, waiting for a read that never comes).
                         bx1, by1, bx2, by2 = tr.rect()
                         _REC_REQ[tr.uid] = (
                             int(bx1 * inv_scale + off_x),

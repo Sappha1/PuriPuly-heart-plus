@@ -2242,6 +2242,13 @@ def _track_loop(cap: _Capture, target: _Target, anchors: _Anchors,
             time.sleep(0.01)
 
 
+def _hex_rgb(h: str) -> tuple[int, int, int]:
+    try:
+        return (int(h[1:3], 16), int(h[3:5], 16), int(h[5:7], 16))
+    except Exception:
+        return (255, 255, 255)
+
+
 def _save_debug_shot(cap: _Capture, boxes, pills: bool = False) -> None:
     import cv2
 
@@ -2249,56 +2256,90 @@ def _save_debug_shot(cap: _Capture, boxes, pills: bool = False) -> None:
         os.makedirs(_SHOT_DIR, exist_ok=True)
         frame = cap.last().copy()
         texted = []
+        oc = _hex_rgb(_C_OUTLINE[0])
+        oc_bgr = (oc[2], oc[1], oc[0])
         for it in boxes:
             bx1, by1, bx2, by2 = it[0], it[1], it[2], it[3]
             x1, y1 = int(bx1 - cap.left), int(by1 - cap.top)
             x2, y2 = int(bx2 - cap.left), int(by2 - cap.top)
             if pills and len(it) > 9:
-                cv2.rectangle(frame, (x1, y1), (x2, y2), (26, 22, 20), -1)
-                cv2.rectangle(frame, (x1, y1), (x2, y2), (0, 0, 255), 1)
-                label = "\n".join(
-                    ln for ln, _p in _fmt_lines(it[7], it[8], it[9])) or "..."
-                texted.append((x1, y1, x2, y2, label))
+                lines = _fmt_lines(it[7], it[8], it[9]) or [("...", False)]
+                texted.append((x1, y1, x2, y2, lines[:3]))
             else:
-                cv2.rectangle(frame, (x1, y1), (x2, y2), (0, 0, 255), 2)
+                cv2.rectangle(frame, (x1, y1), (x2, y2), oc_bgr, 2)
         if texted:
-            # PIL pass for the labels: cv2's built-in font is ASCII-only,
-            # which turned CJK into '?' in shared screenshots. A real
-            # TrueType font (YaHei/Meiryo) draws every script.
+            # PIL pass, mirroring the LIVE renderer exactly — same pill
+            # rect math, colors, opacity and pinyin tint, so what lands in
+            # the shots folder is what the user saw on screen. (cv2's
+            # built-in font is ASCII-only; a TrueType draws every script.)
             from PIL import Image, ImageDraw
 
-            img = Image.fromarray(frame[:, :, ::-1])
-            d = ImageDraw.Draw(img)
-            for x1, y1, x2, y2, label in texted:
-                bw, bh = x2 - x1, y2 - y1
-                n = max(1, label.count("\n") + 1)
+            img = Image.fromarray(frame[:, :, ::-1]).convert("RGBA")
+            ovl = Image.new("RGBA", img.size, (0, 0, 0, 0))
+            od = ImageDraw.Draw(ovl)
+            bg = _hex_rgb(_C_BG[0])
+            txc = _hex_rgb(_C_TEXT[0])
+            pyc = _hex_rgb(_C_PY)
+            alpha = int(255 * _BG_ALPHA[0] / 100)
+            for x1, y1, x2, y2, lines in texted:
+                od.rectangle([x1, y1, x2, y2], outline=oc + (255,), width=1)
+                n = len(lines)
                 if _FONT_FIX[0] > 0:
-                    # Fixed subtitle size: the shot mirrors the live pills —
-                    # no shrink-to-fit, block centered on the box.
                     px = _FONT_FIX[0]
                     font = _pil_font(px)
                     try:
-                        tw = max(d.textlength(ln, font=font)
-                                 for ln in label.split("\n"))
+                        lws = [od.textlength(ln, font=font)
+                               for ln, _p in lines]
                     except Exception:
-                        tw = bw
-                    tx = int((x1 + x2 - tw) / 2)
-                    ty = int((y1 + y2 - n * (px + 5)) / 2) + 2
-                    d.multiline_text((tx, ty), label, font=font,
-                                     fill=(255, 255, 255))
-                    continue
-                px = max(9, min(46, int(bh / n * 0.62)))
-                font = _pil_font(px)
-                try:
-                    tw = max(d.textlength(ln, font=font)
-                             for ln in label.split("\n"))
-                    if tw > bw - 4 and bw > 24 and tw > 0:
-                        px = max(8, int(px * (bw - 4) / tw))
-                        font = _pil_font(px)
-                except Exception:
-                    pass
-                d.multiline_text((x1 + 2, y1 + 2), label, font=font,
-                                 fill=(255, 255, 255))
+                        lws = [x2 - x1] * n
+                    widest = max(lws)
+                    block = n * (px + 5) + 4
+                    bcx = (x1 + x2) / 2.0
+                    if widest + 6 > x2 - x1:
+                        x1 = bcx - (widest + 6) / 2.0
+                        x2 = bcx + (widest + 6) / 2.0
+                    if _PLACE[0] == "cover":
+                        bcy = (y1 + y2) / 2.0
+                        half = max(block, y2 - y1 + 2) / 2.0
+                        ry1, ry2 = bcy - half, bcy + half
+                    else:
+                        ry2 = y1 - 3
+                        ry1 = ry2 - block
+                    line_x = [bcx - w / 2.0 for w in lws]
+                else:
+                    if _PLACE[0] == "cover":
+                        px = max(9, min(46, int((y2 - y1) / n * 0.72)))
+                        ry1, ry2 = y1 - 1, y2 + 1
+                    else:
+                        px = max(10, min(30, int((y2 - y1) * 0.55)))
+                        block = n * (px + 5) + 4
+                        ry2 = y1 - 3
+                        ry1 = ry2 - block
+                    font = _pil_font(px)
+                    try:
+                        tw = max(od.textlength(ln, font=font)
+                                 for ln, _p in lines)
+                        bw = x2 - x1
+                        if tw > bw - 4 and bw > 24 and tw > 0:
+                            px = max(8, int(px * (bw - 4) / tw))
+                            font = _pil_font(px)
+                    except Exception:
+                        pass
+                    line_x = [x1 + 2] * n
+                if _BG_ALPHA[0] > 0:
+                    od.rectangle([x1 - 1, ry1, x2 + 1, ry2],
+                                 fill=bg + (alpha,), outline=oc + (255,),
+                                 width=1)
+                row_h = (ry2 - ry1) / n
+                for j, (ln, is_py) in enumerate(lines):
+                    cy = ry1 + row_h * (j + 0.5)
+                    if _BG_ALPHA[0] == 0:
+                        od.text((line_x[j] + 1, cy + 1), ln, font=font,
+                                fill=(0, 0, 0, 255), anchor="lm")
+                    od.text((line_x[j], cy), ln, font=font,
+                            fill=(pyc if is_py else txc) + (255,),
+                            anchor="lm")
+            img = Image.alpha_composite(img, ovl).convert("RGB")
             frame = np.asarray(img)[:, :, ::-1].copy()
         path = os.path.join(_SHOT_DIR, time.strftime("shot_%H%M%S.png"))
         cv2.imwrite(path, frame)

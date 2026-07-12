@@ -531,6 +531,7 @@
   "dashboard.ocr.menu.foreign_only": "外国語テキストのみ",
   "dashboard.ocr.menu.ignore_names": "プレイヤー名を無視",
   "dashboard.ocr.menu.ignore_pronouns": "代名詞とプロフィールを無視",
+  "dashboard.ocr.menu.ignore_groups": "グループ表示を無視",
   "dashboard.ocr.menu.translate": "キャプチャしたテキストを翻訳",
   "dashboard.ocr.menu.prewarm": "認識のプリウォーム（CPU使用増）",
   "dashboard.ocr.menu.log_chat": "OCRをチャットに記録",

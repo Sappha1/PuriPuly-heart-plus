@@ -315,6 +315,7 @@ _FOREIGN_ONLY = [True]
 # only whole-box matches drop.
 _IGNORE_NAMES = [True]
 _IGNORE_PRONOUNS = [True]
+_IGNORE_GROUPS = [True]  # group banners hugging the TOP of a nameplate
 _NAMES_LOCK = threading.Lock()
 _PLAYER_NAMES: set[str] = set()
 _NAMES_VER = [0]  # bumped when the roster grows (cached verdicts refresh)
@@ -575,6 +576,8 @@ def _apply_prefs(cfg: dict) -> None:
     _IGNORE_NAMES[0] = bool(cfg.get("ignore_names", _IGNORE_NAMES[0]))
     _IGNORE_PRONOUNS[0] = bool(cfg.get("ignore_pronouns",
                                        _IGNORE_PRONOUNS[0]))
+    v = cfg.get("ignore_groups", _IGNORE_GROUPS[0])
+    _IGNORE_GROUPS[0] = bool(int(v)) if str(v).isdigit() else bool(v)
     _XLAT_ENABLED[0] = bool(cfg.get("translate", _XLAT_ENABLED[0]))
     svc = str(cfg.get("xlat_service", _XLAT_SVC[0]) or "bing").lower()
     if svc in ("bing", "google", "papago"):
@@ -2520,7 +2523,7 @@ def _track_loop(cap: _Capture, target: _Target, anchors: _Anchors,
             # pronouns, bio) and is suppressed with it, whatever it says —
             # content matching can't catch "INTP /<name>&…" bios, geometry can.
             name_rects: list[tuple[float, float, float, float]] = []
-            if _ignore_active():
+            if _ignore_active() or _IGNORE_GROUPS[0]:
                 for tr in tracked:
                     if tr.text and tr.text != "-":
                         if tr.namever != _NAMES_VER[0]:
@@ -2559,6 +2562,30 @@ def _track_loop(cap: _Capture, target: _Target, anchors: _Anchors,
                         return True
                 return False
 
+            def _above_name(bx1: float, by1: float, bx2: float,
+                            by2: float) -> bool:
+                # GROUP banners hug the TOP edge of the nameplate ('中国烟草'
+                # / 'Today Mute …' plates). The tight gap window is what
+                # keeps real chat bubbles alive — they float clearly higher,
+                # above the group banner itself.
+                bh = by2 - by1
+                bw = bx2 - bx1
+                for ax1, ay1, ax2, ay2 in name_rects:
+                    ah = max(1.0, ay2 - ay1)
+                    aw = max(1.0, ax2 - ax1)
+                    gap = ay1 - by2  # banner bottom -> name top
+                    if not (-0.3 * ah <= gap <= 0.7 * ah):
+                        continue
+                    if bh < 0.4 * ah or bh > 1.5 * ah:
+                        continue
+                    ov = min(bx2, ax2) - max(bx1, ax1)
+                    if ov <= 0:
+                        continue
+                    coff = abs((bx1 + bx2) - (ax1 + ax2)) / 2.0
+                    if coff <= 0.6 * max(aw, bw):
+                        return True
+                return False
+
             items = []
             for tr in tracked:
                 # Hide (still tracked, never re-recognized): boxes whose text
@@ -2588,13 +2615,16 @@ def _track_loop(cap: _Capture, target: _Target, anchors: _Anchors,
                     continue
                 bx1, by1, bx2, by2 = tr.rect()
                 _txt = (tr.text or "").strip()
-                if (name_rects
-                        and len(_txt) <= 20
-                        and sum("一" <= c <= "鿿" for c in _txt) < 8
+                _short = (len(_txt) <= 20
+                          and sum("一" <= c <= "鿿" for c in _txt) < 8)
+                if (name_rects and _short and _ignore_active()
                         and _under_name(bx1, by1, bx2, by2)):
                     # Nameplate chrome under a name. Long recognized text is
                     # immune — status/pronoun pills are always short.
                     continue
+                if (name_rects and _short and _IGNORE_GROUPS[0]
+                        and _above_name(bx1, by1, bx2, by2)):
+                    continue  # group banner hugging the nameplate top
                 vx, vy = tr.velocity()
                 items.append((
                     (bx1 * inv_scale + off_x) + cap.left,
@@ -3219,7 +3249,11 @@ def run(monitor_index: int = 1, fps: float = 0.0, max_side: int = _TRACK_SIDE,
         except Exception as exc:
             logger.debug("[OCR] redraw error: %s", exc)
         finally:
-            root.after(4, _redraw)
+            # Idle = nothing to animate: drop the render tick from 4ms to
+            # 40ms so a parked overlay costs effectively zero CPU.
+            busy = (_SCAN_ACTIVE[0] or sel["active"]
+                    or time.monotonic() < _FLASH[0])
+            root.after(4 if busy else 40, _redraw)
 
     def _on_close() -> None:
         stop.set()

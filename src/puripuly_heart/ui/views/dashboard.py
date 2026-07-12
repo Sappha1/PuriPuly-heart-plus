@@ -513,6 +513,7 @@ class DashboardView(ft.Row):
             "ocr_color_pronoun": str(_ocr_p.get("ocr_color_pronoun", "")),
             "ocr_pinyin_tone": str(_ocr_p.get("ocr_pinyin_tone", 1)),
             "ocr_pinyin_group": str(_ocr_p.get("ocr_pinyin_group", 1)),
+            "ignore_groups": str(_ocr_p.get("ignore_groups", 1)),
         }
         self.on_ocr_style_change = None  # (prototype) callback(key, value)
         self.ocr_log_chat = bool(_ocr_p.get("log_chat", True))
@@ -2349,6 +2350,8 @@ class DashboardView(ft.Row):
                     _section_row(t("dashboard.ocr.menu.ignore_pronouns"),
                                  _bool_pill(self._ocr_ignore_pronouns,
                                             _on_pronouns)),
+                    _section_row(t("dashboard.ocr.menu.ignore_groups"),
+                                 _mk_style_bool("ignore_groups")),
                     _section_row(t("dashboard.ocr.menu.prewarm"),
                                  _bool_pill(self._ocr_prewarm, _on_prewarm)),
                     _section_row(t("dashboard.ocr.menu.log_chat"),

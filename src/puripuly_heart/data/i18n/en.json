@@ -576,6 +576,7 @@
   "dashboard.ocr.menu.foreign_only": "Foreign text only",
   "dashboard.ocr.menu.ignore_names": "Ignore player names",
   "dashboard.ocr.menu.ignore_pronouns": "Ignore pronouns & bios",
+  "dashboard.ocr.menu.ignore_groups": "Ignore groups",
   "dashboard.ocr.menu.translate": "Translate captured text",
   "dashboard.ocr.menu.prewarm": "Pre-warm recognition (extra CPU)",
   "dashboard.ocr.menu.log_chat": "Log OCR to chat",

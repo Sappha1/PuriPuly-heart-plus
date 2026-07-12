@@ -530,6 +530,7 @@
   "dashboard.ocr.menu.foreign_only": "외국어 텍스트만",
   "dashboard.ocr.menu.ignore_names": "플레이어 이름 무시",
   "dashboard.ocr.menu.ignore_pronouns": "대명사·소개 무시",
+  "dashboard.ocr.menu.ignore_groups": "그룹 표시 무시",
   "dashboard.ocr.menu.translate": "캡처한 텍스트 번역",
   "dashboard.ocr.menu.prewarm": "인식 사전 준비 (CPU 추가 사용)",
   "dashboard.ocr.menu.log_chat": "OCR을 채팅에 기록",

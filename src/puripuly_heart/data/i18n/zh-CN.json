@@ -530,6 +530,7 @@
   "dashboard.ocr.menu.foreign_only": "仅外语文本",
   "dashboard.ocr.menu.ignore_names": "忽略玩家名称",
   "dashboard.ocr.menu.ignore_pronouns": "忽略代词和简介",
+  "dashboard.ocr.menu.ignore_groups": "忽略群组标签",
   "dashboard.ocr.menu.translate": "翻译捕获的文本",
   "dashboard.ocr.menu.prewarm": "预热识别（额外占用 CPU）",
   "dashboard.ocr.menu.log_chat": "将 OCR 记录到聊天",

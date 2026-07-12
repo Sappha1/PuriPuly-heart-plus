@@ -2711,10 +2711,19 @@ def _prtscn_loop(cap: _Capture, state: _BoxState, stop: threading.Event) -> None
 
             hold_cb, tog_cb = _HOLD_COMBO[0], _TOG_COMBO[0]
             prev_active = _SCAN_ACTIVE[0]
+            # Binds count when the TARGET GAME is focused OR our own app
+            # is (so the toggle is testable from the menu with the Status
+            # row visible). Presses in Discord/browsers stay ignored —
+            # typing there was silently flipping the toggle.
+            fgw2 = user32.GetForegroundWindow()
+            fpid = wintypes.DWORD(0)
+            user32.GetWindowThreadProcessId(fgw2, ctypes.byref(fpid))
+            bind_ok = _TGT_FG[0] or (fpid.value and
+                                     fpid.value in _app_pids())
             if hold_cb is None and tog_cb is None:
                 _SCAN_ACTIVE[0] = True
                 was_scan = False
-            elif not _TGT_FG[0]:
+            elif not bind_ok:
                 # Presses in other apps are ignored; the toggle state
                 # persists across alt-tabs, the hold contribution drops.
                 was_scan = False

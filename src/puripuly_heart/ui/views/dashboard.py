@@ -1851,6 +1851,7 @@ class DashboardView(ft.Row):
                          "above": t("dashboard.ocr.place.above")}
         _font_labels = {
             "0": t("dashboard.ocr.font.auto"),
+            "-1": t("dashboard.ocr.match_original"),
             "14": t("settings.overlay.desktop.size.option.small"),
             "18": t("settings.overlay.desktop.size.option.medium"),
             "24": t("settings.overlay.desktop.size.option.large"),
@@ -1935,6 +1936,11 @@ class DashboardView(ft.Row):
                     return name
             return v
 
+        def _text_color_name(v: str) -> str:
+            if v == "auto":
+                return t("dashboard.ocr.match_original")
+            return _color_name(v)
+
         def _open_style_menu(_ev) -> None:
             rows = [
                 _mk_row(t("dashboard.ocr.style.outline"),
@@ -1967,13 +1973,15 @@ class DashboardView(ft.Row):
                             lambda v: _alpha_labels.get(str(v), str(v)))),
                 _mk_row(t("dashboard.ocr.style.text"),
                         _modal_row_btn(
-                            _color_name(self._ocr_style.get(
+                            _text_color_name(self._ocr_style.get(
                                 "ocr_text", "#ffffff")),
                             t("dashboard.ocr.style.text"),
                             [OptionItem(value=h, label=n, description="",
                                         disabled=False)
-                             for h, n in _color_opts],
-                            "ocr_text", _color_name)),
+                             for h, n in ([("auto", t(
+                                 "dashboard.ocr.match_original"))]
+                                 + _color_opts)],
+                            "ocr_text", _text_color_name)),
                 _mk_row(t("dashboard.ocr.style.placement"),
                         _modal_row_btn(
                             _place_labels.get(self._ocr_style.get(

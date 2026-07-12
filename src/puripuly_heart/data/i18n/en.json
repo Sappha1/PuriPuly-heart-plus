@@ -547,6 +547,7 @@
   "dashboard.ocr.style.placement": "Placement",
   "dashboard.ocr.style.font": "Font size",
   "dashboard.ocr.font.auto": "Auto (fit box)",
+  "dashboard.ocr.match_original": "Match original",
   "dashboard.ocr.font.custom": "Custom...",
   "common.cancel": "Cancel",
   "dashboard.ocr.place.cover": "Cover original",

@@ -501,6 +501,7 @@
   "dashboard.ocr.style.placement": "位置",
   "dashboard.ocr.style.font": "字体大小",
   "dashboard.ocr.font.auto": "自动（适应框）",
+  "dashboard.ocr.match_original": "跟随原文",
   "dashboard.ocr.font.custom": "自定义…",
   "common.cancel": "取消",
   "dashboard.ocr.place.cover": "覆盖原文",

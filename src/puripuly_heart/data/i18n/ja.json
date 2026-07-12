@@ -502,6 +502,7 @@
   "dashboard.ocr.style.placement": "配置",
   "dashboard.ocr.style.font": "フォントサイズ",
   "dashboard.ocr.font.auto": "自動（枠に合わせる）",
+  "dashboard.ocr.match_original": "元のテキストに合わせる",
   "dashboard.ocr.font.custom": "カスタム…",
   "common.cancel": "キャンセル",
   "dashboard.ocr.place.cover": "原文を覆う",

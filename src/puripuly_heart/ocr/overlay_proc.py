@@ -469,7 +469,8 @@ def _apply_prefs(cfg: dict) -> None:
     for key, ref in (("ocr_outline", _C_OUTLINE), ("ocr_bg", _C_BG),
                      ("ocr_text", _C_TEXT)):
         v = str(cfg.get(key, ref[0]) or "")
-        if _re.fullmatch(r"#[0-9a-fA-F]{6}", v):
+        if _re.fullmatch(r"#[0-9a-fA-F]{6}", v) \
+                or (key == "ocr_text" and v == "auto"):
             ref[0] = v
     try:
         a = int(cfg.get("ocr_bg_alpha", _BG_ALPHA[0]))
@@ -488,7 +489,7 @@ def _apply_prefs(cfg: dict) -> None:
             else bool(cfg.get("ocr_region_border"))
     try:
         fp = int(cfg.get("ocr_font_px", _FONT_FIX[0]))
-        if 0 <= fp <= 72:
+        if -1 <= fp <= 72:  # -1 = match the original text's size per box
             _FONT_FIX[0] = fp
     except Exception:
         pass
@@ -737,6 +738,7 @@ def _exclude_from_capture(root: tk.Tk) -> None:
 
 _PARENT_PID = [0]  # the PuriPuly app process (set from --parent-pid)
 _APP_PIDS: list = [frozenset(), 0.0]  # cached [pids, stamp]
+_OCCL_DBG: list = [[]]  # "window title#pid" of current occluders (logging)
 
 
 def _app_pids() -> frozenset:
@@ -854,21 +856,51 @@ class _Capture:
                             _CAPTURE_STALL_S)
                 self._reinit()
             return None
+        if self._sct is None:
+            # between failed dxcam reinit attempts: no camera yet
+            if time.monotonic() - getattr(self, "_last_ok", 0.0) > _CAPTURE_STALL_S:
+                self._reinit()
+            return None
         f = np.asarray(self._sct.grab(self._mon))[:, :, :3]
         self._last = f
+        self._last_ok = time.monotonic()
         return f
 
     def _reinit(self) -> None:
         self._last_ok = time.monotonic()
+        self._reinits = getattr(self, "_reinits", 0) + 1
+        # RELEASE, don't just del: dxcam's factory caches camera instances
+        # and only drops RELEASED ones — del alone made create() hand back
+        # the same dead duplicator, so the stall watchdog "recovered" into
+        # the very camera that was broken (scan death until OCR restart).
         try:
-            del self._cam
-        except Exception:
-            pass
+            if self._cam is not None:
+                self._cam.release()
+        except Exception as exc:
+            logger.debug("[OCR] dxcam release failed: %s", exc)
         self._cam = None
+        if self._reinits > 4:
+            # dxcam keeps dying — permanent mss fallback beats a dead feed
+            logger.warning("[OCR] dxcam died %d times — falling back to mss",
+                           self._reinits)
+            try:
+                import mss
+
+                self._sct = mss.mss()
+                self._mon = self._sct.monitors[1]
+                self._last = np.asarray(
+                    self._sct.grab(self._mon))[:, :, :3]
+                logger.info("[OCR] capture: mss fallback active")
+            except Exception as exc:
+                logger.warning("[OCR] mss fallback failed: %s", exc)
+            return
         try:
             import dxcam
 
             self._cam = dxcam.create(output_color="BGR")
+            f = self._cam.grab() if self._cam else None
+            logger.info("[OCR] dxcam recreated (attempt %d, first frame: %s)",
+                        self._reinits, "ok" if f is not None else "none yet")
         except Exception as exc:
             logger.warning("[OCR] dxcam recreate failed: %s", exc)
 
@@ -1013,6 +1045,13 @@ class _Target:
 
         user32.EnumWindows(_cb, 0)
         occl: list[tuple[int, int, int, int]] = []
+        dbg: list[str] = []
+
+        def _note(hw, wpid):
+            buf = ctypes.create_unicode_buffer(48)
+            user32.GetWindowTextW(hw, buf, 48)
+            dbg.append("%s#%d" % (buf.value or "?", wpid))
+
         for hw in order:
             if hw == hwnd:
                 break  # everything after is beneath the target
@@ -1033,6 +1072,7 @@ class _Target:
                     if ix2 - ix1 > 8 and iy2 - iy1 > 8:
                         occl.append((ix1 - sx1, iy1 - sy1,
                                      ix2 - sx1, iy2 - sy1))
+                        _note(hw, wpid.value)
                     continue
                 exs = user32.GetWindowLongW(hw, GWL_EXSTYLE)
                 if exs & WS_EX_TRANSPARENT:
@@ -1060,10 +1100,12 @@ class _Target:
                 ix2, iy2 = min(sx2, r.right), min(sy2, r.bottom)
                 if ix2 - ix1 > 8 and iy2 - iy1 > 8:
                     occl.append((ix1 - sx1, iy1 - sy1, ix2 - sx1, iy2 - sy1))
+                    _note(hw, wpid.value)
                 if len(occl) >= 12:
                     break
             except Exception:
                 continue
+        _OCCL_DBG[0] = dbg
         return occl
 
     def _find_window(self, title: str) -> int:
@@ -1212,8 +1254,9 @@ class _Target:
             self._fg = fg
             new_occl = occl_new if rect_new is not None else []
             if len(new_occl) != len(self._occl):
-                logger.info("[OCR] occlusions: %d -> %d %s",
-                            len(self._occl), len(new_occl), new_occl[:4])
+                logger.info("[OCR] occlusions: %d -> %d %s from %s",
+                            len(self._occl), len(new_occl), new_occl[:4],
+                            _OCCL_DBG[0][:4])
             self._occl = new_occl
         if rect_new is None and not self._warned:
             self._warned = True
@@ -1319,6 +1362,33 @@ def _looks_like_bubble(bgr: np.ndarray, b: TextBox) -> bool:
             or ring_lum - dark > _BUBBLE_CONTRAST)
 
 
+def _glyph_color(crop: np.ndarray) -> str:
+    """Dominant color of the glyph pixels (#rrggbb, '' when too flat to
+    tell). Glyphs are the ~20% of pixels whose luminance deviates most
+    from the crop median, so it works for bright-on-dark and dark-on-
+    bright alike — a gold nameplate yields gold, not white."""
+    try:
+        small = crop if crop.shape[0] * crop.shape[1] <= 24000 \
+            else crop[::2, ::2]
+        f = small.reshape(-1, 3).astype(np.float32)
+        lum = f @ np.array([0.114, 0.587, 0.299], np.float32)  # BGR order
+        med = float(np.median(lum))
+        dev = np.abs(lum - med)
+        thr = float(np.percentile(dev, 80))
+        if thr < 14:
+            return ""  # flat crop: no confident glyph/background split
+        sel = f[dev >= thr]
+        b = int(np.median(sel[:, 0]))
+        g = int(np.median(sel[:, 1]))
+        r = int(np.median(sel[:, 2]))
+        # Near-black text would vanish against the dark pill bg — lift it.
+        if r + g + b < 120:
+            return "#e8e8e8"
+        return "#%02x%02x%02x" % (r, g, b)
+    except Exception:
+        return ""
+
+
 def _rec_loop(cap: _Capture, detector: TextDetector,
               stop: threading.Event) -> None:
     """Recognition worker: reads the requested boxes' text with the LOCAL
@@ -1344,7 +1414,7 @@ def _rec_loop(cap: _Capture, detector: TextDetector,
                 x2p, y2p = min(W, x2 + 6), min(H, y2 + 4)
                 if x2p - x1p < 8 or y2p - y1p < 6:
                     with _REC_LOCK:
-                        _REC_OUT[uid] = ("", None)
+                        _REC_OUT[uid] = ("", None, "")
                     continue
                 crops.append(np.ascontiguousarray(frame[y1p:y2p, x1p:x2p]))
                 uids.append(uid)
@@ -1372,7 +1442,8 @@ def _rec_loop(cap: _Capture, detector: TextDetector,
                                         oy + int(kr[-1]) + 2)
                         except Exception:
                             rect = None
-                        _REC_OUT[uid] = ((text or "").strip(), rect)
+                        _REC_OUT[uid] = ((text or "").strip(), rect,
+                                         _glyph_color(crop))
         except Exception as exc:
             logger.debug("[OCR] rec loop error: %s", exc)
             time.sleep(0.1)
@@ -1393,6 +1464,15 @@ def _detect_loop(cap: _Capture, target: _Target, anchors: _Anchors,
                 last_epoch = epoch
                 logger.info("[OCR] target region: %s (epoch %d)", rect, epoch)
             if rect is None or not fg or not _SCAN_ACTIVE[0]:
+                if _SCAN_ACTIVE[0]:
+                    # The user is HOLDING the scan key and nothing happens —
+                    # say why, throttled (this is the "scan died" diagnosis).
+                    lastw = getattr(_detect_loop, "_why_at", 0.0)
+                    if time.monotonic() - lastw > 5.0:
+                        _detect_loop._why_at = time.monotonic()
+                        logger.info(
+                            "[OCR] scan held but blocked: rect=%s fg=%s "
+                            "occl=%s", rect, fg, _OCCL_DBG[0][:3])
                 wake.wait(0.2)
                 wake.clear()
                 continue
@@ -1519,7 +1599,7 @@ class _Tracked:
                  "moving", "calm_frames", "miss", "sig", "sig_bad", "tex_bad",
                  "last_confirm", "confirms", "jump_dx", "jump_dy", "jump_n",
                  "uid", "text", "refined", "xlat", "namever", "namehit",
-                 "rosterhit", "text_at", "pinyin")
+                 "rosterhit", "text_at", "pinyin", "color")
 
     def __init__(self, b: TextBox) -> None:
         self.x1, self.y1 = float(b.x1), float(b.y1)
@@ -1546,6 +1626,7 @@ class _Tracked:
         self.rosterhit = False  # roster match regardless of ignore toggles
         self.text_at = 0.0  # when recognition first delivered the text
         self.pinyin = ""  # transliteration of Han text (display formats)
+        self.color = ""  # dominant glyph color (#rrggbb; '' = unknown)
 
     def advance(self, dx: float, dy: float, dt: float,
                 gx: float, gy: float) -> None:
@@ -2179,11 +2260,15 @@ def _track_loop(cap: _Capture, target: _Target, anchors: _Anchors,
                             tr.text = hit[0]  # reborn box inherits its text
                             tr.text_at = 0.0  # shown before — no first-hold
                             tr.pinyin = _pinyin_of(tr.text)
+                            if len(hit) > 4 and hit[4]:
+                                tr.color = hit[4]
                     if tr.uid in _REC_OUT:
-                        text, rrect = _REC_OUT.pop(tr.uid)
+                        text, rrect, tcol = _REC_OUT.pop(tr.uid)
                         tr.text = text or "-"
                         tr.text_at = now
                         tr.pinyin = _pinyin_of(tr.text)
+                        if tcol:
+                            tr.color = tcol
                         # Apply the full-res edge refinement when the box is
                         # settled and the correction is within detection's
                         # quantization slop (a large delta means the box
@@ -2200,8 +2285,8 @@ def _track_loop(cap: _Capture, target: _Target, anchors: _Anchors,
                                 tr.ax, tr.ay = nx1, ny1
                                 tr.refined = True
                     if tr.text and tr.text != "-":
-                        text_cache[ckey] = (tr.text, now,
-                                            tr.x2 - tr.x1, tr.y2 - tr.y1)
+                        text_cache[ckey] = (tr.text, now, tr.x2 - tr.x1,
+                                            tr.y2 - tr.y1, tr.color)
                         # Translation: once per unique string per session.
                         if not tr.xlat and _XLAT_ENABLED[0]:
                             norm = tr.text.strip()
@@ -2333,7 +2418,7 @@ def _track_loop(cap: _Capture, target: _Target, anchors: _Anchors,
                     (bx2 * inv_scale + off_x) + cap.left,
                     (by2 * inv_scale + off_y) + cap.top,
                     vx * inv_scale, vy * inv_scale, tr.uid,
-                    tr.text, tr.xlat, tr.pinyin))
+                    tr.text, tr.xlat, tr.pinyin, tr.color))
             state.set(items)
         except Exception as exc:
             logger.debug("[OCR] track iteration error: %s", exc)
@@ -2362,7 +2447,8 @@ def _save_debug_shot(cap: _Capture, boxes, pills: bool = False) -> None:
             x2, y2 = int(bx2 - cap.left), int(by2 - cap.top)
             if pills and len(it) > 9:
                 lines = _fmt_lines(it[7], it[8], it[9]) or [("...", False)]
-                texted.append((x1, y1, x2, y2, lines[:3]))
+                texted.append((x1, y1, x2, y2, lines[:3],
+                               it[10] if len(it) > 10 else ""))
             else:
                 cv2.rectangle(frame, (x1, y1), (x2, y2), oc_bgr, 2)
         if texted:
@@ -2376,14 +2462,16 @@ def _save_debug_shot(cap: _Capture, boxes, pills: bool = False) -> None:
             ovl = Image.new("RGBA", img.size, (0, 0, 0, 0))
             od = ImageDraw.Draw(ovl)
             bg = _hex_rgb(_C_BG[0])
-            txc = _hex_rgb(_C_TEXT[0])
             pyc = _hex_rgb(_C_PY)
             alpha = int(255 * _BG_ALPHA[0] / 100)
-            for x1, y1, x2, y2, lines in texted:
+            for x1, y1, x2, y2, lines, bcol in texted:
+                txc = _hex_rgb((bcol or "#ffffff")
+                               if _C_TEXT[0] == "auto" else _C_TEXT[0])
                 od.rectangle([x1, y1, x2, y2], outline=oc + (255,), width=1)
                 n = len(lines)
-                if _FONT_FIX[0] > 0:
-                    px = _FONT_FIX[0]
+                if _FONT_FIX[0] != 0:
+                    px = _FONT_FIX[0] if _FONT_FIX[0] > 0 \
+                        else max(10, min(64, int((y2 - y1) * 0.82)))
                     font = _pil_font(px)
                     try:
                         lws = [od.textlength(ln, font=font)
@@ -2759,8 +2847,11 @@ def run(monitor_index: int = 1, fps: float = 0.0, max_side: int = _TRACK_SIDE,
             for i, (rid, shs, txs) in enumerate(pill_pool):
                 shown = False
                 if held and i < len(items):
-                    bx1, by1, bx2, by2, vx, vy, uid, text, xlat, py = items[i]
-                    lines = _fmt_lines(text, xlat, py) or ["..."]
+                    (bx1, by1, bx2, by2, vx, vy, uid, text, xlat, py,
+                     tcol) = items[i]
+                    base = (tcol or "#ffffff") if _C_TEXT[0] == "auto" \
+                        else _C_TEXT[0]
+                    lines = _fmt_lines(text, xlat, py) or [("...", False)]
                     lines = lines[:3]
                     ex, ey = vx * ext, vy * ext
                     x1 = (bx1 + ex - left) * sx
@@ -2769,11 +2860,15 @@ def run(monitor_index: int = 1, fps: float = 0.0, max_side: int = _TRACK_SIDE,
                     y2 = (by2 + ey - top) * sy
                     n = len(lines)
                     line_x = None  # per-line x (fixed mode centers lines)
-                    if _FONT_FIX[0] > 0:
-                        # Fixed size: text never shrinks to fit the box —
-                        # the pill grows AROUND the box center instead, and
-                        # each line is centered inside it.
-                        px_h = _FONT_FIX[0]
+                    if _FONT_FIX[0] != 0:
+                        # Fixed or match-original size: text never shrinks
+                        # to fit the box — the pill grows AROUND the box
+                        # center instead, and each line is centered.
+                        # -1 = size from the ORIGINAL text's height, so a
+                        # 50px nameplate renders at ~50px and the smaller
+                        # pronoun field stays proportionally smaller.
+                        px_h = _FONT_FIX[0] if _FONT_FIX[0] > 0 \
+                            else max(10, min(64, int((y2 - y1) * 0.82)))
                         f = _font_px(px_h)
                         lws = [f.measure(ln) for ln, _p in lines]
                         widest = max(lws)
@@ -2810,14 +2905,14 @@ def run(monitor_index: int = 1, fps: float = 0.0, max_side: int = _TRACK_SIDE,
                                               / max(1, widest)))
                             f = _font_px(px_h)
                     key = ("|".join(("»" if p else "") + ln
-                                    for ln, p in lines), px_h, _C_TEXT[0])
+                                    for ln, p in lines), px_h, base)
                     if pill_meta[i] != key:
                         pill_meta[i] = key
                         for j in range(3):
                             ln, is_py = lines[j] if j < n else ("", False)
                             canvas.itemconfigure(
                                 txs[j], text=ln, font=f,
-                                fill=_C_PY if is_py else _C_TEXT[0])
+                                fill=_C_PY if is_py else base)
                             canvas.itemconfigure(shs[j], text=ln, font=f)
                     if _BG_ALPHA[0] > 0:
                         canvas.coords(rid, x1 - 1, ry1, x2 + 1, ry2)

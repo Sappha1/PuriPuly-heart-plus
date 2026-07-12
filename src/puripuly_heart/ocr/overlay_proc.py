@@ -68,6 +68,10 @@ _FONT_FIX = [0]  # subtitle font px; 0 = auto (fit box), -1 = match original
 _SZ_PY = [0]  # pinyin line px override (0 = same as the main font size)
 _SZ_TR = [0]  # translation line px override (0 = inherit)
 _SZ_PRO = [0]  # pronoun-set boxes px override (0 = inherit)
+_C_OR = [""]  # original line color ('' inherit text color, 'auto', #hex)
+_C_TR = [""]  # translation line color ('' inherit, 'auto', #hex)
+_C_PYO = [""]  # pinyin line color ('' = the default teal, 'auto', #hex)
+_C_PRO = [""]  # pronoun-set box color ('' inherit, 'auto', #hex)
 _SCAN_MODE = ["hold"]  # hold | toggle — gates ALL scanning/drawing
 _SCAN_VK = [ord("E")]  # legacy single-key path (combo below preferred)
 _SCAN_ACTIVE = [False]
@@ -128,6 +132,19 @@ def _line_px(kind: str, base: int, pron: int) -> int:
     if kind == "trans" and _SZ_TR[0] > 0:
         return _SZ_TR[0]
     return base
+
+
+def _line_color(kind: str, base: str, tcol: str, pron: str) -> str:
+    """Per-line color. pron (pronoun-box override) beats line-kind
+    overrides, which beat the main text color. 'auto' = the color sampled
+    from the original on-screen glyphs; '' = inherit."""
+    v = pron or (_C_PYO[0] if kind == "py"
+                 else _C_TR[0] if kind == "trans" else _C_OR[0])
+    if not v:
+        return _C_PY if kind == "py" else base
+    if v == "auto":
+        return tcol or "#ffffff"
+    return v
 
 
 def _pinyin_of(text: str) -> str:
@@ -517,6 +534,13 @@ def _apply_prefs(cfg: dict) -> None:
                 ref[0] = v
         except Exception:
             pass
+    for key, ref in (("ocr_color_orig", _C_OR), ("ocr_color_trans", _C_TR),
+                     ("ocr_color_pinyin", _C_PYO),
+                     ("ocr_color_pronoun", _C_PRO)):
+        if key in cfg:
+            v = str(cfg.get(key) or "")
+            if v in ("", "auto") or _re.fullmatch(r"#[0-9a-fA-F]{6}", v):
+                ref[0] = v
     logger.info("[OCR] prefs applied live: prewarm=%d bubbles=%d foreign=%d "
                 "names=%d pronouns=%d translate=%d",
                 _PREWARM[0], _BUBBLES_ONLY[0], _FOREIGN_ONLY[0],
@@ -2489,8 +2513,8 @@ def _save_debug_shot(cap: _Capture, boxes, pills: bool = False) -> None:
             pyc = _hex_rgb(_C_PY)
             alpha = int(255 * _BG_ALPHA[0] / 100)
             for x1, y1, x2, y2, lines, bcol in texted:
-                txc = _hex_rgb((bcol or "#ffffff")
-                               if _C_TEXT[0] == "auto" else _C_TEXT[0])
+                base_c = (bcol or "#ffffff") \
+                    if _C_TEXT[0] == "auto" else _C_TEXT[0]
                 od.rectangle([x1, y1, x2, y2], outline=oc + (255,), width=1)
                 n = len(lines)
                 fix = _FONT_FIX[0]
@@ -2503,9 +2527,12 @@ def _save_debug_shot(cap: _Capture, boxes, pills: bool = False) -> None:
                 else:
                     px = max(10, min(30, int((y2 - y1) * 0.55)))
                 txt0 = lines[0][0] if lines else ""
-                pron = _SZ_PRO[0] if (_SZ_PRO[0] > 0
-                                      and _is_pronoun_text(txt0)) else 0
+                is_pron = _is_pronoun_text(txt0)
+                pron = _SZ_PRO[0] if (_SZ_PRO[0] > 0 and is_pron) else 0
+                pron_c = _C_PRO[0] if is_pron else ""
                 pxs = [_line_px(k, px, pron) for _ln, k in lines]
+                cols = [_hex_rgb(_line_color(k, base_c, bcol, pron_c))
+                        for _ln, k in lines]
                 fonts = [_pil_font(p) for p in pxs]
                 try:
                     lws = [od.textlength(ln, font=fonts[j])
@@ -2557,8 +2584,7 @@ def _save_debug_shot(cap: _Capture, boxes, pills: bool = False) -> None:
                         od.text((line_x[j] + 1, cy + 1), ln, font=fonts[j],
                                 fill=(0, 0, 0, 255), anchor="lm")
                     od.text((line_x[j], cy), ln, font=fonts[j],
-                            fill=(pyc if kind == "py" else txc) + (255,),
-                            anchor="lm")
+                            fill=cols[j] + (255,), anchor="lm")
             img = Image.alpha_composite(img, ovl).convert("RGB")
             frame = np.asarray(img)[:, :, ::-1].copy()
         path = os.path.join(_SHOT_DIR, time.strftime("shot_%H%M%S.png"))
@@ -2906,9 +2932,12 @@ def run(monitor_index: int = 1, fps: float = 0.0, max_side: int = _TRACK_SIDE,
                         px_h = max(9, min(46, int((y2 - y1) / n * 0.72)))
                     else:
                         px_h = max(10, min(30, int((y2 - y1) * 0.55)))
-                    pron = _SZ_PRO[0] if (_SZ_PRO[0] > 0 and text
-                                          and _is_pronoun_text(text)) else 0
+                    is_pron = bool(text) and _is_pronoun_text(text)
+                    pron = _SZ_PRO[0] if (_SZ_PRO[0] > 0 and is_pron) else 0
+                    pron_c = _C_PRO[0] if is_pron else ""
                     pxs = [_line_px(k, px_h, pron) for _ln, k in lines]
+                    cols = [_line_color(k, base, tcol, pron_c)
+                            for _ln, k in lines]
                     fonts = [_font_px(p) for p in pxs]
                     lws = [fonts[j].measure(ln)
                            for j, (ln, _k) in enumerate(lines)]
@@ -2953,7 +2982,8 @@ def run(monitor_index: int = 1, fps: float = 0.0, max_side: int = _TRACK_SIDE,
                         row_h = (ry2 - ry1) / n
                         centers = [ry1 + row_h * (j + 0.5) for j in range(n)]
                     key = ("|".join(("»" if k == "py" else "") + ln
-                                    for ln, k in lines), tuple(pxs), base)
+                                    for ln, k in lines), tuple(pxs),
+                           tuple(cols))
                     if pill_meta[i] != key:
                         pill_meta[i] = key
                         for j in range(3):
@@ -2961,7 +2991,7 @@ def run(monitor_index: int = 1, fps: float = 0.0, max_side: int = _TRACK_SIDE,
                             fj = fonts[j] if j < n else fonts[0]
                             canvas.itemconfigure(
                                 txs[j], text=ln, font=fj,
-                                fill=_C_PY if kind == "py" else base)
+                                fill=cols[j] if j < n else base)
                             canvas.itemconfigure(shs[j], text=ln, font=fj)
                     if _BG_ALPHA[0] > 0:
                         canvas.coords(rid, x1 - 1, ry1, x2 + 1, ry2)

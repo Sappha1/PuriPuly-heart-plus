@@ -507,6 +507,10 @@ class DashboardView(ft.Row):
             "ocr_size_pinyin": str(_ocr_p.get("ocr_size_pinyin", 0)),
             "ocr_size_trans": str(_ocr_p.get("ocr_size_trans", 0)),
             "ocr_size_pronoun": str(_ocr_p.get("ocr_size_pronoun", 0)),
+            "ocr_color_orig": str(_ocr_p.get("ocr_color_orig", "")),
+            "ocr_color_trans": str(_ocr_p.get("ocr_color_trans", "")),
+            "ocr_color_pinyin": str(_ocr_p.get("ocr_color_pinyin", "")),
+            "ocr_color_pronoun": str(_ocr_p.get("ocr_color_pronoun", "")),
         }
         self.on_ocr_style_change = None  # (prototype) callback(key, value)
         self.ocr_log_chat = bool(_ocr_p.get("log_chat", True))
@@ -1959,6 +1963,27 @@ class DashboardView(ft.Row):
                 return t("dashboard.ocr.match_original")
             return _color_name(v)
 
+        def _mk_line_color_row(pref_key: str, title: str,
+                               inherit_label: str) -> ft.Container:
+            def _lbl(v) -> str:
+                s = str(v)
+                if s == "":
+                    return inherit_label
+                if s == "auto":
+                    return t("dashboard.ocr.match_original")
+                return _color_name(s)
+
+            return _mk_row(title, _modal_row_btn(
+                _lbl(self._ocr_style.get(pref_key, "")), title,
+                [OptionItem(value="", label=inherit_label,
+                            description="", disabled=False),
+                 OptionItem(value="auto",
+                            label=t("dashboard.ocr.match_original"),
+                            description="", disabled=False)]
+                + [OptionItem(value=h, label=nm, description="",
+                              disabled=False) for h, nm in _color_opts],
+                pref_key, _lbl))
+
         def _open_style_menu(_ev) -> None:
             rows = [
                 _mk_row(t("dashboard.ocr.style.outline"),
@@ -2023,12 +2048,25 @@ class DashboardView(ft.Row):
                         _mk_size_btn("ocr_size_pronoun",
                                      t("dashboard.ocr.size.pronoun"),
                                      _sub_size_labels)),
+                _mk_line_color_row("ocr_color_orig",
+                                   t("dashboard.ocr.color.orig"),
+                                   t("dashboard.ocr.color.inherit")),
+                _mk_line_color_row("ocr_color_trans",
+                                   t("dashboard.ocr.color.trans"),
+                                   t("dashboard.ocr.color.inherit")),
+                _mk_line_color_row("ocr_color_pinyin",
+                                   t("dashboard.ocr.color.pinyin"),
+                                   t("dashboard.ocr.color.default")),
+                _mk_line_color_row("ocr_color_pronoun",
+                                   t("dashboard.ocr.color.pronoun"),
+                                   t("dashboard.ocr.color.inherit")),
                 ft.Container(height=6),
             ]
             self._ocr_style_popover_close = self._open_popover_at(
                 x + 40, y + 40,
-                ft.Container(content=ft.Column(
+                ft.Container(height=520.0, content=ft.Column(
                     rows, spacing=0, tight=True,
+                    scroll=ft.ScrollMode.AUTO,
                     horizontal_alignment=ft.CrossAxisAlignment.STRETCH)),
                 width=280.0)
 

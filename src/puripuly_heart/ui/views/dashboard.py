@@ -1627,20 +1627,15 @@ class DashboardView(ft.Row):
             border=ft.border.all(1, _TOGGLE_ON),
             width=150,
         )
-        _win_rows_col = ft.Column([], spacing=0, tight=True, visible=False)
-        _win_expanded = [False]
-
-        def _pick_window(title: str) -> None:
-            self._ocr_window_title = title
-            _win_btn_text.value = _win_summary()
-            _win_expanded[0] = False
-            _win_rows_col.visible = False
-            with contextlib.suppress(Exception):
-                _win_btn_text.update()
-                _win_rows_col.update()
-            _guarded(self.on_ocr_window_change, title)
-
-        def _build_win_rows() -> list[ft.Container]:
+        def _open_win_picker(_ev) -> None:
+            # A dozen open windows would push the popover off screen —
+            # use the scrollable SettingsModal picker (same style as the
+            # Mic/PEER provider right-clicks).
+            _close = getattr(self, "_ocr_popover_close", None)
+            if callable(_close):
+                _close()
+            if not self.page:
+                return
             titles: list[str] = []
             try:
                 if callable(self.on_ocr_window_list):
@@ -1648,52 +1643,30 @@ class DashboardView(ft.Row):
             except Exception:
                 titles = []
             cur = self._ocr_window_title
-            options = [("", t("dashboard.ocr.menu.window.whole")),
-                       ("VRChat", "VRChat")]
+            options = [
+                OptionItem(value="",
+                           label=t("dashboard.ocr.menu.window.whole"),
+                           description="", disabled=False),
+                OptionItem(value="VRChat", label="VRChat",
+                           description="", disabled=False),
+            ]
             for w in titles:
-                if w != "VRChat" and all(w != o[0] for o in options):
-                    options.append((w, w))
-            if cur and all(cur != o[0] for o in options):
-                options.append((cur, cur))
-            out: list[ft.Container] = []
-            for value, label in options:
-                active = value == cur
-                icon = ft.Icon(
-                    ft.Icons.RADIO_BUTTON_CHECKED if active
-                    else ft.Icons.RADIO_BUTTON_UNCHECKED,
-                    size=15, color=_TOGGLE_ON if active else _TEXT_FAINT,
-                )
-                out.append(ft.Container(
-                    content=ft.Row(
-                        [icon,
-                         ft.Text(label, size=12, color=_TEXT_PRIMARY,
-                                 expand=True, no_wrap=True,
-                                 overflow=ft.TextOverflow.ELLIPSIS)],
-                        spacing=8,
-                        vertical_alignment=ft.CrossAxisAlignment.CENTER,
-                    ),
-                    padding=ft.padding.only(left=18, right=10, top=6,
-                                            bottom=6),
-                    border_radius=5,
-                    on_click=lambda _e, _v=value: _pick_window(_v),
-                    on_hover=lambda e: (
-                        setattr(e.control, "bgcolor",
-                                "#2a3040" if e.data == "true"
-                                else ft.Colors.TRANSPARENT)
-                        or (e.control.update() if e.control.page else None)
-                    ),
-                ))
-            return out
+                if w != "VRChat":
+                    options.append(OptionItem(value=w, label=w,
+                                              description="",
+                                              disabled=False))
+            if cur and all(o.value != cur for o in options):
+                options.append(OptionItem(value=cur, label=cur,
+                                          description="", disabled=False))
 
-        def _toggle_win(_ev):
-            _win_expanded[0] = not _win_expanded[0]
-            if _win_expanded[0]:
-                _win_rows_col.controls = _build_win_rows()
-            _win_rows_col.visible = _win_expanded[0]
-            with contextlib.suppress(Exception):
-                _win_rows_col.update()
+            def _sel(value: str) -> None:
+                self._ocr_window_title = value
+                _guarded(self.on_ocr_window_change, value)
 
-        _win_btn.on_click = _toggle_win
+            SettingsModal(self.page, t("dashboard.ocr.menu.window"),
+                          options, _sel).open(cur)
+
+        _win_btn.on_click = _open_win_picker
 
         def _on_bubbles(v: bool) -> None:
             self._ocr_bubbles_only = v
@@ -1760,7 +1733,6 @@ class DashboardView(ft.Row):
                 [
                     _section_row(t("dashboard.ocr.menu.window"),
                                  _win_btn, top=8),
-                    _win_rows_col,
                     _section_row(t("dashboard.ocr.menu.bubbles_only"),
                                  _bool_pill(self._ocr_bubbles_only,
                                             _on_bubbles)),

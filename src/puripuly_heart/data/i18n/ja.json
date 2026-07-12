@@ -515,6 +515,8 @@
   "dashboard.ocr.color.default": "デフォルト",
   "dashboard.ocr.pinyin.tones": "ピンイン声調記号",
   "dashboard.ocr.pinyin.group": "ピンインを単語でまとめる",
+  "dashboard.ocr.scan.hold_bind": "押している間スキャン",
+  "dashboard.ocr.scan.toggle_bind": "切り替えキー",
   "dashboard.ocr.state": "状態",
   "dashboard.ocr.state.on": "スキャン中",
   "dashboard.ocr.state.idle": "スキャンしていません",

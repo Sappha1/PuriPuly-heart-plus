@@ -121,7 +121,13 @@ def _parse_bind(s: str):
     return (tuple(mods), key) if key is not None else None
 
 
-_SCAN_COMBO: list = [_parse_bind("E")]
+_SCAN_COMBO: list = [_parse_bind("E")]  # legacy single-bind (migrated)
+# TWO independent binds: hold = scan while the combo is down; toggle = a
+# tap flips persistent scanning. Scanning is active when EITHER says so.
+# Empty bind disables that mechanism; both empty = always scanning.
+_HOLD_COMBO: list = [_parse_bind("E")]
+_TOG_COMBO: list = [None]
+_TOG_STATE = [False]
 
 
 def _fmt_lines(text: str, xlat: str, pinyin: str) -> list[tuple[str, str]]:
@@ -571,6 +577,17 @@ def _apply_prefs(cfg: dict) -> None:
     mode = str(cfg.get("scan_mode", _SCAN_MODE[0]))
     if mode in ("hold", "toggle"):
         _SCAN_MODE[0] = mode
+    if "scan_bind_toggle" in cfg:
+        # New dual-bind config: the two keys are independent.
+        _HOLD_COMBO[0] = _parse_bind(str(cfg.get("scan_bind") or ""))
+        _TOG_COMBO[0] = _parse_bind(str(cfg.get("scan_bind_toggle") or ""))
+    elif "scan_bind" in cfg:
+        # Legacy single bind: scan_mode decides which slot it fills.
+        cbb = _parse_bind(str(cfg.get("scan_bind") or ""))
+        if _SCAN_MODE[0] == "toggle":
+            _TOG_COMBO[0], _HOLD_COMBO[0] = cbb, None
+        else:
+            _HOLD_COMBO[0], _TOG_COMBO[0] = cbb, None
     if "scan_bind" in cfg:
         _SCAN_COMBO[0] = _parse_bind(str(cfg.get("scan_bind") or ""))
     if "ocr_region_border" in cfg:
@@ -2686,41 +2703,40 @@ def _prtscn_loop(cap: _Capture, state: _BoxState, stop: threading.Event) -> None
             # letter for most users, and typing in Discord/a browser was
             # silently flipping the toggle ("PrintScreen killed OCR" was
             # really the e's in the chat message they typed after it).
-            cb = _SCAN_COMBO[0]
+            def _combo_down(cbv) -> bool:
+                mods, keyvk = cbv
+                return (all(user32.GetAsyncKeyState(m) & 0x8000
+                            for m in mods)
+                        and bool(user32.GetAsyncKeyState(keyvk) & 0x8000))
+
+            hold_cb, tog_cb = _HOLD_COMBO[0], _TOG_COMBO[0]
             prev_active = _SCAN_ACTIVE[0]
-            if cb is None:
+            if hold_cb is None and tog_cb is None:
                 _SCAN_ACTIVE[0] = True
                 was_scan = False
             elif not _TGT_FG[0]:
-                was_scan = False  # ignore presses made in other apps
+                # Presses in other apps are ignored; the toggle state
+                # persists across alt-tabs, the hold contribution drops.
+                was_scan = False
+                _SCAN_ACTIVE[0] = _TOG_STATE[0] if tog_cb is not None \
+                    else False
             else:
-                mods, keyvk = cb
-                skey = (all(user32.GetAsyncKeyState(m) & 0x8000
-                            for m in mods)
-                        and bool(user32.GetAsyncKeyState(keyvk) & 0x8000))
-                if _SCAN_MODE[0] == "toggle":
-                    # Deliberate 0.3s HOLD flips the toggle — a typing tap
-                    # (~100ms) does nothing. With a bare-letter bind, the
-                    # VRChat CHATBOX was silently flipping scanning off
-                    # mid-message; focus gating can't catch that (the game
-                    # legitimately has focus while typing).
-                    if skey and not was_scan:
-                        _prtscn_loop._press_at = time.monotonic()
-                    elif skey and was_scan:
-                        pa = getattr(_prtscn_loop, "_press_at", 0.0)
-                        if pa and time.monotonic() - pa >= 0.3:
-                            _prtscn_loop._press_at = 0.0
-                            _SCAN_ACTIVE[0] = not _SCAN_ACTIVE[0]
-                            logger.info("[OCR] scan %s (bind held)",
-                                        "ON" if _SCAN_ACTIVE[0] else "OFF")
-                            _FLASH_TXT[0] = ("OCR ON" if _SCAN_ACTIVE[0]
-                                             else "OCR OFF")
-                            _FLASH[0] = time.monotonic() + 1.6
-                    else:
-                        _prtscn_loop._press_at = 0.0
-                else:
-                    _SCAN_ACTIVE[0] = skey
-                was_scan = skey
+                tog_down = _combo_down(tog_cb) if tog_cb else False
+                hold_down = _combo_down(hold_cb) if hold_cb else False
+                if tog_down:
+                    # Toggle takes precedence: ALT+E must not also read
+                    # as the E hold-bind being down.
+                    hold_down = False
+                if tog_cb is not None:
+                    if tog_down and not was_scan:
+                        _TOG_STATE[0] = not _TOG_STATE[0]
+                        logger.info("[OCR] scan toggle %s",
+                                    "ON" if _TOG_STATE[0] else "OFF")
+                        _FLASH_TXT[0] = ("OCR ON" if _TOG_STATE[0]
+                                         else "OCR OFF")
+                        _FLASH[0] = time.monotonic() + 1.6
+                    was_scan = tog_down
+                _SCAN_ACTIVE[0] = _TOG_STATE[0] or hold_down
             noww = time.monotonic()
             if (_SCAN_ACTIVE[0] != prev_active
                     or noww - getattr(_prtscn_loop, "_state_at", 0.0) > 2.0):

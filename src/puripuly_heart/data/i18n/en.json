@@ -560,6 +560,8 @@
   "dashboard.ocr.color.default": "Default",
   "dashboard.ocr.pinyin.tones": "Pinyin tone marks",
   "dashboard.ocr.pinyin.group": "Group pinyin words",
+  "dashboard.ocr.scan.hold_bind": "Hold-to-scan key",
+  "dashboard.ocr.scan.toggle_bind": "Toggle key",
   "dashboard.ocr.state": "Status",
   "dashboard.ocr.state.on": "Scanning",
   "dashboard.ocr.state.idle": "Not scanning",

@@ -514,6 +514,8 @@
   "dashboard.ocr.color.default": "默认",
   "dashboard.ocr.pinyin.tones": "拼音声调符号",
   "dashboard.ocr.pinyin.group": "拼音按词分组",
+  "dashboard.ocr.scan.hold_bind": "按住扫描键",
+  "dashboard.ocr.scan.toggle_bind": "切换键",
   "dashboard.ocr.state": "状态",
   "dashboard.ocr.state.on": "扫描中",
   "dashboard.ocr.state.idle": "未在扫描",

@@ -514,6 +514,8 @@
   "dashboard.ocr.color.default": "기본",
   "dashboard.ocr.pinyin.tones": "병음 성조 표시",
   "dashboard.ocr.pinyin.group": "병음 단어 묶기",
+  "dashboard.ocr.scan.hold_bind": "홀드 스캔 키",
+  "dashboard.ocr.scan.toggle_bind": "토글 키",
   "dashboard.ocr.state": "상태",
   "dashboard.ocr.state.on": "스캔 중",
   "dashboard.ocr.state.idle": "스캔하지 않음",

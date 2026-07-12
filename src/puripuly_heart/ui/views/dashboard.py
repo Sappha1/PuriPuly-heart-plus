@@ -2102,72 +2102,85 @@ class DashboardView(ft.Row):
             on_click=_open_style_menu,
         )
 
-        # ── scan activation: mode + bind ──
-        _scan_mode_labels = {"hold": t("dashboard.ocr.scan.hold"),
-                             "toggle": t("dashboard.ocr.scan.toggle")}
-        scan_mode_btn = _modal_row_btn(
-            _scan_mode_labels.get(self._ocr_style.get("scan_mode", "hold"),
-                                  ""),
-            t("dashboard.ocr.menu.scan"),
-            [OptionItem(value=k, label=v, description="", disabled=False)
-             for k, v in _scan_mode_labels.items()],
-            "scan_mode", lambda v: _scan_mode_labels.get(v, v))
-        # Bind RECORDER: click, then press the actual combo (modifiers
-        # included, e.g. Alt+E). Escape clears the bind (= always active).
-        _bind_txt = ft.Text(
-            str(self._ocr_style.get("scan_bind", "E")) or "—",
-            size=11, color=_TOGGLE_ON, weight=ft.FontWeight.W_600,
-            no_wrap=True, overflow=ft.TextOverflow.ELLIPSIS,
-        )
-        scan_bind_btn = _summary_btn(_bind_txt)
+        # ── scan activation: TWO independent bind recorders ──
+        # Hold = scan while the combo is down; Toggle = a tap flips
+        # persistent scanning. Either (or both) may be set; Esc clears.
+        # Legacy migration for display: a single scan_bind fills the slot
+        # its old scan_mode selected.
+        if "scan_bind_toggle" not in self._ocr_style:
+            _legacy = str(self._ocr_style.get("scan_bind", "E"))
+            if str(self._ocr_style.get("scan_mode", "hold")) == "toggle":
+                self._ocr_style["scan_bind_toggle"] = _legacy
+                self._ocr_style["scan_bind"] = ""
+            else:
+                self._ocr_style["scan_bind_toggle"] = ""
 
-        def _start_bind_record(_ev) -> None:
-            if not self.page:
-                return
-            _bind_txt.value = "…"
-            with contextlib.suppress(Exception):
-                _bind_txt.update()
-            prev_handler = self.page.on_keyboard_event
+        def _mk_bind_recorder(pref_key: str) -> ft.Container:
+            btxt = ft.Text(
+                str(self._ocr_style.get(pref_key, "")) or "—",
+                size=11, color=_TOGGLE_ON, weight=ft.FontWeight.W_600,
+                no_wrap=True, overflow=ft.TextOverflow.ELLIPSIS,
+            )
+            btn = _summary_btn(btxt)
 
-            def _finish(combo: str) -> None:
-                self.page.on_keyboard_event = prev_handler
-                self._ocr_style["scan_bind"] = combo
-                _bind_txt.value = combo or "—"
+            def _record(_ev) -> None:
+                if not self.page:
+                    return
+                btxt.value = "…"
                 with contextlib.suppress(Exception):
-                    _bind_txt.update()
-                if callable(self.on_ocr_style_change):
-                    _guarded(lambda v: self.on_ocr_style_change(
-                        "scan_bind", v), combo)
+                    btxt.update()
+                prev_handler = self.page.on_keyboard_event
 
-            def _capture(e) -> None:
-                try:
-                    k = str(getattr(e, "key", "") or "").strip()
-                    if k in ("Alt", "Control", "Shift", "Meta", "AltGraph"):
-                        return  # wait for the actual key
-                    if k == "Escape":
-                        _finish("")  # cleared: scanning always active
-                        return
-                    key = k.upper()
-                    import re as _re2
+                def _finish(combo: str) -> None:
+                    self.page.on_keyboard_event = prev_handler
+                    self._ocr_style[pref_key] = combo
+                    btxt.value = combo or "—"
+                    with contextlib.suppress(Exception):
+                        btxt.update()
+                    if callable(self.on_ocr_style_change):
+                        # Write BOTH keys so the overlay switches to the
+                        # dual-bind config (scan_bind_toggle present) and
+                        # stops applying the legacy scan_mode migration.
+                        for k2 in ("scan_bind", "scan_bind_toggle"):
+                            _guarded(lambda v, kk=k2:
+                                     self.on_ocr_style_change(kk, v),
+                                     str(self._ocr_style.get(k2, "")))
 
-                    if not (len(key) == 1 and key.isalnum()) \
-                            and not _re2.fullmatch(r"F([1-9]|1[0-2])", key):
-                        return  # unsupported key — keep recording
-                    parts = []
-                    if getattr(e, "ctrl", False):
-                        parts.append("CTRL")
-                    if getattr(e, "alt", False):
-                        parts.append("ALT")
-                    if getattr(e, "shift", False):
-                        parts.append("SHIFT")
-                    parts.append(key)
-                    _finish("+".join(parts))
-                except Exception:
-                    _finish(str(self._ocr_style.get("scan_bind", "E")))
+                def _capture(e) -> None:
+                    try:
+                        k = str(getattr(e, "key", "") or "").strip()
+                        if k in ("Alt", "Control", "Shift", "Meta",
+                                 "AltGraph"):
+                            return  # wait for the actual key
+                        if k == "Escape":
+                            _finish("")  # cleared: mechanism disabled
+                            return
+                        key = k.upper()
+                        import re as _re2
 
-            self.page.on_keyboard_event = _capture
+                        if not (len(key) == 1 and key.isalnum()) \
+                                and not _re2.fullmatch(r"F([1-9]|1[0-2])",
+                                                       key):
+                            return  # unsupported key — keep recording
+                        parts = []
+                        if getattr(e, "ctrl", False):
+                            parts.append("CTRL")
+                        if getattr(e, "alt", False):
+                            parts.append("ALT")
+                        if getattr(e, "shift", False):
+                            parts.append("SHIFT")
+                        parts.append(key)
+                        _finish("+".join(parts))
+                    except Exception:
+                        _finish(str(self._ocr_style.get(pref_key, "")))
 
-        scan_bind_btn.on_click = _start_bind_record
+                self.page.on_keyboard_event = _capture
+
+            btn.on_click = _record
+            return btn
+
+        hold_bind_btn = _mk_bind_recorder("scan_bind")
+        toggle_bind_btn = _mk_bind_recorder("scan_bind_toggle")
 
         # Region border visibility (the dashed rectangle on screen).
         _border_on = str(self._ocr_style.get(
@@ -2266,11 +2279,10 @@ class DashboardView(ft.Row):
                                  _svc_btn),
                     _section_row(t("dashboard.ocr.menu.format"), fmt_btn),
                     _section_row(t("dashboard.ocr.menu.style"), style_btn),
-                    _section_row(
-                        t("dashboard.ocr.menu.scan"),
-                        ft.Row([scan_mode_btn, scan_bind_btn], spacing=6,
-                               tight=True),
-                    ),
+                    _section_row(t("dashboard.ocr.scan.hold_bind"),
+                                 hold_bind_btn),
+                    _section_row(t("dashboard.ocr.scan.toggle_bind"),
+                                 toggle_bind_btn),
                     _section_row(t("dashboard.ocr.menu.bubbles_only"),
                                  _bool_pill(self._ocr_bubbles_only,
                                             _on_bubbles)),

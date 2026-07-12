@@ -500,6 +500,8 @@
   "dashboard.ocr.style.opacity": "背景の不透明度",
   "dashboard.ocr.style.text": "文字色",
   "dashboard.ocr.style.placement": "配置",
+  "dashboard.ocr.style.font": "フォントサイズ",
+  "dashboard.ocr.font.auto": "自動（枠に合わせる）",
   "dashboard.ocr.place.cover": "原文を覆う",
   "dashboard.ocr.place.above": "原文の上",
   "dashboard.ocr.opacity.none": "なし",

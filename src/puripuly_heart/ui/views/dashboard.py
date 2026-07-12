@@ -502,6 +502,8 @@ class DashboardView(ft.Row):
             "ocr_text": str(_ocr_p.get("ocr_text", "#ffffff")),
             "scan_mode": str(_ocr_p.get("scan_mode", "hold")),
             "scan_bind": str(_ocr_p.get("scan_bind", "E")),
+            "ocr_region_border": str(_ocr_p.get("ocr_region_border", 1)),
+            "ocr_font_px": str(_ocr_p.get("ocr_font_px", 0)),
         }
         self.on_ocr_style_change = None  # (prototype) callback(key, value)
         self.ocr_log_chat = bool(_ocr_p.get("log_chat", True))
@@ -1847,6 +1849,13 @@ class DashboardView(ft.Row):
                          "0": t("dashboard.ocr.opacity.none")}
         _place_labels = {"cover": t("dashboard.ocr.place.cover"),
                          "above": t("dashboard.ocr.place.above")}
+        _font_labels = {
+            "0": t("dashboard.ocr.font.auto"),
+            "14": t("settings.overlay.desktop.size.option.small"),
+            "18": t("settings.overlay.desktop.size.option.medium"),
+            "24": t("settings.overlay.desktop.size.option.large"),
+            "32": t("settings.overlay.desktop.size.option.xlarge"),
+        }
 
         def _color_name(v: str) -> str:
             for hexv, name in _color_opts:
@@ -1903,6 +1912,16 @@ class DashboardView(ft.Row):
                              for k, v in _place_labels.items()],
                             "ocr_place",
                             lambda v: _place_labels.get(v, v))),
+                _mk_row(t("dashboard.ocr.style.font"),
+                        _modal_row_btn(
+                            _font_labels.get(str(self._ocr_style.get(
+                                "ocr_font_px", 0)), _font_labels["0"]),
+                            t("dashboard.ocr.style.font"),
+                            [OptionItem(value=k, label=v, description="",
+                                        disabled=False)
+                             for k, v in _font_labels.items()],
+                            "ocr_font_px",
+                            lambda v: _font_labels.get(str(v), str(v)))),
                 ft.Container(height=6),
             ]
             self._ocr_style_popover_close = self._open_popover_at(

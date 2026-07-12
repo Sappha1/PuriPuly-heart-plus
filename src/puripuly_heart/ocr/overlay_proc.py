@@ -63,6 +63,8 @@ _C_OUTLINE = ["#ff2020"]
 _C_BG = ["#14161a"]
 _BG_ALPHA = [100]  # 100/75/50/25 via stipple, 0 = no backdrop (shadow text)
 _C_TEXT = ["#ffffff"]
+_C_PY = "#5ba8a0"  # pinyin lines — same teal as the chat-log transliteration
+_FONT_FIX = [0]  # fixed subtitle font px; 0 = auto (fit the detected box)
 _SCAN_MODE = ["hold"]  # hold | toggle — gates ALL scanning/drawing
 _SCAN_VK = [ord("E")]  # legacy single-key path (combo below preferred)
 _SCAN_ACTIVE = [False]
@@ -95,20 +97,21 @@ def _parse_bind(s: str):
 _SCAN_COMBO: list = [_parse_bind("E")]
 
 
-def _fmt_lines(text: str, xlat: str, pinyin: str) -> list[str]:
+def _fmt_lines(text: str, xlat: str, pinyin: str) -> list[tuple[str, bool]]:
+    """Ordered subtitle lines as (text, is_pinyin). Pinyin always on top."""
     f = _FMT[0]
     orig, tr, py = text or "", xlat or "", pinyin or ""
     if f == "orig_trans":
-        lines = [orig, tr]
+        lines = [(orig, False), (tr, False)]
     elif f == "orig_pinyin_trans":
-        lines = [orig, py, tr]
+        lines = [(py, True), (orig, False), (tr, False)]
     elif f == "pinyin_trans":
-        lines = [py or orig, tr]
+        lines = [(py or orig, bool(py)), (tr, False)]
     elif f == "pinyin_only":
-        lines = [py or orig]
+        lines = [(py or orig, bool(py))]
     else:
-        lines = [tr or orig]
-    return [ln for ln in lines if ln and ln.strip()]
+        lines = [(tr or orig, False)]
+    return [(ln, p) for ln, p in lines if ln and ln.strip()]
 
 
 def _pinyin_of(text: str) -> str:
@@ -468,6 +471,12 @@ def _apply_prefs(cfg: dict) -> None:
         _REGION_BORDER[0] = bool(int(cfg.get("ocr_region_border") or 0)) \
             if str(cfg.get("ocr_region_border")).isdigit() \
             else bool(cfg.get("ocr_region_border"))
+    try:
+        fp = int(cfg.get("ocr_font_px", _FONT_FIX[0]))
+        if 0 <= fp <= 72:
+            _FONT_FIX[0] = fp
+    except Exception:
+        pass
     logger.info("[OCR] prefs applied live: prewarm=%d bubbles=%d foreign=%d "
                 "names=%d pronouns=%d translate=%d",
                 _PREWARM[0], _BUBBLES_ONLY[0], _FOREIGN_ONLY[0],
@@ -2229,7 +2238,8 @@ def _save_debug_shot(cap: _Capture, boxes, pills: bool = False) -> None:
             if pills and len(it) > 9:
                 cv2.rectangle(frame, (x1, y1), (x2, y2), (26, 22, 20), -1)
                 cv2.rectangle(frame, (x1, y1), (x2, y2), (0, 0, 255), 1)
-                label = "\n".join(_fmt_lines(it[7], it[8], it[9])) or "..."
+                label = "\n".join(
+                    ln for ln, _p in _fmt_lines(it[7], it[8], it[9])) or "..."
                 texted.append((x1, y1, x2, y2, label))
             else:
                 cv2.rectangle(frame, (x1, y1), (x2, y2), (0, 0, 255), 2)
@@ -2560,8 +2570,10 @@ def run(monitor_index: int = 1, fps: float = 0.0, max_side: int = _TRACK_SIDE,
                         r, outline=_C_OUTLINE[0],
                         fill="" if _BG_ALPHA[0] == 0 else _C_BG[0],
                         stipple=stip)
-                    for tid in txs:
-                        canvas.itemconfigure(tid, fill=_C_TEXT[0])
+                # Text fills are per-line (pinyin keeps its own color) —
+                # invalidate the metas so the next pass re-applies them.
+                for i in range(len(pill_meta)):
+                    pill_meta[i] = ("", 0)
             for i, item in enumerate(pool):
                 if i < len(items):
                     bx1, by1, bx2, by2, vx, vy = items[i][:6]
@@ -2584,29 +2596,48 @@ def run(monitor_index: int = 1, fps: float = 0.0, max_side: int = _TRACK_SIDE,
                     x2 = (bx2 + ex - left) * sx
                     y2 = (by2 + ey - top) * sy
                     n = len(lines)
-                    if _PLACE[0] == "cover":
-                        # Fill the detected bounds; lines stacked inside.
-                        px_h = max(9, min(46, int((y2 - y1) / n * 0.72)))
-                        ry1, ry2 = y1 - 1, y2 + 1
-                    else:
-                        # Neatly ABOVE the original text — the original
-                        # stays fully readable underneath.
-                        px_h = max(10, min(30, int((y2 - y1) * 0.55)))
-                        block = n * (px_h + 5) + 4
-                        ry2 = y1 - 3
-                        ry1 = ry2 - block
-                    f = _font_px(px_h)
-                    bw = x2 - x1
-                    widest = max(f.measure(ln) for ln in lines)
-                    if widest > bw - 4 and bw > 24:
-                        px_h = max(8, int(px_h * (bw - 4) / max(1, widest)))
+                    if _FONT_FIX[0] > 0:
+                        # Fixed size: text never shrinks to fit the box —
+                        # the pill grows to fit the text instead.
+                        px_h = _FONT_FIX[0]
                         f = _font_px(px_h)
-                    key = ("|".join(lines), px_h)
+                        widest = max(f.measure(ln) for ln, _p in lines)
+                        block = n * (px_h + 5) + 4
+                        if _PLACE[0] == "cover":
+                            ry1 = y1 - 1
+                            ry2 = max(y2 + 1, ry1 + block)
+                        else:
+                            ry2 = y1 - 3
+                            ry1 = ry2 - block
+                        x2 = max(x2, x1 + widest + 6)
+                    else:
+                        if _PLACE[0] == "cover":
+                            # Fill the detected bounds; lines stacked inside.
+                            px_h = max(9, min(46, int((y2 - y1) / n * 0.72)))
+                            ry1, ry2 = y1 - 1, y2 + 1
+                        else:
+                            # Neatly ABOVE the original text — the original
+                            # stays fully readable underneath.
+                            px_h = max(10, min(30, int((y2 - y1) * 0.55)))
+                            block = n * (px_h + 5) + 4
+                            ry2 = y1 - 3
+                            ry1 = ry2 - block
+                        f = _font_px(px_h)
+                        bw = x2 - x1
+                        widest = max(f.measure(ln) for ln, _p in lines)
+                        if widest > bw - 4 and bw > 24:
+                            px_h = max(8, int(px_h * (bw - 4)
+                                              / max(1, widest)))
+                            f = _font_px(px_h)
+                    key = ("|".join(("»" if p else "") + ln
+                                    for ln, p in lines), px_h, _C_TEXT[0])
                     if pill_meta[i] != key:
                         pill_meta[i] = key
                         for j in range(3):
-                            ln = lines[j] if j < n else ""
-                            canvas.itemconfigure(txs[j], text=ln, font=f)
+                            ln, is_py = lines[j] if j < n else ("", False)
+                            canvas.itemconfigure(
+                                txs[j], text=ln, font=f,
+                                fill=_C_PY if is_py else _C_TEXT[0])
                             canvas.itemconfigure(shs[j], text=ln, font=f)
                     if _BG_ALPHA[0] > 0:
                         canvas.coords(rid, x1 - 1, ry1, x2 + 1, ry2)

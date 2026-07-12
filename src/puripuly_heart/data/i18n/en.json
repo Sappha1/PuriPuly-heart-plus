@@ -545,6 +545,8 @@
   "dashboard.ocr.style.opacity": "Background opacity",
   "dashboard.ocr.style.text": "Text color",
   "dashboard.ocr.style.placement": "Placement",
+  "dashboard.ocr.style.font": "Font size",
+  "dashboard.ocr.font.auto": "Auto (fit box)",
   "dashboard.ocr.place.cover": "Cover original",
   "dashboard.ocr.place.above": "Above original",
   "dashboard.ocr.opacity.none": "None",

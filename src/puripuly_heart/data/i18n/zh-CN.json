@@ -499,6 +499,8 @@
   "dashboard.ocr.style.opacity": "背景不透明度",
   "dashboard.ocr.style.text": "文字颜色",
   "dashboard.ocr.style.placement": "位置",
+  "dashboard.ocr.style.font": "字体大小",
+  "dashboard.ocr.font.auto": "自动（适应框）",
   "dashboard.ocr.place.cover": "覆盖原文",
   "dashboard.ocr.place.above": "原文上方",
   "dashboard.ocr.opacity.none": "无",

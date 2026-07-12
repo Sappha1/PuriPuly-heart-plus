@@ -1632,10 +1632,8 @@ class DashboardView(ft.Row):
         def _open_win_picker(_ev) -> None:
             # A dozen open windows would push the popover off screen —
             # use the scrollable SettingsModal picker (same style as the
-            # Mic/PEER provider right-clicks).
-            _close = getattr(self, "_ocr_popover_close", None)
-            if callable(_close):
-                _close()
+            # Mic/PEER provider right-clicks). The OCR menu STAYS OPEN
+            # underneath; the modal layers above it.
             if not self.page:
                 return
             titles: list[str] = []
@@ -1663,6 +1661,9 @@ class DashboardView(ft.Row):
 
             def _sel(value: str) -> None:
                 self._ocr_window_title = value
+                _win_btn_text.value = _win_summary()
+                with contextlib.suppress(Exception):
+                    _win_btn_text.update()
                 _guarded(self.on_ocr_window_change, value)
 
             SettingsModal(self.page, t("dashboard.ocr.menu.window"),
@@ -1736,9 +1737,6 @@ class DashboardView(ft.Row):
         )
 
         def _open_svc_picker(_ev) -> None:
-            _close = getattr(self, "_ocr_popover_close", None)
-            if callable(_close):
-                _close()
             if not self.page:
                 return
             options = [
@@ -1749,6 +1747,9 @@ class DashboardView(ft.Row):
 
             def _sel(value: str) -> None:
                 self._ocr_xlat_service = value
+                _svc_btn_text.value = _svc_names.get(value, "Bing")
+                with contextlib.suppress(Exception):
+                    _svc_btn_text.update()
                 self._save_ocr_pref("xlat_service", value)
                 if callable(self.on_ocr_xlat_service_change):
                     _guarded(self.on_ocr_xlat_service_change, value)

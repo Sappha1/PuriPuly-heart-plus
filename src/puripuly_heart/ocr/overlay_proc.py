@@ -2537,6 +2537,16 @@ def _track_loop(cap: _Capture, target: _Target, anchors: _Anchors,
                             tr.namever = _NAMES_VER[0]
                         if tr.rosterhit:
                             name_rects.append(tr.rect())
+                # Anchor persistence: crosshair hover makes VRChat restyle
+                # the plate, the name box re-detects, and for that beat no
+                # anchor exists — banners flickered through. Keep the last
+                # known anchors alive for a short grace window.
+                if name_rects:
+                    _track_loop._anch = (list(name_rects), now)
+                else:
+                    _a = getattr(_track_loop, "_anch", None)
+                    if _a is not None and now - _a[1] < 2.5:
+                        name_rects = _a[0]
 
             def _under_name(bx1: float, by1: float, bx2: float,
                             by2: float) -> bool:
@@ -3487,6 +3497,21 @@ def main() -> None:
     # over the CLI defaults at startup too, including the target window.
     _startup_cfg = _load_config()
     _apply_prefs(_startup_cfg)
+    # Restore the scan TOGGLE across restarts and hot-swap takeovers: a
+    # fresh state file saying scanning was ON means the user left it ON —
+    # respawns must not silently flip it off.
+    try:
+        import json as _json2
+
+        with open(_STATE_PATH, encoding="utf-8") as _fh2:
+            _st = _json2.load(_fh2)
+        if (_TOG_COMBO[0] is not None and bool(_st.get("scan"))
+                and time.time() - float(_st.get("ts", 0)) < 30.0):
+            _TOG_STATE[0] = True
+            _SCAN_ACTIVE[0] = True
+            logger.info("[OCR] scan toggle restored ON from previous run")
+    except Exception:
+        pass
     if "window_title" in _startup_cfg:
         args.window = str(_startup_cfg.get("window_title") or "")
     _load_translation_prefs()

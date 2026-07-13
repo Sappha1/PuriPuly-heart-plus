@@ -213,9 +213,9 @@ class OcrOverlayManager:
             return
         self.bubbles_only = enabled
         save_ocr_pref("bubbles_only", enabled)
-        if self.running:
-            self.stop()
-            self.start()
+        # LIVE like every other flag — the legacy stop()/start() here
+        # reset the scan toggle state on every bubbles flip.
+        self._reload_live()
 
     def set_style(self, key: str, value) -> None:
         """Generic persisted style/behavior pref (ocr_format, ocr_place,

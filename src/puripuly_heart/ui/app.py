@@ -2864,22 +2864,31 @@ async def main_gui(page: ft.Page, *, config_path, debug_ui_preview: bool = False
                     fh.seek(pos)
                     chunk = fh.read()
                     pos = fh.tell()
-                for line in chunk.splitlines():
-                    line = line.strip()
-                    if not line:
-                        continue
-                    try:
-                        d = _json.loads(line)
-                    except Exception:
-                        continue
-                    if not getattr(app.view_dashboard, "ocr_log_chat", True):
-                        continue
+            except Exception:
+                continue
+            for line in chunk.splitlines():
+                line = line.strip()
+                if not line:
+                    continue
+                try:
+                    d = _json.loads(line)
+                except Exception:
+                    continue
+                if not getattr(app.view_dashboard, "ocr_log_chat", True):
+                    continue
+                # PER-LINE isolation: a throw here (e.g. a transient flet
+                # control-update race) must NOT abort the whole batch —
+                # a chunk-level try/except silently dropped every entry
+                # after the first failing one ("why wasn't this logged?").
+                try:
                     app.view_dashboard.append_chat_entry(
                         channel="ocr", source="ocr",
                         source_text=str(d.get("src", "")),
                         translated_text=str(d.get("dst", "")))
-            except Exception:
-                pass
+                except Exception:
+                    logger.exception(
+                        "[OCR] feed->chat entry failed: %.60s",
+                        d.get("src", ""))
 
     try:
         page.run_task(_ocr_feed_poller)

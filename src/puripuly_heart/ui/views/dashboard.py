@@ -1417,16 +1417,40 @@ class DashboardView(ft.Row):
             max_lines=4,
             shift_enter=True,
             on_submit=self._on_msg_input_submit,
+            on_change=self._on_msg_input_change,
             on_focus=lambda _: self._set_message_input_focused(True),
             on_blur=lambda _: self._set_message_input_focused(False),
             bgcolor=_BG_INPUT,
             border_radius=8,
             content_padding=ft.padding.symmetric(horizontal=12, vertical=8),
         )
+        # Spell-check preview: a read-only mirror line that shows misspelled
+        # words with a red wavy underline; click a word for suggestions.
+        # Auto-hides when the text is clean, so it is invisible until needed.
+        self._spell_preview = ft.Text(
+            spans=[], size=12, no_wrap=False, selectable=False)
+        self._spell_preview_row = ft.Container(
+            content=self._spell_preview, visible=False,
+            padding=ft.padding.only(left=10, right=10, bottom=2),
+        )
+        self._spell_on = True  # user toggle
+        self._spell_toggle = ft.IconButton(
+            ft.Icons.SPELLCHECK,
+            icon_size=17,
+            icon_color=_TOGGLE_ON,
+            tooltip=t("display.spellcheck.tooltip"),
+            on_click=self._on_spell_toggle,
+            style=ft.ButtonStyle(overlay_color=ft.Colors.TRANSPARENT,
+                                 padding=ft.padding.all(6)),
+        )
+        with contextlib.suppress(Exception):
+            from puripuly_heart.core import spellcheck as _spell
+            _spell.warm()
         input_row = ft.Container(
             content=ft.Row(
                 [
                     self._msg_input,
+                    self._spell_toggle,
                     ft.IconButton(
                         ft.Icons.SEND_ROUNDED,
                         icon_size=18,
@@ -1452,6 +1476,7 @@ class DashboardView(ft.Row):
                     chat_header,
                     chat_box,
                     ft.Divider(height=1, color=_DIVIDER, thickness=1),
+                    self._spell_preview_row,
                     input_row,
                 ],
                 spacing=4,
@@ -3509,6 +3534,7 @@ class DashboardView(ft.Row):
             except Exception:
                 pass
             self._on_submit(text)
+        self._refresh_spellcheck("")
 
     def _on_send_btn_click(self, _e) -> None:
         if not hasattr(self, "_msg_input"):
@@ -3521,6 +3547,122 @@ class DashboardView(ft.Row):
             except Exception:
                 pass
             self._on_submit(text)
+        self._refresh_spellcheck("")
+
+    # ── spell check (send box) ──────────────────────────────────────────
+    def _on_msg_input_change(self, e) -> None:
+        self._refresh_spellcheck(e.control.value or "")
+
+    def _on_spell_toggle(self, _e) -> None:
+        self._spell_on = not self._spell_on
+        self._spell_toggle.icon_color = (_TOGGLE_ON if self._spell_on
+                                         else _TEXT_FAINT)
+        with contextlib.suppress(Exception):
+            self._spell_toggle.update()
+        self._refresh_spellcheck(getattr(self._msg_input, "value", "") or "")
+
+    def _refresh_spellcheck(self, text: str) -> None:
+        """Rebuild the wavy-underline preview for the current input text."""
+        row = getattr(self, "_spell_preview_row", None)
+        if row is None:
+            return
+        errs = []
+        if self._spell_on and text.strip():
+            with contextlib.suppress(Exception):
+                from puripuly_heart.core import spellcheck as _spell
+                errs = _spell.misspelled(text)
+        self._spell_errors = errs
+        if not errs:
+            if row.visible:
+                row.visible = False
+                with contextlib.suppress(Exception):
+                    row.update()
+            return
+        spans: list = []
+        pos = 0
+        for word, s, e in errs:
+            if s > pos:
+                spans.append(ft.TextSpan(
+                    text[pos:s],
+                    style=ft.TextStyle(color=_TEXT_FAINT, size=12)))
+            spans.append(ft.TextSpan(
+                word,
+                style=ft.TextStyle(
+                    color=_TEXT_PRIMARY, size=12,
+                    decoration=ft.TextDecoration.UNDERLINE,
+                    decoration_style=ft.TextDecorationStyle.WAVY,
+                    decoration_color="#e5534b",
+                    decoration_thickness=1.5),
+                on_click=(lambda _ev, w=word, ws=s, we=e:
+                          self._on_spell_word_click(w, ws, we))))
+            pos = e
+        if pos < len(text):
+            spans.append(ft.TextSpan(
+                text[pos:], style=ft.TextStyle(color=_TEXT_FAINT, size=12)))
+        self._spell_preview.spans = spans
+        row.visible = True
+        with contextlib.suppress(Exception):
+            self._spell_preview.update()
+            row.update()
+
+    def _on_spell_word_click(self, word: str, start: int, end: int) -> None:
+        if not self.page:
+            return
+        from puripuly_heart.core import spellcheck as _spell
+        sugg = _spell.suggestions(word)
+
+        def _replace(repl: str) -> None:
+            cur = self._msg_input.value or ""
+            # Guard: only splice if the word is still exactly where it was
+            # (the user may have edited between render and click).
+            if cur[start:end] == word:
+                self._msg_input.value = cur[:start] + repl + cur[end:]
+                with contextlib.suppress(Exception):
+                    self._msg_input.update()
+            self.page.close(dlg)
+            self._refresh_spellcheck(self._msg_input.value or "")
+
+        def _add(_e) -> None:
+            _spell.add_word(word)
+            self.page.close(dlg)
+            self._refresh_spellcheck(self._msg_input.value or "")
+
+        def _ignore(_e) -> None:
+            _spell.ignore_once(word)
+            self.page.close(dlg)
+            self._refresh_spellcheck(self._msg_input.value or "")
+
+        rows: list = []
+        if sugg:
+            for s in sugg:
+                rows.append(ft.TextButton(
+                    content=ft.Text(s, size=14, color=_TEXT_PRIMARY),
+                    on_click=lambda _e, r=s: _replace(r),
+                    style=ft.ButtonStyle(
+                        alignment=ft.alignment.center_left)))
+        else:
+            rows.append(ft.Text(t("display.spellcheck.no_suggestions"),
+                                size=12, color=_TEXT_FAINT, italic=True))
+        rows.append(ft.Divider(height=1, color=_DIVIDER))
+        rows.append(ft.TextButton(
+            content=ft.Text(t("display.spellcheck.add"), size=13,
+                            color=_TOGGLE_ON),
+            on_click=_add,
+            style=ft.ButtonStyle(alignment=ft.alignment.center_left)))
+        rows.append(ft.TextButton(
+            content=ft.Text(t("display.spellcheck.ignore"), size=13,
+                            color=_TEXT_FAINT),
+            on_click=_ignore,
+            style=ft.ButtonStyle(alignment=ft.alignment.center_left)))
+        dlg = ft.AlertDialog(
+            title=ft.Text(f"“{word}”", size=14, weight=ft.FontWeight.W_600),
+            content=ft.Column(rows, tight=True, spacing=2,
+                              width=200,
+                              horizontal_alignment=(
+                                  ft.CrossAxisAlignment.STRETCH)),
+            content_padding=ft.padding.symmetric(horizontal=8, vertical=8),
+        )
+        self.page.open(dlg)
 
     def _set_message_input_focused(self, focused: bool) -> None:
         self._message_input_focused = bool(focused)

@@ -42,6 +42,7 @@ dependencies = [
   "unidic-lite>=1.0.8",
   "langdetect>=1.0.9",
   "jieba>=0.42.1",
+  "pyspellchecker>=0.8.1",
 ]
 
 [project.optional-dependencies]

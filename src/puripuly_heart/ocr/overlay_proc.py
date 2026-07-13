@@ -431,6 +431,19 @@ def _is_roster_name(text: str) -> bool:
                     and difflib.SequenceMatcher(None, n, cand).ratio()
                     >= 0.70):
                 return True
+    # CJK-CORE containment: heavily DECORATED names (Latin/symbol brackets
+    # like 'ʚ 欢欢 ɞ') get their decorations misread by OCR ('欢欢 ε 欢欢'),
+    # so exact/fuzzy fail — but the Han core survives. If a roster name's
+    # 2+ Han core is a contiguous run of THIS box's Han core (or vice
+    # versa) at nameplate scale, it's that player. The length guard keeps
+    # real sentences (which merely CONTAIN a 2-char name core) out.
+    oc = "".join(c for c in n if "一" <= c <= "鿿")
+    if len(oc) >= 2:
+        for cand in names:
+            cc = "".join(c for c in cand if "一" <= c <= "鿿")
+            if (len(cc) >= 2 and abs(len(oc) - len(cc)) <= 3
+                    and (cc in oc or oc in cc)):
+                return True
     return False
 
 
@@ -3014,6 +3027,12 @@ def _merge_lines(items: list) -> list:
             _join_cjk([m[7].strip()
                        for m in sorted(r, key=lambda x: x[0])])
             for r in rows])
+        # NAME RE-CHECK: grouping can reconstruct a decorated player name
+        # from pieces that each escaped the per-box filter (the merged
+        # 'ʚ 欢欢 ɞ' misread as '欢欢 ε 欢欢'). If the JOINED text is an
+        # ignored name, drop the whole group — never show/translate it.
+        if _ignore_active() and _is_ignored_name(joined):
+            continue
         stable = all(it[11] if len(it) > 11 else True for it in g)
         xl = ""
         if _is_own_language(joined, _XLAT_TARGET[0]):

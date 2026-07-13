@@ -502,6 +502,7 @@ class DashboardView(ft.Row):
             "ocr_text": str(_ocr_p.get("ocr_text", "#ffffff")),
             "scan_mode": str(_ocr_p.get("scan_mode", "hold")),
             "scan_bind": str(_ocr_p.get("scan_bind", "E")),
+            "scan_bind_toggle": str(_ocr_p.get("scan_bind_toggle", "")),
             "ocr_region_border": str(_ocr_p.get("ocr_region_border", 1)),
             "ocr_font_px": str(_ocr_p.get("ocr_font_px", 0)),
             "ocr_size_pinyin": str(_ocr_p.get("ocr_size_pinyin", 0)),
@@ -515,6 +516,15 @@ class DashboardView(ft.Row):
             "ocr_pinyin_group": str(_ocr_p.get("ocr_pinyin_group", 1)),
             "ignore_groups": str(_ocr_p.get("ignore_groups", 1)),
         }
+        if "scan_bind_toggle" not in _ocr_p:
+            # ONE-TIME legacy migration, keyed on the CONFIG FILE: a single
+            # scan_bind fills the slot its old scan_mode selected. (Keying
+            # this on the in-memory dict re-ran it every app launch and
+            # scrambled saved binds — "it forgets my binds each version".)
+            if self._ocr_style["scan_mode"] == "toggle":
+                self._ocr_style["scan_bind_toggle"] = \
+                    self._ocr_style["scan_bind"]
+                self._ocr_style["scan_bind"] = ""
         self.on_ocr_style_change = None  # (prototype) callback(key, value)
         self.ocr_log_chat = bool(_ocr_p.get("log_chat", True))
         self.on_ocr_foreign_change = None  # (prototype) callback(bool)
@@ -2106,15 +2116,8 @@ class DashboardView(ft.Row):
         # ── scan activation: TWO independent bind recorders ──
         # Hold = scan while the combo is down; Toggle = a tap flips
         # persistent scanning. Either (or both) may be set; Esc clears.
-        # Legacy migration for display: a single scan_bind fills the slot
-        # its old scan_mode selected.
-        if "scan_bind_toggle" not in self._ocr_style:
-            _legacy = str(self._ocr_style.get("scan_bind", "E"))
-            if str(self._ocr_style.get("scan_mode", "hold")) == "toggle":
-                self._ocr_style["scan_bind_toggle"] = _legacy
-                self._ocr_style["scan_bind"] = ""
-            else:
-                self._ocr_style["scan_bind_toggle"] = ""
+        # (Legacy single-bind migration happens ONCE in __init__, keyed on
+        # the config file — never here, where it re-ran per menu open.)
 
         # Recorder candidates: letters, digits, F-keys, NUMPAD, mouse 3/4/5.
         # Polled via GetAsyncKeyState — flet's keyboard events never see

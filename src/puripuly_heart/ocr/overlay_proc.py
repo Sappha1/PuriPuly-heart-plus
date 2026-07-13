@@ -2836,25 +2836,35 @@ def _join_cjk(parts: list[str]) -> str:
     return s
 
 
-def _bubble_adjacent(a, b) -> bool:
-    """Two text boxes belong to the same bubble: stacked rows (tight
-    vertical gap, aligned/overlapping widths) OR pieces of the SAME visual
-    row (y-overlap, small horizontal gap — the detector sometimes splits
-    one line into side-by-side boxes, which used to break the chain)."""
+def _row_adjacent(a, b) -> bool:
+    """Two boxes are pieces of the SAME visual text row — the detector
+    sometimes splits one line into side-by-side boxes. Requires near-equal
+    heights, a strongly shared row band and a SMALL horizontal gap (scaled
+    by the min height) so two different players' side-by-side bubbles never
+    fuse. Genuine one-line splits sit almost edge-to-edge."""
+    ah, bh = a[3] - a[1], b[3] - b[1]
+    hmin = min(ah, bh)
+    if hmin < 0.65 * max(ah, bh, 1.0):
+        return False  # different text heights = different depth/player
+    yov = min(a[3], b[3]) - max(a[1], b[1])
+    if yov < 0.6 * hmin:
+        return False  # must genuinely share the row band
+    xgap = max(a[0], b[0]) - min(a[2], b[2])
+    return xgap <= 1.1 * hmin
+
+
+def _stack_tight(a, b) -> bool:
+    """Two boxes are CONSECUTIVE rows of one bubble: tight vertical gap
+    (<= 0.9 line-height) with aligned/overlapping widths. No bridging over
+    holes here — a dropped middle row is bridged at the CLUSTER level with
+    a line-pitch check (a pairwise bridge could not tell a real dropped row
+    from the gap between two separate centered bubbles)."""
     ah, bh = a[3] - a[1], b[3] - b[1]
     h = max(ah, bh, 1.0)
-    if min(ah, bh) < 0.5 * h:
-        return False  # very different line heights: not one bubble
-    yov = min(a[3], b[3]) - max(a[1], b[1])
-    if yov >= 0.55 * min(ah, bh):
-        # same visual row: adjacent horizontally?
-        xgap = max(a[0], b[0]) - min(a[2], b[2])
-        return xgap <= 1.5 * h
-    # stacked rows
-    if b[1] >= a[1]:
-        gap = b[1] - a[3]
-    else:
-        gap = a[1] - b[3]
+    if min(ah, bh) < 0.55 * h:
+        return False
+    top, bot = (a, b) if a[1] <= b[1] else (b, a)
+    gap = bot[1] - top[3]
     if not (-0.25 * h <= gap <= 0.9 * h):
         return False
     ov = min(a[2], b[2]) - max(a[0], b[0])
@@ -2864,13 +2874,79 @@ def _bubble_adjacent(a, b) -> bool:
     return ov >= 0.5 * wmin or (ov > 0 and ccd <= 0.5 * wmax)
 
 
+def _cluster_into_rows(g: list) -> list:
+    """Group a cluster's boxes into visual rows (top -> bottom). Each row
+    dict carries y-center, top/bottom, x-extent and its member boxes."""
+    rows: list[dict] = []
+    for it in sorted(g, key=lambda x: (x[1] + x[3]) / 2.0):
+        yc = (it[1] + it[3]) / 2.0
+        ih = max(1.0, it[3] - it[1])
+        for r in rows:
+            if abs(yc - r["yc"]) < 0.5 * ih:
+                r["boxes"].append(it)
+                r["yc"] = sum((m[1] + m[3]) / 2.0
+                              for m in r["boxes"]) / len(r["boxes"])
+                break
+        else:
+            rows.append({"yc": yc, "boxes": [it]})
+    for r in rows:
+        r["top"] = min(m[1] for m in r["boxes"])
+        r["bot"] = max(m[3] for m in r["boxes"])
+        r["x1"] = min(m[0] for m in r["boxes"])
+        r["x2"] = max(m[2] for m in r["boxes"])
+    return rows
+
+
+def _row_pitch(rows: list):
+    """Median top-to-top spacing between consecutive rows, or None for a
+    single-row cluster (no measurable line pitch)."""
+    if len(rows) < 2:
+        return None
+    tops = sorted(r["top"] for r in rows)
+    gaps = sorted(tops[k + 1] - tops[k] for k in range(len(tops) - 1))
+    return gaps[len(gaps) // 2]
+
+
+def _can_bridge(ga: list, gb: list) -> bool:
+    """Two clusters are the SAME plate split by ONE dropped row. The gap
+    between A's bottom row and B's top row must match the plate's OWN line
+    pitch (~exactly one missing row), with strong horizontal alignment.
+    Needs a measurable pitch from at least one side — so two isolated
+    single-line bubbles (both pitch-less) can NEVER fuse, which was the
+    false-merge the adversarial pass found. The pitch match is what tells a
+    real dropped row from the (unrelated) gap between two centered bubbles."""
+    ra, rb = _cluster_into_rows(ga), _cluster_into_rows(gb)
+    if ra[0]["top"] > rb[0]["top"]:
+        ra, rb = rb, ra
+    p = _row_pitch(ra) or _row_pitch(rb)
+    if not p or p <= 0:
+        return False
+    a_bot, b_top = ra[-1], rb[0]
+    h_row = max(1.0, ((a_bot["bot"] - a_bot["top"])
+                      + (b_top["bot"] - b_top["top"])) / 2.0)
+    gap = b_top["top"] - a_bot["bot"]
+    if gap <= 0.9 * h_row:
+        return False  # tight rule already owns this
+    ratio = (gap + h_row) / p  # ~2 == exactly one missing row of same pitch
+    if not (1.6 <= ratio <= 2.4):
+        return False
+    ov = min(a_bot["x2"], b_top["x2"]) - max(a_bot["x1"], b_top["x1"])
+    wmin = max(1.0, min(a_bot["x2"] - a_bot["x1"],
+                        b_top["x2"] - b_top["x1"]))
+    wmax = max(a_bot["x2"] - a_bot["x1"], b_top["x2"] - b_top["x1"], 1.0)
+    ccd = abs((a_bot["x1"] + a_bot["x2"])
+              - (b_top["x1"] + b_top["x2"])) / 2.0
+    return ov >= 0.6 * wmin and ccd <= 0.4 * wmax
+
+
 def _merge_lines(items: list) -> list:
     """Merge the text lines of ONE multi-line chat bubble into a single
     item: one pill instead of overlapping per-line pills, and ONE
-    translation of the whole message instead of garbled per-line pieces.
-    Adjacency is checked against EVERY member of a group (checking only
-    the last line let a single detection hiccup split a plate in two,
-    each half translating separately)."""
+    translation of the whole message. Two passes: (1) tight adjacency
+    (same-row splits + consecutive rows) clusters each solid block;
+    (2) pitch-validated cluster bridging fuses a block split by ONE dropped
+    row. Separate players' bubbles stay separate — different heights, a
+    non-matching gap, or no shared line pitch each block a false merge."""
     if len(items) < 2:
         return items
     its = sorted(items, key=lambda x: (x[1], x[0]))
@@ -2882,12 +2958,27 @@ def _merge_lines(items: list) -> list:
             i = parent[i]
         return i
 
+    def _union(i: int, j: int) -> None:
+        ri, rj = _find(i), _find(j)
+        if ri != rj:
+            parent[rj] = ri
+
+    # Pass 1: TIGHT adjacency only (no hole bridging).
     for i in range(len(its)):
         for j in range(i + 1, len(its)):
-            if _bubble_adjacent(its[i], its[j]):
-                ri, rj = _find(i), _find(j)
-                if ri != rj:
-                    parent[rj] = ri
+            if _row_adjacent(its[i], its[j]) or _stack_tight(its[i], its[j]):
+                _union(i, j)
+    # Pass 2: bridge two clusters separated by exactly ONE dropped row.
+    clusters: dict[int, list] = {}
+    for i in range(len(its)):
+        clusters.setdefault(_find(i), []).append(i)
+    croots = list(clusters.keys())
+    for ii in range(len(croots)):
+        for jj in range(ii + 1, len(croots)):
+            ga = [its[k] for k in clusters[croots[ii]]]
+            gb = [its[k] for k in clusters[croots[jj]]]
+            if _can_bridge(ga, gb):
+                _union(clusters[croots[ii]][0], clusters[croots[jj]][0])
     gmap: dict[int, list] = {}
     for i, it in enumerate(its):
         gmap.setdefault(_find(i), []).append(it)

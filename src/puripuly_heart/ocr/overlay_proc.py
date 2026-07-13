@@ -201,6 +201,33 @@ _PY_GROUP = [True]  # jieba word grouping (nǐhǎo ma vs nǐ hǎo ma)
 _JIEBA_OK = [False]  # set once the ~1s dictionary load finished (warm thread)
 
 
+_WRAPC: dict = {}  # (text, px, maxw) -> wrapped parts (render-time cache)
+
+
+def _wrap_measured(ln: str, meas, maxw: float) -> list[str]:
+    """Split a long line into parts each measuring <= maxw. Prefers space
+    boundaries for Latin; CJK breaks anywhere (as Chinese text does)."""
+    if meas(ln) <= maxw:
+        return [ln]
+    out: list[str] = []
+    cur = ""
+    for ch in ln:
+        t = cur + ch
+        if cur and meas(t) > maxw:
+            sp = cur.rfind(" ")
+            if sp > len(cur) * 0.5:
+                out.append(cur[:sp])
+                cur = cur[sp + 1:] + ch
+            else:
+                out.append(cur)
+                cur = ch
+        else:
+            cur = t
+    if cur:
+        out.append(cur)
+    return out
+
+
 def _pinyin_of(text: str) -> str:
     try:
         if not any("一" <= c <= "鿿" for c in text):
@@ -2931,19 +2958,47 @@ def _save_debug_shot(cap: _Capture, boxes, pills: bool = False) -> None:
                 cols = [_hex_rgb(_line_color(k, base_c, bcol, pron_c))
                         for _ln, k in lines]
                 fonts = [_pil_font(p) for p in pxs]
+                grow = fix != 0 or any(p != px for p in pxs)
+                if grow:
+                    # Mirror the live renderer: wrap to the frame width.
+                    fw = frame.shape[1]
+                    maxw = max(300.0, fw - 48.0)
+                    dl, dpx2, dfn, dcl = [], [], [], []
+                    for j, (ln, kind) in enumerate(lines):
+                        try:
+                            parts = _wrap_measured(
+                                ln, lambda s, _f=fonts[j]:
+                                od.textlength(s, font=_f), maxw)
+                        except Exception:
+                            parts = [ln]
+                        for part in parts:
+                            dl.append((part, kind))
+                            dpx2.append(pxs[j])
+                            dfn.append(fonts[j])
+                            dcl.append(cols[j])
+                    lines = dl[:8]
+                    pxs, fonts, cols = dpx2[:8], dfn[:8], dcl[:8]
+                    n = len(lines)
                 try:
                     lws = [od.textlength(ln, font=fonts[j])
                            for j, (ln, _k) in enumerate(lines)]
                 except Exception:
                     lws = [x2 - x1] * n
                 widest = max(lws)
-                grow = fix != 0 or any(p != px for p in pxs)
                 if grow:
                     block = sum(p + 5 for p in pxs) + 4
                     bcx = (x1 + x2) / 2.0
                     if widest + 6 > x2 - x1:
                         x1 = bcx - (widest + 6) / 2.0
                         x2 = bcx + (widest + 6) / 2.0
+                    fw2 = float(frame.shape[1])
+                    if x1 < 8:
+                        x2 += 8 - x1
+                        x1 = 8.0
+                    if x2 > fw2 - 8:
+                        x1 = max(8.0, x1 - (x2 - (fw2 - 8)))
+                        x2 = fw2 - 8
+                    bcx = (x1 + x2) / 2.0
                     if _PLACE[0] == "cover":
                         bcy = (y1 + y2) / 2.0
                         half = max(block, y2 - y1 + 2) / 2.0
@@ -3328,10 +3383,10 @@ def run(monitor_index: int = 1, fps: float = 0.0, max_side: int = _TRACK_SIDE,
                     width=_BOX_WIDTH, state="hidden")
                 shs = [canvas.create_text(0, 0, text="", fill="#000000",
                                           anchor="w", state="hidden")
-                       for _ in range(3)]
+                       for _ in range(8)]
                 txs = [canvas.create_text(0, 0, text="", fill=_PILL_TEXT,
                                           anchor="w", state="hidden")
-                       for _ in range(3)]
+                       for _ in range(8)]
                 pill_pool.append((r, shs, txs))
                 pill_meta.append(("", 0))
             # Live style: recolor pooled items when the config changed.
@@ -3396,18 +3451,48 @@ def run(monitor_index: int = 1, fps: float = 0.0, max_side: int = _TRACK_SIDE,
                     cols = [_line_color(k, base, tcol, pron_c)
                             for _ln, k in lines]
                     fonts = [_font_px(p) for p in pxs]
-                    lws = [fonts[j].measure(ln)
-                           for j, (ln, _k) in enumerate(lines)]
-                    widest = max(lws)
                     grow = fix != 0 or any(p != px_h for p in pxs)
                     if grow:
-                        # Sized text never shrinks: the pill grows AROUND
-                        # the box center and each line is centered in it.
-                        block = sum(p + 5 for p in pxs) + 4
+                        # Sized text never shrinks — but it WRAPS at the
+                        # screen edge: a wall-of-text plate merged into one
+                        # line used to push the pill past both edges.
+                        maxw = max(300.0,
+                                   (canvas.winfo_width() or 1600) - 48.0)
+                        dl, dpx, dfn, dcl = [], [], [], []
+                        for j, (ln, kind) in enumerate(lines):
+                            ck = (ln, pxs[j], int(maxw))
+                            parts = _WRAPC.get(ck)
+                            if parts is None:
+                                if len(_WRAPC) > 400:
+                                    _WRAPC.clear()
+                                parts = _wrap_measured(
+                                    ln, fonts[j].measure, maxw)
+                                _WRAPC[ck] = parts
+                            for part in parts:
+                                dl.append((part, kind))
+                                dpx.append(pxs[j])
+                                dfn.append(fonts[j])
+                                dcl.append(cols[j])
+                        dl, dpx = dl[:8], dpx[:8]
+                        dfn, dcl = dfn[:8], dcl[:8]
+                        n = len(dl)
+                        lws = [dfn[j].measure(t)
+                               for j, (t, _k) in enumerate(dl)]
+                        widest = max(lws)
+                        block = sum(p + 5 for p in dpx) + 4
                         bcx = (x1 + x2) / 2.0
                         if widest + 6 > x2 - x1:
                             x1 = bcx - (widest + 6) / 2.0
                             x2 = bcx + (widest + 6) / 2.0
+                        # Clamp the pill fully ON screen.
+                        W = float(canvas.winfo_width() or 10 ** 6)
+                        if x1 < 8:
+                            x2 += 8 - x1
+                            x1 = 8.0
+                        if x2 > W - 8:
+                            x1 = max(8.0, x1 - (x2 - (W - 8)))
+                            x2 = W - 8
+                        bcx = (x1 + x2) / 2.0
                         if _PLACE[0] == "cover":
                             bcy = (y1 + y2) / 2.0
                             half = max(block, y2 - y1 + 2) / 2.0
@@ -3418,11 +3503,14 @@ def run(monitor_index: int = 1, fps: float = 0.0, max_side: int = _TRACK_SIDE,
                         line_x = [bcx - w / 2.0 for w in lws]
                         yc = ry1 + ((ry2 - ry1) - block) / 2.0 + 2
                         centers = []
-                        for p in pxs:
+                        for p in dpx:
                             centers.append(yc + (p + 5) / 2.0)
                             yc += p + 5
                     else:
                         # Legacy auto: uniform font, shrink to fit width.
+                        lws = [fonts[j].measure(ln)
+                               for j, (ln, _k) in enumerate(lines)]
+                        widest = max(lws)
                         if _PLACE[0] == "cover":
                             ry1, ry2 = y1 - 1, y2 + 1
                         else:
@@ -3435,27 +3523,28 @@ def run(monitor_index: int = 1, fps: float = 0.0, max_side: int = _TRACK_SIDE,
                                               / max(1, widest)))
                             pxs = [px_h] * n
                             fonts = [_font_px(px_h)] * n
+                        dl, dpx, dfn, dcl = lines, pxs, fonts, cols
                         line_x = None
                         row_h = (ry2 - ry1) / n
                         centers = [ry1 + row_h * (j + 0.5) for j in range(n)]
-                    key = ("|".join(("»" if k == "py" else "") + ln
-                                    for ln, k in lines), tuple(pxs),
-                           tuple(cols))
+                    key = ("|".join(("»" if k == "py" else "") + t
+                                    for t, k in dl), tuple(dpx),
+                           tuple(dcl))
                     if pill_meta[i] != key:
                         pill_meta[i] = key
-                        for j in range(3):
-                            ln, kind = lines[j] if j < n else ("", "trans")
-                            fj = fonts[j] if j < n else fonts[0]
+                        for j in range(8):
+                            t8, _k8 = dl[j] if j < n else ("", "trans")
+                            fj = dfn[j] if j < n else fonts[0]
                             canvas.itemconfigure(
-                                txs[j], text=ln, font=fj,
-                                fill=cols[j] if j < n else base)
-                            canvas.itemconfigure(shs[j], text=ln, font=fj)
+                                txs[j], text=t8, font=fj,
+                                fill=dcl[j] if j < n else base)
+                            canvas.itemconfigure(shs[j], text=t8, font=fj)
                     if _BG_ALPHA[0] > 0:
                         canvas.coords(rid, x1 - 1, ry1, x2 + 1, ry2)
                         canvas.itemconfigure(rid, state="normal")
                     else:
                         canvas.itemconfigure(rid, state="hidden")
-                    for j in range(3):
+                    for j in range(8):
                         if j < n:
                             cy = centers[j]
                             lx = line_x[j] if line_x else x1 + 2
@@ -3474,7 +3563,7 @@ def run(monitor_index: int = 1, fps: float = 0.0, max_side: int = _TRACK_SIDE,
                     shown = True
                 if not shown:
                     canvas.itemconfigure(rid, state="hidden")
-                    for j in range(3):
+                    for j in range(8):
                         canvas.itemconfigure(txs[j], state="hidden")
                         canvas.itemconfigure(shs[j], state="hidden")
         except Exception:

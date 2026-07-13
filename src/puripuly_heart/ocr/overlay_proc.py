@@ -33,6 +33,7 @@ import logging
 import os
 import threading
 import time
+import traceback
 import tkinter as tk
 from ctypes import wintypes
 
@@ -2634,8 +2635,11 @@ def _track_loop(cap: _Capture, target: _Target, anchors: _Anchors,
                     vx * inv_scale, vy * inv_scale, tr.uid,
                     tr.text, tr.xlat, tr.pinyin, tr.color))
             state.set(items)
-        except Exception as exc:
-            logger.debug("[OCR] track iteration error: %s", exc)
+        except Exception:
+            if time.monotonic() - getattr(_track_loop, "_err_at", 0.0) > 5.0:
+                _track_loop._err_at = time.monotonic()
+                logger.warning("[OCR] track iteration error:\n%s",
+                               traceback.format_exc())
             time.sleep(0.01)
 
 
@@ -3246,9 +3250,33 @@ def run(monitor_index: int = 1, fps: float = 0.0, max_side: int = _TRACK_SIDE,
                     for j in range(3):
                         canvas.itemconfigure(txs[j], state="hidden")
                         canvas.itemconfigure(shs[j], state="hidden")
-        except Exception as exc:
-            logger.debug("[OCR] redraw error: %s", exc)
+        except Exception:
+            # WARNING with traceback: a repeating redraw exception means a
+            # BLANK overlay while everything else runs — the "composite
+            # works but my screen shows nothing" state. Debug level hid it.
+            if time.monotonic() - getattr(_redraw, "_err_at", 0.0) > 5.0:
+                _redraw._err_at = time.monotonic()
+                logger.warning("[OCR] redraw error:\n%s",
+                               traceback.format_exc())
         finally:
+            nowm = time.monotonic()
+            # Topmost re-assert: fullscreen games / other overlays can end
+            # up above the tk window after focus churn — the pipeline then
+            # runs fine but nothing is VISIBLE. Cheap to re-assert.
+            if nowm - getattr(_redraw, "_top_at", 0.0) > 3.0:
+                _redraw._top_at = nowm
+                with contextlib_suppress():
+                    root.attributes("-topmost", True)
+                    root.lift()
+            if _SCAN_ACTIVE[0] and nowm - getattr(
+                    _redraw, "_hb_at", 0.0) > 30.0:
+                _redraw._hb_at = nowm
+                try:
+                    _v2, _s2, _it2 = state.get()
+                    logger.info("[OCR] renderer alive: %d items, flash=%s",
+                                len(_it2), _FLASH_TXT[0] or "-")
+                except Exception:
+                    pass
             # Idle = nothing to animate: drop the render tick from 4ms to
             # 40ms so a parked overlay costs effectively zero CPU.
             busy = (_SCAN_ACTIVE[0] or sel["active"]

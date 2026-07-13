@@ -511,9 +511,80 @@ def _load_translation_prefs() -> None:
         logger.debug("[OCR] settings read failed (target stays en): %s", exc)
 
 
+# App-translation BRIDGE: paid/LLM models (DeepL, Gemma, DeepSeek, Gemini,
+# Qwen, local LLMs) can't be called from the overlay — no keys here. The
+# overlay writes request lines; the APP translates with its own provider
+# stack (same keys/quota/managed plumbing as the chat translator) and
+# writes result lines back.
+_BR_REQ = os.path.join(os.path.expanduser("~"), "AppData", "Local",
+                       "puripuly-heart", "ocr_xlat_req.jsonl")
+_BR_RES = os.path.join(os.path.expanduser("~"), "AppData", "Local",
+                       "puripuly-heart", "ocr_xlat_res.jsonl")
+_BR_LOCK = threading.Lock()
+_BR_SEQ = [0]
+_BR_MAP: dict[str, str | None] = {}
+_BR_OFF = [0]
+_WEB_SVCS = ("bing", "google", "papago")
+
+
+def _bridge_pump() -> None:
+    """Parse new result lines into _BR_MAP (caller holds _BR_LOCK)."""
+    try:
+        sz = os.path.getsize(_BR_RES)
+    except OSError:
+        return
+    if sz < _BR_OFF[0]:
+        _BR_OFF[0] = 0
+    if sz == _BR_OFF[0]:
+        return
+    import json
+
+    try:
+        with open(_BR_RES, encoding="utf-8", errors="ignore") as fh:
+            fh.seek(_BR_OFF[0])
+            chunk = fh.read()
+            _BR_OFF[0] = fh.tell()
+    except Exception:
+        return
+    for ln in chunk.splitlines():
+        try:
+            d = json.loads(ln)
+            _BR_MAP[str(d.get("id"))] = (str(d["xlat"])
+                                         if "xlat" in d else None)
+        except Exception:
+            pass
+
+
+def _bridge_translate(text: str, tgt: str, model: str,
+                      timeout: float = 15.0) -> str | None:
+    """Translate via the app. None on error/timeout (caller falls back)."""
+    import json
+
+    with _BR_LOCK:
+        _BR_SEQ[0] += 1
+        rid = f"{os.getpid()}-{_BR_SEQ[0]}"
+        try:
+            with open(_BR_REQ, "a", encoding="utf-8") as fh:
+                fh.write(json.dumps(
+                    {"id": rid, "text": text, "tgt": tgt, "src": "",
+                     "model": model}, ensure_ascii=False) + "\n")
+        except Exception:
+            return None
+    deadline = time.monotonic() + timeout
+    while time.monotonic() < deadline:
+        with _BR_LOCK:
+            _bridge_pump()
+            if rid in _BR_MAP:
+                return _BR_MAP.pop(rid)
+        time.sleep(0.15)
+    logger.warning("[OCR] bridge translate timed out (model=%s)", model)
+    return None
+
+
 def _xlat_loop(stop: threading.Event) -> None:
-    """Translation worker: unique strings only, free web provider, results
-    cached for the session. Uses the app's own language-code mapping."""
+    """Translation worker: unique strings only, results cached for the
+    session. Free web engines run locally; any other model goes through
+    the app bridge, with a Bing fallback so text never stays blank."""
     try:
         from translators import translate_text
     except Exception as exc:
@@ -532,9 +603,19 @@ def _xlat_loop(stop: threading.Event) -> None:
             continue
         tgt = _to_translator_lang(_XLAT_TARGET[0]) or "en"
         try:
-            out = str(translate_text(
-                query_text=text, translator=_XLAT_SVC[0],
-                from_language="auto", to_language=tgt)).strip()
+            svc = _XLAT_SVC[0]
+            out = None
+            if svc not in _WEB_SVCS:
+                out = _bridge_translate(text, _XLAT_TARGET[0] or "en", svc)
+                if out is None:
+                    logger.info("[OCR] bridge failed — bing fallback for %r",
+                                text[:32])
+            if out is None:
+                out = str(translate_text(
+                    query_text=text,
+                    translator=svc if svc in _WEB_SVCS else "bing",
+                    from_language="auto", to_language=tgt)).strip()
+            out = (out or "").strip()
             with _XLAT_LOCK:
                 _XLAT_CACHE[text] = out or text
                 _XLAT_QUEUED.discard(text)
@@ -581,8 +662,8 @@ def _apply_prefs(cfg: dict) -> None:
     _IGNORE_GROUPS[0] = bool(int(v)) if str(v).isdigit() else bool(v)
     _XLAT_ENABLED[0] = bool(cfg.get("translate", _XLAT_ENABLED[0]))
     svc = str(cfg.get("xlat_service", _XLAT_SVC[0]) or "bing").lower()
-    if svc in ("bing", "google", "papago"):
-        _XLAT_SVC[0] = svc
+    if _re.fullmatch(r"[a-z0-9_]{2,40}", svc):
+        _XLAT_SVC[0] = svc  # web engine or any app-bridged model value
     fmt = str(cfg.get("ocr_format", _FMT[0]))
     if fmt in ("orig_trans", "orig_pinyin_trans", "pinyin_trans",
                "pinyin_only", "trans_only"):
@@ -3497,6 +3578,13 @@ def main() -> None:
     # over the CLI defaults at startup too, including the target window.
     _startup_cfg = _load_config()
     _apply_prefs(_startup_cfg)
+    # Stale bridge traffic from a previous run is useless — start clean.
+    for _bp in (_BR_REQ, _BR_RES):
+        try:
+            if os.path.exists(_bp):
+                open(_bp, "w").close()
+        except Exception:
+            pass
     # Restore the scan TOGGLE across restarts and hot-swap takeovers: a
     # fresh state file saying scanning was ON means the user left it ON —
     # respawns must not silently flip it off.

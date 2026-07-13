@@ -2886,6 +2886,112 @@ async def main_gui(page: ft.Page, *, config_path, debug_ui_preview: bool = False
     except Exception:
         pass
 
+    # OCR translation BRIDGE: the overlay can't call paid/LLM providers
+    # itself (no keys there). It writes request lines; we translate with
+    # the app's own provider stack — same keys, quota accounting and
+    # managed plumbing as the chat translator — and write results back.
+    # Free web engines (bing/google/papago) never come through here.
+    async def _ocr_xlat_bridge() -> None:
+        import asyncio as _aio
+        import copy as _copy
+        import json as _json
+        import os as _os
+        import uuid as _uuid
+
+        base = _os.path.join(_os.path.expanduser("~"), "AppData", "Local",
+                             "puripuly-heart")
+        req_p = _os.path.join(base, "ocr_xlat_req.jsonl")
+        res_p = _os.path.join(base, "ocr_xlat_res.jsonl")
+        pos = 0
+        providers: dict[str, object] = {}
+
+        def _provider_for(model_value: str):
+            prov = providers.get(model_value)
+            if prov is not None:
+                return prov
+            from puripuly_heart.app.wiring import (create_llm_provider,
+                                                   create_secret_store)
+            from puripuly_heart.config.settings import (
+                TranslationModel, materialize_translation_settings)
+            matched = next((m for m in TranslationModel
+                            if m.value == model_value), None)
+            if matched is None:
+                raise ValueError(f"unknown OCR model {model_value!r}")
+            settings = _copy.deepcopy(app.controller.settings)
+            settings.translation.model = matched
+            settings = materialize_translation_settings(settings)
+            secrets = create_secret_store(
+                settings.secrets, config_path=app.controller.config_path)
+            prov = create_llm_provider(
+                settings, secrets=secrets,
+                managed_release_service=getattr(
+                    app.controller,
+                    "_managed_openrouter_release_service", None),
+                managed_delegate_ready=getattr(
+                    app.controller, "_on_managed_trial_delegate_ready",
+                    None),
+                runtime_logging=None,
+            )
+            providers[model_value] = prov
+            return prov
+
+        while True:
+            await _aio.sleep(0.25)
+            try:
+                sz = _os.path.getsize(req_p)
+            except OSError:
+                continue
+            if sz < pos:
+                pos = 0  # overlay truncated the file on boot
+            if sz == pos:
+                continue
+            try:
+                with open(req_p, encoding="utf-8", errors="ignore") as fh:
+                    fh.seek(pos)
+                    chunk = fh.read()
+                    pos = fh.tell()
+            except Exception:
+                continue
+            for line in chunk.splitlines():
+                line = line.strip()
+                if not line:
+                    continue
+                rid = None
+                out = None
+                try:
+                    d = _json.loads(line)
+                    rid = d.get("id")
+                    prov = _provider_for(str(d.get("model", "")))
+                    tr = await prov.translate(
+                        utterance_id=_uuid.uuid4(),
+                        text=str(d.get("text", "")),
+                        system_prompt=(
+                            "You are a translator. Translate the user's "
+                            "text into the target language. Output ONLY "
+                            "the translation — no explanations."),
+                        source_language=str(d.get("src", "") or "auto"),
+                        target_language=str(d.get("tgt", "") or "en"),
+                    )
+                    xlat = (getattr(tr, "translated_text", None)
+                            or getattr(tr, "text", "") or "")
+                    out = {"id": rid, "xlat": str(xlat)}
+                except Exception as exc:
+                    logger.warning("[OCR] xlat bridge error: %s", exc)
+                    if rid is not None:
+                        out = {"id": rid, "error": str(exc)[:200]}
+                if out is not None:
+                    try:
+                        with open(res_p, "a", encoding="utf-8") as fh:
+                            fh.write(_json.dumps(out, ensure_ascii=False)
+                                     + "\n")
+                    except Exception:
+                        pass
+
+    try:
+        page.run_task(_ocr_xlat_bridge)
+    except Exception:
+        pass
+
     # Warn at launch when a SAVED channel language isn't supported by that
     # channel's STT provider (e.g. an Indonesian preset restored onto the local
     # Qwen model). Interactive changes already warn; a bad saved combo didn't.

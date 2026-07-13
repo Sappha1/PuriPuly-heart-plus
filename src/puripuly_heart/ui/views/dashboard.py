@@ -1755,8 +1755,28 @@ class DashboardView(ft.Row):
                 logging.getLogger(__name__).exception(
                     "[OCR] region select failed")
 
-        # ── OCR translation model (free engines only) ──
-        _svc_names = {"bing": "Bing", "google": "Google", "papago": "Papago"}
+        # ── OCR translation model — the FULL translator list (same as the
+        # TRANS menu). Free web engines run inside the overlay; paid/LLM
+        # models route through the app's provider stack (user's own keys,
+        # spent only when the user picks one here).
+        from puripuly_heart.config.settings import TranslationModel as _TM
+        _svc_names = {
+            "bing": "Bing", "google": "Google", "papago": "Papago",
+            _TM.GEMMA4.value: "Gemma 4 26B",
+            _TM.DEEPSEEK_V4_FLASH.value: "DeepSeek V4 Flash",
+            _TM.DEEPSEEK_V4_PRO.value: "DeepSeek V4 Pro",
+            _TM.GEMINI_3_FLASH.value: "Gemini 3 Flash",
+            _TM.GEMINI_31_FLASH_LITE.value: "Gemini 3.1 Flash-Lite",
+            _TM.QWEN_35_PLUS.value: "Qwen 3.5 Plus",
+            _TM.DEEPL.value: "DeepL",
+            _TM.GOOGLE_TRANSLATE.value: "Google Translate",
+            _TM.LOCAL_LLM.value: "Local LLMs",
+        }
+        _svc_needs_key = {
+            _TM.DEEPSEEK_V4_PRO.value, _TM.GEMINI_3_FLASH.value,
+            _TM.GEMINI_31_FLASH_LITE.value, _TM.QWEN_35_PLUS.value,
+            _TM.DEEPL.value,
+        }
         _svc_btn_text = ft.Text(
             _svc_names.get(self._ocr_xlat_service, "Bing"),
             size=11, color=_TOGGLE_ON, weight=ft.FontWeight.W_600,
@@ -1773,11 +1793,21 @@ class DashboardView(ft.Row):
         def _open_svc_picker(_ev) -> None:
             if not self.page:
                 return
-            options = [
-                OptionItem(value=k, label=f"{v} (free)", description="",
-                           disabled=False)
-                for k, v in _svc_names.items()
-            ]
+            _has_key = getattr(self, "_translator_model_has_key", {})
+            _free = {"bing", "google", "papago"}
+            options = []
+            for k, v in _svc_names.items():
+                needs = (k in _svc_needs_key
+                         and not _has_key.get(k, False))
+                desc = ""
+                if k in _free:
+                    desc = "(free)"
+                elif needs:
+                    desc = t("settings_modal.requires_api_key")
+                options.append(OptionItem(value=k, label=v,
+                                          description=desc,
+                                          disabled=needs))
+            options.sort(key=lambda o: o.disabled)
 
             def _sel(value: str) -> None:
                 self._ocr_xlat_service = value
@@ -1789,7 +1819,9 @@ class DashboardView(ft.Row):
                     _guarded(self.on_ocr_xlat_service_change, value)
 
             SettingsModal(self.page, t("dashboard.ocr.menu.xlat_model"),
-                          options, _sel).open(self._ocr_xlat_service)
+                          options, _sel,
+                          show_description=True).open(
+                self._ocr_xlat_service)
 
         _svc_btn.on_click = _open_svc_picker
 

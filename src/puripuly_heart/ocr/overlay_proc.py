@@ -1861,7 +1861,7 @@ class _Tracked:
                  "moving", "calm_frames", "miss", "sig", "sig_bad", "tex_bad",
                  "last_confirm", "confirms", "jump_dx", "jump_dy", "jump_n",
                  "uid", "text", "refined", "xlat", "namever", "namehit",
-                 "rosterhit", "text_at", "pinyin", "color")
+                 "rosterhit", "text_at", "stable_at", "pinyin", "color")
 
     def __init__(self, b: TextBox) -> None:
         self.x1, self.y1 = float(b.x1), float(b.y1)
@@ -1887,6 +1887,7 @@ class _Tracked:
         self.namehit = False  # cached "this box is a player name" verdict
         self.rosterhit = False  # roster match regardless of ignore toggles
         self.text_at = 0.0  # when recognition first delivered the text
+        self.stable_at = 0.0  # when the CURRENT text was first seen
         self.pinyin = ""  # transliteration of Han text (display formats)
         self.color = ""  # dominant glyph color (#rrggbb; '' = unknown)
 
@@ -2527,6 +2528,12 @@ def _track_loop(cap: _Capture, target: _Target, anchors: _Anchors,
                                 tr.color = hit[4]
                     if tr.uid in _REC_OUT:
                         text, rrect, tcol = _REC_OUT.pop(tr.uid)
+                        if (text or "-") != tr.text:
+                            # Text CHANGED — someone is still typing into
+                            # the bubble. Restart the settle clock so we
+                            # only translate the finished message.
+                            tr.stable_at = now
+                            tr.xlat = ""
                         tr.text = text or "-"
                         tr.text_at = now
                         tr.pinyin = _pinyin_of(tr.text)
@@ -2565,7 +2572,12 @@ def _track_loop(cap: _Capture, target: _Target, anchors: _Anchors,
                                     if hit is not None:
                                         tr.xlat = hit
                                     elif (norm
-                                          and norm not in _XLAT_QUEUED):
+                                          and norm not in _XLAT_QUEUED
+                                          and now - tr.stable_at >= 0.9):
+                                        # SETTLE gate: bubbles update live
+                                        # while someone types — only spend
+                                        # a translation once the text has
+                                        # held still for a beat.
                                         _XLAT_QUEUED.add(norm)
                                         _XLAT_PENDING.append(norm)
                     elif ((_PREWARM[0] or _SCAN_ACTIVE[0] or _FOREIGN_ONLY[0]
@@ -2738,7 +2750,8 @@ def _track_loop(cap: _Capture, target: _Target, anchors: _Anchors,
                     (bx2 * inv_scale + off_x) + cap.left,
                     (by2 * inv_scale + off_y) + cap.top,
                     vx * inv_scale, vy * inv_scale, tr.uid,
-                    tr.text, tr.xlat, tr.pinyin, tr.color))
+                    tr.text, tr.xlat, tr.pinyin, tr.color,
+                    bool(tr.xlat) or now - tr.stable_at >= 0.9))
             merged = _merge_lines(items)
             # Chat feed: log each unique message the FIRST time it is
             # actually displayed with its translation — what you see in
@@ -2747,6 +2760,7 @@ def _track_loop(cap: _Capture, target: _Target, anchors: _Anchors,
             for it in merged:
                 _mt, _mx = (it[7] or "").strip(), (it[8] or "").strip()
                 if (_mt and _mx and _mt != "-" and _mx != _mt
+                        and (it[11] if len(it) > 11 else True)
                         and _mt not in _FEED_SEEN):
                     _FEED_SEEN.add(_mt)
                     try:
@@ -2836,6 +2850,7 @@ def _merge_lines(items: list) -> list:
             out.extend(g)
             continue
         joined = _join_cjk([it[7].strip() for it in g])
+        stable = all(it[11] if len(it) > 11 else True for it in g)
         xl = ""
         if _is_own_language(joined, _XLAT_TARGET[0]):
             xl = joined
@@ -2844,8 +2859,9 @@ def _merge_lines(items: list) -> list:
                 hit = _XLAT_CACHE.get(joined)
                 if hit is not None:
                     xl = hit
-                elif (_XLAT_ENABLED[0]
+                elif (_XLAT_ENABLED[0] and stable
                       and joined not in _XLAT_QUEUED):
+                    # settle gate: don't translate a message mid-typing
                     _XLAT_QUEUED.add(joined)
                     _XLAT_PENDING.append(joined)
         py = _JOIN_PY.get(joined)
@@ -2857,7 +2873,7 @@ def _merge_lines(items: list) -> list:
         out.append((min(it[0] for it in g), min(it[1] for it in g),
                     max(it[2] for it in g), max(it[3] for it in g),
                     g[0][4], g[0][5], g[0][6], joined, xl, py,
-                    g[0][10] if len(g[0]) > 10 else ""))
+                    g[0][10] if len(g[0]) > 10 else "", stable))
     return out
 
 
@@ -3349,7 +3365,7 @@ def run(monitor_index: int = 1, fps: float = 0.0, max_side: int = _TRACK_SIDE,
                 shown = False
                 if held and i < len(items):
                     (bx1, by1, bx2, by2, vx, vy, uid, text, xlat, py,
-                     tcol) = items[i]
+                     tcol, _stab) = items[i]
                     base = (tcol or "#ffffff") if _C_TEXT[0] == "auto" \
                         else _C_TEXT[0]
                     lines = _fmt_lines(text, xlat, py) or [("...", "trans")]

@@ -3284,7 +3284,19 @@ class DashboardView(ft.Row):
                          else t("dashboard.chat.sent"))
         # Determine source/target language for transliteration
         if is_ocr:
-            src_lang = ""  # OCR can't know the speaker's language — auto
+            # OCR can't know the speaker's language — sniff the SCRIPT of
+            # the captured text. Guessing from configured languages sent
+            # Chinese through the Japanese romaji engine ('你是在香港吗' →
+            # '?? zaiHonkon ?': kakasi read 香港 as kanji, ?? = unmapped).
+            _s = source_text or ""
+            if any("぀" <= c <= "ヿ" for c in _s):
+                src_lang = "ja"  # kana present: Japanese
+            elif any("가" <= c <= "힯" for c in _s):
+                src_lang = "ko"
+            elif any("一" <= c <= "鿿" for c in _s):
+                src_lang = "zh"  # Han without kana: Chinese → pinyin
+            else:
+                src_lang = ""
             tgt_lang = self._source_lang_code  # translated into user's lang
         elif is_peer:
             src_lang = self._peer_source_lang_code  # may be "" (auto detect)
@@ -3302,6 +3314,11 @@ class DashboardView(ft.Row):
         _want_romaji = self.show_romaji
         _want_pinyin = self.show_pinyin
         _want_latin = self.show_latin
+        if is_ocr:
+            # OCR entries always romanize by the sniffed script — the
+            # overlay shows pinyin for these lines, the log should match
+            # even when the user's own display toggles differ.
+            _want_pinyin = _want_romaji = True
         if has_translation:
             translit_src = transliterate_for_language(
                 source_text, src_lang, show_pinyin=_want_pinyin, show_romaji=_want_romaji, show_latin=_want_latin

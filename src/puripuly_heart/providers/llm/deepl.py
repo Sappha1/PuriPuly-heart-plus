@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import asyncio
 import logging
+import re
 from dataclasses import dataclass, field
 from uuid import UUID
 
@@ -152,6 +153,19 @@ class DeepLTranslationProvider:
             target_lang,
         )
         translated = translated.strip()
+        # DeepL's LLM-backed models occasionally hallucinate a language
+        # label onto the end of the output ("…我是自由的Simplified Chinese
+        # (Mainland)" was returned verbatim by the API). Trim it.
+        # Only when the label sits DIRECTLY after a CJK character — a real
+        # English translation ending in the word "Chinese" must survive.
+        _trim = re.sub(
+            r"(?<=[一-鿿])\s*(?:Simplified|Traditional)?\s*Chinese"
+            r"(?:\s*\([^)]{0,30}\))?\s*$",
+            "", translated, flags=re.IGNORECASE)
+        if _trim != translated and _trim:
+            logger.warning("[DeepL] trimmed hallucinated language label: %r",
+                           translated[len(_trim):])
+            translated = _trim.strip()
         logger.info("[DeepL] result: %r", translated)
         return Translation(utterance_id=utterance_id, text=translated)
 

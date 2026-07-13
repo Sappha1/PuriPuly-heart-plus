@@ -166,8 +166,12 @@ def _fmt_lines(text: str, xlat: str, pinyin: str) -> list[tuple[str, str]]:
         lines = [(py or orig, "py" if py else "orig"), (tr, "trans")]
     elif f == "pinyin_only":
         lines = [(py or orig, "py" if py else "orig")]
+    elif _XLAT_ENABLED[0]:
+        # Translation only: show NOTHING until the translation lands —
+        # flashing the original first defeats the point of the format.
+        lines = [(tr, "trans")]
     else:
-        lines = [(tr or orig, "trans")]
+        lines = [(tr or orig, "trans")]  # translation off: raw text
     return [(ln, k) for ln, k in lines if ln and ln.strip()]
 
 
@@ -2872,9 +2876,12 @@ def _merge_lines(items: list) -> list:
             out.append(g[0])
             continue
         if any((not it[7]) or it[7] == "-" for it in g):
-            # Not every line recognized yet — keep them separate this pass;
-            # they merge the moment the last line's text lands.
-            out.extend(g)
+            # Not every line recognized yet: show ONE merged outline with
+            # no text instead of a flicker of half-finished per-line pills.
+            out.append((min(it[0] for it in g), min(it[1] for it in g),
+                        max(it[2] for it in g), max(it[3] for it in g),
+                        g[0][4], g[0][5], g[0][6], "", "", "",
+                        g[0][10] if len(g[0]) > 10 else "", False))
             continue
         joined = _join_cjk([it[7].strip() for it in g])
         stable = all(it[11] if len(it) > 11 else True for it in g)
@@ -2918,9 +2925,12 @@ def _save_debug_shot(cap: _Capture, boxes, pills: bool = False) -> None:
             x1, y1 = int(bx1 - cap.left), int(by1 - cap.top)
             x2, y2 = int(bx2 - cap.left), int(by2 - cap.top)
             if pills and len(it) > 9:
-                lines = _fmt_lines(it[7], it[8], it[9]) or [("...", "trans")]
-                texted.append((x1, y1, x2, y2, lines[:3],
-                               it[10] if len(it) > 10 else ""))
+                lines = _fmt_lines(it[7], it[8], it[9])[:3]
+                if lines:
+                    texted.append((x1, y1, x2, y2, lines,
+                                   it[10] if len(it) > 10 else ""))
+                else:  # translation pending: outline only, like live
+                    cv2.rectangle(frame, (x1, y1), (x2, y2), oc_bgr, 1)
             else:
                 cv2.rectangle(frame, (x1, y1), (x2, y2), oc_bgr, 2)
         if texted:
@@ -3423,8 +3433,15 @@ def run(monitor_index: int = 1, fps: float = 0.0, max_side: int = _TRACK_SIDE,
                      tcol, _stab) = items[i]
                     base = (tcol or "#ffffff") if _C_TEXT[0] == "auto" \
                         else _C_TEXT[0]
-                    lines = _fmt_lines(text, xlat, py) or [("...", "trans")]
-                    lines = lines[:3]
+                    lines = _fmt_lines(text, xlat, py)[:3]
+                    if not lines:
+                        # e.g. translation-only with the translation still
+                        # pending: box outline only, no pill yet.
+                        canvas.itemconfigure(rid, state="hidden")
+                        for j in range(8):
+                            canvas.itemconfigure(txs[j], state="hidden")
+                            canvas.itemconfigure(shs[j], state="hidden")
+                        continue
                     ex, ey = vx * ext, vy * ext
                     x1 = (bx1 + ex - left) * sx
                     y1 = (by1 + ey - top) * sy

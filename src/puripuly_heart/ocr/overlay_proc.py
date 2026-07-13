@@ -2836,40 +2836,62 @@ def _join_cjk(parts: list[str]) -> str:
     return s
 
 
+def _bubble_adjacent(a, b) -> bool:
+    """Two text boxes belong to the same bubble: stacked rows (tight
+    vertical gap, aligned/overlapping widths) OR pieces of the SAME visual
+    row (y-overlap, small horizontal gap — the detector sometimes splits
+    one line into side-by-side boxes, which used to break the chain)."""
+    ah, bh = a[3] - a[1], b[3] - b[1]
+    h = max(ah, bh, 1.0)
+    if min(ah, bh) < 0.5 * h:
+        return False  # very different line heights: not one bubble
+    yov = min(a[3], b[3]) - max(a[1], b[1])
+    if yov >= 0.55 * min(ah, bh):
+        # same visual row: adjacent horizontally?
+        xgap = max(a[0], b[0]) - min(a[2], b[2])
+        return xgap <= 1.5 * h
+    # stacked rows
+    if b[1] >= a[1]:
+        gap = b[1] - a[3]
+    else:
+        gap = a[1] - b[3]
+    if not (-0.25 * h <= gap <= 0.9 * h):
+        return False
+    ov = min(a[2], b[2]) - max(a[0], b[0])
+    wmin = max(1.0, min(a[2] - a[0], b[2] - b[0]))
+    wmax = max(a[2] - a[0], b[2] - b[0], 1.0)
+    ccd = abs((a[0] + a[2]) - (b[0] + b[2])) / 2.0
+    return ov >= 0.5 * wmin or (ov > 0 and ccd <= 0.5 * wmax)
+
+
 def _merge_lines(items: list) -> list:
-    """Merge stacked text lines of ONE multi-line chat bubble into a single
+    """Merge the text lines of ONE multi-line chat bubble into a single
     item: one pill instead of overlapping per-line pills, and ONE
     translation of the whole message instead of garbled per-line pieces.
-    Lines group when they stack tightly with similar height and aligned
-    width — different players' bubbles never sit that close."""
+    Adjacency is checked against EVERY member of a group (checking only
+    the last line let a single detection hiccup split a plate in two,
+    each half translating separately)."""
     if len(items) < 2:
         return items
-    order = sorted(range(len(items)), key=lambda i: items[i][1])
-    groups: list[list] = []
-    for i in order:
-        it = items[i]
-        ih = it[3] - it[1]
-        placed = False
-        for g in groups:
-            last = g[-1]
-            lh = last[3] - last[1]
-            h = max(ih, lh, 1.0)
-            if min(ih, lh) < 0.55 * h:
-                continue  # very different line heights: not one bubble
-            gap = it[1] - last[3]
-            if not (-0.25 * h <= gap <= 0.9 * h):
-                continue
-            ov = min(it[2], last[2]) - max(it[0], last[0])
-            wmin = max(1.0, min(it[2] - it[0], last[2] - last[0]))
-            ccd = abs((it[0] + it[2]) - (last[0] + last[2])) / 2.0
-            wmax = max(it[2] - it[0], last[2] - last[0], 1.0)
-            if ov < 0.5 * wmin and ccd > 0.5 * wmax:
-                continue  # neither overlapping nor center-aligned
-            g.append(it)
-            placed = True
-            break
-        if not placed:
-            groups.append([it])
+    its = sorted(items, key=lambda x: (x[1], x[0]))
+    parent = list(range(len(its)))
+
+    def _find(i: int) -> int:
+        while parent[i] != i:
+            parent[i] = parent[parent[i]]
+            i = parent[i]
+        return i
+
+    for i in range(len(its)):
+        for j in range(i + 1, len(its)):
+            if _bubble_adjacent(its[i], its[j]):
+                ri, rj = _find(i), _find(j)
+                if ri != rj:
+                    parent[rj] = ri
+    gmap: dict[int, list] = {}
+    for i, it in enumerate(its):
+        gmap.setdefault(_find(i), []).append(it)
+    groups = list(gmap.values())
     out: list = []
     for g in groups:
         if len(g) == 1:
@@ -2883,7 +2905,24 @@ def _merge_lines(items: list) -> list:
                         g[0][4], g[0][5], g[0][6], "", "", "",
                         g[0][10] if len(g[0]) > 10 else "", False))
             continue
-        joined = _join_cjk([it[7].strip() for it in g])
+        # Reading order: cluster members into visual rows (top->bottom),
+        # then left->right within each row — side-by-side splits of one
+        # line rejoin in the right order.
+        rows: list[list] = []
+        for it in sorted(g, key=lambda x: ((x[1] + x[3]) / 2.0, x[0])):
+            yc = (it[1] + it[3]) / 2.0
+            ih2 = max(1.0, it[3] - it[1])
+            for r in rows:
+                ryc = sum((m[1] + m[3]) / 2.0 for m in r) / len(r)
+                if abs(yc - ryc) < 0.5 * ih2:
+                    r.append(it)
+                    break
+            else:
+                rows.append([it])
+        joined = _join_cjk([
+            _join_cjk([m[7].strip()
+                       for m in sorted(r, key=lambda x: x[0])])
+            for r in rows])
         stable = all(it[11] if len(it) > 11 else True for it in g)
         xl = ""
         if _is_own_language(joined, _XLAT_TARGET[0]):

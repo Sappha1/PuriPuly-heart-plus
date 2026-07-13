@@ -2563,29 +2563,50 @@ def _track_loop(cap: _Capture, target: _Target, anchors: _Anchors,
                         return True
                 return False
 
-            def _above_name(bx1: float, by1: float, bx2: float,
-                            by2: float) -> bool:
+            def _above_rects(bx1: float, by1: float, bx2: float, by2: float,
+                             arects) -> bool:
                 # GROUP banners hug the TOP edge of the nameplate ('中国烟草'
-                # / 'Today Mute …' plates). The tight gap window is what
-                # keeps real chat bubbles alive — they float clearly higher,
-                # above the group banner itself.
+                # / 'Today Mute …' plates). Gap is measured glyph-box to
+                # glyph-box, so BOTH plates' padding sits between — up to
+                # ~1.35 name-heights is still "hugging". Chat bubbles float
+                # clearly higher, above the group banner itself.
                 bh = by2 - by1
                 bw = bx2 - bx1
-                for ax1, ay1, ax2, ay2 in name_rects:
+                for ax1, ay1, ax2, ay2 in arects:
                     ah = max(1.0, ay2 - ay1)
                     aw = max(1.0, ax2 - ax1)
-                    gap = ay1 - by2  # banner bottom -> name top
-                    if not (-0.3 * ah <= gap <= 0.7 * ah):
+                    gap = ay1 - by2  # banner glyphs bottom -> name glyphs top
+                    if not (-0.3 * ah <= gap <= 1.35 * ah):
                         continue
-                    if bh < 0.4 * ah or bh > 1.5 * ah:
+                    if bh < 0.35 * ah or bh > 1.6 * ah:
                         continue
                     ov = min(bx2, ax2) - max(bx1, ax1)
                     if ov <= 0:
                         continue
                     coff = abs((bx1 + bx2) - (ax1 + ax2)) / 2.0
-                    if coff <= 0.6 * max(aw, bw):
+                    if coff <= 0.7 * max(aw, bw):
                         return True
                 return False
+
+            group_uids: set[int] = set()
+            if _IGNORE_GROUPS[0] and name_rects:
+                # Two passes so stacked banner rows CHAIN upward — the
+                # 'Today Mute' line anchors on the suppressed '今日は無言です'
+                # plate below it, which anchored on the nameplate.
+                g_anchors = list(name_rects)
+                for _p2 in range(2):
+                    for tr in tracked:
+                        if tr.uid in group_uids:
+                            continue
+                        _t2 = (tr.text or "").strip()
+                        if (len(_t2) > 20
+                                or sum("一" <= c <= "鿿" for c in _t2) >= 8):
+                            continue  # real sentences are immune
+                        r2 = tr.rect()
+                        if _above_rects(r2[0], r2[1], r2[2], r2[3],
+                                        g_anchors):
+                            group_uids.add(tr.uid)
+                            g_anchors.append(r2)
 
             items = []
             for tr in tracked:
@@ -2623,9 +2644,8 @@ def _track_loop(cap: _Capture, target: _Target, anchors: _Anchors,
                     # Nameplate chrome under a name. Long recognized text is
                     # immune — status/pronoun pills are always short.
                     continue
-                if (name_rects and _short and _IGNORE_GROUPS[0]
-                        and _above_name(bx1, by1, bx2, by2)):
-                    continue  # group banner hugging the nameplate top
+                if tr.uid in group_uids:
+                    continue  # group banner row above the nameplate
                 vx, vy = tr.velocity()
                 items.append((
                     (bx1 * inv_scale + off_x) + cap.left,

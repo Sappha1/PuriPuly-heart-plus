@@ -2745,7 +2745,7 @@ def _track_loop(cap: _Capture, target: _Target, anchors: _Anchors,
                     (by2 * inv_scale + off_y) + cap.top,
                     vx * inv_scale, vy * inv_scale, tr.uid,
                     tr.text, tr.xlat, tr.pinyin, tr.color))
-            state.set(items)
+            state.set(_merge_lines(items))
         except Exception:
             if time.monotonic() - getattr(_track_loop, "_err_at", 0.0) > 5.0:
                 _track_loop._err_at = time.monotonic()
@@ -2759,6 +2759,92 @@ def _hex_rgb(h: str) -> tuple[int, int, int]:
         return (int(h[1:3], 16), int(h[3:5], 16), int(h[5:7], 16))
     except Exception:
         return (255, 255, 255)
+
+
+_JOIN_PY: dict[str, str] = {}  # pinyin cache for merged multi-line text
+
+
+def _join_cjk(parts: list[str]) -> str:
+    """Join bubble lines: CJK-to-CJK joins directly (line breaks inside a
+    Chinese sentence carry no space), anything else gets one."""
+    s = parts[0]
+    for p in parts[1:]:
+        if (s and p and ("一" <= s[-1] <= "鿿" or s[-1] in "，。！？、；：")
+                and "一" <= p[0] <= "鿿"):
+            s += p
+        else:
+            s += " " + p
+    return s
+
+
+def _merge_lines(items: list) -> list:
+    """Merge stacked text lines of ONE multi-line chat bubble into a single
+    item: one pill instead of overlapping per-line pills, and ONE
+    translation of the whole message instead of garbled per-line pieces.
+    Lines group when they stack tightly with similar height and aligned
+    width — different players' bubbles never sit that close."""
+    if len(items) < 2:
+        return items
+    order = sorted(range(len(items)), key=lambda i: items[i][1])
+    groups: list[list] = []
+    for i in order:
+        it = items[i]
+        ih = it[3] - it[1]
+        placed = False
+        for g in groups:
+            last = g[-1]
+            lh = last[3] - last[1]
+            h = max(ih, lh, 1.0)
+            if min(ih, lh) < 0.55 * h:
+                continue  # very different line heights: not one bubble
+            gap = it[1] - last[3]
+            if not (-0.25 * h <= gap <= 0.9 * h):
+                continue
+            ov = min(it[2], last[2]) - max(it[0], last[0])
+            wmin = max(1.0, min(it[2] - it[0], last[2] - last[0]))
+            ccd = abs((it[0] + it[2]) - (last[0] + last[2])) / 2.0
+            wmax = max(it[2] - it[0], last[2] - last[0], 1.0)
+            if ov < 0.5 * wmin and ccd > 0.5 * wmax:
+                continue  # neither overlapping nor center-aligned
+            g.append(it)
+            placed = True
+            break
+        if not placed:
+            groups.append([it])
+    out: list = []
+    for g in groups:
+        if len(g) == 1:
+            out.append(g[0])
+            continue
+        if any((not it[7]) or it[7] == "-" for it in g):
+            # Not every line recognized yet — keep them separate this pass;
+            # they merge the moment the last line's text lands.
+            out.extend(g)
+            continue
+        joined = _join_cjk([it[7].strip() for it in g])
+        xl = ""
+        if _is_own_language(joined, _XLAT_TARGET[0]):
+            xl = joined
+        else:
+            with _XLAT_LOCK:
+                hit = _XLAT_CACHE.get(joined)
+                if hit is not None:
+                    xl = hit
+                elif (_XLAT_ENABLED[0]
+                      and joined not in _XLAT_QUEUED):
+                    _XLAT_QUEUED.add(joined)
+                    _XLAT_PENDING.append(joined)
+        py = _JOIN_PY.get(joined)
+        if py is None:
+            if len(_JOIN_PY) > 300:
+                _JOIN_PY.clear()
+            py = _pinyin_of(joined)
+            _JOIN_PY[joined] = py
+        out.append((min(it[0] for it in g), min(it[1] for it in g),
+                    max(it[2] for it in g), max(it[3] for it in g),
+                    g[0][4], g[0][5], g[0][6], joined, xl, py,
+                    g[0][10] if len(g[0]) > 10 else ""))
+    return out
 
 
 def _save_debug_shot(cap: _Capture, boxes, pills: bool = False) -> None:

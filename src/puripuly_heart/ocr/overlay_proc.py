@@ -619,16 +619,10 @@ def _xlat_loop(stop: threading.Event) -> None:
             with _XLAT_LOCK:
                 _XLAT_CACHE[text] = out or text
                 _XLAT_QUEUED.discard(text)
-            if out and out.strip() != text.strip():
-                try:
-                    import json as _json
-
-                    with open(_FEED_PATH, "a", encoding="utf-8") as fh:
-                        fh.write(_json.dumps(
-                            {"src": text, "dst": out},
-                            ensure_ascii=False) + "\n")
-                except Exception:
-                    pass
+            # NOTE: the chat feed is written at DISPLAY time (track loop),
+            # not here — logging at translation time sent fragments and
+            # later-suppressed boxes to chat while cached re-displays
+            # logged nothing. Chat now mirrors the screen exactly.
         except Exception as exc:
             logger.debug("[OCR] translate failed (%r): %s", text[:40], exc)
             with _XLAT_LOCK:
@@ -2745,7 +2739,26 @@ def _track_loop(cap: _Capture, target: _Target, anchors: _Anchors,
                     (by2 * inv_scale + off_y) + cap.top,
                     vx * inv_scale, vy * inv_scale, tr.uid,
                     tr.text, tr.xlat, tr.pinyin, tr.color))
-            state.set(_merge_lines(items))
+            merged = _merge_lines(items)
+            # Chat feed: log each unique message the FIRST time it is
+            # actually displayed with its translation — what you see in
+            # game is exactly what lands in chat, fragments and suppressed
+            # boxes never do, and cache hits still log on first display.
+            for it in merged:
+                _mt, _mx = (it[7] or "").strip(), (it[8] or "").strip()
+                if (_mt and _mx and _mt != "-" and _mx != _mt
+                        and _mt not in _FEED_SEEN):
+                    _FEED_SEEN.add(_mt)
+                    try:
+                        import json as _json
+
+                        with open(_FEED_PATH, "a", encoding="utf-8") as fh:
+                            fh.write(_json.dumps(
+                                {"src": _mt, "dst": _mx},
+                                ensure_ascii=False) + "\n")
+                    except Exception:
+                        pass
+            state.set(merged)
         except Exception:
             if time.monotonic() - getattr(_track_loop, "_err_at", 0.0) > 5.0:
                 _track_loop._err_at = time.monotonic()
@@ -2762,6 +2775,7 @@ def _hex_rgb(h: str) -> tuple[int, int, int]:
 
 
 _JOIN_PY: dict[str, str] = {}  # pinyin cache for merged multi-line text
+_FEED_SEEN: set[str] = set()  # messages already logged to chat (session)
 
 
 def _join_cjk(parts: list[str]) -> str:

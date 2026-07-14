@@ -2859,13 +2859,23 @@ async def main_gui(page: ft.Page, *, config_path, debug_ui_preview: bool = False
                 pos = 0  # a new overlay session truncated/recreated the file
             if size == pos:
                 continue
+            # BINARY read + only consume COMPLETE (newline-terminated) lines.
+            # The overlay appends concurrently; a text-mode read could grab a
+            # half-written line (json fails -> dropped) and tell() byte/char
+            # offsets mismatch on CJK, so an entry occasionally never reached
+            # chat despite being in the feed. Byte-exact positions fix both.
             try:
-                with open(feed, encoding="utf-8") as fh:
+                with open(feed, "rb") as fh:
                     fh.seek(pos)
-                    chunk = fh.read()
-                    pos = fh.tell()
+                    raw = fh.read()
             except Exception:
                 continue
+            nl = raw.rfind(b"\n")
+            if nl < 0:
+                continue  # only a partial line so far — wait for the newline
+            complete = raw[:nl + 1]
+            pos += len(complete)  # advance past whole lines only
+            chunk = complete.decode("utf-8", errors="ignore")
             for line in chunk.splitlines():
                 line = line.strip()
                 if not line:

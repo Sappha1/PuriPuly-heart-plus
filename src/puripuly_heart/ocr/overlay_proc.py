@@ -962,6 +962,16 @@ _VK_SNAPSHOT = 0x2C
 _SHOT_DIR = os.path.join(os.path.expanduser("~"), "Desktop", "puripuly_ocr_shots")
 
 
+def _pid_of(hwnd: int) -> int:
+    """Process id owning hwnd (0 on failure)."""
+    try:
+        pid = wintypes.DWORD(0)
+        ctypes.windll.user32.GetWindowThreadProcessId(hwnd, ctypes.byref(pid))
+        return int(pid.value)
+    except Exception:
+        return 0
+
+
 def _hwnd_exe(hwnd: int) -> str:
     """Basename of the process image owning hwnd (lowercase), '' on failure.
     Lets window targeting require the real vrchat.exe, not just the title."""
@@ -1207,6 +1217,8 @@ class _Target:
         self._rect: tuple[int, int, int, int] | None = (0, 0, cap.width, cap.height)
         self._fg = True
         self._fg_title = ""
+        self._hwnd = 0  # cached target window handle
+        self._pid = 0  # target window's process id (focus by process)
         self._epoch = 0
         self._warned = False
         self._occl: list[tuple[int, int, int, int]] = []
@@ -1449,16 +1461,30 @@ class _Target:
             # cannot identify the one being played. The focused one can.
             hwnd = 0
             fgw = user32.GetForegroundWindow()
-            if fgw and user32.IsWindowVisible(fgw):
+            fg_pid = _pid_of(fgw) if fgw else 0
+            # A focused window that is our TARGET's exe with the exact title
+            # locks onto that instance (handles the two-instances case).
+            if fgw and user32.IsWindowVisible(fgw) and (
+                    not self._exe or _hwnd_exe(fgw) == self._exe):
                 n = user32.GetWindowTextLengthW(fgw)
                 if n > 0:
                     b = ctypes.create_unicode_buffer(n + 1)
                     user32.GetWindowTextW(fgw, b, n + 1)
-                    if b.value == self._title and (
-                            not self._exe or _hwnd_exe(fgw) == self._exe):
+                    if b.value == self._title:
                         hwnd = fgw
+            # Keep the CACHED handle if it is still a live window of the right
+            # exe — VRChat RENAMES its own window ('instance + N Chat') and
+            # spawns child windows, so re-matching by title each frame made
+            # the overlay think focus was lost and hide (the "randomly dies,
+            # toggle to fix" bug). The handle is stable; the title is not.
+            if not hwnd and self._hwnd and user32.IsWindow(self._hwnd) and (
+                    not self._exe or _hwnd_exe(self._hwnd) == self._exe):
+                hwnd = self._hwnd
             if not hwnd:
                 hwnd = self._find_window(self._title)
+            if hwnd:
+                self._hwnd = hwnd
+                self._pid = _pid_of(hwnd)
             if hwnd:
                 # DWM extended frame bounds: PHYSICAL screen pixels, immune to
                 # DPI virtualization. GetClientRect/ClientToScreen return the
@@ -1511,8 +1537,13 @@ class _Target:
                         x2 + self._cap.left, y2 + self._cap.top)
                 else:
                     occl_new = []
+                # Focused = the foreground window is the SAME PROCESS as the
+                # target (its main window OR any child: quick-menu, chat
+                # popup, retitled main). PID matching is immune to VRChat's
+                # dynamic window title and its focus-stealing child windows.
                 fgw = user32.GetForegroundWindow()
-                fg = fgw == hwnd
+                fg_pid = _pid_of(fgw) if fgw else 0
+                fg = bool(self._pid) and fg_pid == self._pid
                 fg_title = ""
                 if not fg and fgw:
                     m = user32.GetWindowTextLengthW(fgw)

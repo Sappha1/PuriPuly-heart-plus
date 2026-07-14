@@ -3689,22 +3689,35 @@ class GuiController:
         if not self._peer_local_stt_requested(self.settings):
             self._reset_local_stt_pending_peer_enable_after_install()
 
-    def _on_local_stt_model_loading(self) -> None:
-        """Called from a background thread just before sherpa-onnx model init starts."""
+    def _on_local_stt_model_loading(self, channel: str = "self") -> None:
+        """Called from a background thread just before sherpa-onnx model init
+        starts. CHANNEL-AWARE: the self (mic) and peer backends share this
+        sink, so without the channel a SELF load painted the PEER row's
+        loading ring ("turning on the mic made peer look like it reloaded").
+        The peer ring only shows for a real PEER-channel load; a self load
+        just tracks internal state (its own 'loading model' indicator was
+        deliberately removed)."""
+        if channel == "peer":
+            dash = getattr(self.app, "view_dashboard", None)
+            if dash is not None:
+                with contextlib.suppress(Exception):
+                    dash.set_local_stt_notice("loading", percent=None,
+                                              channel="peer")
+            return
         self._local_stt_runtime_status = "loading"
-        dash = getattr(self.app, "view_dashboard", None)
-        if dash is not None:
-            with contextlib.suppress(Exception):
-                dash.set_local_stt_notice("loading", percent=None)
 
-    def _on_local_stt_model_loaded(self) -> None:
-        """Called from a background thread after sherpa-onnx model init finishes (success or fail)."""
+    def _on_local_stt_model_loaded(self, channel: str = "self") -> None:
+        """Called from a background thread after sherpa-onnx model init
+        finishes (success or fail). See _on_local_stt_model_loading."""
+        if channel == "peer":
+            dash = getattr(self.app, "view_dashboard", None)
+            if dash is not None:
+                with contextlib.suppress(Exception):
+                    dash.set_local_stt_notice(None, percent=None,
+                                              channel="peer")
+            return
         if self._local_stt_runtime_status == "loading":
             self._local_stt_runtime_status = "ready"
-        dash = getattr(self.app, "view_dashboard", None)
-        if dash is not None:
-            with contextlib.suppress(Exception):
-                dash.set_local_stt_notice(None, percent=None)
 
     def _sync_local_stt_notice(self) -> None:
         dash = getattr(self.app, "view_dashboard", None)

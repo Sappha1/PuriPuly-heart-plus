@@ -5092,12 +5092,17 @@ class DashboardView(ft.Row):
         self._managed_auth_pending = bool(pending)
         self._sync_notice()
 
-    def set_local_stt_notice(self, status: str | None, percent: int | None = None) -> None:
+    def set_local_stt_notice(self, status: str | None, percent: int | None = None,
+                             channel: str = "self") -> None:
         previous_status = self._local_stt_notice_status
         self._local_stt_notice_status = status
         self._local_stt_notice_percent = percent if status == "downloading" else None
         self._sync_notice()
-        self._drive_peer_loading_ring(previous_status, status, percent)
+        # The loading RING lives on the PEER row. Only a real PEER model load,
+        # a shared model DOWNLOAD, or a clear should drive it — a SELF (mic)
+        # model 'loading' must never paint the peer row.
+        if channel == "peer" or status in ("downloading", None):
+            self._drive_peer_loading_ring(previous_status, status, percent)
 
     # ── Determinate loading ring for the PEER row ────────────────────────────
     # Downloads report a real percent; the in-memory model LOAD is a single native

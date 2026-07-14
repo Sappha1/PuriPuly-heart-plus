@@ -203,8 +203,8 @@ class LocalQwenSherpaSTTBackend(STTBackend):
     # disables the confidence filter entirely (no transcripts dropped on confidence).
     min_avg_logprob: float | None = LOCAL_QWEN_MIN_AVG_LOGPROB
     diagnostics_enabled: Callable[[], bool] | None = None
-    on_model_loading: object = None  # Callable[[], None] — fired just before blocking model init
-    on_model_loaded: object = None   # Callable[[], None] — fired after model init completes
+    on_model_loading: object = None  # Callable[[str], None] — fired (with channel "self"|"peer") before model init
+    on_model_loaded: object = None   # Callable[[str], None] — fired (with channel "self"|"peer") after model init
     _recognizer: object | None = field(init=False, default=None, repr=False)
     _load_lock: asyncio.Lock = field(init=False, repr=False)
     _decode_lock: asyncio.Lock = field(init=False, repr=False)
@@ -267,7 +267,7 @@ class LocalQwenSherpaSTTBackend(STTBackend):
 
                 if callable(self.on_model_loading):
                     try:
-                        self.on_model_loading()
+                        self.on_model_loading(self.stream_label or "self")
                     except Exception:
                         pass
 
@@ -288,7 +288,7 @@ class LocalQwenSherpaSTTBackend(STTBackend):
                     pass
                 if callable(self.on_model_loaded):
                     try:
-                        self.on_model_loaded()
+                        self.on_model_loaded(self.stream_label or "self")
                     except Exception:
                         pass
             return self._recognizer

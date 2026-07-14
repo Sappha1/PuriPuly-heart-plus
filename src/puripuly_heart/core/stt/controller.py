@@ -814,8 +814,18 @@ class ManagedSTTProvider:
             elif self._has_recent_speech():
                 # Recent speech: reconnect immediately
                 await self._reset_with_reconnect()
+            elif self.stt_provider_name is STTProviderName.LOCAL_QWEN:
+                # OFFLINE local Qwen has no network websocket to bound and
+                # its recognizer stays warm regardless — draining to
+                # DISCONNECTED and reconnecting on the next word just made
+                # peer look like it "reloaded for no reason" and flashed the
+                # loading ring. Keep the warm session alive; no reset needed.
+                self._emit_detailed(
+                    "[STT] Silence timer: local Qwen stays warm (no drain)",
+                    fallback_level=logging.DEBUG,
+                )
             else:
-                # Silence: close session
+                # Silence: close the (network) session
                 await self._reset_on_silence()
         except asyncio.CancelledError:
             pass

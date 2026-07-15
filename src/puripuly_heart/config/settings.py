@@ -3684,7 +3684,14 @@ def from_dict(data: dict[str, Any]) -> AppSettings:
             source_language=data.get("languages", {}).get("source_language", "ko"),
             target_language=data.get("languages", {}).get("target_language", "en"),
             peer_source_language=str(data.get("languages", {}).get("peer_source_language", "")),
-            peer_target_language=str(data.get("languages", {}).get("peer_target_language", "")),
+            # MIGRATION (r252): always clear the peer-target override. The
+            # upstream app's legacy default pinned it to "ko", the current UI
+            # renders NO control for it, and a non-empty value silently forces
+            # incoming voice into that language forever (a Chinese user's
+            # incoming English translated to Korean and "nothing" could fix
+            # it). Peer voice follows the user's own language ("Your
+            # language") — the only behavior the UI actually shows.
+            peer_target_language="",
             auto_detect_peer_voice=bool(
                 data.get("languages", {}).get("auto_detect_peer_voice", False)),
             separate_target_language=str(
@@ -3707,7 +3714,12 @@ def from_dict(data: dict[str, Any]) -> AppSettings:
                     source_language=str(p.get("source_language", "en")),
                     target_languages=[str(t) for t in p.get("target_languages", ["zh-CN"])] or ["zh-CN"],
                     peer_source_language=str(p.get("peer_source_language", "")),
-                    peer_target_language=str(p.get("peer_target_language", "")),
+                    # legacy "ko" peer-target trap — see migration note above
+                    # Cleared like the top-level field (see migration note):
+                    # the preset restore re-pins this on every startup, which
+                    # is how a legacy "ko" kept resurrecting after the v26
+                    # migration cleared the field itself.
+                    peer_target_language="",
                 )
                 for p in (data.get("languages", {}).get("presets") or [])
             ] or [

@@ -403,6 +403,9 @@ class DashboardView(ft.Row):
         # instead of assumed to be the Target language (options menu pill).
         self._auto_detect_voice = False
         self.on_auto_detect_voice_change: object = None  # callback(value: bool)
+        # "Separate text translation" pill (same options menu) — mirrors the
+        # Settings row; ON = separate Text Translation box (unified OFF).
+        self.on_separate_text_translation_change: object = None  # callback(value: bool)
         # Chatbox text format state (mirrors osc.chatbox_include_source + ui.chatbox_reading_only).
         self._chatbox_include_source = True
         self._chatbox_reading_only = False
@@ -4272,24 +4275,42 @@ class DashboardView(ft.Row):
             if callable(self.on_auto_detect_voice_change):
                 self.on_auto_detect_voice_change(bool(val))
 
-        _adv_info = ft.Container(
-            content=ft.Icon(ft.Icons.INFO_OUTLINE, size=11, color=_TEXT_FAINT),
-            tooltip=t("dashboard.menu.auto_detect_voice.tooltip"),
-            padding=ft.padding.only(left=3),
-        )
-        _adv_row = ft.Container(
-            content=ft.Row(
-                [
-                    ft.Text(t("dashboard.menu.auto_detect_voice"), size=11,
-                            color=_TEXT_MUTED),
-                    _adv_info,
-                    ft.Container(expand=True),
-                    _bool_pill(_adv_ref, _on_adv),
-                ],
-                spacing=0, vertical_alignment=ft.CrossAxisAlignment.CENTER,
-            ),
-            padding=ft.padding.only(left=10, right=10, top=4, bottom=2),
-        )
+        def _info_pill_row(label_key: str, tooltip_key: str,
+                           ref: list[bool], on_change) -> ft.Container:
+            _info = ft.Container(
+                content=ft.Icon(ft.Icons.INFO_OUTLINE, size=11, color=_TEXT_FAINT),
+                tooltip=t(tooltip_key),
+                padding=ft.padding.only(left=3),
+            )
+            return ft.Container(
+                content=ft.Row(
+                    [
+                        ft.Text(t(label_key), size=11, color=_TEXT_MUTED),
+                        _info,
+                        ft.Container(expand=True),
+                        _bool_pill(ref, on_change),
+                    ],
+                    spacing=0, vertical_alignment=ft.CrossAxisAlignment.CENTER,
+                ),
+                padding=ft.padding.only(left=10, right=10, top=4, bottom=2),
+            )
+
+        _adv_row = _info_pill_row(
+            "dashboard.menu.auto_detect_voice",
+            "dashboard.menu.auto_detect_voice.tooltip",
+            _adv_ref, _on_adv)
+
+        # ── separate text translation: mirrors the Settings row, applies live.
+        _sep_ref = [not bool(self._unified_translation)]
+
+        def _on_sep(val: bool):
+            if callable(self.on_separate_text_translation_change):
+                self.on_separate_text_translation_change(bool(val))
+
+        _sep_row = _info_pill_row(
+            "settings.separate_text_translation",
+            "settings.separate_text_translation.tooltip",
+            _sep_ref, _on_sep)
 
         # ── assemble ─────────────────────────────────────────────────────────────
         children: list[Any] = [
@@ -4308,6 +4329,7 @@ class DashboardView(ft.Row):
             children += extra_rows
         children.append(_div())
         children.append(_adv_row)
+        children.append(_sep_row)
         children.append(ft.Container(height=4))
         content = ft.Container(content=ft.Column(
             children, spacing=0, tight=True, horizontal_alignment=ft.CrossAxisAlignment.STRETCH))

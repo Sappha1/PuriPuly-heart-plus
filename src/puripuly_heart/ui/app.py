@@ -151,6 +151,7 @@ class TranslatorApp:
         self.view_dashboard.on_transliteration_change = self._on_transliteration_change
         self.view_dashboard.on_pinyin_word_grouping_change = self._on_pinyin_word_grouping_change
         self.view_dashboard.on_auto_detect_voice_change = self._on_auto_detect_voice_change
+        self.view_dashboard.on_separate_text_translation_change = self._on_separate_text_translation_change
         self.view_dashboard.on_chatbox_format_change = self._on_chatbox_format_change
         self.view_dashboard.on_request_current_translator = self._current_translator_model_value
         self.view_dashboard.on_request_deepl_usage_refresh = self._on_request_deepl_usage_refresh
@@ -2006,6 +2007,32 @@ class TranslatorApp:
             updated = copy.deepcopy(settings)
             updated.languages.auto_detect_peer_voice = bool(value)
             await self.controller.apply_settings(updated)
+        self._queue_settings_mutation_task(_task)
+
+    def _on_separate_text_translation_change(self, value: bool) -> None:
+        """Gear-menu pill: ON = separate Text Translation box (unified OFF).
+        Mirrors the Settings row; the live layout swap happens via
+        _on_settings_changed -> dash.set_unified_translation."""
+        import copy
+        async def _task():
+            settings = self.controller.settings
+            if settings is None:
+                return
+            updated = copy.deepcopy(settings)
+            updated.ui.unified_translation_ui = not bool(value)
+            await self.controller.apply_settings(updated)
+            # Keep the Settings page row in sync if it's already built.
+            with contextlib.suppress(Exception):
+                view = getattr(self, "view_settings", None)
+                txt = getattr(view, "_separate_text_text", None)
+                if txt is not None:
+                    from puripuly_heart.ui.i18n import t as _t
+                    txt.content.value = _t(
+                        "settings.option.on" if value else "settings.option.off")
+                    if view.page:
+                        txt.update()
+                if getattr(view, "_settings", None) is not None:
+                    view._settings.ui.unified_translation_ui = not bool(value)
         self._queue_settings_mutation_task(_task)
 
     # fmt id -> (include_source, send_reading, reading_only)

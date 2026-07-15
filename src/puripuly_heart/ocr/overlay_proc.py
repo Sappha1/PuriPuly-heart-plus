@@ -3773,14 +3773,23 @@ def run(monitor_index: int = 1, fps: float = 0.0, max_side: int = _TRACK_SIDE,
                                traceback.format_exc())
         finally:
             nowm = time.monotonic()
-            # Topmost re-assert: fullscreen games / other overlays can end
-            # up above the tk window after focus churn — the pipeline then
-            # runs fine but nothing is VISIBLE. Cheap to re-assert.
-            if nowm - getattr(_redraw, "_top_at", 0.0) > 3.0:
+            # Topmost ONLY while the target game is the foreground context.
+            # The overlay is a transparent, fullscreen, click-through window;
+            # forcing it topmost while the user is in the SHELL (Start menu /
+            # alt-tab switcher) kept it above them, so the game showed
+            # THROUGH the transparent window — looking like "VRChat is drawn
+            # over the Start menu". Drop topmost the instant the game loses
+            # focus so the shell sits on top; re-assert (every 3s) only while
+            # the game is active, which still fixes the z-order-loss blank.
+            want_top = bool(_TGT_FG[0])
+            if want_top != getattr(_redraw, "_is_top", None) or (
+                    want_top and nowm - getattr(_redraw, "_top_at", 0.0) > 3.0):
+                _redraw._is_top = want_top
                 _redraw._top_at = nowm
                 with contextlib_suppress():
-                    root.attributes("-topmost", True)
-                    root.lift()
+                    root.attributes("-topmost", want_top)
+                    if want_top:
+                        root.lift()
             if _SCAN_ACTIVE[0] and nowm - getattr(
                     _redraw, "_hb_at", 0.0) > 30.0:
                 _redraw._hb_at = nowm

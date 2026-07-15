@@ -4112,11 +4112,22 @@ class DashboardView(ft.Row):
             # Target language slot — nothing sensible to swap.
             return
         self._source_lang_code, self._peer_source_lang_code = tgt, src
+        # Extras swap too: the second "Your language" (alt) and the extra
+        # Target language are both single optional slots, so they trade
+        # places — swapping twice restores the original setup. An Auto
+        # Detect ("") extra peer slot can't become an alt source; drop it.
+        old_alt = self._alt_source_lang_code
+        old_extras = list(self._extra_peer_source_lang_codes)
+        new_alt = old_extras[0] if old_extras and old_extras[0] else None
+        self._alt_source_lang_code = new_alt
+        self._extra_peer_source_lang_codes = [old_alt] if old_alt else []
         # Re-assert the typed-target mirror against the new Target language.
         self._apply_unified_target_sync()
         self._update_input_font()
         self._refresh_language_panel()
         self._refresh_language_rows()
+        self._refresh_alt_source()
+        self._rebuild_extra_peer_src_rows()
         self._notify_language_change()
 
     def _build_translit_gear(self) -> ft.Control:

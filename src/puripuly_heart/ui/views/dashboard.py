@@ -3412,6 +3412,7 @@ class DashboardView(ft.Row):
         source: str,
         source_text: str,
         translated_text: str,
+        src_lang_hint: str = "",
     ) -> None:
         if self._chat_list_view is None:
             return
@@ -3426,27 +3427,27 @@ class DashboardView(ft.Row):
             label_color = _RECV_COLOR if is_peer else _SENT_COLOR
             direction = (t("dashboard.chat.received") if is_peer
                          else t("dashboard.chat.sent"))
-        # Determine source/target language for transliteration
+        # Determine source/target language for transliteration. The hint is
+        # the translator-DETECTED language (e.g. DeepL saw Japanese) — it
+        # beats every configured guess.
+        from puripuly_heart.core.transliteration import sniff_translit_language
         if is_ocr:
             # OCR can't know the speaker's language — sniff the SCRIPT of
             # the captured text. Guessing from configured languages sent
             # Chinese through the Japanese romaji engine ('你是在香港吗' →
             # '?? zaiHonkon ?': kakasi read 香港 as kanji, ?? = unmapped).
-            _s = source_text or ""
-            if any("぀" <= c <= "ヿ" for c in _s):
-                src_lang = "ja"  # kana present: Japanese
-            elif any("가" <= c <= "힯" for c in _s):
-                src_lang = "ko"
-            elif any("一" <= c <= "鿿" for c in _s):
-                src_lang = "zh"  # Han without kana: Chinese → pinyin
-            else:
-                src_lang = ""
+            src_lang = sniff_translit_language(source_text or "")
             tgt_lang = self._source_lang_code  # translated into user's lang
         elif is_peer:
-            src_lang = self._peer_source_lang_code  # may be "" (auto detect)
+            src_lang = src_lang_hint or self._peer_source_lang_code
+            if not src_lang_hint and getattr(self, "_auto_detect_voice", False):
+                # Auto detect voice: the configured Target language is only
+                # an assumption — trust the text's script instead, or the
+                # reading line vanishes when the speech is another language.
+                src_lang = sniff_translit_language(source_text or "", src_lang)
             tgt_lang = self._effective_peer_target_lang_code()  # always has a value
         else:
-            src_lang = self._source_lang_code
+            src_lang = src_lang_hint or self._source_lang_code
             tgt_lang = self._target_lang_code
 
         _TRANSLIT_COLOR = "#5ba8a0"

@@ -1622,6 +1622,16 @@ class ClientHub:
             translation.source_language,
             self._source_language_for(runtime),
         )
+        if runtime.channel == "peer" and not translation.source_language                 and not self.peer_source_language:
+            # Voice auto-detection with no provider-reported language: the
+            # configured value is only an assumption — sniff the SCRIPT so
+            # Japanese speech gets romaji instead of a silent no-op through
+            # the pinyin engine.
+            from puripuly_heart.core.transliteration import (
+                sniff_translit_language,
+            )
+            source_language = sniff_translit_language(
+                translation.source_text, source_language)
         # For peer captions the ORIGINAL (source) is the foreign-language line, so the
         # pinyin/romaji belongs above it — romanize the source text (the self path
         # romanizes its translation line instead). Without this the overlay showed no

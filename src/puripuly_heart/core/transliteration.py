@@ -774,3 +774,20 @@ def transliterate_for_language(
         if lang in ("th",) and _is_mostly_thai(text):
             return to_latin_thai(text)
     return ""
+
+
+def sniff_translit_language(text: str, fallback: str = "") -> str:
+    """Best-effort language from SCRIPT, for choosing a romanization system
+    when the configured language can't be trusted (voice auto-detection,
+    OCR captures). Kana anywhere -> Japanese; hangul -> Korean; Han without
+    kana -> Chinese; otherwise the caller's fallback."""
+    t = text or ""
+    for c in t:
+        if "぀" <= c <= "ヿ":
+            return "ja"
+        if "가" <= c <= "힯":
+            return "ko"
+    for c in t:
+        if "一" <= c <= "鿿":
+            return "zh-CN"
+    return fallback

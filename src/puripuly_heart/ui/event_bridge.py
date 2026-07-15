@@ -97,6 +97,7 @@ class UIEventBridge:
                 source=source,
                 source_text=source_text or translated_text,
                 translated_text=translated_text,
+                src_lang_hint=translation.source_language or "",
             )
         elif translation.channel == "peer":
             source_text = (translation.source_text or "").strip()
@@ -105,6 +106,7 @@ class UIEventBridge:
                 source=source,
                 source_text=source_text or translated_text,
                 translated_text=translated_text,
+                src_lang_hint=translation.source_language or "",
             )
 
     def _append_chat_entry(
@@ -114,6 +116,7 @@ class UIEventBridge:
         source: str,
         source_text: str,
         translated_text: str,
+        src_lang_hint: str = "",
     ) -> None:
         dash = getattr(self.app, "view_dashboard", None)
         append_chat = getattr(dash, "append_chat_entry", None)
@@ -125,6 +128,7 @@ class UIEventBridge:
                 source=source,
                 source_text=source_text,
                 translated_text=translated_text,
+                src_lang_hint=src_lang_hint,
             )
         except Exception:
             logger.exception("Failed to append chat entry")

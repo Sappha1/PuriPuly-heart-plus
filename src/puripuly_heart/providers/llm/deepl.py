@@ -117,7 +117,8 @@ class DeepLTranslationProvider:
     api_key: str
     _executor: object = field(init=False, default=None, repr=False)
 
-    def _translate_sync(self, text: str, source_lang: str | None, target_lang: str) -> str:
+    def _translate_sync(self, text: str, source_lang: str | None,
+                        target_lang: str) -> tuple[str, str | None]:
         import deepl  # type: ignore
 
         translator = deepl.Translator(self.api_key)
@@ -126,7 +127,18 @@ class DeepLTranslationProvider:
             source_lang=source_lang,
             target_lang=target_lang,
         )
-        return str(result)
+        detected = getattr(result, "detected_source_lang", None)
+        return str(result), detected
+
+
+# DeepL reports detected sources as uppercase ISO codes ("JA", "ZH", "EN").
+# Map back to the app's codes so downstream romanization/labels know what the
+# speech ACTUALLY was when the user runs voice auto-detection.
+def _from_deepl_detected(code: str | None) -> str | None:
+    if not code:
+        return None
+    c = str(code).strip().upper()
+    return {"ZH": "zh-CN"}.get(c, c.lower()) or None
 
     async def translate(
         self,
@@ -145,7 +157,7 @@ class DeepLTranslationProvider:
             source_language, target_language, source_lang, target_lang, text,
         )
         loop = asyncio.get_event_loop()
-        translated = await loop.run_in_executor(
+        translated, detected = await loop.run_in_executor(
             None,
             self._translate_sync,
             text,
@@ -166,8 +178,10 @@ class DeepLTranslationProvider:
             logger.warning("[DeepL] trimmed hallucinated language label: %r",
                            translated[len(_trim):])
             translated = _trim.strip()
-        logger.info("[DeepL] result: %r", translated)
-        return Translation(utterance_id=utterance_id, text=translated)
+        detected_code = _from_deepl_detected(detected)
+        logger.info("[DeepL] result: %r (detected=%s)", translated, detected_code)
+        return Translation(utterance_id=utterance_id, text=translated,
+                           source_language=detected_code)
 
     async def warmup(self) -> None:
         pass

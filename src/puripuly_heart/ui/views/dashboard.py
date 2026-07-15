@@ -1667,6 +1667,12 @@ class DashboardView(ft.Row):
                 padding=ft.padding.only(left=10, right=10, top=top, bottom=2),
             )
 
+
+        def _row_tt(key: str, control, top: int = 4) -> ft.Container:
+            # Labeled row with an auto info tooltip from '<key>.tooltip'.
+            return _section_row(t(key), control, top=top,
+                                tooltip=t(key + ".tooltip"))
+
         def _guarded(fn, val):
             try:
                 if callable(fn):
@@ -2427,23 +2433,23 @@ class DashboardView(ft.Row):
         content = ft.Container(
             content=ft.Column(
                 [
-                    _section_row(t("dashboard.ocr.state"),
+                    _row_tt("dashboard.ocr.state",
                                  _status_pill, top=8),
-                    _section_row(t("dashboard.ocr.menu.window"),
+                    _row_tt("dashboard.ocr.menu.window",
                                  _win_btn),
-                    _section_row(t("dashboard.ocr.menu.foreign_only"),
+                    _row_tt("dashboard.ocr.menu.foreign_only",
                                  _bool_pill(self._ocr_foreign_only,
                                             _on_foreign)),
-                    _section_row(t("dashboard.ocr.menu.translate"),
+                    _row_tt("dashboard.ocr.menu.translate",
                                  _bool_pill(self._ocr_translate,
                                             _on_translate)),
-                    _section_row(t("dashboard.ocr.menu.xlat_model"),
+                    _row_tt("dashboard.ocr.menu.xlat_model",
                                  _svc_btn),
-                    _section_row(t("dashboard.ocr.menu.format"), fmt_btn),
-                    _section_row(t("dashboard.ocr.menu.style"), style_btn),
-                    _section_row(t("dashboard.ocr.scan.hold_bind"),
+                    _row_tt("dashboard.ocr.menu.format", fmt_btn),
+                    _row_tt("dashboard.ocr.menu.style", style_btn),
+                    _row_tt("dashboard.ocr.scan.hold_bind",
                                  hold_bind_btn),
-                    _section_row(t("dashboard.ocr.scan.toggle_bind"),
+                    _row_tt("dashboard.ocr.scan.toggle_bind",
                                  toggle_bind_btn),
                     _section_row(t("dashboard.ocr.scan.unfiltered_hold_bind"),
                                  unf_hold_bind_btn,
@@ -2453,23 +2459,23 @@ class DashboardView(ft.Row):
                         t("dashboard.ocr.scan.unfiltered_toggle_bind"),
                         unf_toggle_bind_btn,
                         tooltip=t("dashboard.ocr.scan.unfiltered.tooltip")),
-                    _section_row(t("dashboard.ocr.menu.bubbles_only"),
+                    _row_tt("dashboard.ocr.menu.bubbles_only",
                                  _bool_pill(self._ocr_bubbles_only,
                                             _on_bubbles)),
-                    _section_row(t("dashboard.ocr.menu.ignore_names"),
+                    _row_tt("dashboard.ocr.menu.ignore_names",
                                  _bool_pill(self._ocr_ignore_names,
                                             _on_names)),
-                    _section_row(t("dashboard.ocr.menu.ignore_pronouns"),
+                    _row_tt("dashboard.ocr.menu.ignore_pronouns",
                                  _bool_pill(self._ocr_ignore_pronouns,
                                             _on_pronouns)),
-                    _section_row(t("dashboard.ocr.menu.ignore_groups"),
+                    _row_tt("dashboard.ocr.menu.ignore_groups",
                                  _mk_style_bool("ignore_groups")),
-                    _section_row(t("dashboard.ocr.menu.prewarm"),
+                    _row_tt("dashboard.ocr.menu.prewarm",
                                  _bool_pill(self._ocr_prewarm, _on_prewarm)),
-                    _section_row(t("dashboard.ocr.menu.log_chat"),
+                    _row_tt("dashboard.ocr.menu.log_chat",
                                  _bool_pill(self.ocr_log_chat, _on_log)),
-                    _section_row(
-                        t("dashboard.ocr.menu.region_set"),
+                    _row_tt(
+                        "dashboard.ocr.menu.region_set",
                         ft.Row([set_btn, border_btn, lock_pill], spacing=6,
                                tight=True),
                     ),
@@ -2780,6 +2786,12 @@ class DashboardView(ft.Row):
                 padding=ft.padding.only(left=10, right=10, top=top, bottom=2),
             )
 
+
+        def _row_tt(key: str, control, top: int = 4) -> ft.Container:
+            # Labeled row with an auto info tooltip from '<key>.tooltip'.
+            return _section_row(t(key), control, top=top,
+                                tooltip=t(key + ".tooltip"))
+
         def _bool_pill(state_ref: list[bool], on_change) -> ft.Container:
             lbl = ft.Text(
                 t("settings.option.on") if state_ref[0] else t("settings.option.off"),
@@ -2853,7 +2865,16 @@ class DashboardView(ft.Row):
 
         _mode_row = ft.Container(
             content=ft.Column([
-                ft.Text(t("dashboard.overlay.mode.label"), size=10, color=_TEXT_FAINT),
+                ft.Row([
+                    ft.Text(t("dashboard.overlay.mode.label"), size=10, color=_TEXT_FAINT),
+                    ft.Container(
+                        content=ft.Icon(ft.Icons.INFO_OUTLINE, size=11,
+                                        color=_TEXT_FAINT),
+                        tooltip=t("dashboard.overlay.mode.label.tooltip"),
+                        padding=ft.padding.only(left=3),
+                    ),
+                ], spacing=0, tight=True,
+                   vertical_alignment=ft.CrossAxisAlignment.CENTER),
                 ft.Row([
                     _make_mode_pill("auto",    t("dashboard.overlay.mode.auto_option")),
                     _make_mode_pill("steamvr", t("dashboard.overlay.mode.vr_option")),
@@ -2869,8 +2890,8 @@ class DashboardView(ft.Row):
             self._overlay_single_turn = val
             if callable(self.on_overlay_single_turn_change):
                 self.on_overlay_single_turn_change(val)
-        _single_row = _section_row(
-            t("dashboard.overlay.single_turn.label"),
+        _single_row = _row_tt(
+            "dashboard.overlay.single_turn.label",
             _bool_pill(_st_ref, _on_single),
         )
 
@@ -2943,7 +2964,7 @@ class DashboardView(ft.Row):
 
         _disp_btn.on_click = _toggle_disp
         _disp_pill_row = ft.Column([
-            _section_row(t("dashboard.overlay.options.display"), _disp_btn),
+            _row_tt("dashboard.overlay.options.display", _disp_btn),
             _disp_rows_col,
         ], spacing=0, tight=True)
 
@@ -3022,7 +3043,7 @@ class DashboardView(ft.Row):
 
         _size_btn.on_click = _toggle_size
         _size_pill_row = ft.Column([
-            _section_row(t("dashboard.overlay.options.size"), _size_btn),
+            _row_tt("dashboard.overlay.options.size", _size_btn),
             _size_rows_col,
         ], spacing=0, tight=True)
 
@@ -3032,14 +3053,14 @@ class DashboardView(ft.Row):
             self._self_in_overlay = val
             if callable(self.on_self_in_overlay_toggle):
                 self.on_self_in_overlay_toggle(val)
-        _voice_row = _section_row(t("dashboard.overlay.show_voice"), _bool_pill(_v_ref, _on_voice))
+        _voice_row = _row_tt("dashboard.overlay.show_voice", _bool_pill(_v_ref, _on_voice))
 
         _tx_ref = [self._typed_in_overlay]
         def _on_typed(val: bool):
             self._typed_in_overlay = val
             if callable(self.on_typed_in_overlay_toggle):
                 self.on_typed_in_overlay_toggle(val)
-        _text_row = _section_row(t("dashboard.overlay.show_text"), _bool_pill(_tx_ref, _on_typed))
+        _text_row = _row_tt("dashboard.overlay.show_text", _bool_pill(_tx_ref, _on_typed))
 
         # ── divider helper ────────────────────────────────────────────────────
         def _div() -> ft.Container:
@@ -4250,6 +4271,12 @@ class DashboardView(ft.Row):
                 padding=ft.padding.only(left=10, right=10, top=top, bottom=2),
             )
 
+
+        def _row_tt(key: str, control, top: int = 4) -> ft.Container:
+            # Labeled row with an auto info tooltip from '<key>.tooltip'.
+            return _section_row(t(key), control, top=top,
+                                tooltip=t(key + ".tooltip"))
+
         def _bool_pill(state_ref: list[bool], on_change) -> ft.Container:
             lbl = ft.Text(
                 t("settings.option.on") if state_ref[0] else t("settings.option.off"),
@@ -5038,7 +5065,15 @@ class DashboardView(ft.Row):
                     ft.Container(
                         content=ft.Row(
                             [ft.Text(t("dashboard.loopback.menu.mode"),
-                                     size=11, color=_TEXT_MUTED, expand=True),
+                                     size=11, color=_TEXT_MUTED),
+                             ft.Container(
+                                 content=ft.Icon(ft.Icons.INFO_OUTLINE,
+                                                 size=11, color=_TEXT_FAINT),
+                                 tooltip=t(
+                                     "dashboard.loopback.menu.mode.tooltip"),
+                                 padding=ft.padding.only(left=3),
+                             ),
+                             ft.Container(expand=True),
                              _mode_btn],
                             spacing=8,
                             vertical_alignment=ft.CrossAxisAlignment.CENTER,
@@ -5050,7 +5085,16 @@ class DashboardView(ft.Row):
                     ft.Container(
                         content=ft.Row(
                             [ft.Text(t("dashboard.loopback.menu.translation_only"),
-                                     size=11, color=_TEXT_MUTED, expand=True),
+                                     size=11, color=_TEXT_MUTED),
+                             ft.Container(
+                                 content=ft.Icon(ft.Icons.INFO_OUTLINE,
+                                                 size=11, color=_TEXT_FAINT),
+                                 tooltip=t(
+                                     "dashboard.loopback.menu"
+                                     ".translation_only.tooltip"),
+                                 padding=ft.padding.only(left=3),
+                             ),
+                             ft.Container(expand=True),
                              to_pill],
                             spacing=8,
                             vertical_alignment=ft.CrossAxisAlignment.CENTER,

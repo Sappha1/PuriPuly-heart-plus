@@ -4200,6 +4200,7 @@ class DashboardView(ft.Row):
         return icon
 
     def _on_swap_languages(self, _e=None) -> None:
+        logger.info("[LangNotify] SWAP BUTTON clicked (event=%r)", _e)
         src, tgt = self._source_lang_code, self._peer_source_lang_code
         if not src or not tgt:
             # Auto Detect / legacy-empty can't move into the concrete
@@ -5248,6 +5249,16 @@ class DashboardView(ft.Row):
             self.on_recent_languages_change(self._recent_source_langs, self._recent_target_langs)
 
     def _notify_language_change(self):
+        # TEMP diagnostic (r251): a language flip was observed at startup with
+        # no user input — log the caller chain of every notify so the next
+        # occurrence identifies itself. Cheap; remove once the phantom is found.
+        try:
+            import traceback as _tb
+            _frames = _tb.extract_stack(limit=6)[:-1]
+            logger.info("[LangNotify] via %s", " <- ".join(
+                f"{f.name}:{f.lineno}" for f in reversed(_frames)))
+        except Exception:
+            pass
         if self.on_language_change:
             self.on_language_change(
                 self._source_lang_code,

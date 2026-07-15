@@ -651,7 +651,7 @@
   "dashboard.peer_translate_to": "Translate to",
   "dashboard.download": "Download",
   "dashboard.chat": "Chat",
-  "dashboard.tooltip.swap_languages": "Swap languages",
+  "dashboard.tooltip.swap_languages": "Swap Your language and Target language.",
   "dashboard.tooltip.add_target": "Add target language",
   "dashboard.tooltip.add_second_spoken": "Add second spoken language (bilingual quick-switch)",
   "dashboard.tooltip.remove_second_spoken": "Remove second spoken language",

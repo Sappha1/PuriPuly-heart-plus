@@ -651,7 +651,7 @@
   "dashboard.peer_translate_to": "翻訳先",
   "dashboard.download": "ダウンロード",
   "dashboard.chat": "チャット",
-  "dashboard.tooltip.swap_languages": "言語を入れ替え",
+  "dashboard.tooltip.swap_languages": "「あなたの言語」と「ターゲット言語」を入れ替えます。",
   "dashboard.tooltip.add_target": "対象言語を追加",
   "dashboard.tooltip.add_second_spoken": "2 つ目の発話言語を追加（バイリンガル切替）",
   "dashboard.tooltip.remove_second_spoken": "2 つ目の発話言語を削除",

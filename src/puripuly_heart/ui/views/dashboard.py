@@ -1133,7 +1133,11 @@ class DashboardView(ft.Row):
             self._lang_panel)
         self._voice_section_card = _section_card(
             ft.Icons.GRAPHIC_EQ, _voice_key,
-            self._peer_panel, trailing=self._build_translit_gear())
+            self._peer_panel,
+            trailing=ft.Row(
+                [self._build_lang_swap_btn(), self._build_translit_gear()],
+                spacing=2, tight=True,
+            ))
         self._voice_section_lbl = self._section_header_labels[-1][0]
         self._preset_row_container = _preset_row
         self._apply_unified_target_sync()  # also sets text-card visibility
@@ -4086,6 +4090,34 @@ class DashboardView(ft.Row):
         "read_only":       (False, True,  True),
         "trans_only":      (False, False, False),
     }
+
+    def _build_lang_swap_btn(self) -> ft.Control:
+        """Header button that swaps Your language <-> Target language."""
+        icon = ft.Container(
+            content=ft.Icon(ft.Icons.SWAP_VERT, size=15, color=_TEXT_MUTED),
+            padding=ft.padding.all(3), border_radius=4,
+            tooltip=t("dashboard.tooltip.swap_languages"),
+            on_click=self._on_swap_languages,
+            on_hover=lambda e: (
+                setattr(e.control, "bgcolor", "#33343a" if e.data == "true" else ft.Colors.TRANSPARENT)
+                or (e.control.update() if e.control.page else None)
+            ),
+        )
+        return icon
+
+    def _on_swap_languages(self, _e=None) -> None:
+        src, tgt = self._source_lang_code, self._peer_source_lang_code
+        if not src or not tgt:
+            # Auto Detect / legacy-empty can't move into the concrete
+            # Target language slot — nothing sensible to swap.
+            return
+        self._source_lang_code, self._peer_source_lang_code = tgt, src
+        # Re-assert the typed-target mirror against the new Target language.
+        self._apply_unified_target_sync()
+        self._update_input_font()
+        self._refresh_language_panel()
+        self._refresh_language_rows()
+        self._notify_language_change()
 
     def _build_translit_gear(self) -> ft.Control:
         """A single cog on the TEXT TRANSLATION header that opens the format menu."""

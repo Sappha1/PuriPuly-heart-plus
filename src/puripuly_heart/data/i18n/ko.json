@@ -651,7 +651,7 @@
   "dashboard.peer_translate_to": "번역할 언어",
   "dashboard.download": "다운로드",
   "dashboard.chat": "채팅",
-  "dashboard.tooltip.swap_languages": "언어 바꾸기",
+  "dashboard.tooltip.swap_languages": "'내 언어'와 '대상 언어'를 서로 바꿉니다.",
   "dashboard.tooltip.add_target": "대상 언어 추가",
   "dashboard.tooltip.add_second_spoken": "두 번째 사용 언어 추가 (이중 언어 빠른 전환)",
   "dashboard.tooltip.remove_second_spoken": "두 번째 사용 언어 제거",

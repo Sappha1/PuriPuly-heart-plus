@@ -112,6 +112,16 @@ def _to_deepl_target(lang_code: str) -> str:
     return normalized.upper()
 
 
+# DeepL reports detected sources as uppercase ISO codes ("JA", "ZH", "EN").
+# Map back to the app's codes so downstream romanization/labels know what the
+# speech ACTUALLY was when the user runs voice auto-detection.
+def _from_deepl_detected(code: str | None) -> str | None:
+    if not code:
+        return None
+    c = str(code).strip().upper()
+    return {"ZH": "zh-CN"}.get(c, c.lower()) or None
+
+
 @dataclass(slots=True)
 class DeepLTranslationProvider:
     api_key: str
@@ -130,15 +140,6 @@ class DeepLTranslationProvider:
         detected = getattr(result, "detected_source_lang", None)
         return str(result), detected
 
-
-# DeepL reports detected sources as uppercase ISO codes ("JA", "ZH", "EN").
-# Map back to the app's codes so downstream romanization/labels know what the
-# speech ACTUALLY was when the user runs voice auto-detection.
-def _from_deepl_detected(code: str | None) -> str | None:
-    if not code:
-        return None
-    c = str(code).strip().upper()
-    return {"ZH": "zh-CN"}.get(c, c.lower()) or None
 
     async def translate(
         self,

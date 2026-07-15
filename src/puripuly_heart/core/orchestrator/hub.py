@@ -3244,6 +3244,15 @@ class ClientHub:
                 # setting) — empty source lets DeepL (None) and the free web
                 # engines ("auto") detect it per message.
                 request_source_language = ""
+            elif runtime.channel == "peer" and not self.peer_source_language:
+                # Voice auto-detection: _source_language_for's "assume the
+                # user's target language" fallback must NOT be pinned onto
+                # the translator request — DeepL echoes a pinned source back
+                # as its "detected" language and never actually detects
+                # (Japanese speech under a zh-CN assumption came back
+                # detected=zh-CN, feeding romaji through the pinyin engine
+                # downstream). Empty source = real per-utterance detection.
+                request_source_language = ""
             raw_translation = await self.llm.translate(
                 utterance_id=utterance_id,
                 text=text,

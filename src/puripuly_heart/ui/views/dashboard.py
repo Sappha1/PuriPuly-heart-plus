@@ -1,10 +1,13 @@
 import asyncio
 import contextlib
 import datetime
+import logging
 import time
 from typing import Any, Callable
 
 import flet as ft
+
+logger = logging.getLogger(__name__)
 
 from puripuly_heart.core.language import get_all_language_options, is_local_qwen_supported
 from puripuly_heart.core.transliteration import transliterate_for_language

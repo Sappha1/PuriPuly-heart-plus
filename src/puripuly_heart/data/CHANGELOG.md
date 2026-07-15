@@ -2,6 +2,14 @@
 
 User-facing changes per build. The latest build's highlights also appear in-app when an update is ready.
 
+## r248 — 2026-07-14
+
+- Realtime OCR translation: read chat bubbles and world text straight off the screen (ALT+E)
+- Redesigned Translation card: Your language / Target language with one-click swap
+- Independent Chat log format: send translation-only in game while the log shows everything
+- Typed chat messages now auto-detect what you typed and translate into the partner's language
+- Bug fixes: typed-message translation failures, alt-tab/taskbar issues, peer model reloads
+
 ## r247 — 2026-07-07
 - The settings gear now stays dead-center; the update button fades in to its right without moving anything.
 

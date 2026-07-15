@@ -222,6 +222,21 @@ def default_local_stt_source_for_locale(locale: str | None) -> str:
     normalized = (locale or "").strip().replace("_", "-").lower()
     if normalized in {"zh-cn", "zh-hk", "zh-hant-hk"}:
         return "modelscope"
+    # UI locale alone misses most China installs: fresh installs default to
+    # the ENGLISH UI, so first-launch downloads tried HuggingFace first —
+    # which is blocked in China. The download then crawled through timeouts
+    # ("frozen at 0%", users cancel, partial installs) before the ModelScope
+    # fallback ever got its turn. Use the same timezone signal as the Bing
+    # translator default: China Standard Time -> ModelScope first.
+    # (ModelScope is reachable worldwide, so a false positive is harmless.)
+    try:
+        import subprocess
+        result = subprocess.run(["tzutil", "/g"], capture_output=True,
+                                text=True, timeout=3)
+        if "China Standard Time" in result.stdout:
+            return "modelscope"
+    except Exception:
+        pass
     return "huggingface"
 
 

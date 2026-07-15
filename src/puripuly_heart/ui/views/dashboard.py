@@ -858,16 +858,7 @@ class DashboardView(ft.Row):
         self._peer_panel = ft.Container(
             content=ft.Column(
                 [
-                    # "Translate from" (the peer's language) first — reading
-                    # top-to-bottom mirrors the translation direction.
-                    ft.Row(
-                        [self._lbl_peer_voice, _peer_speaks_info],
-                        spacing=0,
-                        vertical_alignment=ft.CrossAxisAlignment.CENTER,
-                    ),
-                    _peer_src_row,
-                    self._extra_peer_src_rows_col,
-                    ft.Divider(height=5, color=_DIVIDER, thickness=1),
+                    # "Your language" first, then "Target language" below.
                     ft.Row(
                         [self._lbl_you_speak, _you_speak_info],
                         spacing=0,
@@ -875,6 +866,14 @@ class DashboardView(ft.Row):
                     ),
                     _src_with_plus,
                     self._alt_src_row,
+                    ft.Divider(height=5, color=_DIVIDER, thickness=1),
+                    ft.Row(
+                        [self._lbl_peer_voice, _peer_speaks_info],
+                        spacing=0,
+                        vertical_alignment=ft.CrossAxisAlignment.CENTER,
+                    ),
+                    _peer_src_row,
+                    self._extra_peer_src_rows_col,
                 ],
                 spacing=3,
                 horizontal_alignment=ft.CrossAxisAlignment.STRETCH,

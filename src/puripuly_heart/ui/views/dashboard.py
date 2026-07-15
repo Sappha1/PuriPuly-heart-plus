@@ -414,6 +414,10 @@ class DashboardView(ft.Row):
         self._chatbox_include_source = True
         self._chatbox_reading_only = False
         self.on_chatbox_format_change: object = None  # callback(fmt_id: str)
+        # In-app chat LOG format — independent of the chatbox format, so
+        # "send translation only in game, but log everything" works.
+        self._chat_log_format = "orig_read_trans"
+        self.on_chat_log_format_change: object = None  # callback(fmt_id: str)
         self.translation_needs_key = False
         self.stt_needs_key = False
         self.last_sent_text = t("dashboard.ready")
@@ -504,6 +508,8 @@ class DashboardView(ft.Row):
                 _sd.get("languages", {}).get("auto_detect_peer_voice", False))
             self._separate_target_pref = str(
                 _sd.get("languages", {}).get("separate_target_language", ""))
+            self._chat_log_format = str(
+                _sd.get("ui", {}).get("chat_log_format", "orig_read_trans"))
         except Exception:
             pass
         self._ocr_prewarm = bool(_ocr_p.get("prewarm", True))
@@ -3428,10 +3434,16 @@ class DashboardView(ft.Row):
         has_translation = bool(source_text and translated_text and source_text.strip() != translated_text.strip())
 
         # Log romanization follows the display toggle (show_*) only — the chatbox
-        # "Output Format" (send_*) shapes the VRChat message, not the in-app log.
-        _want_romaji = self.show_romaji
-        _want_pinyin = self.show_pinyin
-        _want_latin = self.show_latin
+        # The in-app log has its OWN format ("Chat log" in the options menu),
+        # independent of what the chatbox sends to VRChat.
+        _fmt = str(getattr(self, "_chat_log_format", "orig_read_trans"))
+        if _fmt not in ("orig_trans", "orig_read_trans", "read_trans",
+                        "read_only", "trans_only"):
+            _fmt = "orig_read_trans"
+        _inc_src = _fmt in ("orig_trans", "orig_read_trans")
+        _read_only = _fmt == "read_only"
+        _want_read = _fmt in ("orig_read_trans", "read_trans", "read_only")
+        _want_romaji = _want_pinyin = _want_latin = _want_read
         if is_ocr:
             # OCR entries always romanize by the sniffed script — the
             # overlay shows pinyin for these lines, the log should match
@@ -3445,13 +3457,20 @@ class DashboardView(ft.Row):
                 translated_text, tgt_lang, show_pinyin=_want_pinyin, show_romaji=_want_romaji, show_latin=_want_latin
             )
             # Source text with optional transliteration (if source is CJK)
-            if translit_src:
+            if translit_src and _inc_src:
                 content_rows.append(ft.Text(translit_src, size=11, color=_TRANSLIT_COLOR, italic=True))
-            content_rows.append(ft.Text(source_text.strip(), size=12, color=_TEXT_FAINT))
+            if _inc_src:
+                content_rows.append(ft.Text(source_text.strip(), size=12, color=_TEXT_FAINT))
             # Translation block: pinyin/romaji above, then translation text
-            if translit_tgt and translit_tgt != translit_src:
+            if translit_tgt and (translit_tgt != translit_src or not _inc_src):
                 content_rows.append(ft.Text(translit_tgt, size=11, color=_TRANSLIT_COLOR, italic=True))
-            content_rows.append(ft.Text(translated_text.strip(), size=13, color=_TEXT_PRIMARY, weight=ft.FontWeight.W_500))
+            if _read_only:
+                # Reading only: keep just the translit lines; fall back to the
+                # translation when nothing was romanizable at all.
+                if not content_rows:
+                    content_rows.append(ft.Text(translated_text.strip(), size=13, color=_TEXT_PRIMARY, weight=ft.FontWeight.W_500))
+            else:
+                content_rows.append(ft.Text(translated_text.strip(), size=13, color=_TEXT_PRIMARY, weight=ft.FontWeight.W_500))
         elif translated_text:
             translit = transliterate_for_language(
                 translated_text, tgt_lang, show_pinyin=_want_pinyin, show_romaji=_want_romaji, show_latin=_want_latin
@@ -4248,6 +4267,11 @@ class DashboardView(ft.Row):
         if callable(self.on_chatbox_format_change):
             self.on_chatbox_format_change(fmt)
 
+    def _pick_chat_log_fmt(self, fmt: str) -> None:
+        self._chat_log_format = fmt
+        if callable(self.on_chat_log_format_change):
+            self.on_chat_log_format_change(fmt)
+
     def _toggle_overlay_reading(self) -> None:
         new = not (self.show_pinyin or self.show_romaji or self.show_latin)
         self.show_pinyin = self.show_romaji = self.show_latin = new
@@ -4321,64 +4345,82 @@ class DashboardView(ft.Row):
         def _fmt_label(fid: str) -> str:
             return t(f"dashboard.translit.fmt.{fid}", system=rw)
 
-        cur = [self._current_chatbox_fmt()]
-        _fmt_btn_text = ft.Text(
-            _fmt_label(cur[0]), size=11, color=_TOGGLE_ON, weight=ft.FontWeight.W_600,
-            no_wrap=True, overflow=ft.TextOverflow.ELLIPSIS,
-        )
-        _fmt_btn = ft.Container(
-            content=_fmt_btn_text, padding=ft.padding.symmetric(horizontal=8, vertical=4),
-            border_radius=6, bgcolor="#1a2e2a", border=ft.border.all(1, _TOGGLE_ON),
-        )
-        _fmt_icons: dict[str, Any] = {}
-        _fmt_rows: list[Any] = []
-        for fid in fmt_ids:
-            _active = fid == cur[0]
-            _ic = ft.Icon(
-                ft.Icons.RADIO_BUTTON_CHECKED if _active else ft.Icons.RADIO_BUTTON_UNCHECKED,
-                size=15, color=_TOGGLE_ON if _active else _TEXT_FAINT,
+        def _mk_fmt_selector(current_id: str, on_pick,
+                             label_key: str) -> ft.Column:
+            # Summary button expanding to a radio list; used twice — once for
+            # the CHATBOX (what VRChat receives) and once for the CHAT LOG
+            # (what the in-app log shows). Independent selections.
+            cur = [current_id]
+            _btn_text = ft.Text(
+                _fmt_label(cur[0]), size=11, color=_TOGGLE_ON, weight=ft.FontWeight.W_600,
+                no_wrap=True, overflow=ft.TextOverflow.ELLIPSIS,
             )
-            _fmt_icons[fid] = _ic
-            _row_lbl = ft.Text(_fmt_label(fid), size=12, color=_TEXT_PRIMARY, expand=True)
-            def _on_fmt_row(_ev, _f=fid):
-                if cur[0] == _f:
-                    return
-                cur[0] = _f
-                self._pick_chatbox_fmt(_f)
-                for _k, _i in _fmt_icons.items():
-                    _sel = _k == _f
-                    _i.name = ft.Icons.RADIO_BUTTON_CHECKED if _sel else ft.Icons.RADIO_BUTTON_UNCHECKED
-                    _i.color = _TOGGLE_ON if _sel else _TEXT_FAINT
-                _fmt_btn_text.value = _fmt_label(_f)
-                try:
-                    _fmt_btn_text.update()
-                    for _i in _fmt_icons.values():
-                        _i.update()
+            _btn = ft.Container(
+                content=_btn_text, padding=ft.padding.symmetric(horizontal=8, vertical=4),
+                border_radius=6, bgcolor="#1a2e2a", border=ft.border.all(1, _TOGGLE_ON),
+            )
+            _icons: dict[str, Any] = {}
+            _rows: list[Any] = []
+            for fid in fmt_ids:
+                _active = fid == cur[0]
+                _ic = ft.Icon(
+                    ft.Icons.RADIO_BUTTON_CHECKED if _active else ft.Icons.RADIO_BUTTON_UNCHECKED,
+                    size=15, color=_TOGGLE_ON if _active else _TEXT_FAINT,
+                )
+                _icons[fid] = _ic
+                _row_lbl = ft.Text(_fmt_label(fid), size=12, color=_TEXT_PRIMARY, expand=True)
+                def _on_row(_ev, _f=fid):
+                    if cur[0] == _f:
+                        return
+                    cur[0] = _f
+                    on_pick(_f)
+                    for _k, _i in _icons.items():
+                        _sel = _k == _f
+                        _i.name = ft.Icons.RADIO_BUTTON_CHECKED if _sel else ft.Icons.RADIO_BUTTON_UNCHECKED
+                        _i.color = _TOGGLE_ON if _sel else _TEXT_FAINT
+                    _btn_text.value = _fmt_label(_f)
+                    try:
+                        _btn_text.update()
+                        for _i in _icons.values():
+                            _i.update()
+                    except Exception: pass
+                _rows.append(ft.Container(
+                    content=ft.Row([_ic, _row_lbl], spacing=8,
+                                   vertical_alignment=ft.CrossAxisAlignment.CENTER),
+                    padding=ft.padding.only(left=18, right=10, top=6, bottom=6),
+                    border_radius=5, on_click=_on_row,
+                    on_hover=lambda e2: (
+                        setattr(e2.control, "bgcolor", "#2a3040" if e2.data == "true" else ft.Colors.TRANSPARENT)
+                        or (e2.control.update() if e2.control.page else None)
+                    ),
+                ))
+            _rows_col = ft.Column(_rows, spacing=0, tight=True, visible=False)
+            _expanded = [False]
+            def _toggle(_ev):
+                _expanded[0] = not _expanded[0]
+                _rows_col.visible = _expanded[0]
+                try: _rows_col.update()
                 except Exception: pass
-            _fmt_rows.append(ft.Container(
-                content=ft.Row([_ic, _row_lbl], spacing=8,
-                               vertical_alignment=ft.CrossAxisAlignment.CENTER),
-                padding=ft.padding.only(left=18, right=10, top=6, bottom=6),
-                border_radius=5, on_click=_on_fmt_row,
-                on_hover=lambda e2: (
-                    setattr(e2.control, "bgcolor", "#2a3040" if e2.data == "true" else ft.Colors.TRANSPARENT)
-                    or (e2.control.update() if e2.control.page else None)
-                ),
-            ))
-        _fmt_rows_col = ft.Column(_fmt_rows, spacing=0, tight=True, visible=False)
-        _fmt_expanded = [False]
-        def _toggle_fmt(_ev):
-            _fmt_expanded[0] = not _fmt_expanded[0]
-            _fmt_rows_col.visible = _fmt_expanded[0]
-            try: _fmt_rows_col.update()
-            except Exception: pass
-        _fmt_btn.on_click = _toggle_fmt
-        _fmt_section = ft.Column(
-            [_section_row(t("dashboard.translit.menu.chatbox_short"), _fmt_btn,
-                          tooltip=t("dashboard.translit.menu.chatbox_short.tooltip")),
-             _fmt_rows_col],
-            spacing=0, tight=True,
-        )
+            _btn.on_click = _toggle
+            return ft.Column(
+                [_section_row(t(label_key), _btn,
+                              tooltip=t(label_key + ".tooltip")),
+                 _rows_col],
+                spacing=0, tight=True,
+            )
+
+        _fmt_section = _mk_fmt_selector(
+            self._current_chatbox_fmt(), self._pick_chatbox_fmt,
+            "dashboard.translit.menu.chatbox_short")
+        _log_fmt_cur = str(self._chat_log_format)
+        if _log_fmt_cur not in fmt_ids:
+            _log_fmt_cur = "trans_only" if _log_fmt_cur not in (
+                "orig_trans", "orig_read_trans", "read_trans", "read_only",
+                "trans_only") else _log_fmt_cur
+        _log_fmt_section = _mk_fmt_selector(
+            _log_fmt_cur if _log_fmt_cur in fmt_ids else "orig_trans",
+            self._pick_chat_log_fmt,
+            "dashboard.translit.menu.log_short")
 
         # ── overlay reading + grouped pinyin (On/Off pills), reading langs only ──
         extra_rows: list[Any] = []
@@ -4434,6 +4476,7 @@ class DashboardView(ft.Row):
                 padding=ft.padding.only(left=10, right=10, top=8, bottom=2),
             ),
             _fmt_section,
+            _log_fmt_section,
         ]
         if extra_rows:
             children.append(_div())

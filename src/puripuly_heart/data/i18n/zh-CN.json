@@ -727,6 +727,8 @@
   "dashboard.translit.menu.title": "输出格式",
   "dashboard.translit.menu.chatbox_short": "聊天框",
   "dashboard.translit.menu.chatbox_short.tooltip": "发送到 VRChat 聊天框的消息格式：原文、{system}、译文或其组合。",
+  "dashboard.translit.menu.log_short": "聊天记录",
+  "dashboard.translit.menu.log_short.tooltip": "应用内聊天记录对每条消息的显示内容——独立于上方的聊天框格式，例如游戏内只发送译文，而记录保留原文、{system}和译文。",
   "settings.steamvr_autolaunch": "随 SteamVR 启动",
   "settings.auto_download_updates": "自动下载更新",
   "settings.separate_text_translation": "独立文本翻译",

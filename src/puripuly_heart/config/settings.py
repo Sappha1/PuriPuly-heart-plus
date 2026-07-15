@@ -880,6 +880,8 @@ class UiSettings:
     # make typed messages mirror the Voice "Translate to" (reading) language.
     # Default on — most users want one target, not two independent directions.
     unified_translation_ui: bool = True
+    # In-app chat log format — independent of the chatbox output format.
+    chat_log_format: str = "orig_read_trans"
     show_pending_echo: bool = True
     chatbox_send_peer: bool = False
     # When True, peer-voice loopback into your own chatbox sends only the final
@@ -1627,6 +1629,7 @@ def to_dict(settings: AppSettings) -> dict[str, Any]:
             "peer_translation_enabled": settings.ui.peer_translation_enabled,
             "filter_peer_by_target_languages": settings.ui.filter_peer_by_target_languages,
             "unified_translation_ui": settings.ui.unified_translation_ui,
+        "chat_log_format": settings.ui.chat_log_format,
             "show_pending_echo": settings.ui.show_pending_echo,
             "chatbox_send_peer": settings.ui.chatbox_send_peer,
             "chatbox_send_peer_translation_only": settings.ui.chatbox_send_peer_translation_only,
@@ -3922,6 +3925,7 @@ def from_dict(data: dict[str, Any]) -> AppSettings:
             typed_in_overlay=bool(ui_data.get("typed_in_overlay", True)),
             filter_peer_by_target_languages=bool(ui_data.get("filter_peer_by_target_languages", False)),
             unified_translation_ui=bool(ui_data.get("unified_translation_ui", True)),
+        chat_log_format=str(ui_data.get("chat_log_format", "orig_read_trans")),
             show_pending_echo=bool(ui_data.get("show_pending_echo", True)),
             chatbox_send_peer=bool(ui_data.get("chatbox_send_peer", False)),
             chatbox_send_peer_translation_only=bool(

@@ -727,6 +727,8 @@
   "dashboard.translit.menu.title": "出力形式",
   "dashboard.translit.menu.chatbox_short": "チャットボックス",
   "dashboard.translit.menu.chatbox_short.tooltip": "VRChat チャットボックスに送信するメッセージの形式：原文、{system}、翻訳、またはその組み合わせ。",
+  "dashboard.translit.menu.log_short": "チャットログ",
+  "dashboard.translit.menu.log_short.tooltip": "アプリ内チャットログの各メッセージの表示内容——上のチャットボックス形式とは独立。ゲーム内には翻訳のみ送り、ログには原文・{system}・翻訳を残す、といった使い方ができます。",
   "settings.steamvr_autolaunch": "SteamVR と同時に起動",
   "settings.auto_download_updates": "アップデートの自動ダウンロード",
   "settings.separate_text_translation": "テキスト翻訳を分離",

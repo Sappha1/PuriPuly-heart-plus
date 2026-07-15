@@ -154,6 +154,7 @@ class TranslatorApp:
         self.view_dashboard.on_separate_text_translation_change = self._on_separate_text_translation_change
         self.view_dashboard.on_separate_target_pref_change = self._on_separate_target_pref_change
         self.view_dashboard.on_chatbox_format_change = self._on_chatbox_format_change
+        self.view_dashboard.on_chat_log_format_change = self._on_chat_log_format_change
         self.view_dashboard.on_request_current_translator = self._current_translator_model_value
         self.view_dashboard.on_request_deepl_usage_refresh = self._on_request_deepl_usage_refresh
         self.view_dashboard.on_request_stt_download = self._on_request_stt_download
@@ -1729,6 +1730,8 @@ class TranslatorApp:
             dash.send_pinyin = bool(getattr(_ui, "send_pinyin", False))
             dash.send_romaji = bool(getattr(_ui, "send_romaji", False))
             dash._show_pending_echo = bool(getattr(_ui, "show_pending_echo", True))
+            dash._chat_log_format = str(getattr(
+                _ui, "chat_log_format", "orig_read_trans"))
             new_chatbox_peer = bool(getattr(_ui, "chatbox_send_peer", False))
             if dash._chatbox_send_peer != new_chatbox_peer:
                 dash._chatbox_send_peer = new_chatbox_peer
@@ -1996,6 +1999,19 @@ class TranslatorApp:
                 return
             updated = copy.deepcopy(settings)
             updated.ui.pinyin_word_grouping = bool(value)
+            await self.controller.apply_settings(updated)
+        self._queue_settings_mutation_task(_task)
+
+    def _on_chat_log_format_change(self, fmt: str) -> None:
+        # The dashboard already renders new entries with the new format;
+        # just persist it.
+        import copy
+        async def _task():
+            settings = self.controller.settings
+            if settings is None:
+                return
+            updated = copy.deepcopy(settings)
+            updated.ui.chat_log_format = str(fmt)
             await self.controller.apply_settings(updated)
         self._queue_settings_mutation_task(_task)
 

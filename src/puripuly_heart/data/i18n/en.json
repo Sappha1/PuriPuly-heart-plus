@@ -727,6 +727,8 @@
   "dashboard.translit.menu.title": "Output Format",
   "dashboard.translit.menu.chatbox_short": "Chatbox",
   "dashboard.translit.menu.chatbox_short.tooltip": "The format of the message sent to the VRChat chatbox: original text, {system} reading, translation, or a combination.",
+  "dashboard.translit.menu.log_short": "Chat log",
+  "dashboard.translit.menu.log_short.tooltip": "What the in-app chat log shows for each message — independent of the Chatbox format above, so you can send only the translation in game while the log keeps original, {system} and translation.",
   "settings.steamvr_autolaunch": "Start with SteamVR",
   "settings.auto_download_updates": "Automatic update downloads",
   "settings.separate_text_translation": "Separate text translation",

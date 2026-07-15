@@ -727,6 +727,8 @@
   "dashboard.translit.menu.title": "출력 형식",
   "dashboard.translit.menu.chatbox_short": "채팅박스",
   "dashboard.translit.menu.chatbox_short.tooltip": "VRChat 채팅박스로 보내는 메시지 형식: 원문, {system}, 번역 또는 조합.",
+  "dashboard.translit.menu.log_short": "채팅 로그",
+  "dashboard.translit.menu.log_short.tooltip": "앱 내 채팅 로그에 각 메시지를 어떻게 표시할지 — 위의 채팅박스 형식과 독립적입니다. 게임에는 번역만 보내고 로그에는 원문·{system}·번역을 모두 남길 수 있습니다.",
   "settings.steamvr_autolaunch": "SteamVR와 함께 시작",
   "settings.auto_download_updates": "업데이트 자동 다운로드",
   "settings.separate_text_translation": "텍스트 번역 분리",

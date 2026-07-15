@@ -49,14 +49,14 @@ DESKTOP_FLET_MIN_HEIGHT = 160
 DESKTOP_FLET_DEFAULT_TEXT_SCALE = 1.0
 DESKTOP_FLET_MIN_TEXT_SCALE = 0.75
 DESKTOP_FLET_MAX_TEXT_SCALE = 1.5
-DESKTOP_FLET_DEFAULT_BACKGROUND_ALPHA = 0.6
+DESKTOP_FLET_DEFAULT_BACKGROUND_ALPHA = 0.01
 DESKTOP_FLET_MIN_BACKGROUND_ALPHA = 0.01
 DESKTOP_FLET_MAX_BACKGROUND_ALPHA = 1.0
 DESKTOP_FLET_MIN_OUTLINE_WIDTH = 0.5
 DESKTOP_FLET_MAX_OUTLINE_WIDTH = 8.0
 DESKTOP_FLET_SIZE_PRESET_ORDER = ("tiny", "xsmall", "small", "medium", "large", "xlarge")
 DESKTOP_FLET_SIZE_PRESET_DISPLAY_ORDER = tuple(reversed(DESKTOP_FLET_SIZE_PRESET_ORDER))
-DESKTOP_FLET_DEFAULT_SIZE_PRESET = "small"
+DESKTOP_FLET_DEFAULT_SIZE_PRESET = "xsmall"
 DESKTOP_FLET_SIZE_PRESETS: dict[str, tuple[int, int]] = {
     "tiny": (640, 160),
     "xsmall": (960, 240),
@@ -450,8 +450,8 @@ class LanguageSettings:
     # whatever the dataclass says). peer_target must default to "" (follow the
     # source/"You Speak" language).
     source_language: str = "en"
-    target_language: str = "en"
-    peer_source_language: str = "en"
+    target_language: str = "zh-CN"
+    peer_source_language: str = "zh-CN"
     peer_target_language: str = ""
     # "Auto detect voice" (dashboard options menu): incoming peer VOICE is
     # language-auto-detected instead of assumed to be peer_source_language.
@@ -466,9 +466,12 @@ class LanguageSettings:
     recent_source_languages: list[str] = field(default_factory=lambda: ["en", "zh-CN", "ja"])
     recent_target_languages: list[str] = field(default_factory=lambda: ["en", "zh-CN", "ja"])
     presets: list[LanguagePreset] = field(default_factory=lambda: [
-        LanguagePreset(source_language="en", target_languages=["zh-CN"]),
-        LanguagePreset(source_language="en", target_languages=["ja"]),
-        LanguagePreset(source_language="en", target_languages=["ko"]),
+        LanguagePreset(source_language="en", target_languages=["zh-CN"],
+                       peer_source_language="zh-CN"),
+        LanguagePreset(source_language="en", target_languages=["ja"],
+                       peer_source_language="ja"),
+        LanguagePreset(source_language="en", target_languages=["ko"],
+                       peer_source_language="ko"),
     ])
     active_preset: int = 0
 
@@ -521,7 +524,7 @@ class AudioSettings:
 @dataclass(slots=True)
 class DesktopAudioSettings:
     output_device: str = ""
-    vad_speech_threshold: float = 0.6
+    vad_speech_threshold: float = 0.8
     vad_hangover_ms: int = DEFAULT_DESKTOP_AUDIO_VAD_HANGOVER_MS
     vad_pre_roll_ms: int = 500
 
@@ -844,16 +847,16 @@ class OpenRouterSettings:
 class UiSettings:
     locale: str = "en"
     overlay_enabled: bool = False
-    peer_translation_enabled: bool = False
+    peer_translation_enabled: bool = True
     peer_translation_eula_accepted: bool = False
     integrated_context_enabled: bool = True
     integrated_context_bootstrapped: bool = False
     clipboard_auto_translate_enabled: bool = False
-    show_pinyin: bool = False
-    show_romaji: bool = False
+    show_pinyin: bool = True
+    show_romaji: bool = True
     send_pinyin: bool = False
     send_romaji: bool = False
-    show_latin: bool = False
+    show_latin: bool = True
     send_latin: bool = False
     # When True, pinyin is grouped into words (péngyǒu) via jieba segmentation; when
     # False it's per-syllable (péng yǒu). Applies to shown AND sent pinyin.
@@ -870,8 +873,8 @@ class UiSettings:
     # one, so the sidebar button goes straight to "restart". Off = the button
     # asks before downloading.
     auto_download_updates: bool = True
-    self_in_overlay: bool = True
-    typed_in_overlay: bool = True
+    self_in_overlay: bool = False
+    typed_in_overlay: bool = False
     filter_peer_by_target_languages: bool = False
     # Unified translation view: hide the separate "Text Translation" card and
     # make typed messages mirror the Voice "Translate to" (reading) language.
@@ -1018,7 +1021,7 @@ class DesktopFletOverlaySettings:
 
 @dataclass(slots=True)
 class OverlaySettings:
-    target: str = OVERLAY_TARGET_STEAMVR
+    target: str = OVERLAY_TARGET_DESKTOP
     show_translation: bool = True
     show_peer_original: bool = True
     show_self: bool = True

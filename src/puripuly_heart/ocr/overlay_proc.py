@@ -58,14 +58,14 @@ _PILL_BG = "#14161a"
 _PILL_TEXT = "#ffffff"
 
 # ── Subtitle appearance / activation (all live-configurable) ──
-_FMT = ["trans_only"]  # orig_trans|orig_pinyin_trans|pinyin_trans|pinyin_only|trans_only
+_FMT = ["orig_pinyin_trans"]  # orig_trans|orig_pinyin_trans|pinyin_trans|pinyin_only|trans_only
 _PLACE = ["cover"]  # cover (fill the box) | above (stack above the text)
 _C_OUTLINE = ["#ff2020"]
 _C_BG = ["#14161a"]
 _BG_ALPHA = [100]  # 100/75/50/25 via stipple, 0 = no backdrop (shadow text)
-_C_TEXT = ["#ffffff"]
+_C_TEXT = ["auto"]
 _C_PY = "#5ba8a0"  # pinyin lines — same teal as the chat-log transliteration
-_FONT_FIX = [0]  # subtitle font px; 0 = auto (fit box), -1 = match original
+_FONT_FIX = [50]  # subtitle font px; 0 = auto (fit box), -1 = match original
 _SZ_PY = [0]  # pinyin line px override (0 = same as the main font size)
 _SZ_TR = [0]  # translation line px override (0 = inherit)
 _SZ_PRO = [0]  # pronoun-set boxes px override (0 = inherit)
@@ -76,7 +76,7 @@ _C_PRO = [""]  # pronoun-set box color ('' inherit, 'auto', #hex)
 _SCAN_MODE = ["hold"]  # hold | toggle — gates ALL scanning/drawing
 _SCAN_VK = [ord("E")]  # legacy single-key path (combo below preferred)
 _SCAN_ACTIVE = [False]
-_REGION_BORDER = [True]  # show the dashed region rectangle
+_REGION_BORDER = [False]  # show the dashed region rectangle
 _TGT_FG = [True]  # live "target window is foreground" (track loop updates)
 _FLASH = [0.0]  # show the on-screen scan-state flash until this monotonic
 _FLASH_TXT = [""]
@@ -149,7 +149,7 @@ _SCAN_COMBO: list = [_parse_bind("E")]  # legacy single-bind (migrated)
 # tap flips persistent scanning. Scanning is active when EITHER says so.
 # Empty bind disables that mechanism; both empty = always scanning.
 _HOLD_COMBO: list = [_parse_bind("E")]
-_TOG_COMBO: list = [None]
+_TOG_COMBO: list = [_parse_bind("ALT+E")]
 _TOG_STATE = [False]
 # Unfiltered scanning: while active, the VRChat-specific filters (bubbles
 # only, group banners, roster names, pronoun sets) are bypassed so EVERYTHING

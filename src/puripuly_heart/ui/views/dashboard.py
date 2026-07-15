@@ -525,17 +525,22 @@ class DashboardView(ft.Row):
         self.on_ocr_xlat_service_change = None  # (prototype) callback(str)
         # Style/behavior prefs surfaced in the OCR menu (persisted, live).
         self._ocr_style = {
-            "ocr_format": str(_ocr_p.get("ocr_format", "trans_only")),
+            "ocr_format": str(_ocr_p.get("ocr_format", "orig_pinyin_trans")),
             "ocr_place": str(_ocr_p.get("ocr_place", "cover")),
             "ocr_outline": str(_ocr_p.get("ocr_outline", "#ff2020")),
             "ocr_bg": str(_ocr_p.get("ocr_bg", "#14161a")),
             "ocr_bg_alpha": str(_ocr_p.get("ocr_bg_alpha", 100)),
-            "ocr_text": str(_ocr_p.get("ocr_text", "#ffffff")),
+            "ocr_text": str(_ocr_p.get("ocr_text", "auto")),
             "scan_mode": str(_ocr_p.get("scan_mode", "hold")),
             "scan_bind": str(_ocr_p.get("scan_bind", "E")),
-            "scan_bind_toggle": str(_ocr_p.get("scan_bind_toggle", "")),
-            "ocr_region_border": str(_ocr_p.get("ocr_region_border", 1)),
-            "ocr_font_px": str(_ocr_p.get("ocr_font_px", 0)),
+            # ALT+E toggle out of the box — but only for FRESH configs; a
+            # legacy config that set up a hold bind must not gain a
+            # surprise toggle it never chose.
+            "scan_bind_toggle": str(_ocr_p.get(
+                "scan_bind_toggle",
+                "ALT+E" if "scan_bind" not in _ocr_p else "")),
+            "ocr_region_border": str(_ocr_p.get("ocr_region_border", 0)),
+            "ocr_font_px": str(_ocr_p.get("ocr_font_px", 50)),
             "ocr_size_pinyin": str(_ocr_p.get("ocr_size_pinyin", 0)),
             "ocr_size_trans": str(_ocr_p.get("ocr_size_trans", 0)),
             "ocr_size_pronoun": str(_ocr_p.get("ocr_size_pronoun", 0)),
@@ -557,7 +562,7 @@ class DashboardView(ft.Row):
                     self._ocr_style["scan_bind"]
                 self._ocr_style["scan_bind"] = ""
         self.on_ocr_style_change = None  # (prototype) callback(key, value)
-        self.ocr_log_chat = bool(_ocr_p.get("log_chat", True))
+        self.ocr_log_chat = bool(_ocr_p.get("log_chat", False))
         self.on_ocr_foreign_change = None  # (prototype) callback(bool)
         self.on_ocr_ignore_names_change = None  # (prototype) callback(bool)
         self.on_ocr_region_set = None  # (prototype) callback() — fresh drag

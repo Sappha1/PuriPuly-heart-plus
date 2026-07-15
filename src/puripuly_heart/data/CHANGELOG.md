@@ -2,6 +2,10 @@
 
 User-facing changes per build. The latest build's highlights also appear in-app when an update is ready.
 
+## r249 — 2026-07-14
+
+- Right-click menus now scroll instead of getting cut off when the window is small
+
 ## r248 — 2026-07-14
 
 - Realtime OCR translation: read chat bubbles and world text straight off the screen (ALT+E)

@@ -68,14 +68,21 @@ def _fire_event(name: str) -> None:
         evt = kernel32.CreateEventW(None, False, False, name)
         kernel32.SetEvent(evt)
 
-# PROTOTYPE LOCAL BUILD ONLY. The packaged app doesn't bundle the OCR libraries
-# (rapidocr/mss/opencv/tkinter), so when running frozen we launch the overlay
-# through the source venv that DOES have them. These paths are this dev machine's
-# repo; a real shippable OCR feature would bundle the deps instead.
+# Packaged builds ship the OCR overlay as its own frozen app (built from
+# ocr_overlay.spec and copied to <app dir>\ocr\PuriPulyHeartOCR\) because it
+# needs libraries the main bundle excludes (rapidocr/mss/opencv/tkinter).
+# The dev-venv path below is the fallback for THIS dev machine only: running
+# a packaged build from the repo (scratchpad test builds) hot-swaps the
+# overlay from source instead of the bundled exe.
 _DEV_REPO = r"C:\Users\Owner\Desktop\PuriPuly-heart-2.1.2"
 _DEV_VENV_PY = os.path.join(_DEV_REPO, ".venv", "Scripts", "python.exe")
 _DEV_SRC = os.path.join(_DEV_REPO, "src")
 _CREATE_NO_WINDOW = 0x08000000
+
+
+def _packaged_ocr_exe() -> str:
+    return os.path.join(os.path.dirname(sys.executable),
+                        "ocr", "PuriPulyHeartOCR", "PuriPulyHeartOCR.exe")
 
 
 class OcrOverlayManager:
@@ -298,31 +305,38 @@ class OcrOverlayManager:
         if self.running:
             return True
         _shutdown_event(False)  # clear any previous OFF signal before spawning
-        args = ["-m", "puripuly_heart.ocr.overlay_proc",
-                "--fps", str(self._fps), "--monitor", str(self._monitor),
-                "--parent-pid", str(os.getpid()),
-                "--prewarm", "1" if self.prewarm else "0",
-                "--bubbles-only", "1" if self.bubbles_only else "0",
-                "--foreign-only", "1" if self.foreign_only else "0",
-                "--ignore-names", "1" if self.ignore_names else "0",
-                "--ignore-pronouns", "1" if self.ignore_pronouns else "0",
-                "--translate", "1" if self.translate else "0"]
+        flags = ["--fps", str(self._fps), "--monitor", str(self._monitor),
+                 "--parent-pid", str(os.getpid()),
+                 "--prewarm", "1" if self.prewarm else "0",
+                 "--bubbles-only", "1" if self.bubbles_only else "0",
+                 "--foreign-only", "1" if self.foreign_only else "0",
+                 "--ignore-names", "1" if self.ignore_names else "0",
+                 "--ignore-pronouns", "1" if self.ignore_pronouns else "0",
+                 "--translate", "1" if self.translate else "0"]
         if self.window_title:
-            args += ["--window", self.window_title]
+            flags += ["--window", self.window_title]
         env = dict(os.environ)
         if getattr(sys, "frozen", False):
-            # Packaged app: shell out to the source venv that has the OCR libs.
-            python = _DEV_VENV_PY
-            env["PYTHONPATH"] = _DEV_SRC
-            if not os.path.exists(python):
-                logger.warning("[OCR] dev venv not found at %s", python)
+            packaged = _packaged_ocr_exe()
+            if os.path.exists(packaged):
+                # Normal install: the bundled OCR overlay app.
+                cmd = [packaged, *flags]
+            elif os.path.exists(_DEV_VENV_PY):
+                # Dev machine running a repo test build: hot-swap from source.
+                env["PYTHONPATH"] = _DEV_SRC
+                cmd = [_DEV_VENV_PY, "-m",
+                       "puripuly_heart.ocr.overlay_proc", *flags]
+            else:
+                logger.warning(
+                    "[OCR] no bundled overlay at %s and no dev venv", packaged)
                 return False
         else:
-            python = sys.executable  # running from source
             env.setdefault("PYTHONPATH", _DEV_SRC)
+            cmd = [sys.executable, "-m",
+                   "puripuly_heart.ocr.overlay_proc", *flags]
         try:
             self._proc = subprocess.Popen(
-                [python, *args], env=env, creationflags=_CREATE_NO_WINDOW,
+                cmd, env=env, creationflags=_CREATE_NO_WINDOW,
             )
             logger.info("[OCR] overlay subprocess started (pid=%s)", self._proc.pid)
             return True

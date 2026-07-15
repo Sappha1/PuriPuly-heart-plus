@@ -6,7 +6,7 @@
 #define MyAppName "PuriPulyHeart+"
 #define MyAppDirName "PuriPulyHeartPlus"
 #define MyAppGroupName "PuriPulyHeart+"
-#define MyAppVersion "2.1.2"
+#define MyAppVersion "2.2.0"
 #define MyAppPublisher "Sappha1 (original by salee)"
 #define MyAppURL "https://github.com/Sappha1/PuriPuly-heart-plus"
 #define MyAppExeName "PuriPulyHeart.exe"

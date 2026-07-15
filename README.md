@@ -5,7 +5,7 @@
 <h1 align="center">PuriPulyHeart+</h1>
 
 <p align="center">
-  <img src="https://img.shields.io/badge/version-2.1.2%2B-89CFF0" alt="Version" />
+  <img src="https://img.shields.io/badge/version-2.2.0%2B-B39DDB" alt="Version" />
   <img src="https://img.shields.io/badge/license-AGPL--3.0--or--later-blue" alt="License: AGPL-3.0-or-later" />
   <img src="https://img.shields.io/badge/python-3.12-yellow" alt="Python" />
   <img src="https://img.shields.io/badge/platform-Windows-lightgrey" alt="Platform" />
@@ -25,6 +25,7 @@ The original PuriPuly Heart already does the core job well: two-way voice transl
 
 ### New in this fork — not in the original
 
+- **Realtime OCR translation** — the app can *read the game screen itself*. Press a key (ALT+E out of the box) and it detects text on screen — chat bubbles, nameplates, signs — recognizes it, and paints the translation right over the game as a live subtitle, with optional pinyin reading. It's built for VRChat: it knows what a chat bubble looks like, follows text as players move, ignores player names / pronoun tags / group banners (each filter is toggleable, with an "unfiltered" bind for quick peeks at world text), and can restrict itself to a screen region. Detection runs locally on your GPU; translation uses the free web engines by default. Right-click the **OCR** pill to configure everything.
 - **Free translation built in** — Google and Bing web translation with no key, no cost, no account, plus **DeepL** support. The original expects a paid LLM provider; here you just install and start talking. If a paid translator can't run, translation automatically falls back to the free one instead of stopping.
 - **One-click in-app updates** — when a new version is out, an update button appears in the sidebar; one click downloads, applies, and restarts the app. The original has no self-update.
 - **A Windows installer** — `PuriPulyHeartPlus-Setup.exe`: per-user install (no admin prompt), Start-menu shortcut, uninstaller, installer UI in five languages, and it downloads the speech model during setup with an automatic China-friendly mirror.
@@ -35,7 +36,7 @@ The original PuriPuly Heart already does the core job well: two-way voice transl
 ### Improved from the original
 
 - **Overlay** — instant on/off and live switching between VR and desktop display, size presets, and position locking.
-- **Peer translation** — the other person's speech is translated into *your* language, following your "You Speak" setting.
+- **Peer translation** — the other person's speech is translated into *your* language automatically.
 - **Works out of the box in restrictive regions** — sensible defaults for China (Bing translation, local speech model from a reachable mirror) and clear messages when a network is blocking something.
 - **Polish everywhere** — three quick language preset slots, clearer status indicators with built-in VRChat OSC guidance, completed UI translations (English / 한국어 / 日本語 / 简体中文).
 
@@ -51,7 +52,7 @@ Either way, that's the last download you do by hand — updates arrive through t
 ## Quick start
 
 1. Install (or unzip) and launch.
-2. Pick your languages: **Translate to** (what your chatbox prints), **You Speak**, and **Peer voice**.
+2. Pick your languages: **Your language** (what you speak and read) and **Target language** (the other person's language — your messages translate into it). The ⇅ button swaps them.
 3. Click **MIC** to start voice recognition, **TRANS** for translation.
 4. Enable OSC in VRChat: Action Menu → Options → OSC → **Enabled** (the Mute Sync chip turns green after you toggle your in-game mic once).
 5. (Optional) **PEER** translates the other person's voice; **Overlay** shows subtitles on desktop or in VR.

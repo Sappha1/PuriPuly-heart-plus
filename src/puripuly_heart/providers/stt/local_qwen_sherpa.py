@@ -98,6 +98,10 @@ def _transcript_text_for_log(text: str) -> str:
 
 
 _SPECIAL_TOKEN_RE = re.compile(r"<\|[^|<>]{1,32}\|>")
+# Decode repetition loops: a single char repeated 5+ times, or a short unit
+# repeated 4+ times ('堵' x80 after a legit prefix flooded the whole overlay).
+_CHAR_RUN_RE = re.compile(r"(.)\1{4,}")
+_UNIT_LOOP_RE = re.compile(r"(.{2,6}?)\1{3,}")
 
 
 def _strip_asr_meta_wrapper(text: str) -> str:
@@ -119,6 +123,16 @@ def _strip_asr_meta_wrapper(text: str) -> str:
         logger.warning("[STT][local_qwen] special-token leak truncated: %r",
                        text[m.start():m.start() + 60])
         text = text[:m.start()].strip()
+    # Collapse decode loops instead of dropping the segment: the sentence
+    # before the loop is real speech ('不是啊，怎么一直' + 堵 x80 -> keep the
+    # sentence with a natural 3x stutter). _looks_repetitive only catches
+    # WHOLLY repetitive strings, so a legit prefix slipped these through.
+    collapsed = _CHAR_RUN_RE.sub(lambda mm: mm.group(1) * 3, text)
+    collapsed = _UNIT_LOOP_RE.sub(lambda mm: mm.group(1) * 2, collapsed)
+    if collapsed != text:
+        logger.warning("[STT][local_qwen] repetition loop collapsed: %d -> %d chars",
+                       len(text), len(collapsed))
+        text = collapsed
     return text
 
 

@@ -725,7 +725,7 @@
   "dashboard.translit.fmt.read_only": "{system} Only",
   "dashboard.translit.fmt.trans_only": "Translation Only",
   "dashboard.translit.menu.title": "Output Format",
-  "dashboard.translit.menu.chatbox_short": "Chatbox",
+  "dashboard.translit.menu.chatbox_short": "Chat box",
   "dashboard.translit.menu.chatbox_short.tooltip": "The format of the message sent to the VRChat chatbox: original text, {system} reading, translation, or a combination.",
   "dashboard.translit.menu.log_short": "Chat log",
   "dashboard.translit.menu.log_short.tooltip": "What the in-app chat log shows for each message — independent of the Chatbox format above, so you can send only the translation in game while the log keeps original, {system} and translation.",

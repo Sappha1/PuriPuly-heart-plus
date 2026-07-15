@@ -2,6 +2,13 @@
 
 User-facing changes per build. The latest build's highlights also appear in-app when an update is ready.
 
+## r251 — 2026-07-15
+
+- Peer voice model now loads once at startup — the first speech no longer pays a surprise 7-9s load
+- Auto-detected voice gets the right reading line: Japanese speech shows romaji (not pinyin), Korean shows romaja
+- Speech-model hallucinations (endoftext garbage) are truncated instead of printed
+- Fixed a translation-provider regression from the r250 hotfix
+
 ## r250 — 2026-07-15
 
 - Fixed OCR detection not working in installed builds (the bundled recognition engine failed to load)

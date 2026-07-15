@@ -855,6 +855,10 @@ class UiSettings:
     self_in_overlay: bool = True
     typed_in_overlay: bool = True
     filter_peer_by_target_languages: bool = False
+    # Unified translation view: hide the separate "Text Translation" card and
+    # make typed messages mirror the Voice "Translate to" (reading) language.
+    # Default on — most users want one target, not two independent directions.
+    unified_translation_ui: bool = True
     show_pending_echo: bool = True
     chatbox_send_peer: bool = False
     # When True, peer-voice loopback into your own chatbox sends only the final
@@ -1599,6 +1603,7 @@ def to_dict(settings: AppSettings) -> dict[str, Any]:
             "overlay_enabled": settings.ui.overlay_enabled,
             "peer_translation_enabled": settings.ui.peer_translation_enabled,
             "filter_peer_by_target_languages": settings.ui.filter_peer_by_target_languages,
+            "unified_translation_ui": settings.ui.unified_translation_ui,
             "show_pending_echo": settings.ui.show_pending_echo,
             "chatbox_send_peer": settings.ui.chatbox_send_peer,
             "chatbox_send_peer_translation_only": settings.ui.chatbox_send_peer_translation_only,
@@ -3889,6 +3894,7 @@ def from_dict(data: dict[str, Any]) -> AppSettings:
             self_in_overlay=bool(ui_data.get("self_in_overlay", True)),
             typed_in_overlay=bool(ui_data.get("typed_in_overlay", True)),
             filter_peer_by_target_languages=bool(ui_data.get("filter_peer_by_target_languages", False)),
+            unified_translation_ui=bool(ui_data.get("unified_translation_ui", True)),
             show_pending_echo=bool(ui_data.get("show_pending_echo", True)),
             chatbox_send_peer=bool(ui_data.get("chatbox_send_peer", False)),
             chatbox_send_peer_translation_only=bool(

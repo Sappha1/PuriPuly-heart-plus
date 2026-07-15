@@ -475,6 +475,22 @@ class DashboardView(ft.Row):
             _ocr_p = load_ocr_prefs()
         except Exception:
             _ocr_p = {}
+        # Unified translation view: hide the separate "Text Translation" card
+        # and make typed messages mirror the Voice "Translate to" (reading)
+        # language. Read at build time (needs to decide which cards to render);
+        # a toggle in Settings changes it for the next launch.
+        self._unified_translation = True
+        try:
+            import json as _json
+            import os as _os
+            _sp = _os.path.join(_os.path.expanduser("~"), "AppData", "Local",
+                                "puripuly-heart", "settings.json")
+            with open(_sp, encoding="utf-8") as _fh:
+                self._unified_translation = bool(
+                    _json.load(_fh).get("ui", {}).get(
+                        "unified_translation_ui", True))
+        except Exception:
+            pass
         self._ocr_prewarm = bool(_ocr_p.get("prewarm", True))
         self._ocr_bubbles_only = bool(_ocr_p.get("bubbles_only", True))
         self._ocr_vrchat_only = bool(_ocr_p.get("vrchat_only", True))
@@ -1083,16 +1099,27 @@ class DashboardView(ft.Row):
                 margin=ft.margin.symmetric(horizontal=6, vertical=3),
             )
 
-        self._middle_section = ft.Column(
-            [
-                ft.Container(
-                    content=self._preset_tabs_row,
-                    padding=ft.padding.symmetric(horizontal=10, vertical=4),
-                ),
+        _preset_row = ft.Container(
+            content=self._preset_tabs_row,
+            padding=ft.padding.symmetric(horizontal=10, vertical=4),
+        )
+        if self._unified_translation:
+            # One "Translation" card: the separate Text Translation box is
+            # hidden and typed messages mirror the Voice "Translate to"
+            # language. The options gear moves onto this card's header.
+            self._apply_unified_target_sync()
+            _cards = [
+                _section_card(ft.Icons.GRAPHIC_EQ, "dashboard.section.translation",
+                              self._peer_panel, trailing=self._build_translit_gear()),
+            ]
+        else:
+            _cards = [
                 _section_card(ft.Icons.CHAT_BUBBLE_OUTLINE, "dashboard.section.text_translation",
                               self._lang_panel, trailing=self._build_translit_gear()),
                 _section_card(ft.Icons.GRAPHIC_EQ, "dashboard.section.voice_translation", self._peer_panel),
-            ],
+            ]
+        self._middle_section = ft.Column(
+            [_preset_row, *_cards],
             scroll=ft.ScrollMode.AUTO,
             expand=True,
             spacing=0,
@@ -3560,6 +3587,8 @@ class DashboardView(ft.Row):
         self._extra_target_lang_codes = list(targets[1:])
         self._peer_source_lang_code = preset.get("peer_source", "")
         self._peer_target_lang_code = preset.get("peer_target", "")
+        # Unified view: the (hidden) text target mirrors the reading language.
+        self._apply_unified_target_sync()
         self._update_input_font()
         self._refresh_language_panel()
         self._refresh_language_rows()
@@ -4444,10 +4473,19 @@ class DashboardView(ft.Row):
 
     # ── Language selection callbacks ─────────────────────────────────────────
 
+    def _apply_unified_target_sync(self) -> None:
+        """Unified view: typed messages mirror the Voice 'Translate to'
+        (reading) language. Skip when it is Auto Detect (empty) — there is no
+        concrete language to mirror, so the last text target is left alone."""
+        if getattr(self, "_unified_translation", True) and self._source_lang_code:
+            self._target_lang_code = self._source_lang_code
+
     def _on_source_select(self, lang_code: str):
         self._source_lang_code = lang_code
         if lang_code:  # don't add "Auto" to recent
             self._add_to_recent(lang_code, is_source=True)
+        # Unified view: keep the (hidden) text target mirroring this.
+        self._apply_unified_target_sync()
         self._update_input_font()
         self._refresh_language_panel()
         self._refresh_language_rows()
@@ -4971,6 +5009,8 @@ class DashboardView(ft.Row):
         if active.get("peer_source", "") or active.get("peer_target", ""):
             self._peer_source_lang_code = active.get("peer_source", "")
             self._peer_target_lang_code = active.get("peer_target", "")
+        # Unified view: the (hidden) text target mirrors the reading language.
+        self._apply_unified_target_sync()
         self._update_input_font()
         self._refresh_language_panel()
         self._refresh_language_rows()

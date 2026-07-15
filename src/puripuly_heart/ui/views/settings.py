@@ -1421,6 +1421,16 @@ class SettingsView(ft.Column):
             ),
             value=self._auto_download_updates_text,
         )
+        self._separate_text_text = self._build_clickable_text(
+            t("settings.option.off"),
+            self._on_separate_text_click,
+        )
+        separate_text_card = self._wrap_unit_card(
+            title=self._info_title_keyed(
+                "settings.separate_text_translation",
+                "settings.separate_text_translation.tooltip"),
+            value=self._separate_text_text,
+        )
         self._filter_peer_lang_text = self._build_clickable_text(
             t("settings.filter_peer_by_target_languages.off"),
             self._on_filter_peer_lang_click,
@@ -1456,6 +1466,7 @@ class SettingsView(ft.Column):
                     vrc_mic_card,
                     live_preview_card,
                     chatbox_send_peer_card,
+                    separate_text_card,
                     self_in_overlay_card,
                     steamvr_autolaunch_card,
                     auto_download_updates_card,
@@ -3059,6 +3070,11 @@ class SettingsView(ft.Column):
         )
         self._live_preview_text.content.value = t(
             "settings.option.on" if bool(getattr(settings.ui, "show_pending_echo", True)) else "settings.option.off"
+        )
+        self._separate_text_text.content.value = t(
+            "settings.option.on"
+            if not bool(getattr(settings.ui, "unified_translation_ui", True))
+            else "settings.option.off"
         )
         self._chatbox_send_peer_text.content.value = t(
             "settings.option.on" if bool(getattr(settings.ui, "chatbox_send_peer", False)) else "settings.option.off"
@@ -4999,6 +5015,21 @@ class SettingsView(ft.Column):
         )
         if self.page:
             self._auto_download_updates_text.update()
+        self._emit_settings_changed()
+
+    def _on_separate_text_click(self, e) -> None:
+        if not self._settings:
+            return
+        # ON = show the separate "Text Translation" box (unified OFF).
+        current_unified = bool(getattr(
+            self._settings.ui, "unified_translation_ui", True))
+        new_unified = not current_unified
+        self._settings.ui.unified_translation_ui = new_unified
+        self._separate_text_text.content.value = t(
+            "settings.option.on" if not new_unified else "settings.option.off"
+        )
+        if self.page:
+            self._separate_text_text.update()
         self._emit_settings_changed()
 
     def _on_live_preview_click(self, e) -> None:

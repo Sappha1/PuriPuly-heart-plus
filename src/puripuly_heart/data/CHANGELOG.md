@@ -2,6 +2,15 @@
 
 User-facing changes per build. The latest build's highlights also appear in-app when an update is ready.
 
+## r252 — 2026-07-15
+
+- China: speech model now downloads from ModelScope first on Chinese systems (HuggingFace is blocked there)
+- Fewer antivirus false alarms: builds are no longer UPX-compressed
+- Installer: optional "clean install" checkbox wipes old settings and app data for a fresh start
+- Overlay keeps itself on top — no more invisible subtitles under the game
+- Speech recognition: runaway repeated-character output is collapsed instead of flooding the screen
+- Fixed a legacy hidden setting that forced incoming voice into Korean
+
 ## r251 — 2026-07-15
 
 - Peer voice model now loads once at startup — the first speech no longer pays a surprise 7-9s load

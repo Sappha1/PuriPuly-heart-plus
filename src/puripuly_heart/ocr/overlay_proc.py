@@ -3348,7 +3348,13 @@ def run(monitor_index: int = 1, fps: float = 0.0, max_side: int = _TRACK_SIDE,
     sy = tk_h / float(height) if height else 1.0
     win_w, win_h = int(round(width * sx)), int(round(height * sy))
     win_x, win_y = int(round(left * sx)), int(round(top * sy))
-    root.geometry(f"{win_w}x{win_h}+{win_x}+{win_y}")
+    # ONE PIXEL SHORT of the monitor: a borderless window whose bounds
+    # EXACTLY equal the monitor is classified by Windows as a fullscreen
+    # app, which auto-hides the taskbar/Start bar — and that state gets
+    # stuck when a GPU-composited window (Discord) is focused next. Being
+    # 1px short makes the shell treat it as a normal window (taskbar stays);
+    # the missing bottom row never holds a chat bubble.
+    root.geometry(f"{win_w}x{max(1, win_h - 1)}+{win_x}+{win_y}")
     root.configure(bg=_TRANSPARENT_KEY)
     try:
         root.attributes("-transparentcolor", _TRANSPARENT_KEY)

@@ -459,6 +459,10 @@ class LanguageSettings:
     # the typed-message target in the unified view — only voice recognition
     # and translation sourcing go auto.
     auto_detect_peer_voice: bool = False
+    # Last target the user picked while "Separate text translation" was ON.
+    # The unified mirror overwrites target_language, so this remembers the
+    # separate-mode preference and restores it when the user switches back.
+    separate_target_language: str = ""
     recent_source_languages: list[str] = field(default_factory=lambda: ["en", "zh-CN", "ja"])
     recent_target_languages: list[str] = field(default_factory=lambda: ["en", "zh-CN", "ja"])
     presets: list[LanguagePreset] = field(default_factory=lambda: [
@@ -1494,6 +1498,7 @@ def to_dict(settings: AppSettings) -> dict[str, Any]:
             "peer_source_language": settings.languages.peer_source_language,
             "peer_target_language": settings.languages.peer_target_language,
             "auto_detect_peer_voice": settings.languages.auto_detect_peer_voice,
+            "separate_target_language": settings.languages.separate_target_language,
             "recent_source_languages": settings.languages.recent_source_languages,
             "recent_target_languages": settings.languages.recent_target_languages,
             "active_preset": settings.languages.active_preset,
@@ -3676,6 +3681,8 @@ def from_dict(data: dict[str, Any]) -> AppSettings:
             peer_target_language=str(data.get("languages", {}).get("peer_target_language", "")),
             auto_detect_peer_voice=bool(
                 data.get("languages", {}).get("auto_detect_peer_voice", False)),
+            separate_target_language=str(
+                data.get("languages", {}).get("separate_target_language", "")),
             recent_source_languages=list(
                 dict.fromkeys(
                     list(data.get("languages", {}).get("recent_source_languages") or [])

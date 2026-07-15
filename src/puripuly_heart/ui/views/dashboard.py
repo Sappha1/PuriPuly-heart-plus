@@ -406,6 +406,10 @@ class DashboardView(ft.Row):
         # "Separate text translation" pill (same options menu) — mirrors the
         # Settings row; ON = separate Text Translation box (unified OFF).
         self.on_separate_text_translation_change: object = None  # callback(value: bool)
+        # Last target picked while separate mode was ON — the unified mirror
+        # overwrites target, so this restores the pick when switching back.
+        self._separate_target_pref = ""
+        self.on_separate_target_pref_change: object = None  # callback(code: str)
         # Chatbox text format state (mirrors osc.chatbox_include_source + ui.chatbox_reading_only).
         self._chatbox_include_source = True
         self._chatbox_reading_only = False
@@ -498,6 +502,8 @@ class DashboardView(ft.Row):
                 _sd.get("ui", {}).get("unified_translation_ui", True))
             self._auto_detect_voice = bool(
                 _sd.get("languages", {}).get("auto_detect_peer_voice", False))
+            self._separate_target_pref = str(
+                _sd.get("languages", {}).get("separate_target_language", ""))
         except Exception:
             pass
         self._ocr_prewarm = bool(_ocr_p.get("prewarm", True))
@@ -4578,6 +4584,15 @@ class DashboardView(ft.Row):
         enabled = bool(enabled)
         if enabled == self._unified_translation:
             return
+        if enabled:
+            # Going unified: the mirror is about to overwrite the target —
+            # remember the separate-mode pick first.
+            if self._target_lang_code:
+                self._separate_target_pref = self._target_lang_code
+        elif self._separate_target_pref:
+            # Going separate: restore the remembered pick (e.g. Japanese)
+            # instead of leaving the mirrored Target language in place.
+            self._target_lang_code = self._separate_target_pref
         self._unified_translation = enabled
         key = ("dashboard.section.translation" if enabled
                else "dashboard.section.voice_translation")
@@ -4623,6 +4638,12 @@ class DashboardView(ft.Row):
     def _on_target_select(self, lang_code: str):
         self._target_lang_code = lang_code
         self._add_to_recent(lang_code, is_source=False)
+        if not self._unified_translation and lang_code:
+            # Remember the separate-mode pick so toggling unified (which
+            # mirrors target := Target language) doesn't lose it.
+            self._separate_target_pref = lang_code
+            if callable(self.on_separate_target_pref_change):
+                self.on_separate_target_pref_change(lang_code)
         self._refresh_language_panel()
         self._refresh_language_rows()
         self._notify_language_change()

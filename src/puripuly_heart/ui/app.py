@@ -152,6 +152,7 @@ class TranslatorApp:
         self.view_dashboard.on_pinyin_word_grouping_change = self._on_pinyin_word_grouping_change
         self.view_dashboard.on_auto_detect_voice_change = self._on_auto_detect_voice_change
         self.view_dashboard.on_separate_text_translation_change = self._on_separate_text_translation_change
+        self.view_dashboard.on_separate_target_pref_change = self._on_separate_target_pref_change
         self.view_dashboard.on_chatbox_format_change = self._on_chatbox_format_change
         self.view_dashboard.on_request_current_translator = self._current_translator_model_value
         self.view_dashboard.on_request_deepl_usage_refresh = self._on_request_deepl_usage_refresh
@@ -2006,6 +2007,18 @@ class TranslatorApp:
                 return
             updated = copy.deepcopy(settings)
             updated.languages.auto_detect_peer_voice = bool(value)
+            await self.controller.apply_settings(updated)
+        self._queue_settings_mutation_task(_task)
+
+    def _on_separate_target_pref_change(self, code: str) -> None:
+        """Persist the separate-mode target pick so it survives restarts."""
+        import copy
+        async def _task():
+            settings = self.controller.settings
+            if settings is None:
+                return
+            updated = copy.deepcopy(settings)
+            updated.languages.separate_target_language = str(code)
             await self.controller.apply_settings(updated)
         self._queue_settings_mutation_task(_task)
 

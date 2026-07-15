@@ -151,6 +151,14 @@ _SCAN_COMBO: list = [_parse_bind("E")]  # legacy single-bind (migrated)
 _HOLD_COMBO: list = [_parse_bind("E")]
 _TOG_COMBO: list = [None]
 _TOG_STATE = [False]
+# Unfiltered scanning: while active, the VRChat-specific filters (bubbles
+# only, group banners, roster names, pronoun sets) are bypassed so EVERYTHING
+# on screen gets scanned -- a quick peek without flipping the menu options.
+# Same hold/toggle bind pair as scanning, but UNBOUND by default.
+_UNF_HOLD_COMBO: list = [None]
+_UNF_TOG_COMBO: list = [None]
+_UNF_TOG_STATE = [False]
+_UNFILTERED = [False]
 
 
 def _fmt_lines(text: str, xlat: str, pinyin: str) -> list[tuple[str, str]]:
@@ -385,7 +393,13 @@ def _looks_truncated_bio(t: str) -> bool:
 
 
 def _ignore_active() -> bool:
+    if _UNFILTERED[0]:
+        return False
     return _IGNORE_NAMES[0] or _IGNORE_PRONOUNS[0]
+
+
+def _groups_active() -> bool:
+    return _IGNORE_GROUPS[0] and not _UNFILTERED[0]
 
 
 def _is_roster_name(text: str) -> bool:
@@ -448,6 +462,8 @@ def _is_roster_name(text: str) -> bool:
 
 
 def _is_ignored_name(text: str) -> bool:
+    if _UNFILTERED[0]:
+        return False
     t = text.strip()
     if not t:
         return False
@@ -742,6 +758,14 @@ def _apply_prefs(cfg: dict) -> None:
             _HOLD_COMBO[0], _TOG_COMBO[0] = cbb, None
     if "scan_bind" in cfg:
         _SCAN_COMBO[0] = _parse_bind(str(cfg.get("scan_bind") or ""))
+    if "unfiltered_bind" in cfg or "unfiltered_bind_toggle" in cfg:
+        _UNF_HOLD_COMBO[0] = _parse_bind(str(cfg.get("unfiltered_bind") or ""))
+        _UNF_TOG_COMBO[0] = _parse_bind(
+            str(cfg.get("unfiltered_bind_toggle") or ""))
+        if (_UNF_HOLD_COMBO[0] is not None
+                and _UNF_HOLD_COMBO[0] == _UNF_TOG_COMBO[0]):
+            # Identical binds: toggle wins, hold drops (mirrors scan binds).
+            _UNF_HOLD_COMBO[0] = None
     if "ocr_region_border" in cfg:
         _REGION_BORDER[0] = bool(int(cfg.get("ocr_region_border") or 0)) \
             if str(cfg.get("ocr_region_border")).isdigit() \
@@ -1831,7 +1855,7 @@ def _detect_loop(cap: _Capture, target: _Target, anchors: _Anchors,
                     det_bgr[dy1:dy2, dx1:dx2] = 0
             raw = detector.detect(det_bgr)
             shaped = [b for b in raw if _text_plausible(b, det_w, det_h)]
-            if _BUBBLES_ONLY[0]:
+            if _BUBBLES_ONLY[0] and not _UNFILTERED[0]:
                 kept = [b for b in shaped
                         if _looks_like_bubble(det_bgr, b)]
                 ndrop = len(shaped) - len(kept)
@@ -2692,7 +2716,7 @@ def _track_loop(cap: _Capture, target: _Target, anchors: _Anchors,
             # pronouns, bio) and is suppressed with it, whatever it says —
             # content matching can't catch "INTP /<name>&…" bios, geometry can.
             name_rects: list[tuple[float, float, float, float]] = []
-            if _ignore_active() or _IGNORE_GROUPS[0]:
+            if _ignore_active() or _groups_active():
                 for tr in tracked:
                     if tr.text and tr.text != "-":
                         if tr.namever != _NAMES_VER[0]:
@@ -2767,7 +2791,7 @@ def _track_loop(cap: _Capture, target: _Target, anchors: _Anchors,
                 return False
 
             group_uids: set[int] = set()
-            if _IGNORE_GROUPS[0] and name_rects:
+            if _groups_active() and name_rects:
                 # Two passes so stacked banner rows CHAIN upward — the
                 # 'Today Mute' line anchors on the suppressed '今日は無言です'
                 # plate below it, which anchored on the nameplate.
@@ -3254,6 +3278,7 @@ def _prtscn_loop(cap: _Capture, state: _BoxState, stop: threading.Event) -> None
     was_down = False
     was_combo = False
     was_scan = False
+    was_unf = False
     user32 = ctypes.windll.user32
     while not stop.is_set():
         try:
@@ -3311,6 +3336,35 @@ def _prtscn_loop(cap: _Capture, state: _BoxState, stop: threading.Event) -> None
                         _FLASH[0] = time.monotonic() + 1.6
                     was_scan = tog_down
                 _SCAN_ACTIVE[0] = _TOG_STATE[0] or hold_down
+            # Unfiltered-scan binds: same hold/toggle semantics and the
+            # same focus gate; both unbound => always off.
+            unf_hold, unf_tog = _UNF_HOLD_COMBO[0], _UNF_TOG_COMBO[0]
+            if unf_hold is None and unf_tog is None:
+                was_unf = False
+                new_unf = False
+            elif not bind_ok:
+                was_unf = False
+                new_unf = _UNF_TOG_STATE[0] if unf_tog is not None else False
+            else:
+                utog_down = _combo_down(unf_tog) if unf_tog else False
+                uhold_down = _combo_down(unf_hold) if unf_hold else False
+                if utog_down:
+                    uhold_down = False
+                if unf_tog is not None:
+                    if utog_down and not was_unf:
+                        _UNF_TOG_STATE[0] = not _UNF_TOG_STATE[0]
+                        _FLASH_TXT[0] = ("UNFILTERED ON" if _UNF_TOG_STATE[0]
+                                         else "UNFILTERED OFF")
+                        _FLASH[0] = time.monotonic() + 1.6
+                    was_unf = utog_down
+                new_unf = _UNF_TOG_STATE[0] or uhold_down
+            if new_unf != _UNFILTERED[0]:
+                _UNFILTERED[0] = new_unf
+                # Bust cached name-suppression verdicts so already-tracked
+                # nameplates un-suppress (and re-suppress) immediately.
+                _NAMES_VER[0] += 1
+                logger.info("[OCR] unfiltered scanning %s",
+                            "ON" if new_unf else "OFF")
             noww = time.monotonic()
             if (_SCAN_ACTIVE[0] != prev_active
                     or noww - getattr(_prtscn_loop, "_state_at", 0.0) > 2.0):

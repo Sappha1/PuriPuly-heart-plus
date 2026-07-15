@@ -1647,12 +1647,21 @@ class DashboardView(ft.Row):
             with contextlib.suppress(Exception):
                 region_on = bool(self.on_ocr_region_state())
 
-        def _section_row(label: str, control, top: int = 4) -> ft.Container:
+        def _section_row(label: str, control, top: int = 4,
+                         tooltip: str | None = None) -> ft.Container:
+            _row = [ft.Text(label, size=11, color=_TEXT_MUTED)]
+            if tooltip:
+                _row.append(ft.Container(
+                    content=ft.Icon(ft.Icons.INFO_OUTLINE, size=11,
+                                    color=_TEXT_FAINT),
+                    tooltip=tooltip,
+                    padding=ft.padding.only(left=3),
+                ))
+            _row.append(ft.Container(expand=True))
+            _row.append(control)
             return ft.Container(
                 content=ft.Row(
-                    [ft.Text(label, size=11, color=_TEXT_MUTED, expand=True),
-                     control],
-                    spacing=8,
+                    _row, spacing=0,
                     vertical_alignment=ft.CrossAxisAlignment.CENTER,
                 ),
                 padding=ft.padding.only(left=10, right=10, top=top, bottom=2),
@@ -2244,26 +2253,30 @@ class DashboardView(ft.Row):
             self._bind_btxts[pref_key] = btxt
 
             def _finish(combo: str) -> None:
-                # One combo can't drive both mechanisms: recording a bind
-                # already on the OTHER slot steals it (clears it there).
-                other = ("scan_bind_toggle" if pref_key == "scan_bind"
-                         else "scan_bind")
-                if combo and str(self._ocr_style.get(other, "")) == combo:
-                    self._ocr_style[other] = ""
-                    ob = self._bind_btxts.get(other)
-                    if ob is not None:
-                        ob.value = "—"
-                        with contextlib.suppress(Exception):
-                            ob.update()
+                # One combo can't drive two mechanisms: recording a bind
+                # already on ANY other slot steals it (clears it there).
+                _all_keys = ("scan_bind", "scan_bind_toggle",
+                             "unfiltered_bind", "unfiltered_bind_toggle")
+                if combo:
+                    for other in _all_keys:
+                        if other == pref_key:
+                            continue
+                        if str(self._ocr_style.get(other, "")) == combo:
+                            self._ocr_style[other] = ""
+                            ob = self._bind_btxts.get(other)
+                            if ob is not None:
+                                ob.value = "—"
+                                with contextlib.suppress(Exception):
+                                    ob.update()
                 self._ocr_style[pref_key] = combo
                 btxt.value = combo or "—"
                 with contextlib.suppress(Exception):
                     btxt.update()
                 if callable(self.on_ocr_style_change):
-                    # Write BOTH keys so the overlay switches to the
-                    # dual-bind config (scan_bind_toggle present) and
-                    # stops applying the legacy scan_mode migration.
-                    for k2 in ("scan_bind", "scan_bind_toggle"):
+                    # Write ALL bind keys: scan_bind_toggle presence flips
+                    # the overlay to dual-bind config (ends the legacy
+                    # scan_mode migration), and steals must persist too.
+                    for k2 in _all_keys:
                         _guarded(lambda v, kk=k2:
                                  self.on_ocr_style_change(kk, v),
                                  str(self._ocr_style.get(k2, "")))
@@ -2328,6 +2341,8 @@ class DashboardView(ft.Row):
 
         hold_bind_btn = _mk_bind_recorder("scan_bind")
         toggle_bind_btn = _mk_bind_recorder("scan_bind_toggle")
+        unf_hold_bind_btn = _mk_bind_recorder("unfiltered_bind")
+        unf_toggle_bind_btn = _mk_bind_recorder("unfiltered_bind_toggle")
 
         # Region border visibility (the dashed rectangle on screen).
         _border_on = str(self._ocr_style.get(
@@ -2430,6 +2445,14 @@ class DashboardView(ft.Row):
                                  hold_bind_btn),
                     _section_row(t("dashboard.ocr.scan.toggle_bind"),
                                  toggle_bind_btn),
+                    _section_row(t("dashboard.ocr.scan.unfiltered_hold_bind"),
+                                 unf_hold_bind_btn,
+                                 tooltip=t(
+                                     "dashboard.ocr.scan.unfiltered.tooltip")),
+                    _section_row(
+                        t("dashboard.ocr.scan.unfiltered_toggle_bind"),
+                        unf_toggle_bind_btn,
+                        tooltip=t("dashboard.ocr.scan.unfiltered.tooltip")),
                     _section_row(t("dashboard.ocr.menu.bubbles_only"),
                                  _bool_pill(self._ocr_bubbles_only,
                                             _on_bubbles)),

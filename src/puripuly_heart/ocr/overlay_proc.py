@@ -159,6 +159,10 @@ _UNF_HOLD_COMBO: list = [None]
 _UNF_TOG_COMBO: list = [None]
 _UNF_TOG_STATE = [False]
 _UNFILTERED = [False]
+# PrintScreen debug composites (boxes + frame -> Desktop folder). OFF by
+# default — a dev/bug-report aid, not something scanning should do to
+# every user's Desktop. The OCR menu has the toggle.
+_DEBUG_SHOTS = [False]
 
 
 def _fmt_lines(text: str, xlat: str, pinyin: str) -> list[tuple[str, str]]:
@@ -758,6 +762,9 @@ def _apply_prefs(cfg: dict) -> None:
             _HOLD_COMBO[0], _TOG_COMBO[0] = cbb, None
     if "scan_bind" in cfg:
         _SCAN_COMBO[0] = _parse_bind(str(cfg.get("scan_bind") or ""))
+    if "debug_shots" in cfg:
+        v = cfg.get("debug_shots")
+        _DEBUG_SHOTS[0] = bool(int(v)) if str(v).isdigit() else bool(v)
     if "unfiltered_bind" in cfg or "unfiltered_bind_toggle" in cfg:
         _UNF_HOLD_COMBO[0] = _parse_bind(str(cfg.get("unfiltered_bind") or ""))
         _UNF_TOG_COMBO[0] = _parse_bind(
@@ -3374,7 +3381,7 @@ def _prtscn_loop(cap: _Capture, state: _BoxState, stop: threading.Event) -> None
                 with contextlib_suppress():
                     os.remove(_SHOT_TRIGGER)
                 fire = True
-            if fire:
+            if fire and _DEBUG_SHOTS[0]:
                 _v, _s, boxes = state.get()
                 _save_debug_shot(cap, boxes, pills=_SCAN_ACTIVE[0])
         except Exception:

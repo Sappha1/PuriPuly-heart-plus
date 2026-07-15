@@ -597,6 +597,8 @@
   "dashboard.ocr.menu.prewarm": "Pre-warm recognition (extra CPU)",
   "dashboard.ocr.menu.prewarm.tooltip": "Keep the recognition models loaded while not scanning so the first scan starts instantly — costs some CPU/GPU.",
   "dashboard.ocr.menu.log_chat": "Log OCR to chat",
+  "dashboard.ocr.menu.debug_shots": "Debug screenshots",
+  "dashboard.ocr.menu.debug_shots.tooltip": "When on, pressing PrintScreen saves a diagnostic composite (captured frame + detection boxes) to Desktop\\puripuly_ocr_shots — useful when reporting OCR bugs. Off: PrintScreen does nothing here.",
   "dashboard.ocr.menu.log_chat.tooltip": "Also append every OCR translation to the in-app chat log.",
   "dashboard.ocr.menu.region_lock": "🔒 Lock to region",
   "dashboard.ocr.menu.region_set": "Set OCR region (drag)",

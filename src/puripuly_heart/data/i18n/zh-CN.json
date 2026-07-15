@@ -551,6 +551,8 @@
   "dashboard.ocr.menu.prewarm": "预热识别（额外占用 CPU）",
   "dashboard.ocr.menu.prewarm.tooltip": "不扫描时也保持识别模型加载，首次扫描即刻开始——会占用一些 CPU/GPU。",
   "dashboard.ocr.menu.log_chat": "将 OCR 记录到聊天",
+  "dashboard.ocr.menu.debug_shots": "调试截图",
+  "dashboard.ocr.menu.debug_shots.tooltip": "开启后，按 PrintScreen 会将诊断合成图（捕获帧+检测框）保存到 Desktop\\puripuly_ocr_shots——报告 OCR 问题时很有用。关闭：PrintScreen 在此无作用。",
   "dashboard.ocr.menu.log_chat.tooltip": "同时将每条 OCR 翻译追加到应用内聊天记录。",
   "dashboard.ocr.menu.region_lock": "🔒 锁定到区域",
   "dashboard.ocr.menu.region_set": "设置 OCR 区域（拖动）",

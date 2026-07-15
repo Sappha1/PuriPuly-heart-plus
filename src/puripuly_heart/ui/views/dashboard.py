@@ -551,6 +551,8 @@ class DashboardView(ft.Row):
             "ocr_pinyin_tone": str(_ocr_p.get("ocr_pinyin_tone", 1)),
             "ocr_pinyin_group": str(_ocr_p.get("ocr_pinyin_group", 1)),
             "ignore_groups": str(_ocr_p.get("ignore_groups", 1)),
+            # PrintScreen debug composites — OFF by default, for bug reports.
+            "debug_shots": str(_ocr_p.get("debug_shots", 0)),
         }
         if "scan_bind_toggle" not in _ocr_p:
             # ONE-TIME legacy migration, keyed on the CONFIG FILE: a single
@@ -2479,6 +2481,9 @@ class DashboardView(ft.Row):
                                  _bool_pill(self._ocr_prewarm, _on_prewarm)),
                     _row_tt("dashboard.ocr.menu.log_chat",
                                  _bool_pill(self.ocr_log_chat, _on_log)),
+                    _row_tt("dashboard.ocr.menu.debug_shots",
+                                 _mk_style_bool("debug_shots",
+                                                default_on=False)),
                     _row_tt(
                         "dashboard.ocr.menu.region_set",
                         ft.Row([set_btn, border_btn, lock_pill], spacing=6,

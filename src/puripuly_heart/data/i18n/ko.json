@@ -551,6 +551,8 @@
   "dashboard.ocr.menu.prewarm": "인식 사전 준비 (CPU 추가 사용)",
   "dashboard.ocr.menu.prewarm.tooltip": "스캔하지 않을 때도 인식 모델을 로드해 두어 첫 스캔이 즉시 시작 — CPU/GPU를 약간 사용합니다.",
   "dashboard.ocr.menu.log_chat": "OCR을 채팅에 기록",
+  "dashboard.ocr.menu.debug_shots": "디버그 스크린샷",
+  "dashboard.ocr.menu.debug_shots.tooltip": "켜면 PrintScreen을 눌렀을 때 진단용 합성 이미지(캡처 프레임+감지 상자)를 Desktop\\puripuly_ocr_shots에 저장합니다 — OCR 버그 제보에 유용. 끄면 PrintScreen은 아무 동작도 하지 않습니다.",
   "dashboard.ocr.menu.log_chat.tooltip": "모든 OCR 번역을 앱 내 채팅 로그에도 추가합니다.",
   "dashboard.ocr.menu.region_lock": "🔒 영역 잠금",
   "dashboard.ocr.menu.region_set": "OCR 영역 설정 (드래그)",

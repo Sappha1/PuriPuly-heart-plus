@@ -552,6 +552,8 @@
   "dashboard.ocr.menu.prewarm": "認識のプリウォーム（CPU使用増）",
   "dashboard.ocr.menu.prewarm.tooltip": "スキャンしていない間もモデルをロードしたままにし、初回スキャンを即開始——CPU/GPU を少し消費します。",
   "dashboard.ocr.menu.log_chat": "OCRをチャットに記録",
+  "dashboard.ocr.menu.debug_shots": "デバッグスクリーンショット",
+  "dashboard.ocr.menu.debug_shots.tooltip": "オンにすると PrintScreen で診断用合成画像（キャプチャフレーム＋検出ボックス）を Desktop\\puripuly_ocr_shots に保存します——OCR の不具合報告に便利。オフ：PrintScreen はここでは何もしません。",
   "dashboard.ocr.menu.log_chat.tooltip": "各 OCR 翻訳をアプリ内チャットログにも追加します。",
   "dashboard.ocr.menu.region_lock": "🔒 領域にロック",
   "dashboard.ocr.menu.region_set": "OCR領域を設定（ドラッグ）",

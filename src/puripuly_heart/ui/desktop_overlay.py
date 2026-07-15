@@ -2584,6 +2584,8 @@ class FletDesktopRendererWindow:
             "desktop_overlay.window.title",
             default="PuriPuly Overlay",
         )
+        self._window_title_value = str(page.title)
+        self._native_hwnd = 0  # resolved lazily by _reassert_native_topmost
         window.icon = "icons/icon.ico"
         window.frameless = True
         window.always_on_top = True
@@ -3033,6 +3035,10 @@ class FletDesktopRendererWindow:
                 getattr(window, "width", None), getattr(window, "height", None),
             )
             self._arm_active_banner_on_reveal()
+            self._reassert_native_topmost()
+            if not getattr(self, "_topmost_guard_started", False):
+                self._topmost_guard_started = True
+                self._run_page_task(self._topmost_guard_loop)
 
     async def _composite_nudge_after_reveal(self) -> None:
         """Force the just-revealed content to lay out and paint: pulse the window size
@@ -3589,6 +3595,38 @@ class FletDesktopRendererWindow:
     async def _return_preview_to_edit_mode(self) -> None:
         await self._set_interaction_mode(_DESKTOP_INTERACTION_MODE_EDIT, emit_event=True)
 
+    def _reassert_native_topmost(self) -> None:
+        """Force the overlay back into the TOPMOST band via Win32.
+
+        window.always_on_top=True is set at startup, but native restyles
+        (flet's ignore_mouse_events toggle on lock/pass-through changes)
+        can silently demote the window to the normal z-band — observed
+        live: Firefox/Discord/VRChat stacked ABOVE the overlay while
+        captions kept rendering into an invisible window. SetWindowPos
+        with HWND_TOPMOST is idempotent and cheap; call it after every
+        window mutation and from the periodic guard."""
+        try:
+            import ctypes
+            hwnd = getattr(self, "_native_hwnd", 0)
+            if not hwnd:
+                hwnd = ctypes.windll.user32.FindWindowW(
+                    None, self._window_title_value or "PuriPuly Overlay")
+                self._native_hwnd = hwnd
+            if hwnd:
+                # HWND_TOPMOST(-1), SWP_NOMOVE|NOSIZE|NOACTIVATE
+                ctypes.windll.user32.SetWindowPos(
+                    hwnd, -1, 0, 0, 0, 0, 0x13)
+        except Exception:
+            pass
+
+    async def _topmost_guard_loop(self) -> None:
+        """Periodic self-heal: whatever demotes the overlay, it recovers
+        within a few seconds instead of staying buried under the game."""
+        import asyncio as _aio
+        while True:
+            await _aio.sleep(4.0)
+            self._reassert_native_topmost()
+
     async def _set_interaction_mode(self, mode: str, *, emit_event: bool) -> None:
         if mode not in _DESKTOP_INTERACTION_MODES:
             return
@@ -3603,6 +3641,7 @@ class FletDesktopRendererWindow:
             "[DesktopOverlay][Lock] interaction_mode %s->%s render_elapsed_ms=%.1f",
             previous_mode, mode, render_elapsed_ms,
         )
+        self._reassert_native_topmost()
         if (
             mode == _DESKTOP_INTERACTION_MODE_EDIT
             and self._needs_bounds_reassert_on_edit

@@ -2,6 +2,10 @@
 
 User-facing changes per build. The latest build's highlights also appear in-app when an update is ready.
 
+## r250 — 2026-07-15
+
+- Fixed OCR detection not working in installed builds (the bundled recognition engine failed to load)
+
 ## r249 — 2026-07-14
 
 - Right-click menus now scroll instead of getting cut off when the window is small

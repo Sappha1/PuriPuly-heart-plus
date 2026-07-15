@@ -453,6 +453,12 @@ class LanguageSettings:
     target_language: str = "en"
     peer_source_language: str = "en"
     peer_target_language: str = ""
+    # "Auto detect voice" (dashboard options menu): incoming peer VOICE is
+    # language-auto-detected instead of assumed to be peer_source_language.
+    # The concrete peer_source_language ("Target language" card) still drives
+    # the typed-message target in the unified view — only voice recognition
+    # and translation sourcing go auto.
+    auto_detect_peer_voice: bool = False
     recent_source_languages: list[str] = field(default_factory=lambda: ["en", "zh-CN", "ja"])
     recent_target_languages: list[str] = field(default_factory=lambda: ["en", "zh-CN", "ja"])
     presets: list[LanguagePreset] = field(default_factory=lambda: [
@@ -469,8 +475,16 @@ class LanguageSettings:
             raise ValueError("target_language must be non-empty")
 
     @property
+    def voice_peer_source_language(self) -> str:
+        """Peer VOICE recognition/translation source. Empty (= auto-detect)
+        when 'Auto detect voice' is on; otherwise the concrete peer language.
+        Feed THIS to the hub/STT — peer_source_language itself stays concrete
+        because the unified typed-message target mirrors it."""
+        return "" if self.auto_detect_peer_voice else self.peer_source_language
+
+    @property
     def effective_peer_source(self) -> str:
-        return self.peer_source_language or self.source_language
+        return self.voice_peer_source_language or self.source_language
 
     @property
     def effective_peer_target(self) -> str:
@@ -1479,6 +1493,7 @@ def to_dict(settings: AppSettings) -> dict[str, Any]:
             "target_language": settings.languages.target_language,
             "peer_source_language": settings.languages.peer_source_language,
             "peer_target_language": settings.languages.peer_target_language,
+            "auto_detect_peer_voice": settings.languages.auto_detect_peer_voice,
             "recent_source_languages": settings.languages.recent_source_languages,
             "recent_target_languages": settings.languages.recent_target_languages,
             "active_preset": settings.languages.active_preset,
@@ -3659,6 +3674,8 @@ def from_dict(data: dict[str, Any]) -> AppSettings:
             target_language=data.get("languages", {}).get("target_language", "en"),
             peer_source_language=str(data.get("languages", {}).get("peer_source_language", "")),
             peer_target_language=str(data.get("languages", {}).get("peer_target_language", "")),
+            auto_detect_peer_voice=bool(
+                data.get("languages", {}).get("auto_detect_peer_voice", False)),
             recent_source_languages=list(
                 dict.fromkeys(
                     list(data.get("languages", {}).get("recent_source_languages") or [])

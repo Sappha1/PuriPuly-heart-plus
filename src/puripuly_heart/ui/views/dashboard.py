@@ -399,6 +399,10 @@ class DashboardView(ft.Row):
         # Pinyin grouped into words (péngyǒu) vs per-syllable (péng yǒu). Default grouped.
         self._pinyin_word_grouping = True
         self.on_pinyin_word_grouping_change: object = None  # callback(value: bool)
+        # "Auto detect voice": incoming peer voice language auto-detected
+        # instead of assumed to be the Target language (options menu pill).
+        self._auto_detect_voice = False
+        self.on_auto_detect_voice_change: object = None  # callback(value: bool)
         # Chatbox text format state (mirrors osc.chatbox_include_source + ui.chatbox_reading_only).
         self._chatbox_include_source = True
         self._chatbox_reading_only = False
@@ -486,9 +490,11 @@ class DashboardView(ft.Row):
             _sp = _os.path.join(_os.path.expanduser("~"), "AppData", "Local",
                                 "puripuly-heart", "settings.json")
             with open(_sp, encoding="utf-8") as _fh:
-                self._unified_translation = bool(
-                    _json.load(_fh).get("ui", {}).get(
-                        "unified_translation_ui", True))
+                _sd = _json.load(_fh)
+            self._unified_translation = bool(
+                _sd.get("ui", {}).get("unified_translation_ui", True))
+            self._auto_detect_voice = bool(
+                _sd.get("languages", {}).get("auto_detect_peer_voice", False))
         except Exception:
             pass
         self._ocr_prewarm = bool(_ocr_p.get("prewarm", True))
@@ -4258,6 +4264,18 @@ class DashboardView(ft.Row):
                     t("dashboard.translit.words", system=rw),
                     _bool_pill(_gp_ref, self._on_pinyin_grouping_toggle)))
 
+        # ── auto detect voice: peer voice language auto-detection, decoupled
+        # from the concrete "Target language" pick (which typed messages use).
+        _adv_ref = [bool(self._auto_detect_voice)]
+
+        def _on_adv(val: bool):
+            self._auto_detect_voice = bool(val)
+            if callable(self.on_auto_detect_voice_change):
+                self.on_auto_detect_voice_change(bool(val))
+
+        _adv_row = _section_row(
+            t("dashboard.menu.auto_detect_voice"), _bool_pill(_adv_ref, _on_adv))
+
         # ── assemble ─────────────────────────────────────────────────────────────
         children: list[Any] = [
             ft.Container(
@@ -4273,6 +4291,8 @@ class DashboardView(ft.Row):
         if extra_rows:
             children.append(_div())
             children += extra_rows
+        children.append(_div())
+        children.append(_adv_row)
         children.append(ft.Container(height=4))
         content = ft.Container(content=ft.Column(
             children, spacing=0, tight=True, horizontal_alignment=ft.CrossAxisAlignment.STRETCH))
@@ -4464,9 +4484,10 @@ class DashboardView(ft.Row):
         self._refresh_auto_translit()
 
     def _open_peer_source_dialog(self, _=None):
-        auto_label = t("language.auto", default="Auto Detect")
-        peer_src_langs = [("", auto_label)] + list(self._LANG_OPTIONS)
-        modal = LanguageModal(page=self.page, languages=peer_src_langs, on_select=self._on_peer_source_select)
+        # No Auto Detect entry here: the "Target language" must be concrete —
+        # it drives the typed-message target in the unified view. Voice
+        # auto-detection is its own toggle in the options (gear) menu.
+        modal = LanguageModal(page=self.page, languages=self._LANG_OPTIONS, on_select=self._on_peer_source_select)
         modal.open(current=self._peer_source_lang_code, recent=self._recent_source_langs)
 
     def _open_peer_target_dialog(self, _=None):

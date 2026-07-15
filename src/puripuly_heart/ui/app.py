@@ -150,6 +150,7 @@ class TranslatorApp:
         self.view_dashboard.on_translator_change = self._on_translator_change
         self.view_dashboard.on_transliteration_change = self._on_transliteration_change
         self.view_dashboard.on_pinyin_word_grouping_change = self._on_pinyin_word_grouping_change
+        self.view_dashboard.on_auto_detect_voice_change = self._on_auto_detect_voice_change
         self.view_dashboard.on_chatbox_format_change = self._on_chatbox_format_change
         self.view_dashboard.on_request_current_translator = self._current_translator_model_value
         self.view_dashboard.on_request_deepl_usage_refresh = self._on_request_deepl_usage_refresh
@@ -1743,6 +1744,13 @@ class TranslatorApp:
                     bool(getattr(_ui, "unified_translation_ui", True)))
             except Exception:
                 logger.exception("unified-translation live toggle failed")
+            # Keep the gear menu's "Auto detect voice" pill state current.
+            try:
+                dash._auto_detect_voice = bool(getattr(
+                    getattr(settings, "languages", None),
+                    "auto_detect_peer_voice", False))
+            except Exception:
+                pass
             # Initialize the overlay lock icon and VR/PC mode chip from settings at
             # startup so they reflect reality before the user first toggles overlay.
             try:
@@ -1986,6 +1994,17 @@ class TranslatorApp:
                 return
             updated = copy.deepcopy(settings)
             updated.ui.pinyin_word_grouping = bool(value)
+            await self.controller.apply_settings(updated)
+        self._queue_settings_mutation_task(_task)
+
+    def _on_auto_detect_voice_change(self, value: bool) -> None:
+        import copy
+        async def _task():
+            settings = self.controller.settings
+            if settings is None:
+                return
+            updated = copy.deepcopy(settings)
+            updated.languages.auto_detect_peer_voice = bool(value)
             await self.controller.apply_settings(updated)
         self._queue_settings_mutation_task(_task)
 

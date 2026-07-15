@@ -4320,7 +4320,7 @@ class GuiController:
         if self.hub is not None:
             self.hub.source_language = settings.languages.source_language
             self.hub.target_language = settings.languages.target_language
-            self.hub.peer_source_language = settings.languages.peer_source_language
+            self.hub.peer_source_language = settings.languages.voice_peer_source_language
             self.hub.peer_target_language = settings.languages.peer_target_language
             self.hub.system_prompt = settings.system_prompt
             self.hub.low_latency_mode = settings.stt.low_latency_mode
@@ -4568,7 +4568,7 @@ class GuiController:
         if self.hub is not None:
             self.hub.source_language = next_settings.languages.source_language
             self.hub.target_language = next_settings.languages.target_language
-            self.hub.peer_source_language = next_settings.languages.peer_source_language
+            self.hub.peer_source_language = next_settings.languages.voice_peer_source_language
             self.hub.peer_target_language = next_settings.languages.peer_target_language
             self.hub.system_prompt = next_settings.system_prompt
             self.hub.low_latency_mode = next_settings.stt.low_latency_mode
@@ -5164,7 +5164,7 @@ class GuiController:
             runtime_logging=self.runtime_logging,
             source_language=self.settings.languages.source_language,
             target_language=self.settings.languages.target_language,
-            peer_source_language=self.settings.languages.peer_source_language,
+            peer_source_language=self.settings.languages.voice_peer_source_language,
             peer_target_language=self.settings.languages.peer_target_language,
             system_prompt=self.settings.system_prompt,
             chatbox_include_source=self.settings.osc.chatbox_include_source,

@@ -253,3 +253,5 @@ opencode.json
 
 # VRCT reference copy (local reference only, not part of this project)
 vrct refernece/
+
+dist-dev/

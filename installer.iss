@@ -66,9 +66,24 @@ Name: "chinesetraditional"; MessagesFile: "installer\Languages\ChineseTraditiona
 
 [Tasks]
 Name: "desktopicon"; Description: "{cm:CreateDesktopIcon}"; GroupDescription: "{cm:AdditionalIcons}"; Flags: unchecked
+; Clean install: wipe ALL app data (settings, downloaded speech model, logs,
+; OCR config, crash sentinels) so no remnant from an older install can poison
+; the new one (e.g. a legacy language override or a half-downloaded model).
+; API keys are NOT affected - they live in the Windows credential store.
+Name: "cleanslate"; Description: "{cm:CleanSlate}"; GroupDescription: "{cm:CleanSlateGroup}"; Flags: unchecked
 Name: "quicklaunchicon"; Description: "{cm:CreateQuickLaunchIcon}"; GroupDescription: "{cm:AdditionalIcons}"; Flags: unchecked; OnlyBelowVersion: 6.1; Check: not IsAdminInstallMode
 
 [CustomMessages]
+english.CleanSlateGroup=Clean install:
+english.CleanSlate=Delete ALL old settings and app data (fresh start; API keys are kept)
+korean.CleanSlateGroup=깨끗한 설치:
+korean.CleanSlate=이전 설정과 앱 데이터를 모두 삭제 (새로 시작; API 키는 유지됨)
+japanese.CleanSlateGroup=クリーンインストール:
+japanese.CleanSlate=以前の設定とアプリデータをすべて削除（新規開始、APIキーは保持）
+chinesesimplified.CleanSlateGroup=全新安装:
+chinesesimplified.CleanSlate=删除所有旧设置和应用数据（全新开始；API 密钥会保留）
+chinesetraditional.CleanSlateGroup=全新安裝:
+chinesetraditional.CleanSlate=刪除所有舊設定和應用資料（全新開始；API 金鑰會保留）
 english.LocalSttPageTitle=ASR Model
 english.LocalSttPageDescription=Download the built-in ASR model.
 english.LocalSttReinstall=Redownload ASR model
@@ -119,6 +134,12 @@ Name: "{userappdata}\Microsoft\Internet Explorer\Quick Launch\{#MyAppGroupName}"
 Filename: "{app}\{#MyAppExeName}"; Description: "{cm:LaunchProgram,{#StringChange(MyAppName, '&', '&&')}}"; Flags: nowait postinstall skipifsilent
 
 [InstallDelete]
+; Clean install (opt-in checkbox): everything under the app data folder goes -
+; settings.json, downloaded speech model, logs, OCR config, crash sentinels.
+Type: filesandordirs; Name: "{localappdata}\puripuly-heart"; Tasks: cleanslate
+; Always clear the packaged runtime tree before laying down the new one, so
+; upgrades can never leave stale .pyd/.dll remnants from a previous build.
+Type: filesandordirs; Name: "{app}\_internal"
 ; Remove the managed default-path VAD cache so the app can rehydrate it from the bundled model.
 Type: files; Name: "{localappdata}\puripuly-heart\silero_vad.onnx"
 ; Remove stale legacy soxr runtime names before laying down the current packaged tree.

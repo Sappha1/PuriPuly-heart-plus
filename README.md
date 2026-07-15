@@ -15,7 +15,7 @@
 
 ---
 
-![PuriPulyHeart+ dashboard](docs/images/plus/dashboard-v22.png)
+![PuriPulyHeart+ dashboard](docs/images/plus/dashboard-2.2.png)
 
 PuriPulyHeart+ listens to your voice, translates it, and prints it to the VRChat chatbox — and does the same in reverse for the person you're talking to, with subtitles on a desktop or VR overlay. Speech recognition runs **fully local** (Qwen ASR 0.6B) out of the box: no account, no API key, no credit card needed to start talking.
 

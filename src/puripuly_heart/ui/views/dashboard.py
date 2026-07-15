@@ -4272,8 +4272,24 @@ class DashboardView(ft.Row):
             if callable(self.on_auto_detect_voice_change):
                 self.on_auto_detect_voice_change(bool(val))
 
-        _adv_row = _section_row(
-            t("dashboard.menu.auto_detect_voice"), _bool_pill(_adv_ref, _on_adv))
+        _adv_info = ft.Container(
+            content=ft.Icon(ft.Icons.INFO_OUTLINE, size=11, color=_TEXT_FAINT),
+            tooltip=t("dashboard.menu.auto_detect_voice.tooltip"),
+            padding=ft.padding.only(left=3),
+        )
+        _adv_row = ft.Container(
+            content=ft.Row(
+                [
+                    ft.Text(t("dashboard.menu.auto_detect_voice"), size=11,
+                            color=_TEXT_MUTED),
+                    _adv_info,
+                    ft.Container(expand=True),
+                    _bool_pill(_adv_ref, _on_adv),
+                ],
+                spacing=0, vertical_alignment=ft.CrossAxisAlignment.CENTER,
+            ),
+            padding=ft.padding.only(left=10, right=10, top=4, bottom=2),
+        )
 
         # ── assemble ─────────────────────────────────────────────────────────────
         children: list[Any] = [

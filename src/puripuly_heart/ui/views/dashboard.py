@@ -2213,7 +2213,7 @@ class DashboardView(ft.Row):
                     rows, spacing=0, tight=True,
                     scroll=ft.ScrollMode.AUTO,
                     horizontal_alignment=ft.CrossAxisAlignment.STRETCH)),
-                width=280.0)
+                width=280.0, est_height=540.0)
 
         def _mk_row(label: str, control, top: int = 4) -> ft.Container:
             return _section_row(label, control, top)
@@ -2503,7 +2503,7 @@ class DashboardView(ft.Row):
             ),
         )
         self._ocr_popover_close = self._open_popover_at(
-            x, y, content, width=300.0)
+            x, y, content, width=300.0, est_height=760.0)
 
     def _set_ocr_region(self) -> None:
         if not self._ocr_on:
@@ -3120,7 +3120,8 @@ class DashboardView(ft.Row):
             ),
         )
         self._overlay_popover_close = self._open_popover_at(
-            0.0, y, content, width=248.0, right_side=True
+            0.0, y, content, width=248.0, right_side=True,
+            est_height=440.0,
         )
 
     def set_overlay_background_alpha(self, alpha: float) -> None:
@@ -3137,13 +3138,17 @@ class DashboardView(ft.Row):
 
     def _open_popover_at(self, x: float, y: float, content: ft.Control,
                          width: float | None = None, clamp_width: float | None = None,
-                         right_side: bool = False):
+                         right_side: bool = False,
+                         est_height: float | None = None):
         """Show an arbitrary popover panel anchored near page coordinates (x, y).
 
         width=None lets the panel size tightly to its content (menus). The panel is
         clamped to the window so it never gets clipped at an edge. Returns close().
         right_side=True anchors to the right edge of the page (ignores x), so the
         popup never overflows when the window is narrow.
+        est_height: approximate content height — tall menus anchor upward to fit,
+        and when the WINDOW is shorter than the menu the panel is capped to the
+        window height and scrolls instead of getting cut off at the bottom.
         """
         if not self.page:
             return lambda: None
@@ -3162,11 +3167,25 @@ class DashboardView(ft.Row):
         if page_h:
             top = min(top, max(margin, page_h - margin - 56.0))
         top = max(margin, top)
+        panel_height: float | None = None
+        if est_height and page_h:
+            avail = page_h - 2 * margin
+            if est_height >= avail:
+                # Window shorter than the menu: pin to the top, cap the
+                # panel to the window and let the content scroll.
+                top = margin
+                panel_height = avail
+                content = ft.Column([content], scroll=ft.ScrollMode.AUTO,
+                                    tight=True)
+            else:
+                # Fits — but anchor upward so the bottom never clips.
+                top = max(margin, min(top, page_h - margin - est_height))
 
         if right_side:
             panel = ft.Container(
                 content=content,
                 width=width,
+                height=panel_height,
                 bgcolor="#26272b",
                 border_radius=8,
                 border=ft.border.all(1, "#3a3b3f"),
@@ -3185,6 +3204,7 @@ class DashboardView(ft.Row):
             panel = ft.Container(
                 content=content,
                 width=width,
+                height=panel_height,
                 bgcolor="#26272b",
                 border_radius=8,
                 border=ft.border.all(1, "#3a3b3f"),
@@ -4487,7 +4507,8 @@ class DashboardView(ft.Row):
         children.append(ft.Container(height=4))
         content = ft.Container(content=ft.Column(
             children, spacing=0, tight=True, horizontal_alignment=ft.CrossAxisAlignment.STRETCH))
-        self._translit_popover_close = self._open_popover_at(x, y, content, width=280.0)
+        self._translit_popover_close = self._open_popover_at(
+            x, y, content, width=280.0, est_height=500.0)
 
     def set_chatbox_format_state(self, include_source: bool, reading_only: bool) -> None:
         self._chatbox_include_source = bool(include_source)

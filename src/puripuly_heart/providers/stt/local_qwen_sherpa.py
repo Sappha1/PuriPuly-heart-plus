@@ -4,6 +4,7 @@ import asyncio
 import contextlib
 import importlib
 import logging
+import re
 import time
 from dataclasses import dataclass, field
 from pathlib import Path
@@ -96,6 +97,9 @@ def _transcript_text_for_log(text: str) -> str:
     return text
 
 
+_SPECIAL_TOKEN_RE = re.compile(r"<\|[^|<>]{1,32}\|>")
+
+
 def _strip_asr_meta_wrapper(text: str) -> str:
     """The Qwen3 ASR model occasionally leaks its internal prompt format instead
     of a bare transcript ('system\\nlanguage Chinese<asr_text>是河南的吗？' —
@@ -104,7 +108,18 @@ def _strip_asr_meta_wrapper(text: str) -> str:
     and drop the meta prefix."""
     if "<asr_text>" in text:
         text = text.rsplit("<asr_text>", 1)[1]
-    return text.replace("</asr_text>", "").strip()
+    text = text.replace("</asr_text>", "").strip()
+    # Raw SPECIAL TOKENS also leak: '罗曼达。<|endoftext|>Human Rights Watch
+    # （人权观察）是全球最大的人权组织…' was emitted verbatim on ambiguous audio.
+    # Everything from the first special token onward is training-data
+    # continuation, not speech — truncate (an all-garbage segment becomes
+    # empty and the caller's `if text:` gate drops it).
+    m = _SPECIAL_TOKEN_RE.search(text)
+    if m:
+        logger.warning("[STT][local_qwen] special-token leak truncated: %r",
+                       text[m.start():m.start() + 60])
+        text = text[:m.start()].strip()
+    return text
 
 
 def _looks_repetitive(text: str) -> bool:

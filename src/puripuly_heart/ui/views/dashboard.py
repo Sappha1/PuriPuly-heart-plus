@@ -2728,11 +2728,21 @@ class DashboardView(ft.Row):
                 border=ft.border.all(1, _TOGGLE_ON if active else "#3a3b3f"),
             )
 
-        def _section_row(label: str, control: Any, top: int = 4) -> ft.Container:
+        def _section_row(label: str, control: Any, top: int = 4,
+                         tooltip: str | None = None) -> ft.Container:
+            _row: list[Any] = [ft.Text(label, size=11, color=_TEXT_MUTED)]
+            if tooltip:
+                _row.append(ft.Container(
+                    content=ft.Icon(ft.Icons.INFO_OUTLINE, size=11, color=_TEXT_FAINT),
+                    tooltip=tooltip,
+                    padding=ft.padding.only(left=3),
+                ))
+            _row.append(ft.Container(expand=True))
+            _row.append(control)
             return ft.Container(
                 content=ft.Row(
-                    [ft.Text(label, size=11, color=_TEXT_MUTED, expand=True), control],
-                    spacing=8, vertical_alignment=ft.CrossAxisAlignment.CENTER,
+                    _row, spacing=0,
+                    vertical_alignment=ft.CrossAxisAlignment.CENTER,
                 ),
                 padding=ft.padding.only(left=10, right=10, top=top, bottom=2),
             )
@@ -4149,11 +4159,21 @@ class DashboardView(ft.Row):
         rw = self._reading_word(script)
 
         # ── shared styling helpers (mirror _on_overlay_right_click) ──────────────
-        def _section_row(label: str, control: Any, top: int = 4) -> ft.Container:
+        def _section_row(label: str, control: Any, top: int = 4,
+                         tooltip: str | None = None) -> ft.Container:
+            _row: list[Any] = [ft.Text(label, size=11, color=_TEXT_MUTED)]
+            if tooltip:
+                _row.append(ft.Container(
+                    content=ft.Icon(ft.Icons.INFO_OUTLINE, size=11, color=_TEXT_FAINT),
+                    tooltip=tooltip,
+                    padding=ft.padding.only(left=3),
+                ))
+            _row.append(ft.Container(expand=True))
+            _row.append(control)
             return ft.Container(
                 content=ft.Row(
-                    [ft.Text(label, size=11, color=_TEXT_MUTED, expand=True), control],
-                    spacing=8, vertical_alignment=ft.CrossAxisAlignment.CENTER,
+                    _row, spacing=0,
+                    vertical_alignment=ft.CrossAxisAlignment.CENTER,
                 ),
                 padding=ft.padding.only(left=10, right=10, top=top, bottom=2),
             )
@@ -4245,7 +4265,9 @@ class DashboardView(ft.Row):
             except Exception: pass
         _fmt_btn.on_click = _toggle_fmt
         _fmt_section = ft.Column(
-            [_section_row(t("dashboard.translit.menu.chatbox_short"), _fmt_btn), _fmt_rows_col],
+            [_section_row(t("dashboard.translit.menu.chatbox_short"), _fmt_btn,
+                          tooltip=t("dashboard.translit.menu.chatbox_short.tooltip")),
+             _fmt_rows_col],
             spacing=0, tight=True,
         )
 
@@ -4257,14 +4279,16 @@ class DashboardView(ft.Row):
                 self.show_pinyin = self.show_romaji = self.show_latin = val
                 self._emit_transliteration_change()
             extra_rows.append(_section_row(
-                t("dashboard.translit.menu.show_reading", system=rw), _bool_pill(_sr_ref, _on_show)))
+                t("dashboard.translit.menu.show_reading", system=rw), _bool_pill(_sr_ref, _on_show),
+                tooltip=t("dashboard.translit.menu.show_reading.tooltip", system=rw)))
             # Grouped vs per-syllable(pinyin)/per-mora(romaji). Romaji is grouped by default;
             # turning this off gives the per-character reading.
             if script in ("pinyin", "romaji"):
                 _gp_ref = [self._pinyin_word_grouping]
                 extra_rows.append(_section_row(
                     t("dashboard.translit.words", system=rw),
-                    _bool_pill(_gp_ref, self._on_pinyin_grouping_toggle)))
+                    _bool_pill(_gp_ref, self._on_pinyin_grouping_toggle),
+                    tooltip=t("dashboard.translit.words.tooltip", system=rw)))
 
         # ── auto detect voice: peer voice language auto-detection, decoupled
         # from the concrete "Target language" pick (which typed messages use).
@@ -4275,30 +4299,9 @@ class DashboardView(ft.Row):
             if callable(self.on_auto_detect_voice_change):
                 self.on_auto_detect_voice_change(bool(val))
 
-        def _info_pill_row(label_key: str, tooltip_key: str,
-                           ref: list[bool], on_change) -> ft.Container:
-            _info = ft.Container(
-                content=ft.Icon(ft.Icons.INFO_OUTLINE, size=11, color=_TEXT_FAINT),
-                tooltip=t(tooltip_key),
-                padding=ft.padding.only(left=3),
-            )
-            return ft.Container(
-                content=ft.Row(
-                    [
-                        ft.Text(t(label_key), size=11, color=_TEXT_MUTED),
-                        _info,
-                        ft.Container(expand=True),
-                        _bool_pill(ref, on_change),
-                    ],
-                    spacing=0, vertical_alignment=ft.CrossAxisAlignment.CENTER,
-                ),
-                padding=ft.padding.only(left=10, right=10, top=4, bottom=2),
-            )
-
-        _adv_row = _info_pill_row(
-            "dashboard.menu.auto_detect_voice",
-            "dashboard.menu.auto_detect_voice.tooltip",
-            _adv_ref, _on_adv)
+        _adv_row = _section_row(
+            t("dashboard.menu.auto_detect_voice"), _bool_pill(_adv_ref, _on_adv),
+            tooltip=t("dashboard.menu.auto_detect_voice.tooltip"))
 
         # ── separate text translation: mirrors the Settings row, applies live.
         _sep_ref = [not bool(self._unified_translation)]
@@ -4307,10 +4310,9 @@ class DashboardView(ft.Row):
             if callable(self.on_separate_text_translation_change):
                 self.on_separate_text_translation_change(bool(val))
 
-        _sep_row = _info_pill_row(
-            "settings.separate_text_translation",
-            "settings.separate_text_translation.tooltip",
-            _sep_ref, _on_sep)
+        _sep_row = _section_row(
+            t("settings.separate_text_translation"), _bool_pill(_sep_ref, _on_sep),
+            tooltip=t("settings.separate_text_translation.tooltip"))
 
         # ── assemble ─────────────────────────────────────────────────────────────
         children: list[Any] = [

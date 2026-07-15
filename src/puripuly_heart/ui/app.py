@@ -2011,8 +2011,11 @@ class TranslatorApp:
 
     def _on_separate_text_translation_change(self, value: bool) -> None:
         """Gear-menu pill: ON = separate Text Translation box (unified OFF).
-        Mirrors the Settings row; the live layout swap happens via
-        _on_settings_changed -> dash.set_unified_translation."""
+        Swap the layout immediately — on_settings_changed only fires from the
+        Settings VIEW, so apply_settings alone would persist without any
+        visible change until restart."""
+        with contextlib.suppress(Exception):
+            self.view_dashboard.set_unified_translation(not bool(value))
         import copy
         async def _task():
             settings = self.controller.settings

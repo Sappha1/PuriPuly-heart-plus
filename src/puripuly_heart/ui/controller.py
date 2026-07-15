@@ -4999,6 +4999,19 @@ class GuiController:
         await self._peer_runtime.apply_policy(config=config, desired_active=desired_active)
         self._last_peer_stt_runtime_signature = config.runtime_signature
         self._sync_effective_hub_flags(self.settings)
+        if desired_active and not already_running_same_config:
+            # The peer pill goes green, but the model itself used to load
+            # LAZILY at the first utterance (a 7-9s "reload" wheel the moment
+            # someone finally speaks). Warm it in the background now so the
+            # load happens at enable time instead — the loading bar shows
+            # during startup and the first speech transcribes immediately.
+            async def _warm() -> None:
+                try:
+                    await self._peer_runtime.warmup()
+                except Exception:
+                    self.log_detailed("[STT] peer warmup failed (will lazy-load)")
+            with contextlib.suppress(Exception):
+                asyncio.get_running_loop().create_task(_warm())
 
     async def _rebuild_pipeline(self, *, rebuild_stt: bool) -> None:
         self.log_detailed(

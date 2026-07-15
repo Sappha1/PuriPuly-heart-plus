@@ -50,6 +50,13 @@ class FinalTranscriptSuppressedNotification:
 @dataclass(slots=True)
 class ManagedSTTProvider:
     backend: STTBackend
+
+    async def warmup(self) -> None:
+        """Preload the backend's model (PeerChannelRuntime.warmup delegates
+        here) so the first real utterance doesn't pay the load."""
+        backend_warmup = getattr(self.backend, "warmup", None)
+        if callable(backend_warmup):
+            await backend_warmup()
     sample_rate_hz: int
     stt_provider_name: STTProviderName | None = None
     channel: ChannelId = "self"

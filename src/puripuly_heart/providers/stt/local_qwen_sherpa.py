@@ -236,6 +236,12 @@ class LocalQwenSherpaSTTBackend(STTBackend):
         await self._ensure_recognizer()
         return _LocalQwenSherpaSession(backend=self)
 
+    async def warmup(self) -> None:
+        # Idempotent: constructing the sherpa recognizer is the 7-9s cost
+        # normally paid at the FIRST utterance ("green light but not truly
+        # ready"). Warming at enable time moves that load to startup.
+        await self._ensure_recognizer()
+
     async def close(self) -> None:
         self._recognizer = None
 

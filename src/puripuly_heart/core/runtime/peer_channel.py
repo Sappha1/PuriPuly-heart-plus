@@ -99,7 +99,8 @@ class PeerChannelRuntime:
             if (
                 desired_active
                 and self._desired_active
-                and self._state == PeerChannelRuntimeState.RUNNING
+                and self._state in (PeerChannelRuntimeState.RUNNING,
+                                    PeerChannelRuntimeState.STARTING)
                 and self._signature == config.runtime_signature
             ):
                 self._config = config
@@ -121,7 +122,8 @@ class PeerChannelRuntime:
                 self._state = PeerChannelRuntimeState.STOPPING
             elif (
                 self._signature == config.runtime_signature
-                and self._state == PeerChannelRuntimeState.RUNNING
+                and self._state in (PeerChannelRuntimeState.RUNNING,
+                                    PeerChannelRuntimeState.STARTING)
             ):
                 return
             else:

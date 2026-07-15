@@ -3918,29 +3918,18 @@ class GuiController:
                 resume_self=False,
                 resume_peer=True,
             )
-        try:
-            await self._probe_peer_local_stt_runtime_load()
-            self._local_stt_install_state = LocalSTTInstallState(status="ready")
-            if self._local_stt_runtime_status != "downloading":
-                self._local_stt_runtime_status = "ready"
-            self._sync_local_stt_notice()
-            return True
-        except LocalSTTModelMissingError:
-            return self._handle_local_stt_unavailable(
-                "missing",
-                resume_self=False,
-                resume_peer=True,
-            )
-        except (LocalSTTManifestInvalidError, LocalQwenSherpaLoadError):
-            # If peer was disabled while the probe was loading, discard the error
-            # silently — the user already turned peer off, so a red light is misleading.
-            if self.settings is None or not self._peer_local_stt_requested(self.settings):
-                return False
-            return self._handle_local_stt_unavailable(
-                "invalid",
-                resume_self=False,
-                resume_peer=True,
-            )
+        # The load-probe used to load a THROWAWAY model here just to prove
+        # loadability — now that the runtime eagerly warms its REAL backend
+        # (see _refresh_peer_stt_runtime), that probe doubled the 7-9s load
+        # at every startup ("peer loading twice in a row"). The cheap status
+        # checks above still gate missing/invalid/downloading installs;
+        # genuine load failures surface through the runtime's terminal-
+        # failure path exactly like a mid-session fault.
+        self._local_stt_install_state = LocalSTTInstallState(status="ready")
+        if self._local_stt_runtime_status != "downloading":
+            self._local_stt_runtime_status = "ready"
+        self._sync_local_stt_notice()
+        return True
 
     async def _probe_peer_local_stt_runtime_load(self) -> None:
         assert self.settings is not None

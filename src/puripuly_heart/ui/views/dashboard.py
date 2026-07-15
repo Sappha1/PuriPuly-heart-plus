@@ -476,9 +476,9 @@ class DashboardView(ft.Row):
         except Exception:
             _ocr_p = {}
         # Unified translation view: hide the separate "Text Translation" card
-        # and make typed messages mirror the Voice "Translate to" (reading)
-        # language. Read at build time (needs to decide which cards to render);
-        # a toggle in Settings changes it for the next launch.
+        # and make typed messages mirror the Voice "Translate from" (partner's)
+        # language. Read here for the initial card layout; the Settings toggle
+        # applies live via set_unified_translation().
         self._unified_translation = True
         try:
             import json as _json
@@ -1103,21 +1103,30 @@ class DashboardView(ft.Row):
             content=self._preset_tabs_row,
             padding=ft.padding.symmetric(horizontal=10, vertical=4),
         )
+        # Both cards are ALWAYS built so the unified/separate layouts can swap
+        # live (settings toggle) without rebuilding the sidebar. Unified view:
+        # the voice card is titled "Translation", the Text Translation card is
+        # hidden, and typed messages mirror the Voice "Translate from"
+        # (partner's) language. When "Translate from" is Auto Detect there is
+        # no concrete language to mirror, so the Text Translation card is
+        # revealed for the user to pick the typed-output language. The options
+        # gear lives on the voice card in both layouts (one control instance
+        # can't be parented twice).
+        _voice_key = ("dashboard.section.translation" if self._unified_translation
+                      else "dashboard.section.voice_translation")
+        self._text_section_card = _section_card(
+            ft.Icons.CHAT_BUBBLE_OUTLINE, "dashboard.section.text_translation",
+            self._lang_panel)
+        self._voice_section_card = _section_card(
+            ft.Icons.GRAPHIC_EQ, _voice_key,
+            self._peer_panel, trailing=self._build_translit_gear())
+        self._voice_section_lbl = self._section_header_labels[-1][0]
+        self._preset_row_container = _preset_row
+        self._apply_unified_target_sync()  # also sets text-card visibility
         if self._unified_translation:
-            # One "Translation" card: the separate Text Translation box is
-            # hidden and typed messages mirror the Voice "Translate to"
-            # language. The options gear moves onto this card's header.
-            self._apply_unified_target_sync()
-            _cards = [
-                _section_card(ft.Icons.GRAPHIC_EQ, "dashboard.section.translation",
-                              self._peer_panel, trailing=self._build_translit_gear()),
-            ]
+            _cards = [self._voice_section_card, self._text_section_card]
         else:
-            _cards = [
-                _section_card(ft.Icons.CHAT_BUBBLE_OUTLINE, "dashboard.section.text_translation",
-                              self._lang_panel, trailing=self._build_translit_gear()),
-                _section_card(ft.Icons.GRAPHIC_EQ, "dashboard.section.voice_translation", self._peer_panel),
-            ]
+            _cards = [self._text_section_card, self._voice_section_card]
         self._middle_section = ft.Column(
             [_preset_row, *_cards],
             scroll=ft.ScrollMode.AUTO,
@@ -3587,7 +3596,7 @@ class DashboardView(ft.Row):
         self._extra_target_lang_codes = list(targets[1:])
         self._peer_source_lang_code = preset.get("peer_source", "")
         self._peer_target_lang_code = preset.get("peer_target", "")
-        # Unified view: the (hidden) text target mirrors the reading language.
+        # Unified view: the (hidden) text target mirrors the partner's language.
         self._apply_unified_target_sync()
         self._update_input_font()
         self._refresh_language_panel()
@@ -4474,17 +4483,77 @@ class DashboardView(ft.Row):
     # ── Language selection callbacks ─────────────────────────────────────────
 
     def _apply_unified_target_sync(self) -> None:
-        """Unified view: typed messages mirror the Voice 'Translate to'
-        (reading) language. Skip when it is Auto Detect (empty) — there is no
-        concrete language to mirror, so the last text target is left alone."""
-        if getattr(self, "_unified_translation", True) and self._source_lang_code:
-            self._target_lang_code = self._source_lang_code
+        """Unified view: typed messages go out in the PARTNER's language, so
+        the (hidden) text target mirrors the Voice 'Translate from' (peer
+        speaks). Mirroring the 'Translate to' (reading) language instead would
+        make target==source — a no-op that sends typed text untranslated.
+        When 'Translate from' is Auto Detect there is no concrete language to
+        mirror; the Text Translation card is revealed so the user defines the
+        typed-output language themselves."""
+        if getattr(self, "_unified_translation", True) and self._peer_source_lang_code:
+            self._target_lang_code = self._peer_source_lang_code
+        self._refresh_unified_text_card()
+
+    def _refresh_unified_text_card(self) -> None:
+        """Show the Text Translation card when it is meaningful: always in the
+        separate layout, and in the unified layout only while the partner's
+        language is Auto Detect (typed output needs a manual pick)."""
+        card = getattr(self, "_text_section_card", None)
+        if card is None:
+            return
+        visible = (not getattr(self, "_unified_translation", True)
+                   or not self._peer_source_lang_code)
+        if card.visible != visible:
+            card.visible = visible
+            try:
+                if card.page:
+                    card.update()
+            except Exception:
+                pass
+
+    def set_unified_translation(self, enabled: bool) -> None:
+        """Live-apply the Settings 'Separate text translation' toggle: retitle
+        the voice card, reorder/show the Text Translation card, and re-assert
+        the typed-target mirror."""
+        enabled = bool(enabled)
+        if enabled == self._unified_translation:
+            return
+        self._unified_translation = enabled
+        key = ("dashboard.section.translation" if enabled
+               else "dashboard.section.voice_translation")
+        lbl = getattr(self, "_voice_section_lbl", None)
+        if lbl is not None:
+            lbl.value = t(key)
+            # keep apply_locale() re-translating the right key later
+            for i, (l, _k) in enumerate(self._section_header_labels):
+                if l is lbl:
+                    self._section_header_labels[i] = (l, key)
+                    break
+        # Unified: primary Translation card on top; separate: classic order.
+        try:
+            if enabled:
+                order = [self._voice_section_card, self._text_section_card]
+            else:
+                order = [self._text_section_card, self._voice_section_card]
+            self._middle_section.controls = [self._preset_row_container, *order]
+        except Exception:
+            pass
+        self._apply_unified_target_sync()
+        self._refresh_language_panel()
+        self._refresh_language_rows()
+        try:
+            if self._middle_section.page:
+                self._middle_section.update()
+        except Exception:
+            pass
+        # Persist the re-mirrored typed target (no-op when nothing changed).
+        self._notify_language_change()
 
     def _on_source_select(self, lang_code: str):
         self._source_lang_code = lang_code
         if lang_code:  # don't add "Auto" to recent
             self._add_to_recent(lang_code, is_source=True)
-        # Unified view: keep the (hidden) text target mirroring this.
+        # Unified view: re-assert the typed-target mirror.
         self._apply_unified_target_sync()
         self._update_input_font()
         self._refresh_language_panel()
@@ -4509,6 +4578,9 @@ class DashboardView(ft.Row):
         self._peer_source_lang_code = lang_code
         if lang_code:  # don't add Auto Detect ("") to recents
             self._add_to_recent(lang_code, is_source=True)
+        # Unified view: typed messages follow the partner's language.
+        self._apply_unified_target_sync()
+        self._refresh_language_panel()
         self._refresh_language_rows()
         self._notify_language_change()
 
@@ -5009,8 +5081,14 @@ class DashboardView(ft.Row):
         if active.get("peer_source", "") or active.get("peer_target", ""):
             self._peer_source_lang_code = active.get("peer_source", "")
             self._peer_target_lang_code = active.get("peer_target", "")
-        # Unified view: the (hidden) text target mirrors the reading language.
+        # Unified view: the (hidden) text target mirrors the partner's
+        # language. When the persisted target disagrees with the mirror (e.g.
+        # settings written by an older build), push the corrected value back —
+        # otherwise the hub keeps translating typed text into the stale
+        # target. Converges: the second sync pass produces no diff.
         self._apply_unified_target_sync()
+        if self._target_lang_code != target_code:
+            self._notify_language_change()
         self._update_input_font()
         self._refresh_language_panel()
         self._refresh_language_rows()

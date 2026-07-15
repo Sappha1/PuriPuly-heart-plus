@@ -697,7 +697,7 @@
   "settings.steamvr_autolaunch": "SteamVR와 함께 시작",
   "settings.auto_download_updates": "업데이트 자동 다운로드",
   "settings.separate_text_translation": "텍스트 번역 분리",
-  "settings.separate_text_translation.tooltip": "끄기(기본): '번역' 상자 하나 — 입력 메시지는 음성 번역 대상과 같은 언어. 켜기: 별도의 '텍스트 번역' 상자를 표시해 다른 언어로 전송. 재시작 후 적용.",
+  "settings.separate_text_translation.tooltip": "끄기(기본): '번역' 상자 하나 — 입력 메시지는 상대방의 언어(음성 '번역 출발어')로 전송됩니다. 그것이 자동 감지이면 '텍스트 번역' 상자가 나타나 출력 언어를 고를 수 있습니다. 켜기: 별도의 '텍스트 번역' 상자를 유지. 즉시 적용.",
   "settings.auto_download_updates.tooltip": "새 버전이 발견되면 백그라운드에서 자동으로 다운로드하여 사이드바 버튼 한 번으로 재시작·적용할 수 있습니다. 끄면 다운로드 전에 묻습니다.",
   "settings.steamvr_autolaunch.tooltip": "SteamVR가 시작될 때 PuriPulyHeart를 자동으로 실행하여 번역기가 항상 VRChat과 함께 실행되도록 합니다. 전환 시 SteamVR가 실행 중이어야 합니다.",
   "settings.steamvr_autolaunch.steamvr_not_running": "SteamVR가 실행 중이 아닙니다. SteamVR를 시작한 후 다시 전환하세요.",

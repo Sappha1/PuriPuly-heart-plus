@@ -140,6 +140,10 @@ class ClientHub:
     loopback_selected_languages_only: bool = False
     _peer_language_filter_notice_shown: bool = False
     _pending_overlay_transcripts: dict = field(default_factory=dict)
+    # Utterances that came from the keyboard (submit_text). Typed text can be
+    # in ANY language regardless of the configured "You speak" — these get
+    # source auto-detection instead of the mic's fixed source language.
+    _typed_utterance_ids: set = field(default_factory=set)
     fallback_transcript_only: bool = False
     translation_enabled: bool = True
     peer_translation_enabled: bool = False
@@ -916,6 +920,9 @@ class ClientHub:
 
         utterance_id = uuid4()
         self._remember_source(utterance_id, source)
+        if len(self._typed_utterance_ids) > 512:  # bound; typed msgs are sparse
+            self._typed_utterance_ids.clear()
+        self._typed_utterance_ids.add(utterance_id)
 
         transcript = Transcript(
             utterance_id=utterance_id,
@@ -925,10 +932,16 @@ class ClientHub:
         )
         await self._handle_transcript(transcript, is_final=True, source=source)
 
+        # Typed text can be in any language, so the config-level src==tgt
+        # no-op shortcut of _translation_is_noop_for doesn't apply — it
+        # wrongly skipped translation (raw text sent, pending chat echo never
+        # finalized -> "Translation failed") whenever the configured source
+        # matched the target. Only skip on confident content detection.
         if (
             self.llm is None
             or not self.translation_enabled
-            or self._translation_is_noop_for(text, self.self_runtime)
+            or self._text_already_in_language(
+                text, self._target_language_for(self.self_runtime))
         ):
             await self._enqueue_osc(utterance_id, transcript_text=text, translation_text=None)
         else:
@@ -3215,6 +3228,12 @@ class ClientHub:
 
             request_source_language = self._source_language_for(runtime)
             request_target_language = self._target_language_for(runtime)
+            if utterance_id in self._typed_utterance_ids:
+                # Keyboard text may be in any language (the user can type
+                # English or Chinese regardless of the mic "You speak"
+                # setting) — empty source lets DeepL (None) and the free web
+                # engines ("auto") detect it per message.
+                request_source_language = ""
             raw_translation = await self.llm.translate(
                 utterance_id=utterance_id,
                 text=text,

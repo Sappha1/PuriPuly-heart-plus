@@ -1736,6 +1736,13 @@ class TranslatorApp:
             new_self_in_overlay = bool(getattr(_ui, "self_in_overlay", True))
             dash._self_in_overlay = new_self_in_overlay
             dash._typed_in_overlay = bool(getattr(_ui, "typed_in_overlay", True))
+            # "Separate text translation" applies live: swap the unified /
+            # two-card layout without a restart.
+            try:
+                dash.set_unified_translation(
+                    bool(getattr(_ui, "unified_translation_ui", True)))
+            except Exception:
+                logger.exception("unified-translation live toggle failed")
             # Initialize the overlay lock icon and VR/PC mode chip from settings at
             # startup so they reflect reality before the user first toggles overlay.
             try:

@@ -697,7 +697,7 @@
   "settings.steamvr_autolaunch": "Start with SteamVR",
   "settings.auto_download_updates": "Automatic update downloads",
   "settings.separate_text_translation": "Separate text translation",
-  "settings.separate_text_translation.tooltip": "OFF (default): one 'Translation' box — your typed messages use the same language you read voice in. ON: show a separate 'Text Translation' box to send typed messages in a different language. Takes effect after a restart.",
+  "settings.separate_text_translation.tooltip": "OFF (default): one 'Translation' box — typed messages are sent in your partner's language (the voice 'Translate from'). If that is Auto Detect, the Text Translation box appears so you can pick the typed-output language. ON: keep a separate 'Text Translation' box with its own target. Applies immediately.",
   "settings.auto_download_updates.tooltip": "Download new versions in the background as soon as they're found, so the sidebar button only needs one press to restart and apply. Turn off to be asked before anything downloads.",
   "settings.steamvr_autolaunch.tooltip": "Automatically launch PuriPulyHeart whenever SteamVR starts, so the translator always runs alongside VRChat. SteamVR must be running when you turn this on or off.",
   "settings.steamvr_autolaunch.steamvr_not_running": "SteamVR isn't running — start SteamVR, then toggle this again.",

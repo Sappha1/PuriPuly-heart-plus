@@ -775,10 +775,16 @@ def _apply_prefs(cfg: dict) -> None:
                     if str(cfg.get(key)).isdigit() else bool(cfg.get(key))
             except Exception:
                 pass
+    # Re-read the translation target (your reading language) LIVE. It used
+    # to be loaded only once at overlay startup, so changing your language
+    # afterwards left the overlay on the old target — under which text in
+    # that old language was hidden by foreign-only and never translated.
+    _load_translation_prefs()
     logger.info("[OCR] prefs applied live: prewarm=%d bubbles=%d foreign=%d "
-                "names=%d pronouns=%d translate=%d",
+                "names=%d pronouns=%d translate=%d target=%s",
                 _PREWARM[0], _BUBBLES_ONLY[0], _FOREIGN_ONLY[0],
-                _IGNORE_NAMES[0], _IGNORE_PRONOUNS[0], _XLAT_ENABLED[0])
+                _IGNORE_NAMES[0], _IGNORE_PRONOUNS[0], _XLAT_ENABLED[0],
+                _XLAT_TARGET[0])
 _SELECT_REQ = [False]
 
 

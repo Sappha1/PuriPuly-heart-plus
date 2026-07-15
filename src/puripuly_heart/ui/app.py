@@ -1631,6 +1631,12 @@ class TranslatorApp:
 
             async def _task():
                 await self.controller.on_dashboard_language_change(**_p)
+                # Push the new language into the RUNNING OCR overlay so its
+                # translation target (your reading language) updates live —
+                # otherwise OCR keeps the target it had when you toggled it
+                # on, and text in that language is hidden by foreign-only.
+                with contextlib.suppress(Exception):
+                    self._ocr_manager._reload_live()
 
             self._queue_settings_mutation_task(_task)
 

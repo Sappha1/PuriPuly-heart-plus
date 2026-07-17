@@ -18,7 +18,7 @@ from puripuly_heart.ui.fonts import font_for_language
 from puripuly_heart.ui.i18n import get_locale, language_name, t
 from puripuly_heart.ui.overlay_peer_contract import OverlayPeerConsumerContract
 
-_BUILD_TAG = "r255"  #increment each build so user can confirm version
+_BUILD_TAG = "r256"  #increment each build so user can confirm version
 
 # ── VRCT-style dark palette ──────────────────────────────────────────────────
 _BG_MAIN = "#2e2f32"
@@ -1880,10 +1880,9 @@ class DashboardView(ft.Row):
                 return
             _has_key = getattr(self, "_translator_model_has_key", {})
             _free = {"bing", "google", "papago"}
-            # Keyless services stay selectable (the overlay falls back to Bing
-            # when the bridged model has no key) — see the main translator
-            # picker for why disabling them dead-ends key entry.
-            entries = []
+            # Gated on a VERIFIED key like the main translator picker — key
+            # entry lives in the cog Settings, not here.
+            options = []
             for k, v in _svc_names.items():
                 needs = (k in _svc_needs_key
                          and not _has_key.get(k, False))
@@ -1892,10 +1891,10 @@ class DashboardView(ft.Row):
                     desc = "(free)"
                 elif needs:
                     desc = t("settings_modal.requires_api_key")
-                entries.append((needs, OptionItem(value=k, label=v,
-                                                  description=desc)))
-            entries.sort(key=lambda e: e[0])
-            options = [e[1] for e in entries]
+                options.append(OptionItem(value=k, label=v,
+                                          description=desc,
+                                          disabled=needs))
+            options.sort(key=lambda o: o.disabled)
 
             def _sel(value: str) -> None:
                 self._ocr_xlat_service = value
@@ -3990,20 +3989,18 @@ class DashboardView(ft.Row):
             TranslationModel.QWEN_35_PLUS,
             TranslationModel.DEEPL,
         }
-        # Keyless models stay SELECTABLE: picking one is the only way to make
-        # its key field appear in Settings > API (visibility follows the active
-        # provider), and translation gracefully falls back to a free web engine
-        # until the key is entered. Disabling them created a dead end where a
-        # new key could never be added.
-        entries = []
+        # Dashboard pickers are GATED on a VERIFIED key (api_key_verified) —
+        # key entry happens in the cog Settings, whose picker is deliberately
+        # unrestricted (selecting a model there reveals its key field). The
+        # dashboard is the quick-switch surface: only working options.
+        options = []
         for m in _ORDERED_MODELS:
             needs_key = m in _NEEDS_KEY and not self._translator_model_has_key.get(m.value, False)
             desc = t("settings_modal.requires_api_key") if needs_key else ""
-            entries.append((needs_key, OptionItem(value=m.value, label=_LABELS.get(m, m.value), description=desc)))
-        # Ready-to-use options first; key-needing ones below (stable sort keeps
+            options.append(OptionItem(value=m.value, label=_LABELS.get(m, m.value), description=desc, disabled=needs_key))
+        # Usable options first; greyed-out ones sink below (stable sort keeps
         # each group's original order).
-        entries.sort(key=lambda e: e[0])
-        options = [e[1] for e in entries]
+        options.sort(key=lambda o: o.disabled)
         # Prefer the live model from settings so the highlight is always accurate,
         # even if the cached label value drifted (e.g. a temporary fallback).
         current_val = ""

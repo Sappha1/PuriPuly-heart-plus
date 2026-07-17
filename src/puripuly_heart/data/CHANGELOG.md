@@ -2,6 +2,11 @@
 
 User-facing changes per build. The latest build's highlights also appear in-app when an update is ready.
 
+## r256 — 2026-07-17
+
+- Dashboard right-click pickers again grey out models without a working API key — enter keys via the gear Settings, whose picker stays unrestricted
+- When a selected model has no working key, the app now says so in red (instead of silently translating with free Google and pretending)
+
 ## r255 — 2026-07-17
 
 - Turning translation off no longer hides incoming voice — the chat log now shows the untranslated lines (same for your own mic)

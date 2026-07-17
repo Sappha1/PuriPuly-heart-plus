@@ -4629,6 +4629,13 @@ class GuiController:
             f"[Translation] {self.settings.provider.llm.value} unavailable ({reason}) — "
             "falling back to Google Translate (free web) until it's configured"
         )
+        # Loud, user-visible: silent fallback made a selected paid model LOOK
+        # active while free Google actually translated (misleading label,
+        # mystery quality). The user must know a key is needed.
+        self._log_error(
+            f"Translation: {self.settings.provider.llm.value} has no working API key — "
+            "using free Google Translate instead. Enter the key in Settings → API."
+        )
         return SemaphoreLLMProvider(
             inner=FreeWebTranslationProvider("google"),
             semaphore=asyncio.Semaphore(self.settings.llm.concurrency_limit),

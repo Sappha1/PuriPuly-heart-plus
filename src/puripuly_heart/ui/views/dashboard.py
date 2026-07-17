@@ -18,7 +18,7 @@ from puripuly_heart.ui.fonts import font_for_language
 from puripuly_heart.ui.i18n import get_locale, language_name, t
 from puripuly_heart.ui.overlay_peer_contract import OverlayPeerConsumerContract
 
-_BUILD_TAG = "r257"  #increment each build so user can confirm version
+_BUILD_TAG = "r258"  #increment each build so user can confirm version
 
 # ── VRCT-style dark palette ──────────────────────────────────────────────────
 _BG_MAIN = "#2e2f32"
@@ -1636,6 +1636,17 @@ class DashboardView(ft.Row):
         self._toggle_overlay()
 
     def _toggle_overlay(self) -> None:
+        # Debounce: a double-fired click event (two toggles ~200ms apart) soft-hid
+        # and re-revealed the overlay — seen live as a "random restart" with the
+        # active banner popping up mid-session. Humans re-click slower than this.
+        import time as _time
+        now = _time.monotonic()
+        last = getattr(self, "_last_overlay_toggle_ts", 0.0)
+        if now - last < 0.4:
+            logger.info("[Dashboard] Overlay toggle debounced (%.0fms since last)",
+                        (now - last) * 1000)
+            return
+        self._last_overlay_toggle_ts = now
         enabled = True
         if self._overlay_peer_contract is not None:
             enabled = not self._overlay_peer_contract.overlay.intent_enabled

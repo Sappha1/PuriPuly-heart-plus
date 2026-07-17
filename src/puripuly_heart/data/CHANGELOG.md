@@ -2,6 +2,11 @@
 
 User-facing changes per build. The latest build's highlights also appear in-app when an update is ready.
 
+## r258 — 2026-07-17
+
+- The dashboard TRANS label now updates when you change the model in the gear Settings (it used to only track the dashboard's own picker)
+- Fixed the overlay randomly hiding and re-showing itself (with the "overlay active" banner) — a double-fired click event bounced it; toggles are debounced now
+
 ## r257 — 2026-07-17
 
 - Dashboard right-click pickers again grey out models without a working API key — enter keys via the gear Settings, whose picker stays unrestricted

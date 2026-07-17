@@ -2367,8 +2367,29 @@ class TranslatorApp:
                 await self.controller.apply_providers()
             else:
                 await self.controller.apply_providers(pending_settings)
+            # Mirror the applied model onto the dashboard TRANS sublabel — it
+            # only updated via the dashboard's own picker, so a model changed
+            # in the cog Settings kept showing the OLD name (e.g. "Bing")
+            # until the user re-picked it on the dashboard.
+            self._sync_dashboard_translator_label()
 
         self._queue_settings_mutation_task(_task)
+
+    def _sync_dashboard_translator_label(self) -> None:
+        try:
+            from puripuly_heart.config.settings import TranslationModel
+            from puripuly_heart.ui.views.settings import _TRANSLATION_MODEL_LABEL_KEYS
+            from puripuly_heart.ui.i18n import t
+
+            model_value = str(getattr(self.controller.settings.translation.model, "value",
+                                      self.controller.settings.translation.model))
+            matched = next((m for m in TranslationModel if m.value == model_value), None)
+            dash = getattr(self, "view_dashboard", None)
+            if dash is not None and matched is not None and matched in _TRANSLATION_MODEL_LABEL_KEYS:
+                dash.set_translator_label(
+                    t(_TRANSLATION_MODEL_LABEL_KEYS[matched]), model_value=model_value)
+        except Exception:
+            pass
 
     def _on_local_llm_secret_changed(self) -> None:
         async def _task():

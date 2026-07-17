@@ -665,6 +665,7 @@ class ClientHub:
         stage: str,
         runtime: ChannelRuntime,
         publish_chatbox: bool,
+        transcript: Transcript | None = None,
     ) -> None:
         self._emit_detailed(
             "[Hub] Translation skipped (stage=%s, channel=%s, publish_chatbox=%s): %s",
@@ -674,6 +675,19 @@ class ClientHub:
             self._translation_skip_reason(runtime),
             fallback_level=logging.INFO,
         )
+        # Surface the raw line to the chat log. Without this, the log only got
+        # entries from TRANSLATION_DONE — turning TRANS off made incoming voice
+        # look like it stopped being picked up entirely.
+        if transcript is not None and transcript.text.strip():
+            with contextlib.suppress(Exception):
+                self.ui_events.put_nowait(
+                    UIEvent(
+                        type=UIEventType.TRANSLATION_SKIPPED,
+                        utterance_id=transcript.utterance_id,
+                        payload=transcript,
+                        source="Peer" if runtime.channel == "peer" else "Mic",
+                    )
+                )
 
     def _log_translation_failure(
         self,
@@ -1087,6 +1101,7 @@ class ClientHub:
                     stage="final",
                     runtime=runtime,
                     publish_chatbox=self._should_publish_to_chatbox(runtime),
+                    transcript=event.transcript,
                 )
                 if self._should_publish_to_chatbox(runtime):
                     await self._enqueue_osc(
@@ -1204,6 +1219,7 @@ class ClientHub:
                 stage="final",
                 runtime=runtime,
                 publish_chatbox=self._should_publish_to_chatbox(runtime),
+                transcript=transcript,
             )
             await self._finalize_peer_source_only(
                 transcript,
@@ -2782,6 +2798,7 @@ class ClientHub:
                 stage="final",
                 runtime=self.self_runtime,
                 publish_chatbox=True,
+                transcript=transcript,
             )
             await self._enqueue_osc(
                 buffer.merge_id, transcript_text=final_text, translation_text=None

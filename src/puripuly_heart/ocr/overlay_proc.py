@@ -667,6 +667,12 @@ def _xlat_loop(stop: threading.Event) -> None:
     except Exception:
         def _to_translator_lang(code: str) -> str:  # type: ignore
             return code
+    try:
+        from puripuly_heart.providers.llm.free_web import (
+            edge_bing_translate_sync as _edge_bing,
+        )
+    except Exception:
+        _edge_bing = None
     while not stop.is_set():
         with _XLAT_LOCK:
             text = _XLAT_PENDING.pop(0) if _XLAT_PENDING else None
@@ -683,10 +689,15 @@ def _xlat_loop(stop: threading.Event) -> None:
                     logger.info("[OCR] bridge failed — bing fallback for %r",
                                 text[:32])
             if out is None:
-                out = str(translate_text(
-                    query_text=text,
-                    translator=svc if svc in _WEB_SVCS else "bing",
-                    from_language="auto", to_language=tgt)).strip()
+                use_svc = svc if svc in _WEB_SVCS else "bing"
+                if use_svc == "bing" and _edge_bing is not None:
+                    # Edge endpoint: works in China; the bing.com scrape doesn't.
+                    out = _edge_bing(text, "", tgt)
+                else:
+                    out = str(translate_text(
+                        query_text=text,
+                        translator=use_svc,
+                        from_language="auto", to_language=tgt)).strip()
             out = (out or "").strip()
             with _XLAT_LOCK:
                 _XLAT_CACHE[text] = out or text

@@ -270,6 +270,20 @@ class UIEventBridge:
                     add_history(source, transcript.text, language_code=source_lang)
             return
 
+        if event.type == UIEventType.TRANSLATION_SKIPPED:
+            transcript = event.payload
+            if not isinstance(transcript, Transcript):
+                return
+            # Raw line only (empty translated_text renders original-only) —
+            # keeps the chat log alive with TRANS off or same-language speech.
+            self._append_chat_entry(
+                channel=str(transcript.channel or "self"),
+                source=event.source or "Mic",
+                source_text=transcript.text,
+                translated_text="",
+            )
+            return
+
         if event.type == UIEventType.TRANSLATION_DONE:
             translation = event.payload
             if not isinstance(translation, Translation):

@@ -3502,11 +3502,14 @@ class SettingsView(ft.Column):
                 needs_key = not _model_key_map.get(model, True)
             base_desc = t(f"settings.translation_model.{model.value}.description", default="")
             description = (base_desc + " — " if base_desc else "") + "Requires API key" if needs_key else base_desc
+            # NOT disabled when the key is missing: selecting the model is what
+            # makes its key field appear below (visibility follows the active
+            # provider), so greying it out dead-ended key entry. Translation
+            # falls back to a free web engine until the key is entered.
             return OptionItem(
                 value=model.value,
                 label=self._translation_model_display_label(model),
                 description=description,
-                disabled=needs_key,
             )
 
         options = [

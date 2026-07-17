@@ -2131,6 +2131,17 @@ class TranslatorApp:
             async def _task():
                 await self.controller.apply_settings(updated)
                 await self.controller.apply_providers(force_rebuild_llm=True)
+                # The settings page displays a DRAFT deep-copied when it was
+                # last edited — without dropping it here, the Translation row
+                # kept showing the OLD model (e.g. "DeepL") after a dashboard
+                # switch to DeepSeek. Only safe when the user has no unsaved
+                # provider edits pending on the settings page.
+                sv = getattr(self, "view_settings", None)
+                if sv is not None and not getattr(sv, "has_provider_changes", False):
+                    sv._provider_settings_draft = None
+                    with contextlib.suppress(Exception):
+                        sv._sync_translation_selection_controls(self.controller.settings)
+                        sv._update_api_visibility()
 
             self._queue_settings_mutation_task(_task)
 
@@ -2911,10 +2922,21 @@ async def main_gui(page: ft.Page, *, config_path, debug_ui_preview: bool = False
 
         # Silent build-number check → sidebar update button (shared flow with
         # the About card; no-op in source runs, quiet on network failure).
+        # Re-checks every 2h: the launch-only check meant an update shipped
+        # mid-session never surfaced the button — the user had to find
+        # "Check for updates" in settings by hand.
         try:
             from puripuly_heart.ui.update_flow import get_update_flow
 
-            page.run_task(get_update_flow().check_silently)
+            async def _periodic_update_check() -> None:
+                import asyncio as _aio
+
+                while True:
+                    with contextlib.suppress(Exception):
+                        await get_update_flow().check_silently()
+                    await _aio.sleep(2 * 60 * 60)
+
+            page.run_task(_periodic_update_check)
         except Exception:
             pass
 

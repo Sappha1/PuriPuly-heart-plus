@@ -2,6 +2,14 @@
 
 User-facing changes per build. The latest build's highlights also appear in-app when an update is ready.
 
+## r255 — 2026-07-17
+
+- Turning translation off no longer hides incoming voice — the chat log now shows the untranslated lines (same for your own mic)
+- Bing translation rebuilt on Microsoft's Edge service: no API key, works in mainland China, no more timeouts or crashes
+- The Settings translation picker (gear icon) now also lets you select key-needing models so their key fields appear
+- Changing the translator from the dashboard now updates the Settings page display instantly (it used to show a stale model)
+- The app re-checks for updates every 2 hours, so the update button appears mid-session instead of only at launch
+
 ## r254 — 2026-07-16
 
 - Translator models that need an API key are selectable again — pick the model, then its key field appears in Settings → API (translation uses a free engine until the key is entered)

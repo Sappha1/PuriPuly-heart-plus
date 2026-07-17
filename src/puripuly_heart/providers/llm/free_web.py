@@ -57,16 +57,64 @@ def _to_translator_lang(lang_code: str) -> str:
     return base
 
 
+# The Edge browser's internal translation endpoint: no auth, no scraping, one
+# POST, and — critically — reachable from mainland China (Edge operates there
+# officially). The old `translators`-library bing path scraped bing.com pages:
+# cn.bing.com now 301s to www.bing.com (blocked in China) and the scrape chain
+# breaks with "'NoneType' object has no attribute 'xpath'" whenever Microsoft
+# churns the page. Every major Chinese OSS translator uses this endpoint.
+_EDGE_TRANSLATE_URL = "https://edge.microsoft.com/translate/translatetext"
+_EDGE_UA = (
+    "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 "
+    "(KHTML, like Gecko) Chrome/131.0.0.0 Safari/537.36 Edg/131.0.0.0"
+)
+
+
+def _to_edge_lang(code: str) -> str:
+    """Microsoft Translator BCP-47: zh keeps its script tag, others drop region."""
+    low = (code or "").strip().lower()
+    if not low or low == "auto":
+        return ""
+    if low in ("zh", "zh-cn", "zh-hans", "zh-sg"):
+        return "zh-Hans"
+    if low in ("zh-tw", "zh-hk", "zh-mo", "zh-hant"):
+        return "zh-Hant"
+    return low.split("-")[0]
+
+
+def edge_bing_translate_sync(text: str, from_lang: str, to_lang: str) -> str:
+    """Translate via edge.microsoft.com (the app's 'Bing' engine). Empty/auto
+    from_lang omits the `from` param → server-side language detection."""
+    import requests
+
+    params = {"to": _to_edge_lang(to_lang) or "en", "isEnterpriseClient": "false"}
+    src = _to_edge_lang(from_lang)
+    if src:
+        params["from"] = src
+    resp = requests.post(
+        _EDGE_TRANSLATE_URL,
+        params=params,
+        json=[text],
+        headers={"User-Agent": _EDGE_UA},
+        timeout=8.0,
+    )
+    resp.raise_for_status()
+    data = resp.json()
+    return str(data[0]["translations"][0]["text"]).strip()
+
+
 class FreeWebTranslationProvider:
-    """Google / Bing / Papago translation via the `translators` library (no API key)."""
+    """Google / Bing / Papago translation via free web endpoints (no API key).
+    'bing' uses the Edge translate endpoint; the rest go through `translators`."""
 
     def __init__(self, translator: str) -> None:
         self._translator = translator  # "google", "bing", "papago"
 
     def _translate_sync(self, text: str, from_lang: str, to_lang: str) -> str:
-        # Must precede the translators import: pins CN backends (cn.bing.com)
-        # on Chinese systems, where the lib's own geo-detection endpoints and
-        # the international backends are both blocked (10s timeouts).
+        if self._translator == "bing":
+            return edge_bing_translate_sync(text, from_lang, to_lang)
+        # Must precede the translators import: pins the region so the lib skips
+        # its geo-detection calls (blocked/hanging in China) for google/papago.
         from puripuly_heart.core.translators_region import ensure_translators_region
 
         ensure_translators_region()

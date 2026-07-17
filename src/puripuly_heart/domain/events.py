@@ -87,6 +87,11 @@ class UIEventType(str, Enum):
     TRANSCRIPT_PARTIAL = "TRANSCRIPT_PARTIAL"
     TRANSCRIPT_FINAL = "TRANSCRIPT_FINAL"
     TRANSLATION_DONE = "TRANSLATION_DONE"
+    # A final transcript whose translation was intentionally skipped (TRANS
+    # off, or same-language no-op). Carries the Transcript so the chat log can
+    # show the raw line — chat entries used to exist ONLY for translations,
+    # which made "translation off" look like "voice not picked up".
+    TRANSLATION_SKIPPED = "TRANSLATION_SKIPPED"
     EXTRA_TRANSLATIONS_DONE = "EXTRA_TRANSLATIONS_DONE"
     OSC_SENT = "OSC_SENT"
     ERROR = "ERROR"

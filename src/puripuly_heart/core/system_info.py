@@ -142,6 +142,57 @@ def _timezone_name() -> str:
         return "unknown"
 
 
+def _mark_of_the_web_zone(path: str) -> int | None:
+    """ZoneId from the file's Zone.Identifier ADS (3 = downloaded from the
+    internet), or None when absent/unreadable."""
+    try:
+        with open(f"{path}:Zone.Identifier", encoding="utf-8", errors="ignore") as fh:
+            for line in fh:
+                if line.strip().lower().startswith("zoneid="):
+                    return int(line.strip().split("=", 1)[1])
+    except (OSError, ValueError):
+        pass
+    return None
+
+
+def diagnose_blocked_executable(exe_path: str) -> str:
+    """Explain a WinError 5/4551 launch refusal of exe_path in support-log terms.
+
+    Windows' CreateProcess failure message is a bare "Access is denied" with no
+    file name and no cause, so callers that catch it must name the exe they
+    passed in and this figures out the likely blocker: quarantined-and-deleted,
+    Smart App Control, Mark-of-the-Web, or a generic AV/permissions block.
+    """
+    if not os.path.exists(exe_path):
+        return (
+            f"{exe_path} no longer exists — an antivirus likely quarantined or "
+            "deleted it; restore it from the AV's protection history and add an "
+            "exclusion for the app folder"
+        )
+    notes = []
+    if _smart_app_control_state() == "enforce":
+        notes.append(
+            "Smart App Control is ON — it blocks unsigned apps with 'access "
+            "denied', ignores antivirus exclusions, and has no per-app "
+            "whitelist; it can only be switched off in Windows Security > "
+            "App & browser control > Smart App Control settings"
+        )
+    zone = _mark_of_the_web_zone(exe_path)
+    if zone is not None and zone >= 3:
+        notes.append(
+            "the file is marked as downloaded from the internet "
+            "(Mark-of-the-Web) — right-click the file > Properties > Unblock, "
+            "or unblock the downloaded zip before extracting it"
+        )
+    if not notes:
+        notes.append(
+            "the file exists but Windows refused to execute it — most likely an "
+            "antivirus block (check the antivirus's protection history) or "
+            "missing folder permissions"
+        )
+    return f"{exe_path}: " + "; ".join(notes)
+
+
 def log_system_info_async() -> None:
     """Log one [SysInfo] block from a daemon thread; never blocks startup."""
 

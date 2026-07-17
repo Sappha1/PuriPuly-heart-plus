@@ -341,7 +341,20 @@ class OcrOverlayManager:
             logger.info("[OCR] overlay subprocess started (pid=%s)", self._proc.pid)
             return True
         except Exception as exc:
-            logger.warning("[OCR] failed to start overlay: %s", exc)
+            # WinError 5/4551 = Windows refused to execute the exe (AV, Smart
+            # App Control, MotW...). The OS message names no file and no cause,
+            # so diagnose it here — this line is what support logs live on.
+            if getattr(exc, "winerror", None) in (5, 4551):
+                from puripuly_heart.core.system_info import diagnose_blocked_executable
+
+                logger.warning(
+                    "[OCR] Windows blocked the overlay exe (WinError %s) — %s",
+                    exc.winerror,
+                    diagnose_blocked_executable(cmd[0]),
+                )
+            else:
+                logger.warning(
+                    "[OCR] failed to start overlay (exe=%s): %s", cmd[0], exc)
             self._proc = None
             return False
 

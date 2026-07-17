@@ -650,6 +650,14 @@ def _xlat_loop(stop: threading.Event) -> None:
     session. Free web engines run locally; any other model goes through
     the app bridge, with a Bing fallback so text never stays blank."""
     try:
+        # Pin CN backends on Chinese systems before the import (see
+        # core/translators_region.py) — international bing times out there.
+        from puripuly_heart.core.translators_region import ensure_translators_region
+
+        ensure_translators_region()
+    except Exception:
+        pass
+    try:
         from translators import translate_text
     except Exception as exc:
         logger.warning("[OCR] translators lib unavailable: %s", exc)

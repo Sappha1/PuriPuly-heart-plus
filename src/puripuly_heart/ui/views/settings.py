@@ -3290,6 +3290,11 @@ class SettingsView(ft.Column):
         )
         self._openrouter_pkce_button_row.visible = openrouter_byok_selected
         self._deepseek_key.visible = llm == LLMProviderName.DEEPSEEK
+        # DeepL was missing here entirely, so its key field (and usage row)
+        # showed permanently regardless of the selected translator.
+        deepl_active = llm == LLMProviderName.DEEPL
+        self._deepl_key.visible = deepl_active
+        self._deepl_usage_row.visible = deepl_active
         self._sync_openrouter_pkce_button_state(settings)
         self._translation_connection_row.visible = True
         self._local_llm_connection_card.visible = llm == LLMProviderName.LOCAL_LLM

@@ -64,6 +64,12 @@ class FreeWebTranslationProvider:
         self._translator = translator  # "google", "bing", "papago"
 
     def _translate_sync(self, text: str, from_lang: str, to_lang: str) -> str:
+        # Must precede the translators import: pins CN backends (cn.bing.com)
+        # on Chinese systems, where the lib's own geo-detection endpoints and
+        # the international backends are both blocked (10s timeouts).
+        from puripuly_heart.core.translators_region import ensure_translators_region
+
+        ensure_translators_region()
         from translators import translate_text  # type: ignore
 
         # Let exceptions propagate so the orchestrator can surface a visible
@@ -105,11 +111,22 @@ class FreeWebTranslationProvider:
                 loop.run_in_executor(None, self._translate_sync, text, from_lang, to_lang),
                 timeout=10.0,
             )
-        except asyncio.TimeoutError as exc:
-            logger.warning("[%s] translation timed out after 10s (service may be blocked)", self._translator)
-            raise RuntimeError(
-                f"{self._translator} translation timed out after 10s (service may be blocked)"
-            ) from exc
+        except asyncio.TimeoutError:
+            # One retry: free web endpoints (esp. through the GFW) often stall
+            # transiently and answer promptly on a fresh request.
+            logger.warning(
+                "[%s] translation timed out after 10s — retrying once", self._translator)
+            try:
+                translated = await asyncio.wait_for(
+                    loop.run_in_executor(None, self._translate_sync, text, from_lang, to_lang),
+                    timeout=10.0,
+                )
+            except asyncio.TimeoutError as exc:
+                logger.warning(
+                    "[%s] translation timed out twice (service may be blocked)", self._translator)
+                raise RuntimeError(
+                    f"{self._translator} translation timed out twice (service may be blocked)"
+                ) from exc
         except Exception as exc:
             logger.warning("[%s] translation failed: %s", self._translator, exc)
             raise RuntimeError(f"{self._translator} translation failed: {exc}") from exc

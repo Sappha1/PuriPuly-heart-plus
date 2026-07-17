@@ -2,6 +2,13 @@
 
 User-facing changes per build. The latest build's highlights also appear in-app when an update is ready.
 
+## r254 — 2026-07-16
+
+- Translator models that need an API key are selectable again — pick the model, then its key field appears in Settings → API (translation uses a free engine until the key is entered)
+- DeepL's key field now only appears while DeepL is the selected translator, like every other model
+- China: Bing translation connects to the China servers automatically — fixes the 10-second timeouts
+- Free web translation retries once before giving up on a slow connection
+
 ## r253 — 2026-07-16
 
 - Fixed the false "local speech model isn't working" popup: garbage from the other person's call audio no longer blames your speech model

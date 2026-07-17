@@ -37,6 +37,15 @@ AppPublisher={#MyAppPublisher}
 AppPublisherURL={#MyAppURL}
 AppSupportURL={#MyAppURL}
 AppUpdatesURL={#MyAppURL}/releases
+; Explicit VERSIONINFO resource on Setup.exe — an installer with no version
+; metadata matches the anonymous-executable profile AV/SmartScreen heuristics
+; score against.
+VersionInfoVersion={#MyAppVersion}.0
+VersionInfoCompany={#MyAppPublisher}
+VersionInfoDescription={#MyAppName} Setup
+VersionInfoProductName={#MyAppName}
+VersionInfoProductVersion={#MyAppVersion}.0
+VersionInfoCopyright=© Sappha1 (original by salee). Licensed under AGPL-3.0.
 DefaultDirName={autopf}\{#MyAppDirName}
 DefaultGroupName={#MyAppGroupName}
 AllowNoIcons=yes

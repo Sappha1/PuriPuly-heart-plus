@@ -65,6 +65,12 @@ Works out of the box: local Qwen ASR for speech (the installer fetches it from a
 
 DeepL, Gemini, DeepSeek, Qwen, OpenRouter, Deepgram, and Soniox are supported in **Settings → API**. Keys verify automatically when entered and at every launch. Step-by-step signup guides with screenshots live in the collapsible sections of [docs/API_GUIDES.md](docs/API_GUIDES.md) if you need them.
 
+### Antivirus warnings / "Error 5: Access denied"
+
+The exes are open-source builds that aren't code-signed (yet), so brand-new releases can trigger Windows SmartScreen or antivirus false positives until they build up reputation — the same thing happens with upstream VRCT. If SmartScreen warns, use **More info → Run anyway**; if your antivirus quarantines a file, restore it and add the install folder as an exclusion.
+
+If the installer fails with **"Unable to execute file in the temporary directory... Error 5: Access denied"**, or the OCR overlay won't start with the same error, check Windows 11 **Smart App Control**: Windows Security → App & browser control → Smart App Control settings (or run `Get-MpComputerStatus | Select SmartAppControlState` in PowerShell). Smart App Control blocks unsigned apps it doesn't recognize, **ignores antivirus exclusions**, and has no per-app whitelist — the only options are turning it off or using the zip download instead of the installer. Everything the app does is local and open source; you can audit and build it yourself from this repo.
+
 ## Development
 
 | Area | Environment |

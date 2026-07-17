@@ -225,6 +225,7 @@ Installer_output/
 .references/
 /scripts/*
 !/scripts/bench_*.py
+!/scripts/pyi_version_resource.py
 !/scripts/ci/
 /scripts/ci/*
 !/scripts/ci/build-release-artifacts.ps1

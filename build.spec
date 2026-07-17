@@ -33,8 +33,12 @@ if not overlay_staged_path.exists():
         f"{overlay_staged_path}. Build and stage the Rust overlay before PyInstaller packaging."
     )
 
+from puripuly_heart import __version__
 from puripuly_heart.core.local_qwen_runtime import LOCAL_QWEN_PACKAGED_RUNTIME_RELATIVE_DIR
 from puripuly_heart.core.overlay.openvr_vendor import collect_vendored_openvr_runtime_binaries
+
+sys.path.insert(0, str(Path("scripts").resolve()))
+from pyi_version_resource import build_version_resource
 
 block_cipher = None
 SOXR_RELEASE_INPUTS_MANIFEST_PATH = Path("build/soxr-release-inputs/manifest.json").resolve()
@@ -216,7 +220,11 @@ exe = EXE(
     entitlements_file=None,
     contents_directory="_internal",
     icon=str(src_path / "puripuly_heart" / "data" / "icons" / "icon.ico"),
-    version_info=None,
+    version=build_version_resource(
+        version=__version__,
+        name="PuriPulyHeart",
+        description="PuriPulyHeart+ — VRChat live translation",
+    ),
 )
 
 coll = COLLECT(

@@ -19,6 +19,10 @@ from PyInstaller.utils.hooks import collect_data_files, collect_dynamic_libs
 
 src_path = Path("src").resolve()
 sys.path.insert(0, str(src_path))
+sys.path.insert(0, str(Path("scripts").resolve()))
+
+from puripuly_heart import __version__
+from pyi_version_resource import build_version_resource
 
 block_cipher = None
 
@@ -103,7 +107,11 @@ exe = EXE(
     entitlements_file=None,
     contents_directory="_internal",
     icon=str(src_path / "puripuly_heart" / "data" / "icons" / "icon.ico"),
-    version_info=None,
+    version=build_version_resource(
+        version=__version__,
+        name="PuriPulyHeartOCR",
+        description="PuriPulyHeart+ realtime OCR overlay",
+    ),
 )
 
 coll = COLLECT(

@@ -2,10 +2,12 @@
 
 User-facing changes per build. The latest build's highlights also appear in-app when an update is ready.
 
-## r256 — 2026-07-17
+## r257 — 2026-07-17
 
 - Dashboard right-click pickers again grey out models without a working API key — enter keys via the gear Settings, whose picker stays unrestricted
-- When a selected model has no working key, the app now says so in red (instead of silently translating with free Google and pretending)
+- When a selected model has no working key, the app now says so in red (instead of silently translating with a free engine and pretending)
+- Entering a valid API key now takes effect immediately — previously the free-engine fallback stayed active until an app restart
+- The no-key fallback engine is now Bing (works in China) instead of Google (blocked there)
 
 ## r255 — 2026-07-17
 

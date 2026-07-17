@@ -4619,25 +4619,28 @@ class GuiController:
         return settings
 
     def _create_free_web_fallback_llm(self, reason: str):
-        """Keyless Google free-web provider used when the configured key-backed
+        """Keyless free-web provider used when the configured key-backed
         translator can't be built. Translations must never silently die on a paid
-        model with no key — the runtime falls back to a free model (settings are
-        left untouched so the user's choice is preserved)."""
+        model with no key — the runtime falls back to a free engine (settings are
+        left untouched so the user's choice is preserved). BING, not Google:
+        the Edge translate endpoint works everywhere INCLUDING mainland China,
+        where Google is blocked — a Chinese user falling back to Google got
+        nothing at all."""
         from puripuly_heart.providers.llm.free_web import FreeWebTranslationProvider
 
         self.log_basic(
             f"[Translation] {self.settings.provider.llm.value} unavailable ({reason}) — "
-            "falling back to Google Translate (free web) until it's configured"
+            "falling back to Bing (free web) until it's configured"
         )
         # Loud, user-visible: silent fallback made a selected paid model LOOK
-        # active while free Google actually translated (misleading label,
+        # active while a free engine actually translated (misleading label,
         # mystery quality). The user must know a key is needed.
         self._log_error(
             f"Translation: {self.settings.provider.llm.value} has no working API key — "
-            "using free Google Translate instead. Enter the key in Settings → API."
+            "using free Bing translation instead. Enter the key in Settings → API."
         )
         return SemaphoreLLMProvider(
-            inner=FreeWebTranslationProvider("google"),
+            inner=FreeWebTranslationProvider("bing"),
             semaphore=asyncio.Semaphore(self.settings.llm.concurrency_limit),
         )
 

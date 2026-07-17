@@ -2768,6 +2768,16 @@ class TranslatorApp:
                     set_trans_flags(self._translator_key_flags_from_settings(self.controller.settings))
             except Exception:
                 pass
+            if success:
+                # A verified key must take effect IMMEDIATELY. Without this
+                # rebuild, the free-web fallback provider built at startup
+                # stayed active — a user entered a valid DeepSeek key and the
+                # log kept showing google/bing until the next app restart.
+                async def _rebuild_llm_after_key() -> None:
+                    with contextlib.suppress(Exception):
+                        await self.controller.apply_providers(force_rebuild_llm=True)
+
+                self._queue_settings_mutation_task(_rebuild_llm_after_key)
 
         return success, msg
 

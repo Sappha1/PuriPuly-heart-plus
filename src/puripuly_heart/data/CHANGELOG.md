@@ -2,6 +2,14 @@
 
 User-facing changes per build. The latest build's highlights also appear in-app when an update is ready.
 
+## r253 — 2026-07-16
+
+- Fixed the false "local speech model isn't working" popup: garbage from the other person's call audio no longer blames your speech model
+- Audio buffers are 8x deeper — slower PCs no longer drop (and garble) audio while the speech model loads
+- Logs now start with a system snapshot (CPU, RAM, GPU, Windows build, Smart App Control) so bug reports diagnose themselves
+- When Windows blocks a program file (antivirus / Smart App Control), the log now names the file and the likely cause with the fix
+- Fewer antivirus false alarms: all exes and the installer now carry proper publisher/version information
+
 ## r252 — 2026-07-15
 
 - China: speech model now downloads from ModelScope first on Chinese systems (HuggingFace is blocked there)

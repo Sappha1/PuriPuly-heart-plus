@@ -64,7 +64,11 @@ class DesktopLoopbackDeviceResolver:
 class DesktopLoopbackAudioSource:
     device_name: str = ""
     frames_per_buffer: int = 1024
-    max_queue_frames: int = 64
+    # ~21ms per 1024-sample frame at 48kHz: 64 frames was only ~1.4s of buffer,
+    # so the 7-9s local model load (and CPU inference bursts on weak machines)
+    # overflowed the queue and dropped audio — shredded chunks then transcribed
+    # as hallucination garbage. 512 frames ≈ 11s (~4MB) rides out the stall.
+    max_queue_frames: int = 512
 
     _queue: janus.Queue[np.ndarray | None] = field(init=False, repr=False)
     _stream: object = field(init=False, repr=False)

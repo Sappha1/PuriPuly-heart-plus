@@ -522,8 +522,12 @@ class GuiController:
         repr=False,
     )
     _runtime_logging: SessionRuntimeLoggingService | None = field(init=False, default=None)
-    _local_qwen_hallucination_detection_count: int = field(init=False, default=0)
+    # Per-channel: peer-channel garbage means degraded CAPTURE audio (loopback
+    # queue drops, call noise/music), not a broken model — it must never trigger
+    # the "switch to a cloud model" modal meant for genuine self-mic failures.
+    _local_qwen_hallucination_detection_counts: dict = field(init=False, default_factory=dict)
     _local_qwen_hallucination_modal_shown: bool = field(init=False, default=False)
+    _peer_hallucination_burst_logged: bool = field(init=False, default=False)
 
     overlay_state: str = "off"
     _overlay_user_enabled_this_session: bool = field(init=False, default=False)
@@ -4834,15 +4838,32 @@ class GuiController:
         self,
         notification: FinalTranscriptSuppressedNotification,
     ) -> None:
-        self._local_qwen_hallucination_detection_count += 1
-        count = self._local_qwen_hallucination_detection_count
+        channel = str(notification.channel or "self")
+        counts = self._local_qwen_hallucination_detection_counts
+        counts[channel] = counts.get(channel, 0) + 1
+        count = counts[channel]
         self.log_detailed(
             "[STT][SuppressedFinalNotification] "
             f"local_qwen_guidance count={count} "
-            f"channel={notification.channel} "
+            f"channel={channel} "
             f"modal_shown={self._local_qwen_hallucination_modal_shown}"
         )
         if count < LOCAL_QWEN_HALLUCINATION_GUIDANCE_TRIGGER_COUNT:
+            return
+        if channel != "self":
+            # A hallucination streak on the PEER channel is a capture-audio
+            # problem (loopback queue drops shredding audio, or music/noise in
+            # the call) — the model itself is running. Two friends got told
+            # "the local speech model isn't working, switch to Deepgram" by
+            # this modal while their peer STT was transcribing fine.
+            if not self._peer_hallucination_burst_logged:
+                self._peer_hallucination_burst_logged = True
+                self.log_basic(
+                    "[STT][peer] Repeated garbage transcripts suppressed "
+                    f"(count={count}) — this indicates degraded loopback "
+                    "capture audio (queue drops / call noise), not a broken "
+                    "speech model; no user dialog shown"
+                )
             return
         if self._local_qwen_hallucination_modal_shown:
             return

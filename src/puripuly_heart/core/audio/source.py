@@ -440,7 +440,10 @@ class SoundDeviceAudioSource(AudioSource):
     blocksize: int | None = None
     wasapi_auto_convert: bool = False
     wasapi_exclusive: bool = False
-    max_queue_frames: int = 64
+    # 64 frames overflowed during the 7-9s local model load / inference bursts
+    # on weak CPUs, dropping mic audio (same failure as the loopback source);
+    # 512 buffers ~10s+ instead of dropping.
+    max_queue_frames: int = 512
 
     _queue: janus.Queue[np.ndarray | None] = field(init=False, repr=False)
     _stream: object = field(init=False, repr=False)

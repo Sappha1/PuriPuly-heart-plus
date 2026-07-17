@@ -290,6 +290,10 @@ def main(argv: list[str] | None = None) -> int:
 
     logging_sinks = configure_main_logging()
     try:
+        from puripuly_heart.core.system_info import log_system_info_async
+
+        log_system_info_async()
+
         parser = build_parser()
         args = parser.parse_args(argv)
 

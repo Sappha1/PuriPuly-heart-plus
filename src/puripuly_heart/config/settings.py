@@ -255,14 +255,16 @@ class TranslationSettings:
                 raise ValueError("translation connection_history connection is not supported")
 
 
+# MANAGED / MANAGED_CHINA retired 2026-07-17: the "managed free key" flow was
+# the UPSTREAM author's Discord-verified allowance system — it sent this fork's
+# users to the original author's Discord and implied the wrong maintainer.
+# Existing configs with connection=managed migrate automatically: the
+# normalizer falls back to the first supported connection (OpenRouter BYOK).
 TRANSLATION_CONNECTIONS_BY_MODEL: dict[TranslationModel, tuple[TranslationConnection, ...]] = {
     TranslationModel.GEMMA4: (
-        TranslationConnection.MANAGED,
         TranslationConnection.OPENROUTER,
     ),
     TranslationModel.DEEPSEEK_V4_FLASH: (
-        TranslationConnection.MANAGED,
-        TranslationConnection.MANAGED_CHINA,
         TranslationConnection.OPENROUTER,
         TranslationConnection.OFFICIAL_BYOK,
     ),
@@ -277,7 +279,6 @@ TRANSLATION_CONNECTIONS_BY_MODEL: dict[TranslationModel, tuple[TranslationConnec
     TranslationModel.PAPAGO: (TranslationConnection.FREE_WEB,),
 }
 TRANSLATION_CONNECTION_PRIORITY: tuple[TranslationConnection, ...] = (
-    TranslationConnection.MANAGED,
     TranslationConnection.OPENROUTER,
     TranslationConnection.OFFICIAL_BYOK,
 )

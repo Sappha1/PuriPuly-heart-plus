@@ -1689,8 +1689,9 @@ class TranslatorApp:
             )
             deepl_ok = bool(getattr(verified, "deepl", False))
             return {
-                TranslationModel.GEMMA4.value: True,              # managed (free)
-                TranslationModel.DEEPSEEK_V4_FLASH.value: True,   # managed (free)
+                # Managed free allowance retired — both need a real key now.
+                TranslationModel.GEMMA4.value: openrouter_ok,
+                TranslationModel.DEEPSEEK_V4_FLASH.value: openrouter_ok or deepseek_ok,
                 TranslationModel.DEEPSEEK_V4_PRO.value: deepseek_ok,
                 TranslationModel.GEMINI_3_FLASH.value: google_ok,
                 TranslationModel.GEMINI_31_FLASH_LITE.value: google_ok,

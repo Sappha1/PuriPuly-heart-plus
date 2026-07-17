@@ -3608,6 +3608,11 @@ class GuiController:
             self._show_short_message("settings.steamvr_autolaunch.failed")
 
     async def _handle_managed_translation_enable(self, request_generation: int) -> bool:
+        # Managed flow retired (fork policy): it was the upstream author's
+        # Discord-verified free-key system. Config normalization migrates
+        # managed connections to BYOK, but this guard makes sure no old config
+        # can ever reach the Discord auth / founder-letter dialogs again.
+        return True
         if self.settings is None or self.hub is None:
             return True
         if self.settings.provider.llm != LLMProviderName.OPENROUTER:

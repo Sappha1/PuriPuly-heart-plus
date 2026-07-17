@@ -2,8 +2,9 @@
 
 User-facing changes per build. The latest build's highlights also appear in-app when an update is ready.
 
-## r258 — 2026-07-17
+## r259 — 2026-07-17
 
+- Removed the upstream "managed free key" system entirely — no more prompts pointing to the original project's Discord; DeepSeek Flash and Gemma now use your own OpenRouter/DeepSeek key
 - The dashboard TRANS label now updates when you change the model in the gear Settings (it used to only track the dashboard's own picker)
 - Fixed the overlay randomly hiding and re-showing itself (with the "overlay active" banner) — a double-fired click event bounced it; toggles are debounced now
 

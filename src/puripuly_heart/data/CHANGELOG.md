@@ -2,6 +2,10 @@
 
 User-facing changes per build. The latest build's highlights also appear in-app when an update is ready.
 
+## r261 — 2026-07-17
+
+- New setting: "Log API request content" (Settings → General, off by default) — writes the exact text, context, and instructions sent to translation servers into the program log
+
 ## r260 — 2026-07-17
 
 - Mute Sync now reads VRChat's current mic state directly — no more toggling your in-game mic once to sync, and it finally works with push-to-talk

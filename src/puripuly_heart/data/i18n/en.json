@@ -703,6 +703,8 @@
   "settings.live_preview.tooltip": "When ON, your typed or spoken text appears in the chat immediately while waiting for the translation to arrive.",
   "settings.chatbox_send_peer": "Peer voice to chatbox",
   "settings.chatbox_send_peer.tooltip": "When ON, incoming peer speech is sent to the VRChat chatbox — original text first, then the translation, so your peer can verify accuracy.",
+  "settings.log_api_requests": "Log API request content",
+  "settings.log_api_requests.tooltip": "Writes the exact content sent to translation servers (text, context, and instructions) into the program log, so you can inspect every outgoing request. Off by default.",
   "settings.show_pinyin.tooltip": "Show pinyin (romanised Mandarin pronunciation) beneath Chinese characters in the chat log.",
   "settings.show_romaji.tooltip": "Show romaji (romanised Japanese pronunciation) beneath Japanese characters in the chat log.",
   "settings.send_pinyin.tooltip": "Include pinyin in the text sent to the VRChat chatbox alongside the Chinese translation.",

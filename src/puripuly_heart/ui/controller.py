@@ -600,6 +600,9 @@ class GuiController:
         self.hub.peer_translation_enabled = self._effective_peer_translation_enabled_for(
             resolved_settings
         )
+        self.hub.log_api_request_content = bool(
+            resolved_settings.ui.log_api_request_content
+        )
         self.hub.integrated_context_enabled = self._effective_integrated_context_enabled_for(
             resolved_settings
         )

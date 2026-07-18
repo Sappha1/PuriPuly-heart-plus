@@ -883,6 +883,10 @@ class UiSettings:
     unified_translation_ui: bool = True
     # In-app chat log format — independent of the chatbox output format.
     chat_log_format: str = "orig_read_trans"
+    # Debug: mirror every outbound translation API request (prompt, context,
+    # text, languages) into the program log so the user can inspect exactly
+    # what is sent to which server. Off by default.
+    log_api_request_content: bool = False
     show_pending_echo: bool = True
     chatbox_send_peer: bool = False
     # When True, peer-voice loopback into your own chatbox sends only the final
@@ -1631,6 +1635,7 @@ def to_dict(settings: AppSettings) -> dict[str, Any]:
             "filter_peer_by_target_languages": settings.ui.filter_peer_by_target_languages,
             "unified_translation_ui": settings.ui.unified_translation_ui,
         "chat_log_format": settings.ui.chat_log_format,
+            "log_api_request_content": settings.ui.log_api_request_content,
             "show_pending_echo": settings.ui.show_pending_echo,
             "chatbox_send_peer": settings.ui.chatbox_send_peer,
             "chatbox_send_peer_translation_only": settings.ui.chatbox_send_peer_translation_only,
@@ -3939,6 +3944,7 @@ def from_dict(data: dict[str, Any]) -> AppSettings:
             filter_peer_by_target_languages=bool(ui_data.get("filter_peer_by_target_languages", False)),
             unified_translation_ui=bool(ui_data.get("unified_translation_ui", True)),
         chat_log_format=str(ui_data.get("chat_log_format", "orig_read_trans")),
+        log_api_request_content=bool(ui_data.get("log_api_request_content", False)),
             show_pending_echo=bool(ui_data.get("show_pending_echo", True)),
             chatbox_send_peer=bool(ui_data.get("chatbox_send_peer", False)),
             chatbox_send_peer_translation_only=bool(

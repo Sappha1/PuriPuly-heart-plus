@@ -703,6 +703,8 @@
   "settings.live_preview.tooltip": "开启时，你输入或说出的文本会在等待翻译期间立即显示在聊天中。",
   "settings.chatbox_send_peer": "对方语音发送到聊天框",
   "settings.chatbox_send_peer.tooltip": "开启时，接收到的对方语音会发送到 VRChat 聊天框 — 先显示原文，再显示译文，方便对方核对准确性。",
+  "settings.log_api_requests": "记录 API 请求内容",
+  "settings.log_api_requests.tooltip": "将发送到翻译服务器的完整内容（文本、上下文和指令）写入程序日志，方便检查每个发出的请求。默认关闭。",
   "settings.show_pinyin.tooltip": "在聊天记录中的汉字下方显示拼音（普通话发音的罗马字标注）。",
   "settings.show_romaji.tooltip": "在聊天记录中的日语下方显示罗马音（日语发音的罗马字标注）。",
   "settings.send_pinyin.tooltip": "在发送到 VRChat 聊天框的文本中，连同中文译文一起包含拼音。",

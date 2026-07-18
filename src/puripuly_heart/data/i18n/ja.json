@@ -703,6 +703,8 @@
   "settings.live_preview.tooltip": "オンの場合、入力または発話したテキストが翻訳を待つ間すぐにチャットに表示されます。",
   "settings.chatbox_send_peer": "相手の音声をチャットボックスへ",
   "settings.chatbox_send_peer.tooltip": "オンの場合、受信した相手の発話が VRChat チャットボックスに送信されます — 先に原文、次に翻訳を表示し、相手が正確さを確認できます。",
+  "settings.log_api_requests": "APIリクエスト内容をログに記録",
+  "settings.log_api_requests.tooltip": "翻訳サーバーへ送信される内容（テキスト・コンテキスト・指示文）をそのままプログラムログに記録し、送信内容を確認できます。既定ではオフです。",
   "settings.show_pinyin.tooltip": "チャットログ内の漢字の下にピンイン（中国語の発音表記）を表示します。",
   "settings.show_romaji.tooltip": "チャットログ内の日本語の下にローマ字（発音表記）を表示します。",
   "settings.send_pinyin.tooltip": "VRChat チャットボックスに送るテキストに、中国語訳と一緒にピンインを含めます。",

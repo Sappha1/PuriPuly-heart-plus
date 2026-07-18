@@ -703,6 +703,8 @@
   "settings.live_preview.tooltip": "켜짐일 때, 입력하거나 말한 텍스트가 번역을 기다리는 동안 즉시 채팅에 표시됩니다.",
   "settings.chatbox_send_peer": "상대 음성을 채팅창으로",
   "settings.chatbox_send_peer.tooltip": "켜짐일 때, 수신된 상대 발화가 VRChat 채팅창으로 전송됩니다 — 원문 먼저, 그다음 번역을 표시해 상대가 정확성을 확인할 수 있습니다.",
+  "settings.log_api_requests": "API 요청 내용 기록",
+  "settings.log_api_requests.tooltip": "번역 서버로 전송되는 내용(텍스트, 문맥, 지시문)을 프로그램 로그에 그대로 기록하여 모든 요청을 확인할 수 있습니다. 기본값은 꺼짐입니다.",
   "settings.show_pinyin.tooltip": "채팅 기록의 한자 아래에 병음(중국어 발음 표기)을 표시합니다.",
   "settings.show_romaji.tooltip": "채팅 기록의 일본어 아래에 로마자(일본어 발음 표기)를 표시합니다.",
   "settings.send_pinyin.tooltip": "VRChat 채팅창으로 보내는 텍스트에 중국어 번역과 함께 병음을 포함합니다.",

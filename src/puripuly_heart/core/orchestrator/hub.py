@@ -147,6 +147,9 @@ class ClientHub:
     fallback_transcript_only: bool = False
     translation_enabled: bool = True
     peer_translation_enabled: bool = False
+    # Debug: mirror outbound translation requests (prompt/context/text/langs)
+    # into the program log — synced from settings.ui.log_api_request_content.
+    log_api_request_content: bool = False
     integrated_context_enabled: bool = False
     hangover_s: float = 1.1  # Self VAD hangover in seconds for user-facing E2E latency.
     peer_hangover_s: float = 0.6  # Peer VAD hangover in seconds for user-facing E2E latency.
@@ -3158,6 +3161,36 @@ class ClientHub:
             romanization=romanization,
         )
 
+    def _log_llm_request(
+        self,
+        *,
+        stage: str,
+        text: str,
+        system_prompt: str,
+        source_language: str,
+        target_language: str,
+        context: str,
+    ) -> None:
+        """Mirror the exact outbound translation request into the program log
+        (gated on the "Log API request content" setting)."""
+        if not self.log_api_request_content:
+            return
+        llm = self.llm
+        inner = getattr(llm, "inner", None)
+        provider = type(inner if inner is not None else llm).__name__ if llm else "none"
+        self._emit_basic(
+            "[APIRequest][%s] stage=%s source=%r target=%r\n"
+            "  text: %s\n  context: %s\n  system_prompt: %s",
+            provider,
+            stage,
+            source_language,
+            target_language,
+            text,
+            context or "(none)",
+            system_prompt or "(none)",
+            fallback_level=logging.INFO,
+        )
+
     async def _translate_text(
         self,
         utterance_id: UUID,
@@ -3182,6 +3215,14 @@ class ClientHub:
             )
         request_source_language = self._source_language_for(runtime)
         request_target_language = self._target_language_for(runtime)
+        self._log_llm_request(
+            stage="translate",
+            text=text,
+            system_prompt=formatted_prompt,
+            source_language=request_source_language,
+            target_language=request_target_language,
+            context=context_str,
+        )
         translation = await self.llm.translate(
             utterance_id=utterance_id,
             text=text,
@@ -3270,6 +3311,14 @@ class ClientHub:
                 # detected=zh-CN, feeding romaji through the pinyin engine
                 # downstream). Empty source = real per-utterance detection.
                 request_source_language = ""
+            self._log_llm_request(
+                stage="peer_final",
+                text=text,
+                system_prompt=formatted_prompt,
+                source_language=request_source_language,
+                target_language=request_target_language,
+                context=context_str,
+            )
             raw_translation = await self.llm.translate(
                 utterance_id=utterance_id,
                 text=text,
@@ -3410,6 +3459,14 @@ class ClientHub:
             try:
                 extra_prompt, extra_ctx, _, _ = self._prepare_llm_request_with_mode(
                     text, runtime=runtime
+                )
+                self._log_llm_request(
+                    stage="extra_target",
+                    text=text,
+                    system_prompt=extra_prompt,
+                    source_language=request_source_language,
+                    target_language=extra_target,
+                    context=extra_ctx,
                 )
                 raw_extra = await self.llm.translate(
                     utterance_id=utterance_id,

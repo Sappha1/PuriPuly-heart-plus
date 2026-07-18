@@ -2238,6 +2238,47 @@ class SettingsView(ft.Column):
             expand=False,
         )
 
+        # Read-only preview of the request-content template: derived by running
+        # the REAL composition function with placeholder variables, so this
+        # display can never drift from what is actually sent to LLM servers.
+        from puripuly_heart.providers.llm.messages import build_translation_user_message
+
+        request_format_preview = build_translation_user_message(
+            text="${text}", context="${context}"
+        )
+        self._request_format_text = ft.Text(
+            request_format_preview,
+            size=13,
+            color=COLOR_ON_BACKGROUND,
+            selectable=True,
+            font_family="Consolas, monospace",
+        )
+        self._request_format_helper = ft.Text(
+            t("settings.request_format.helper"),
+            size=12,
+            color=COLOR_NEUTRAL,
+        )
+        request_format_card = SharedCardWrapper(
+            ft.Column(
+                [
+                    self._info_title_keyed(
+                        "settings.request_format", "settings.request_format.tooltip"),
+                    ft.Container(height=12),
+                    ft.Container(
+                        content=self._request_format_text,
+                        padding=12,
+                        border_radius=12,
+                        border=ft.border.all(1, COLOR_DIVIDER),
+                    ),
+                    ft.Container(height=8),
+                    self._request_format_helper,
+                ],
+                spacing=0,
+            ),
+            height=None,
+            expand=False,
+        )
+
         self._settings_subtab_shell = self._build_settings_subtab_shell(
             {
                 "api": [
@@ -2253,7 +2294,7 @@ class SettingsView(ft.Column):
                     general_vad_row,
                     general_clipboard_row,
                 ],
-                "prompt": [row7, persona_card],
+                "prompt": [row7, persona_card, request_format_card],
                 "overlay": [
                     overlay_row1,
                     overlay_row1b,
@@ -2451,8 +2492,13 @@ class SettingsView(ft.Column):
     def _sync_prompt_tab_copy(self) -> None:
         self._prompt_for_text.value = self._prompt_provider_copy()
         self._custom_vocab_helper_text.value = self._custom_vocabulary_helper_copy()
+        self._request_format_helper.value = t("settings.request_format.helper")
         if self.page:
-            for control in (self._prompt_for_text, self._custom_vocab_helper_text):
+            for control in (
+                self._prompt_for_text,
+                self._custom_vocab_helper_text,
+                self._request_format_helper,
+            ):
                 with contextlib.suppress(Exception):
                     control.update()
 

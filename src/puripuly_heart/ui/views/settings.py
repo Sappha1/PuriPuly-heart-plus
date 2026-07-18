@@ -1475,7 +1475,6 @@ class SettingsView(ft.Column):
                     vrc_mic_card,
                     live_preview_card,
                     chatbox_send_peer_card,
-                    log_api_requests_card,
                     separate_text_card,
                     self_in_overlay_card,
                     steamvr_autolaunch_card,
@@ -2243,8 +2242,27 @@ class SettingsView(ft.Column):
         # display can never drift from what is actually sent to LLM servers.
         from puripuly_heart.providers.llm.messages import build_translation_user_message
 
-        request_format_preview = build_translation_user_message(
+        # The FULL API invoking message shape (not just the user-content
+        # wrapper): system + user roles as sent to OpenAI-style servers
+        # (DeepSeek/OpenRouter/Qwen/Local; Gemini carries the same content in
+        # its own field names). User content derived from the real composer.
+        _user_content = build_translation_user_message(
             text="${text}", context="${context}"
+        )
+        _indented_user = "\n".join(
+            "        " + line for line in _user_content.splitlines())
+        request_format_preview = (
+            '{\n'
+            '  "model": "${model}",\n'
+            '  "messages": [\n'
+            '    { "role": "system",\n'
+            '      "content": "${systemPrompt}" },\n'
+            '    { "role": "user",\n'
+            '      "content":\n'
+            f'{_indented_user}\n'
+            '    }\n'
+            '  ]\n'
+            '}'
         )
         self._request_format_text = ft.Text(
             request_format_preview,
@@ -2287,6 +2305,8 @@ class SettingsView(ft.Column):
                     self._local_llm_connection_card,
                     self._managed_key_card,
                     api_keys_row,
+                    # Lives on the API tab — it's about what goes to API servers.
+                    log_api_requests_card,
                 ],
                 "general": [
                     general_primary_row,

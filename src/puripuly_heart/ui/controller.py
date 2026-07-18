@@ -386,6 +386,9 @@ class GuiController:
     receiver: VrcOscReceiver | None = None
     vrc_mic_state: VrcMicState | None = None
     _oscquery_sync_task: object = field(init=False, default=None, repr=False)
+    # Non-empty while translations run on the free-web fallback (e.g. "Bing")
+    # instead of the selected model — drives the dashboard "model → Bing" label.
+    llm_fallback_engine: str = field(init=False, default="")
     vrc_mic_audio_gate: VrcMicAudioGate | None = None
 
     _bridge_task: asyncio.Task[None] | None = None
@@ -4627,6 +4630,14 @@ class GuiController:
         save_settings(path, settings)
         return settings
 
+    def _sync_dashboard_translator_label_via_app(self) -> None:
+        """Re-render the dashboard TRANS label after any LLM (re)build so it
+        reflects fallback state ("Gemini 3 Flash → Bing") the moment it changes."""
+        sync = getattr(self.app, "_sync_dashboard_translator_label", None)
+        if callable(sync):
+            with contextlib.suppress(Exception):
+                sync()
+
     def _create_free_web_fallback_llm(self, reason: str):
         """Keyless free-web provider used when the configured key-backed
         translator can't be built. Translations must never silently die on a paid
@@ -4648,6 +4659,7 @@ class GuiController:
             f"Translation: {self.settings.provider.llm.value} has no working API key — "
             "using free Bing translation instead. Enter the key in Settings → API."
         )
+        self.llm_fallback_engine = "Bing"
         return SemaphoreLLMProvider(
             inner=FreeWebTranslationProvider("bing"),
             semaphore=asyncio.Semaphore(self.settings.llm.concurrency_limit),
@@ -4690,9 +4702,12 @@ class GuiController:
             with contextlib.suppress(Exception):
                 llm = self._create_free_web_fallback_llm(str(llm_error or "no API key"))
                 fallback_used = True
+        if not fallback_used:
+            self.llm_fallback_engine = ""
 
         # Update hub's LLM provider
         self.hub.llm = llm
+        self._sync_dashboard_translator_label_via_app()
 
         # Update dashboard status. The needs-key badge stays on while running on
         # the fallback so the user can see their chosen translator isn't serving.
@@ -5131,6 +5146,8 @@ class GuiController:
             )
         except Exception as exc:
             llm_error = exc
+        if llm is not None:
+            self.llm_fallback_engine = ""
         if llm is None:
             # This used to be a bare suppress: a key-backed translator with a
             # missing/broken key started the whole session with llm=None and
@@ -5139,6 +5156,7 @@ class GuiController:
             if self._llm_provider_requires_secret(self.settings.provider.llm):
                 with contextlib.suppress(Exception):
                     llm = self._create_free_web_fallback_llm(str(llm_error or "no API key"))
+        self._sync_dashboard_translator_label_via_app()
 
         # Whisper hub-block alert: the startup reachability probe can pass while
         # the real model download still times out — surface a visible alert on

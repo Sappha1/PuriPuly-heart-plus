@@ -1913,7 +1913,14 @@ class TranslatorApp:
                     matched = m
                     break
             if matched is not None and matched in _TRANSLATION_MODEL_LABEL_KEYS:
-                dash.set_translator_label(t(_TRANSLATION_MODEL_LABEL_KEYS[matched]), model_value=matched.value)
+                label = t(_TRANSLATION_MODEL_LABEL_KEYS[matched])
+                # Show the fallback honestly: "Gemini 3 Flash → Bing" when the
+                # selected model has no working key and free Bing actually
+                # translates — a plain green "Gemini 3 Flash" was a lie.
+                fallback = getattr(self.controller, "llm_fallback_engine", "")
+                if fallback:
+                    label = f"{label} → {fallback}"
+                dash.set_translator_label(label, model_value=matched.value)
         except Exception:
             pass
 
@@ -2377,20 +2384,10 @@ class TranslatorApp:
         self._queue_settings_mutation_task(_task)
 
     def _sync_dashboard_translator_label(self) -> None:
-        try:
-            from puripuly_heart.config.settings import TranslationModel
-            from puripuly_heart.ui.views.settings import _TRANSLATION_MODEL_LABEL_KEYS
-            from puripuly_heart.ui.i18n import t
-
-            model_value = str(getattr(self.controller.settings.translation.model, "value",
-                                      self.controller.settings.translation.model))
-            matched = next((m for m in TranslationModel if m.value == model_value), None)
-            dash = getattr(self, "view_dashboard", None)
-            if dash is not None and matched is not None and matched in _TRANSLATION_MODEL_LABEL_KEYS:
-                dash.set_translator_label(
-                    t(_TRANSLATION_MODEL_LABEL_KEYS[matched]), model_value=model_value)
-        except Exception:
-            pass
+        # Single renderer: _sync_translator_label carries the fallback-suffix
+        # logic, so every path shows "model → Bing" consistently.
+        with contextlib.suppress(Exception):
+            self._sync_translator_label(self.controller.settings)
 
     def _on_local_llm_secret_changed(self) -> None:
         async def _task():

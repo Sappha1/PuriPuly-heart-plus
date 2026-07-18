@@ -92,6 +92,12 @@ async def run_initial_mute_sync(state, *, is_active) -> None:  # noqa: ANN001
     discovery thread). is_active: callable() -> bool, False stops the loop.
     """
     try:
+        logger.info(
+            "[OSCQuery] Starting VRChat service discovery for mute sync — "
+            "Windows may ask ONCE to allow the app through the firewall. "
+            "This only listens for local-network service announcements; "
+            "nothing is sent to the internet."
+        )
         while is_active() and state.muted is None:
             muted = await asyncio.to_thread(_fetch_mute_via_oscquery)
             if not is_active() or state.muted is not None:

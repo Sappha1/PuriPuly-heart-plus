@@ -54,7 +54,7 @@ Either way, that's the last download you do by hand — updates arrive through t
 1. Install (or unzip) and launch.
 2. Pick your languages: **Your language** (what you speak and read) and **Target language** (the other person's language — your messages translate into it). The ⇅ button swaps them.
 3. Click **MIC** to start voice recognition, **TRANS** for translation.
-4. Enable OSC in VRChat: Action Menu → Options → OSC → **Enabled** (the Mute Sync chip syncs automatically — works with push-to-talk too).
+4. Enable OSC in VRChat: Action Menu → Options → OSC → **Enabled** (the Mute Sync chip syncs automatically — works with push-to-talk too). Windows will ask **once** to allow the app through the firewall: that's the mute-sync discovery finding VRChat on your own PC — allow it on private networks; nothing is sent to the internet, and declining just means mute sync waits for a mic toggle like older versions.
 5. (Optional) **PEER** translates the other person's voice; **Overlay** shows subtitles on desktop or in VR.
 
 ### Using it in China

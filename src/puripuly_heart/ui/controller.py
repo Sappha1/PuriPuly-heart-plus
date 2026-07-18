@@ -385,6 +385,7 @@ class GuiController:
     _peer_runtime: PeerChannelRuntime | None = None
     receiver: VrcOscReceiver | None = None
     vrc_mic_state: VrcMicState | None = None
+    _oscquery_sync_task: object = field(init=False, default=None, repr=False)
     vrc_mic_audio_gate: VrcMicAudioGate | None = None
 
     _bridge_task: asyncio.Task[None] | None = None
@@ -6109,7 +6110,31 @@ class GuiController:
                 self.vrc_mic_audio_gate.set_receiver_active(True)
                 self.vrc_mic_audio_gate.reset()
 
+            # OSCQuery initial-state fetch: VRChat only SENDS MuteSelf on
+            # change, so sync used to require one in-game mic toggle — and
+            # push-to-talk users could never sync at all. This asks VRChat's
+            # OSCQuery service for the CURRENT value, then exits; the OSC
+            # receiver handles changes from there.
+            self._start_oscquery_mute_sync()
+
+    def _start_oscquery_mute_sync(self) -> None:
+        task = getattr(self, "_oscquery_sync_task", None)
+        if task is not None and not task.done():
+            return
+        state = self.vrc_mic_state
+        if state is None or state.muted is not None:
+            return
+        from puripuly_heart.core.osc.oscquery_sync import run_initial_mute_sync
+
+        self._oscquery_sync_task = asyncio.create_task(
+            run_initial_mute_sync(state, is_active=lambda: self.receiver is not None)
+        )
+
     def _stop_vrc_mic_receiver(self) -> None:
+        task = getattr(self, "_oscquery_sync_task", None)
+        if task is not None and not task.done():
+            task.cancel()
+        self._oscquery_sync_task = None
         if self.receiver is not None:
             with contextlib.suppress(Exception):
                 self.receiver.stop()

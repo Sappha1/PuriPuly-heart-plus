@@ -2,6 +2,10 @@
 
 User-facing changes per build. The latest build's highlights also appear in-app when an update is ready.
 
+## r260 — 2026-07-17
+
+- Mute Sync now reads VRChat's current mic state directly — no more toggling your in-game mic once to sync, and it finally works with push-to-talk
+
 ## r259 — 2026-07-17
 
 - Removed the upstream "managed free key" system entirely — no more prompts pointing to the original project's Discord; DeepSeek Flash and Gemma now use your own OpenRouter/DeepSeek key

@@ -2,7 +2,10 @@
 
 User-facing changes per build. The latest build's highlights also appear in-app when an update is ready.
 
-## r263 — 2026-07-17
+## r264 — 2026-07-17
+
+- "Log API request content" now sits above the API keys box
+
 
 - The Windows firewall prompt is gone by default: push-to-talk mute sync is now an opt-in toggle (Settings → General → "Push-to-talk Mute Sync"). Toggle-mute users sync on their first mic flip exactly as before, with no network discovery at all
 

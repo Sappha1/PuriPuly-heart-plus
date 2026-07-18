@@ -2315,9 +2315,10 @@ class SettingsView(ft.Column):
                     self._translation_connection_row,
                     self._local_llm_connection_card,
                     self._managed_key_card,
-                    api_keys_row,
-                    # Lives on the API tab — it's about what goes to API servers.
+                    # Above the keys box (user preference) — it's about what
+                    # goes to API servers, not about the keys themselves.
                     log_api_requests_card,
+                    api_keys_row,
                 ],
                 "general": [
                     general_primary_row,

@@ -245,6 +245,7 @@ class TranslationSettings:
             raise ValueError("translation connection is not supported for model")
         if not isinstance(self.connection_history, dict):
             raise ValueError("translation connection_history must be a dict")
+        stale_history_models: list[str] = []
         for model_value, connection in self.connection_history.items():
             model = _parse_translation_model(model_value)
             if model is None:
@@ -252,7 +253,13 @@ class TranslationSettings:
             if not isinstance(connection, TranslationConnection):
                 raise ValueError("invalid translation connection_history connection")
             if connection not in _supported_translation_connections(model):
-                raise ValueError("translation connection_history connection is not supported")
+                # Self-heal instead of raising: a history entry for a RETIRED
+                # connection (e.g. the removed MANAGED flow) is stale data, not
+                # a programming error — raising here crashed fresh installs at
+                # startup with no way for the user to recover.
+                stale_history_models.append(model_value)
+        for model_value in stale_history_models:
+            del self.connection_history[model_value]
 
 
 # MANAGED / MANAGED_CHINA retired 2026-07-17: the "managed free key" flow was
@@ -309,7 +316,12 @@ def _default_translation_connection(model: TranslationModel) -> TranslationConne
 
 
 def _default_translation_connection_history() -> dict[str, TranslationConnection]:
-    return {TranslationModel.GEMMA4.value: TranslationConnection.MANAGED}
+    # NEVER hardcode a connection here — this factory shipping a retired
+    # MANAGED entry crashed every FRESH install at first run (r259-r264:
+    # "translation connection_history connection is not supported").
+    return {
+        TranslationModel.GEMMA4.value: default_translation_connection(TranslationModel.GEMMA4)
+    }
 
 
 def _parse_translation_model(value: object) -> TranslationModel | None:

@@ -2,6 +2,10 @@
 
 User-facing changes per build. The latest build's highlights also appear in-app when an update is ready.
 
+## r265 — 2026-07-17
+
+- HOTFIX: fresh installs crashed at first launch ("translation connection_history connection is not supported") — a leftover default from the removed managed-key system; stale entries now self-heal instead of crashing
+
 ## r264 — 2026-07-17
 
 - "Log API request content" now sits above the API keys box

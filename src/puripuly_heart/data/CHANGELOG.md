@@ -2,6 +2,13 @@
 
 User-facing changes per build. The latest build's highlights also appear in-app when an update is ready.
 
+## r262 — 2026-07-17
+
+- The dashboard TRANS label now shows when a fallback is active (e.g. "Gemini 3 Flash → Bing") instead of pretending the selected model is serving
+- The Prompt page's request format now shows the full API message (model + system + user), matching what LLM servers actually receive
+- "Log API request content" moved to Settings → API, next to the keys
+- The one-time Windows firewall prompt is now explained in the log and README (it's the VRChat mute-sync discovery; local network only)
+
 ## r261 — 2026-07-17
 
 - New setting: "Log API request content" (Settings → General, off by default) — writes the exact text, context, and instructions sent to translation servers into the program log

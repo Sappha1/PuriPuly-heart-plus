@@ -705,6 +705,8 @@
   "settings.chatbox_send_peer.tooltip": "开启时，接收到的对方语音会发送到 VRChat 聊天框 — 先显示原文，再显示译文，方便对方核对准确性。",
   "settings.log_api_requests": "记录 API 请求内容",
   "settings.log_api_requests.tooltip": "将发送到翻译服务器的完整内容（文本、上下文和指令）写入程序日志，方便检查每个发出的请求。默认关闭。",
+  "settings.ptt_mute_sync": "按键说话静音同步",
+  "settings.ptt_mute_sync.tooltip": "直接读取 VRChat 当前的麦克风状态，使静音同步支持按键说话，无需切换麦克风。开启后 Windows 会请求一次防火墙权限（仅本地网络发现，不会连接互联网）。使用切换静音的用户可保持关闭：首次切换麦克风即可同步。",
   "settings.request_format": "请求内容格式",
   "settings.request_format.tooltip": "发送到 LLM 翻译服务器的完整 API 调用消息。${model} 是所选模型，${systemPrompt} 是上方编辑的提示词，${text} 是您说出或输入的文本，${context} 是最近的对话历史。",
   "settings.request_format.helper": "OpenAI 风格的服务器（DeepSeek/OpenRouter/Qwen/本地）收到的正是此结构；Gemini 以自己的字段名承载相同内容。没有历史时省略 <context> 块。免费网页引擎（Google/Bing/Papago）和 DeepL 则直接发送纯文本和语言参数。",

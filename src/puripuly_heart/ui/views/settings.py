@@ -1164,6 +1164,16 @@ class SettingsView(ft.Column):
             value=self._vrc_mic_text,
         )
 
+        self._ptt_mute_sync_text = self._build_clickable_text(
+            t("settings.option.off"),
+            self._on_ptt_mute_sync_click,
+        )
+        ptt_mute_sync_card = self._wrap_unit_card(
+            title=self._info_title_keyed(
+                "settings.ptt_mute_sync", "settings.ptt_mute_sync.tooltip"),
+            value=self._ptt_mute_sync_text,
+        )
+
         self._microphone_test_text = self._build_clickable_text(
             t("settings.microphone_test.action"),
             self._on_microphone_test_click,
@@ -1473,6 +1483,7 @@ class SettingsView(ft.Column):
                 [
                     clipboard_auto_translate_card,
                     vrc_mic_card,
+                    ptt_mute_sync_card,
                     live_preview_card,
                     chatbox_send_peer_card,
                     separate_text_card,
@@ -3154,6 +3165,9 @@ class SettingsView(ft.Column):
         )
         self._log_api_requests_text.content.value = t(
             "settings.option.on" if bool(getattr(settings.ui, "log_api_request_content", False)) else "settings.option.off"
+        )
+        self._ptt_mute_sync_text.content.value = t(
+            "settings.option.on" if bool(getattr(settings.ui, "ptt_mute_sync", False)) else "settings.option.off"
         )
         self._chatbox_send_peer_text.content.value = t(
             "settings.option.on" if bool(getattr(settings.ui, "chatbox_send_peer", False)) else "settings.option.off"
@@ -5131,6 +5145,18 @@ class SettingsView(ft.Column):
             self._live_preview_text.update()
         self._emit_settings_changed()
 
+    def _on_ptt_mute_sync_click(self, e) -> None:
+        if not self._settings:
+            return
+        new_value = not bool(getattr(self._settings.ui, "ptt_mute_sync", False))
+        self._settings.ui.ptt_mute_sync = new_value
+        self._ptt_mute_sync_text.content.value = t(
+            "settings.option.on" if new_value else "settings.option.off"
+        )
+        if self.page:
+            self._ptt_mute_sync_text.update()
+        self._emit_settings_changed()
+
     def _on_log_api_requests_click(self, e) -> None:
         if not self._settings:
             return
@@ -5379,6 +5405,7 @@ class SettingsView(ft.Column):
                 (getattr(self, "_live_preview_text", None), "settings.option.on" if bool(getattr(_ui, "show_pending_echo", True)) else "settings.option.off"),
                 (getattr(self, "_chatbox_send_peer_text", None), "settings.option.on" if bool(getattr(_ui, "chatbox_send_peer", False)) else "settings.option.off"),
                 (getattr(self, "_log_api_requests_text", None), "settings.option.on" if bool(getattr(_ui, "log_api_request_content", False)) else "settings.option.off"),
+                (getattr(self, "_ptt_mute_sync_text", None), "settings.option.on" if bool(getattr(_ui, "ptt_mute_sync", False)) else "settings.option.off"),
                 (getattr(self, "_steamvr_autolaunch_text", None), "settings.option.on" if bool(getattr(_ui, "autolaunch_with_steamvr", False)) else "settings.option.off"),
                 (getattr(self, "_auto_download_updates_text", None), "settings.option.on" if bool(getattr(_ui, "auto_download_updates", True)) else "settings.option.off"),
             ]

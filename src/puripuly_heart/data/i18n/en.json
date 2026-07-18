@@ -705,6 +705,8 @@
   "settings.chatbox_send_peer.tooltip": "When ON, incoming peer speech is sent to the VRChat chatbox — original text first, then the translation, so your peer can verify accuracy.",
   "settings.log_api_requests": "Log API request content",
   "settings.log_api_requests.tooltip": "Writes the exact content sent to translation servers (text, context, and instructions) into the program log, so you can inspect every outgoing request. Off by default.",
+  "settings.ptt_mute_sync": "Push-to-talk Mute Sync",
+  "settings.ptt_mute_sync.tooltip": "Reads VRChat's current mic state directly, so Mute Sync works with push-to-talk and needs no mic toggle. Turning this ON makes Windows ask once to allow the app through the firewall (local network discovery only — nothing goes to the internet). Leave it off if you use toggle mute: syncing on your first mic toggle works as always.",
   "settings.request_format": "Request content format",
   "settings.request_format.tooltip": "The full API invoking message sent to LLM translation servers. ${model} is the selected model, ${systemPrompt} is the prompt edited above, ${text} is your spoken or typed text, ${context} is recent conversation history.",
   "settings.request_format.helper": "OpenAI-style servers (DeepSeek/OpenRouter/Qwen/Local) receive exactly this shape; Gemini carries the same content in its own field names. The <context> block is omitted without history. Free web engines (Google/Bing/Papago) and DeepL send plain text with language parameters instead.",

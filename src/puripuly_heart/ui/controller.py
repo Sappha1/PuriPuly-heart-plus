@@ -4621,6 +4621,7 @@ class GuiController:
                 await self._rebuild_stt_provider()
 
         self._sync_signature_caches(next_settings)
+        self._refresh_oscquery_mute_sync()
 
     def _load_or_init_settings(self, path: Path) -> AppSettings:
         if path.exists():
@@ -6139,6 +6140,11 @@ class GuiController:
             self._start_oscquery_mute_sync()
 
     def _start_oscquery_mute_sync(self) -> None:
+        # OPT-IN (ui.ptt_mute_sync, off by default): starting the mDNS listener
+        # makes Windows show a one-time firewall prompt, which toggle-mode users
+        # never need — they sync on mic toggle exactly like before.
+        if self.settings is None or not self.settings.ui.ptt_mute_sync:
+            return
         task = getattr(self, "_oscquery_sync_task", None)
         if task is not None and not task.done():
             return
@@ -6150,6 +6156,19 @@ class GuiController:
         self._oscquery_sync_task = asyncio.create_task(
             run_initial_mute_sync(state, is_active=lambda: self.receiver is not None)
         )
+
+    def _refresh_oscquery_mute_sync(self) -> None:
+        """Apply the Push-to-talk Mute Sync setting live: start discovery when
+        turned on (receiver active, still unsynced), cancel it when turned off."""
+        enabled = bool(self.settings is not None and self.settings.ui.ptt_mute_sync)
+        if enabled:
+            if self.receiver is not None:
+                self._start_oscquery_mute_sync()
+            return
+        task = getattr(self, "_oscquery_sync_task", None)
+        if task is not None and not task.done():
+            task.cancel()
+        self._oscquery_sync_task = None
 
     def _stop_vrc_mic_receiver(self) -> None:
         task = getattr(self, "_oscquery_sync_task", None)

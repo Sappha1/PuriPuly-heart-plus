@@ -887,6 +887,10 @@ class UiSettings:
     # text, languages) into the program log so the user can inspect exactly
     # what is sent to which server. Off by default.
     log_api_request_content: bool = False
+    # Push-to-talk Mute Sync: OSCQuery discovery of VRChat's live mic state.
+    # OFF by default - starting the mDNS listener triggers a one-time Windows
+    # firewall prompt, which toggle-mode users (the majority) never need.
+    ptt_mute_sync: bool = False
     show_pending_echo: bool = True
     chatbox_send_peer: bool = False
     # When True, peer-voice loopback into your own chatbox sends only the final
@@ -1636,6 +1640,7 @@ def to_dict(settings: AppSettings) -> dict[str, Any]:
             "unified_translation_ui": settings.ui.unified_translation_ui,
         "chat_log_format": settings.ui.chat_log_format,
             "log_api_request_content": settings.ui.log_api_request_content,
+            "ptt_mute_sync": settings.ui.ptt_mute_sync,
             "show_pending_echo": settings.ui.show_pending_echo,
             "chatbox_send_peer": settings.ui.chatbox_send_peer,
             "chatbox_send_peer_translation_only": settings.ui.chatbox_send_peer_translation_only,
@@ -3945,6 +3950,7 @@ def from_dict(data: dict[str, Any]) -> AppSettings:
             unified_translation_ui=bool(ui_data.get("unified_translation_ui", True)),
         chat_log_format=str(ui_data.get("chat_log_format", "orig_read_trans")),
         log_api_request_content=bool(ui_data.get("log_api_request_content", False)),
+        ptt_mute_sync=bool(ui_data.get("ptt_mute_sync", False)),
             show_pending_echo=bool(ui_data.get("show_pending_echo", True)),
             chatbox_send_peer=bool(ui_data.get("chatbox_send_peer", False)),
             chatbox_send_peer_translation_only=bool(

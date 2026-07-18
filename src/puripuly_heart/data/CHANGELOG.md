@@ -5,6 +5,7 @@ User-facing changes per build. The latest build's highlights also appear in-app 
 ## r261 — 2026-07-17
 
 - New setting: "Log API request content" (Settings → General, off by default) — writes the exact text, context, and instructions sent to translation servers into the program log
+- Prompt page: new read-only "Request content format" card showing the exact template wrapped around your text when sent to LLM servers
 
 ## r260 — 2026-07-17
 

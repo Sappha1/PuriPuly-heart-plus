@@ -47,6 +47,10 @@ VersionInfoProductName={#MyAppName}
 VersionInfoProductVersion={#MyAppVersion}.0
 VersionInfoCopyright=© Sappha1 (original by salee). Licensed under AGPL-3.0.
 DefaultDirName={autopf}\{#MyAppDirName}
+; Always show the folder chooser. Inno's default (auto) HIDES it when a
+; previous install exists — users who wanted another drive never got the
+; option because their old install pinned the location silently.
+DisableDirPage=no
 DefaultGroupName={#MyAppGroupName}
 AllowNoIcons=yes
 LicenseFile=LICENSE

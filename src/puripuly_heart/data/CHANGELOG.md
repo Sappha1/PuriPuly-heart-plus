@@ -2,6 +2,11 @@
 
 User-facing changes per build. The latest build's highlights also appear in-app when an update is ready.
 
+## r266 — 2026-07-18
+
+- Fixed transcripts sometimes appearing twice: a startup race could open two speech sessions on the same recognizer, doubling every line until a restart
+- The installer now always shows the folder chooser, so you can install to another drive even when upgrading
+
 ## r265 — 2026-07-17
 
 - HOTFIX: fresh installs crashed at first launch ("translation connection_history connection is not supported") — a leftover default from the removed managed-key system; stale entries now self-heal instead of crashing

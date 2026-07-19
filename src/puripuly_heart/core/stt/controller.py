@@ -78,6 +78,12 @@ class ManagedSTTProvider:
 
     _state: STTSessionState = STTSessionState.DISCONNECTED
     _active_session: STTBackendSession | None = None
+    # Serializes session creation. Without it, warmup and the first VAD audio
+    # raced through _ensure_session's is-None check concurrently and BOTH
+    # opened sessions: the loser leaked ("Task was destroyed but it is
+    # pending!") or — worse — kept consuming the shared recognizer and
+    # delivered every transcript TWICE (duplicate chat lines).
+    _ensure_session_lock: asyncio.Lock = field(default_factory=asyncio.Lock)
     _session_started_at: float | None = None
     _consumer_task: asyncio.Task[None] | None = None
     _draining: set[asyncio.Task[None]] = field(default_factory=set)
@@ -380,6 +386,14 @@ class ManagedSTTProvider:
         await session.send_audio(pcm)
 
     async def _ensure_session(self) -> bool:
+        if self._active_session is not None:
+            return True
+        async with self._ensure_session_lock:
+            return await self._ensure_session_locked()
+
+    async def _ensure_session_locked(self) -> bool:
+        # Re-check under the lock: a concurrent caller may have connected while
+        # we waited — without this, both callers opened a session and one leaked.
         if self._active_session is not None:
             return True
 

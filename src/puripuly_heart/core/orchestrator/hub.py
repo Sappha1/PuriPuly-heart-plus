@@ -3253,7 +3253,7 @@ class ClientHub:
         request_source_language = self._source_language_for(runtime)
         request_target_language = self._target_language_for(runtime)
         self._log_llm_request(
-            stage="translate",
+            stage=f"{runtime.channel}_translate",
             text=text,
             system_prompt=formatted_prompt,
             source_language=request_source_language,
@@ -3349,7 +3349,9 @@ class ClientHub:
                 # downstream). Empty source = real per-utterance detection.
                 request_source_language = ""
             self._log_llm_request(
-                stage="peer_final",
+                # Channel-accurate: this path also serves typed/self messages —
+                # a typed message was showing as "peer_final" in the inspector.
+                stage=f"{runtime.channel}_final",
                 text=text,
                 system_prompt=formatted_prompt,
                 source_language=request_source_language,

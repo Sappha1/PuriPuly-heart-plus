@@ -2,6 +2,10 @@
 
 User-facing changes per build. The latest build's highlights also appear in-app when an update is ready.
 
+## r268 — 2026-07-20
+
+- API Requests view fixes: Enter sends (Shift+Enter for newline, same send button as the chat box), manual sends use your dashboard Target language (no more missing target_lang error), log lines no longer bleed into the view, the header button no longer gets cut off, and typed messages are labeled with the right channel instead of "peer_final"
+
 ## r267 — 2026-07-18
 
 - New API Requests view in the Logs page: see every request sent to translation servers, wire-accurate per provider (DeepL/free-web entries say plainly that the prompt is NOT sent — only your text and languages are)

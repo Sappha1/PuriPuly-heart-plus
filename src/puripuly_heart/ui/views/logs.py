@@ -313,19 +313,27 @@ class LogsView(ft.Column):
             max_lines=3,
             text_size=13,
             border_radius=12,
+            expand=True,
+            # Same behavior as the dashboard chat box: Enter sends,
+            # Shift+Enter inserts a newline.
+            shift_enter=True,
+            on_submit=self._on_api_send_click,
         )
-        self._api_send_button = ft.TextButton(
-            text=t("logs.api.send"),
-            icon=ft.Icons.SEND,
-            style=self._get_button_style(font_family),
+        # Same send control as the dashboard chat box.
+        self._api_send_button = ft.IconButton(
+            ft.Icons.SEND_ROUNDED,
+            tooltip=t("logs.api.send"),
             on_click=self._on_api_send_click,
         )
         self._api_composer = ft.Container(
             content=ft.Column(
                 [
                     self._api_prompt_field,
-                    self._api_text_field,
-                    ft.Row([ft.Container(expand=True), self._api_send_button]),
+                    ft.Row(
+                        [self._api_text_field, self._api_send_button],
+                        vertical_alignment=ft.CrossAxisAlignment.END,
+                        spacing=8,
+                    ),
                 ],
                 spacing=8,
             ),
@@ -464,7 +472,9 @@ class LogsView(ft.Column):
         if self._log_text is None:
             return
 
-        if self._showing_conversation:
+        if self._showing_conversation or self._showing_api_requests:
+            # Another view owns _log_text right now — flushing would stomp it
+            # with raw log lines (seen live: API entries interleaved with logs).
             self._rendered_line_count = len(self._log_buffer)
             self._last_cleanup_count = self._model.cleanup_count
             self._last_update = time.time()
@@ -637,8 +647,7 @@ class LogsView(ft.Column):
         if self._api_text_field:
             self._api_text_field.label = t("logs.api.text")
         if self._api_send_button:
-            self._api_send_button.text = t("logs.api.send")
-            self._api_send_button.style = self._get_button_style(font_family)
+            self._api_send_button.tooltip = t("logs.api.send")
         if self._showing_conversation and self._log_text is not None:
             self._render_conversation_text()
         if self._showing_api_requests and self._log_text is not None:

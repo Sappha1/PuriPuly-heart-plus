@@ -2366,9 +2366,17 @@ class TranslatorApp:
 
             inner = getattr(llm, "inner", None)
             provider = type(inner if inner is not None else llm).__name__
+            # Use the SAME target resolution as real requests (the dashboard's
+            # Target language). The old settings-attr read silently failed and
+            # sent an empty target -> DeepL "target_lang field is required".
             target = ""
             with contextlib.suppress(Exception):
-                target = self.controller.settings.target_language or "en"
+                target = hub._target_language_for(hub.self_runtime)
+            if not target:
+                with contextlib.suppress(Exception):
+                    target = self.controller.settings.target_language
+            if not target:
+                target = "en"
             view.append_api_request({
                 "provider": provider,
                 "stage": "manual",

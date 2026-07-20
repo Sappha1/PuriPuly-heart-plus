@@ -236,7 +236,7 @@
   "logs.conversation.show": "会話ログを見る",
   "logs.api.show": "API",
   "logs.api.hide": "APIを隠す",
-  "logs.api.prompt": "システムプロンプト（編集可）",
+  "logs.api.prompt": "システムプロンプト",
   "logs.api.text": "送信するテキスト",
   "logs.api.send": "プロバイダーへ送信",
   "logs.api.empty": "まだAPIリクエストはありません — 翻訳するとここに表示されます。",

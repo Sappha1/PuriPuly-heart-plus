@@ -213,6 +213,18 @@ class ApiRequestsView(ft.Column):
             if _inspect.isawaitable(result):
                 await result
 
+    def set_prompt_if_empty(self, prompt: str) -> None:
+        """Prefill the composer with the app's active prompt (called when the
+        tab opens) — only when the user hasn't typed their own yet."""
+        if not prompt or (self._prompt_field.value or "").strip():
+            return
+        self._prompt_field.value = prompt
+        if self.page:
+            try:
+                self._prompt_field.update()
+            except Exception:
+                pass
+
     # ── Composer ─────────────────────────────────────────────────────────
 
     def _on_send_click(self, _e: ft.ControlEvent | object) -> None:

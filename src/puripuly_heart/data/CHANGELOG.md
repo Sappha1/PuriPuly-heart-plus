@@ -2,6 +2,11 @@
 
 User-facing changes per build. The latest build's highlights also appear in-app when an update is ready.
 
+## r270 — 2026-07-20
+
+- Fixed the API tab composer: pressing Enter/Send crashed silently (a leftover reference from the tab move) — sends work now
+- The System prompt box prefills with the app's active prompt when you open the tab, ready to edit ("(editable)" caption removed)
+
 ## r269 — 2026-07-20
 
 - API Requests is now its own tab (new icon in the top bar) instead of a mode inside the Logs page

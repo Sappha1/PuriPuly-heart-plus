@@ -1008,6 +1008,25 @@ class TranslatorApp:
                 await self.view_logs.scroll_to_bottom()
 
             self.page.run_task(_scroll)
+        elif index == 4:
+            # Prefill the composer with the ACTIVE formatted prompt (exactly
+            # what real requests carry) so the user edits the live prompt —
+            # an empty "editable" box with nothing to edit made no sense.
+            try:
+                hub = getattr(self.controller, "hub", None)
+                if hub is not None:
+                    prompt = hub._prepare_llm_request_with_mode("", runtime=hub.self_runtime)[0]
+                    self.view_api_requests.set_prompt_if_empty(prompt)
+            except Exception:
+                pass
+
+            async def _scroll_api():
+                import asyncio
+
+                await asyncio.sleep(0.05)
+                await self.view_api_requests.scroll_to_bottom()
+
+            self.page.run_task(_scroll_api)
 
     def _open_logs_tab(self) -> None:
         self._on_nav_change(2)
@@ -2363,7 +2382,9 @@ class TranslatorApp:
         ACTIVE translation provider and show the raw response in the view."""
 
         async def _task() -> None:
-            view = self.view_logs
+            # The r269 tab move left this pointing at view_logs — every send
+            # crashed with AttributeError before reaching the provider.
+            view = self.view_api_requests
             hub = getattr(self.controller, "hub", None)
             llm = getattr(hub, "llm", None) if hub is not None else None
             if llm is None:

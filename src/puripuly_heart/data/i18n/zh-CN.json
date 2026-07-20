@@ -235,7 +235,7 @@
   "logs.conversation.show": "查看对话记录",
   "logs.api.show": "API",
   "logs.api.hide": "隐藏 API",
-  "logs.api.prompt": "系统提示词（可编辑）",
+  "logs.api.prompt": "系统提示词",
   "logs.api.text": "要发送的文本",
   "logs.api.send": "发送到服务商",
   "logs.api.empty": "尚未捕获任何 API 请求 — 翻译内容后将显示在这里。",

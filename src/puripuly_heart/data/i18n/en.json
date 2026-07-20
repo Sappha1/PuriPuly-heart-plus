@@ -241,7 +241,7 @@
   "logs.conversation.show": "Conversation View",
   "logs.api.show": "API",
   "logs.api.hide": "Hide API",
-  "logs.api.prompt": "System prompt (editable)",
+  "logs.api.prompt": "System prompt",
   "logs.api.text": "Text to send",
   "logs.api.send": "Send to provider",
   "logs.api.empty": "No API requests captured yet — translate something and it will appear here.",

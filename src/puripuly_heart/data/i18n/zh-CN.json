@@ -751,5 +751,6 @@
   "settings.steamvr_autolaunch.tooltip": "SteamVR 启动时自动运行 PuriPulyHeart，让翻译器始终与 VRChat 一起运行。开关此选项时 SteamVR 必须正在运行。",
   "settings.steamvr_autolaunch.steamvr_not_running": "SteamVR 未运行——请先启动 SteamVR，然后再切换此选项。",
   "settings.steamvr_autolaunch.dev_build": "随 SteamVR 自动启动需要打包版应用。",
-  "settings.steamvr_autolaunch.failed": "无法更新 SteamVR 自动启动。请查看日志了解详情。"
+  "settings.steamvr_autolaunch.failed": "无法更新 SteamVR 自动启动。请查看日志了解详情。",
+  "api_view.title": "API 请求"
 }

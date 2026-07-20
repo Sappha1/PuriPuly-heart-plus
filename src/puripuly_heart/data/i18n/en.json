@@ -751,5 +751,6 @@
   "settings.steamvr_autolaunch.tooltip": "Automatically launch PuriPulyHeart whenever SteamVR starts, so the translator always runs alongside VRChat. SteamVR must be running when you turn this on or off.",
   "settings.steamvr_autolaunch.steamvr_not_running": "SteamVR isn't running — start SteamVR, then toggle this again.",
   "settings.steamvr_autolaunch.dev_build": "Auto-start with SteamVR requires the packaged app.",
-  "settings.steamvr_autolaunch.failed": "Couldn't update SteamVR auto-start. Check the logs for details."
+  "settings.steamvr_autolaunch.failed": "Couldn't update SteamVR auto-start. Check the logs for details.",
+  "api_view.title": "API Requests"
 }

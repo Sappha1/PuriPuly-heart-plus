@@ -213,7 +213,7 @@ class TranslatorApp:
         self.view_settings.show_snackbar = self._show_snackbar
         self.view_logs.on_mode_change = self._on_runtime_logging_mode_change
         self.view_logs.set_runtime_logging_mode(self.controller.runtime_logging_mode)
-        self.view_logs.on_send_custom_request = self._on_send_custom_api_request
+        self.view_api_requests.on_send_custom_request = self._on_send_custom_api_request
         runtime_log_basic = getattr(self.controller, "log_basic", None)
         runtime_log_detailed = getattr(self.controller, "log_detailed", None)
         if callable(runtime_log_basic):
@@ -261,6 +261,9 @@ class TranslatorApp:
         self.view_dashboard = DashboardView()
         self.view_settings = SettingsView()
         self.view_logs = LogsView()
+        from puripuly_heart.ui.views.api_requests import ApiRequestsView
+
+        self.view_api_requests = ApiRequestsView()
         self.view_about = AboutView()
         self.view_settings.set_overlay_runtime_state(self.overlay_state)
 
@@ -274,6 +277,7 @@ class TranslatorApp:
             (ft.Icons.SETTINGS, "Settings"),
             (ft.Icons.ARTICLE, "Logs"),
             (ft.Icons.INFO_OUTLINE, "About"),
+            (ft.Icons.SWAP_VERT, "API"),  # view index 4 (appended: About stays 3)
         ]
         _ON = "#48a495"
         _OFF = "#6e7175"
@@ -984,7 +988,8 @@ class TranslatorApp:
 
                     self._queue_settings_mutation_task(_task)
 
-        view_map = {0: self.view_dashboard, 1: self.view_settings, 2: self.view_logs, 3: self.view_about}
+        view_map = {0: self.view_dashboard, 1: self.view_settings, 2: self.view_logs,
+                    3: self.view_about, 4: self.view_api_requests}
         self._inner_content.content = view_map.get(index, self.view_dashboard)
         self._inner_content.padding = self._content_padding_for_index(index)
         self._top_nav_bar.visible = index != 0
@@ -1024,6 +1029,8 @@ class TranslatorApp:
         self.view_settings.apply_locale()
         self.refresh_overlay_peer_contract()
         self.view_logs.apply_locale()
+        with contextlib.suppress(Exception):
+            self.view_api_requests.apply_locale()
         # Header-bar update controls (built once in _build_layout)
         with contextlib.suppress(Exception):
             self._hdr_whatsnew_text.value = t("update.whatsnew")

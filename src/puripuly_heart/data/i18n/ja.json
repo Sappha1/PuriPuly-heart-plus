@@ -751,5 +751,6 @@
   "settings.steamvr_autolaunch.tooltip": "SteamVR の起動時に PuriPulyHeart を自動的に起動し、VRChat と常に一緒に動作させます。切り替え時は SteamVR が起動している必要があります。",
   "settings.steamvr_autolaunch.steamvr_not_running": "SteamVR が起動していません。SteamVR を起動してからもう一度切り替えてください。",
   "settings.steamvr_autolaunch.dev_build": "SteamVR 自動起動はパッケージ版アプリが必要です。",
-  "settings.steamvr_autolaunch.failed": "SteamVR 自動起動を更新できませんでした。詳細はログを確認してください。"
+  "settings.steamvr_autolaunch.failed": "SteamVR 自動起動を更新できませんでした。詳細はログを確認してください。",
+  "api_view.title": "APIリクエスト"
 }

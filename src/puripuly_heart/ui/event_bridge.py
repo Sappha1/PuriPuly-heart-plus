@@ -270,6 +270,16 @@ class UIEventBridge:
                     add_history(source, transcript.text, language_code=source_lang)
             return
 
+        if event.type == UIEventType.API_REQUEST:
+            payload = event.payload
+            if isinstance(payload, dict):
+                view_logs = getattr(self.app, "view_logs", None)
+                append = getattr(view_logs, "append_api_request", None)
+                if callable(append):
+                    with contextlib.suppress(Exception):
+                        append(payload)
+            return
+
         if event.type == UIEventType.TRANSLATION_SKIPPED:
             transcript = event.payload
             if not isinstance(transcript, Transcript):

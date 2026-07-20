@@ -4,6 +4,7 @@ import asyncio
 import logging
 import re
 from dataclasses import dataclass, field
+from typing import ClassVar
 from uuid import UUID
 
 from puripuly_heart.domain.models import Translation
@@ -124,6 +125,11 @@ def _from_deepl_detected(code: str | None) -> str | None:
 
 @dataclass(slots=True)
 class DeepLTranslationProvider:
+    # DeepL's API takes only text + language pair. The hub still hands every
+    # provider a system_prompt/context; this flag tells the request inspector
+    # they are NOT sent to the server.
+    USES_SYSTEM_PROMPT: ClassVar[bool] = False
+
     api_key: str
     _executor: object = field(init=False, default=None, repr=False)
 

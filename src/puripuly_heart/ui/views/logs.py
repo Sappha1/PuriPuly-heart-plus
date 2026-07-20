@@ -6,6 +6,7 @@ import logging
 import subprocess
 import sys
 import time
+from collections import deque
 from dataclasses import dataclass
 from datetime import datetime
 from pathlib import Path
@@ -175,6 +176,17 @@ class LogsView(ft.Column):
         self._conversation_model = ConversationViewModel()
         self._runtime_logging_mode = _BASIC_MODE
 
+        # API Requests view: structured captures of outbound translation
+        # requests (from hub API_REQUEST events) + a composer to hand-send a
+        # custom prompt/text to the active provider.
+        self._api_button: ft.TextButton | None = None
+        self._showing_api_requests = False
+        self._api_request_model: deque[dict] = deque(maxlen=50)
+        self._api_prompt_field: ft.TextField | None = None
+        self._api_text_field: ft.TextField | None = None
+        self._api_composer: ft.Container | None = None
+        self.on_send_custom_request: Callable[[str, str], None] | None = None
+
         # Log buffer and throttling state
         self._model = LiveLogViewModel()
         self._log_buffer = self._model.visible_lines
@@ -236,10 +248,17 @@ class LogsView(ft.Column):
             style=self._get_button_style(font_family),
             on_click=self._on_conversation_button_click,
         )
+        self._api_button = ft.TextButton(
+            text=self._api_button_label(),
+            icon=ft.Icons.SWAP_VERT,
+            style=self._get_button_style(font_family),
+            on_click=self._on_api_button_click,
+        )
 
         # Header rows
         self._header_button_row = ft.Row(
-            controls=[self._folder_button, self._mode_button, self._conversation_button],
+            controls=[self._folder_button, self._mode_button,
+                      self._conversation_button, self._api_button],
             spacing=4,
             vertical_alignment=ft.CrossAxisAlignment.CENTER,
         )
@@ -277,9 +296,46 @@ class LogsView(ft.Column):
             scroll=ft.ScrollMode.AUTO,
         )
 
+        # API Requests composer: edit the prompt/text and hand-send it to the
+        # active provider. Visible only in the API Requests view.
+        self._api_prompt_field = ft.TextField(
+            label=t("logs.api.prompt"),
+            multiline=True,
+            min_lines=3,
+            max_lines=8,
+            text_size=12,
+            border_radius=12,
+        )
+        self._api_text_field = ft.TextField(
+            label=t("logs.api.text"),
+            multiline=True,
+            min_lines=1,
+            max_lines=3,
+            text_size=13,
+            border_radius=12,
+        )
+        self._api_send_button = ft.TextButton(
+            text=t("logs.api.send"),
+            icon=ft.Icons.SEND,
+            style=self._get_button_style(font_family),
+            on_click=self._on_api_send_click,
+        )
+        self._api_composer = ft.Container(
+            content=ft.Column(
+                [
+                    self._api_prompt_field,
+                    self._api_text_field,
+                    ft.Row([ft.Container(expand=True), self._api_send_button]),
+                ],
+                spacing=8,
+            ),
+            padding=ft.padding.only(left=16, right=16, bottom=12),
+            visible=False,
+        )
+
         # Card content
         card_content = ft.Column(
-            controls=[header, self._log_scroll],
+            controls=[header, self._log_scroll, self._api_composer],
             spacing=0,
             expand=True,
         )
@@ -458,6 +514,8 @@ class LogsView(ft.Column):
 
     def _on_conversation_button_click(self, _e: ft.ControlEvent | object) -> None:
         self._showing_conversation = not self._showing_conversation
+        if self._showing_conversation:
+            self._set_api_view(False)
         if self._conversation_button is not None:
             self._conversation_button.text = self._conversation_button_label()
         if self._showing_conversation:
@@ -466,6 +524,96 @@ class LogsView(ft.Column):
             self._rebuild_visible_text()
         if self.page:
             self.update()
+
+    # --- API Requests view ---
+
+    def append_api_request(self, entry: dict) -> None:
+        """Structured capture of an outbound request (bridge: API_REQUEST)."""
+        record = dict(entry)
+        record.setdefault("ts", time.strftime("%H:%M:%S"))
+        self._api_request_model.append(record)
+        if self._showing_api_requests:
+            self._render_api_requests_text()
+            if self.page and self._log_text is not None:
+                self._log_text.update()
+
+    def append_api_response(self, provider: str, text: str) -> None:
+        """Result (or error) of a hand-sent composer request."""
+        self._api_request_model.append({
+            "ts": time.strftime("%H:%M:%S"),
+            "provider": provider,
+            "stage": "response",
+            "text": text,
+        })
+        if self._showing_api_requests:
+            self._render_api_requests_text()
+            if self.page and self._log_text is not None:
+                self._log_text.update()
+
+    def _render_api_requests_text(self) -> None:
+        assert self._log_text is not None
+        if not self._api_request_model:
+            self._log_text.value = t("logs.api.empty")
+            return
+        blocks: list[str] = []
+        for e in self._api_request_model:
+            if e.get("stage") == "response":
+                blocks.append(
+                    f"[{e.get('ts', '')}] ← {e.get('provider', '')} response:\n"
+                    f"{e.get('text', '')}"
+                )
+                continue
+            head = (
+                f"[{e.get('ts', '')}] → {e.get('provider', '')} · {e.get('stage', '')} · "
+                f"{e.get('source_language') or 'auto'} → {e.get('target_language', '')}"
+            )
+            body = [f"text: {e.get('text', '')}"]
+            if e.get("prompt_sent", True):
+                body.append(f"context: {e.get('context') or '(none)'}")
+                body.append(f"system_prompt:\n{e.get('system_prompt') or '(none)'}")
+            else:
+                body.append(t("logs.api.not_sent"))
+            blocks.append(head + "\n" + "\n".join(body))
+        self._log_text.value = ("\n" + "─" * 60 + "\n").join(blocks)
+
+    def _api_button_label(self) -> str:
+        key = "logs.api.hide" if self._showing_api_requests else "logs.api.show"
+        return t(key)
+
+    def _set_api_view(self, showing: bool) -> None:
+        self._showing_api_requests = showing
+        if self._api_button is not None:
+            self._api_button.text = self._api_button_label()
+        if self._api_composer is not None:
+            self._api_composer.visible = showing
+
+    def _on_api_button_click(self, _e: ft.ControlEvent | object) -> None:
+        entering = not self._showing_api_requests
+        self._set_api_view(entering)
+        if entering:
+            self._showing_conversation = False
+            if self._conversation_button is not None:
+                self._conversation_button.text = self._conversation_button_label()
+            # Prefill the composer from the newest captured LLM request so the
+            # user can tweak the real prompt rather than start from scratch.
+            if self._api_prompt_field is not None and not self._api_prompt_field.value:
+                for e in reversed(self._api_request_model):
+                    if e.get("prompt_sent") and e.get("system_prompt"):
+                        self._api_prompt_field.value = e["system_prompt"]
+                        break
+            self._render_api_requests_text()
+        else:
+            self._rebuild_visible_text()
+        if self.page:
+            self.update()
+
+    def _on_api_send_click(self, _e: ft.ControlEvent | object) -> None:
+        prompt = (self._api_prompt_field.value or "") if self._api_prompt_field else ""
+        text = (self._api_text_field.value or "") if self._api_text_field else ""
+        if not text.strip():
+            return
+        if callable(self.on_send_custom_request):
+            self.on_send_custom_request(prompt, text)
 
     def apply_locale(self) -> None:
         """Refresh UI text when locale changes."""
@@ -481,8 +629,20 @@ class LogsView(ft.Column):
         if self._conversation_button:
             self._conversation_button.text = self._conversation_button_label()
             self._conversation_button.style = self._get_button_style(font_family)
+        if self._api_button:
+            self._api_button.text = self._api_button_label()
+            self._api_button.style = self._get_button_style(font_family)
+        if self._api_prompt_field:
+            self._api_prompt_field.label = t("logs.api.prompt")
+        if self._api_text_field:
+            self._api_text_field.label = t("logs.api.text")
+        if self._api_send_button:
+            self._api_send_button.text = t("logs.api.send")
+            self._api_send_button.style = self._get_button_style(font_family)
         if self._showing_conversation and self._log_text is not None:
             self._render_conversation_text()
+        if self._showing_api_requests and self._log_text is not None:
+            self._render_api_requests_text()
         # Only update if added to page
         if self.page:
             self.update()

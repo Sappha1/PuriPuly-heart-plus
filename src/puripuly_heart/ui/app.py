@@ -213,6 +213,7 @@ class TranslatorApp:
         self.view_settings.show_snackbar = self._show_snackbar
         self.view_logs.on_mode_change = self._on_runtime_logging_mode_change
         self.view_logs.set_runtime_logging_mode(self.controller.runtime_logging_mode)
+        self.view_logs.on_send_custom_request = self._on_send_custom_api_request
         runtime_log_basic = getattr(self.controller, "log_basic", None)
         runtime_log_detailed = getattr(self.controller, "log_detailed", None)
         if callable(runtime_log_basic):
@@ -2349,6 +2350,53 @@ class TranslatorApp:
             await self.controller.apply_settings(merged_settings)
 
         self._queue_settings_mutation_task(_task)
+
+    def _on_send_custom_api_request(self, system_prompt: str, text: str) -> None:
+        """API Requests view composer: hand-send a custom prompt/text to the
+        ACTIVE translation provider and show the raw response in the view."""
+
+        async def _task() -> None:
+            view = self.view_logs
+            hub = getattr(self.controller, "hub", None)
+            llm = getattr(hub, "llm", None) if hub is not None else None
+            if llm is None:
+                view.append_api_response("none", "No translation provider is active.")
+                return
+            from uuid import uuid4
+
+            inner = getattr(llm, "inner", None)
+            provider = type(inner if inner is not None else llm).__name__
+            target = ""
+            with contextlib.suppress(Exception):
+                target = self.controller.settings.target_language or "en"
+            view.append_api_request({
+                "provider": provider,
+                "stage": "manual",
+                "source_language": "",
+                "target_language": target,
+                "text": text,
+                "context": "",
+                "system_prompt": system_prompt,
+                "prompt_sent": bool(getattr(inner if inner is not None else llm,
+                                            "USES_SYSTEM_PROMPT", True)),
+            })
+            try:
+                translation = await llm.translate(
+                    utterance_id=uuid4(),
+                    text=text,
+                    system_prompt=system_prompt,
+                    source_language="",
+                    target_language=target,
+                    context="",
+                )
+                view.append_api_response(provider, translation.text)
+            except Exception as exc:
+                view.append_api_response(provider, f"ERROR: {exc}")
+
+        try:
+            self.page.run_task(_task)
+        except Exception:
+            logger.exception("Failed to run custom API request")
 
     def _on_runtime_logging_mode_change(self, mode: str) -> None:
         self.controller.set_runtime_logging_mode(mode)

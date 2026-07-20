@@ -92,6 +92,10 @@ class UIEventType(str, Enum):
     # show the raw line — chat entries used to exist ONLY for translations,
     # which made "translation off" look like "voice not picked up".
     TRANSLATION_SKIPPED = "TRANSLATION_SKIPPED"
+    # Structured capture of an outbound translation request (payload: dict with
+    # provider/stage/langs/text/context/system_prompt/prompt_sent) — feeds the
+    # API Requests view in the logs page.
+    API_REQUEST = "API_REQUEST"
     EXTRA_TRANSLATIONS_DONE = "EXTRA_TRANSLATIONS_DONE"
     OSC_SENT = "OSC_SENT"
     ERROR = "ERROR"

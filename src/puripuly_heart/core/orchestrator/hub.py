@@ -3171,25 +3171,62 @@ class ClientHub:
         target_language: str,
         context: str,
     ) -> None:
-        """Mirror the exact outbound translation request into the program log
-        (gated on the "Log API request content" setting)."""
-        if not self.log_api_request_content:
-            return
+        """Capture the outbound translation request: always emitted as a
+        structured API_REQUEST UI event (feeds the API Requests view); also
+        mirrored into the program log when "Log API request content" is on.
+        WIRE-ACCURATE: providers with USES_SYSTEM_PROMPT=False (DeepL, free
+        web) receive only text + languages — the prompt/context the hub built
+        never reach that server, and the capture says so instead of implying
+        the whole prompt was sent."""
         llm = self.llm
         inner = getattr(llm, "inner", None)
-        provider = type(inner if inner is not None else llm).__name__ if llm else "none"
-        self._emit_basic(
-            "[APIRequest][%s] stage=%s source=%r target=%r\n"
-            "  text: %s\n  context: %s\n  system_prompt: %s",
-            provider,
-            stage,
-            source_language,
-            target_language,
-            text,
-            context or "(none)",
-            system_prompt or "(none)",
-            fallback_level=logging.INFO,
-        )
+        resolved = inner if inner is not None else llm
+        provider = type(resolved).__name__ if llm else "none"
+        prompt_sent = bool(getattr(resolved, "USES_SYSTEM_PROMPT", True)) if llm else False
+        with contextlib.suppress(Exception):
+            self.ui_events.put_nowait(
+                UIEvent(
+                    type=UIEventType.API_REQUEST,
+                    payload={
+                        "provider": provider,
+                        "stage": stage,
+                        "source_language": source_language,
+                        "target_language": target_language,
+                        "text": text,
+                        "context": context,
+                        "system_prompt": system_prompt,
+                        "prompt_sent": prompt_sent,
+                    },
+                )
+            )
+        if not self.log_api_request_content:
+            return
+        if prompt_sent:
+            self._emit_basic(
+                "[APIRequest][%s] stage=%s source=%r target=%r\n"
+                "  text: %s\n  context: %s\n  system_prompt: %s",
+                provider,
+                stage,
+                source_language,
+                target_language,
+                text,
+                context or "(none)",
+                system_prompt or "(none)",
+                fallback_level=logging.INFO,
+            )
+        else:
+            self._emit_basic(
+                "[APIRequest][%s] stage=%s source=%r target=%r\n"
+                "  text: %s\n"
+                "  (system prompt & context NOT sent — this provider receives "
+                "only the text and language pair)",
+                provider,
+                stage,
+                source_language,
+                target_language,
+                text,
+                fallback_level=logging.INFO,
+            )
 
     async def _translate_text(
         self,

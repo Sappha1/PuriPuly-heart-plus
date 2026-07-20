@@ -2,6 +2,11 @@
 
 User-facing changes per build. The latest build's highlights also appear in-app when an update is ready.
 
+## r267 — 2026-07-18
+
+- New API Requests view in the Logs page: see every request sent to translation servers, wire-accurate per provider (DeepL/free-web entries say plainly that the prompt is NOT sent — only your text and languages are)
+- The view includes a composer: edit the system prompt, type a text, and hand-send it to the active provider to see the raw response
+
 ## r266 — 2026-07-18
 
 - Fixed transcripts sometimes appearing twice: a startup race could open two speech sessions on the same recognizer, doubling every line until a restart

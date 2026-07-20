@@ -107,6 +107,10 @@ class FreeWebTranslationProvider:
     """Google / Bing / Papago translation via free web endpoints (no API key).
     'bing' uses the Edge translate endpoint; the rest go through `translators`."""
 
+    # Free web engines receive only text + language pair — the hub-provided
+    # system_prompt/context never reach the server (request inspector flag).
+    USES_SYSTEM_PROMPT = False
+
     def __init__(self, translator: str) -> None:
         self._translator = translator  # "google", "bing", "papago"
 

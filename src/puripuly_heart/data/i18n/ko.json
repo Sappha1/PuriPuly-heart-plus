@@ -753,5 +753,6 @@
   "settings.steamvr_autolaunch.dev_build": "SteamVR 자동 시작은 패키지 앱이 필요합니다.",
   "settings.steamvr_autolaunch.failed": "SteamVR 자동 시작을 업데이트할 수 없습니다. 로그를 확인하세요.",
   "api_view.title": "API 요청",
-  "logs.api.push_vrchat": "VRChat 채팅창으로도 전송"
+  "logs.api.push_vrchat": "VRChat 채팅창으로도 전송",
+  "logs.api.push_vrchat.short": "VRChat로"
 }

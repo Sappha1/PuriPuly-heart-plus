@@ -62,11 +62,21 @@ class ApiRequestsView(ft.Column):
             style=self._button_style(font_family),
             on_click=self._on_clear_click,
         )
+        # In the header next to Clear (short label; the tooltip explains) —
+        # it sat awkwardly inside the composer. OFF by default: prompt
+        # experiments shouldn't spam the in-game chatbox unless asked to.
+        self._push_vrchat_checkbox = ft.Checkbox(
+            label=t("logs.api.push_vrchat.short"),
+            tooltip=t("logs.api.push_vrchat"),
+            value=False,
+        )
         header = ft.Container(
             content=ft.Row(
-                [self._title_text, ft.Container(expand=True), self._clear_button],
+                [self._title_text, ft.Container(expand=True),
+                 self._push_vrchat_checkbox, self._clear_button],
                 alignment=ft.MainAxisAlignment.SPACE_BETWEEN,
                 vertical_alignment=ft.CrossAxisAlignment.CENTER,
+                spacing=12,
             ),
             padding=ft.padding.only(left=16, right=8, top=8, bottom=0),
         )
@@ -129,27 +139,20 @@ class ApiRequestsView(ft.Column):
             tooltip=t("logs.api.send"),
             on_click=self._on_send_click,
         )
-        # OFF by default: the composer is a test bench — prompt experiments
-        # shouldn't spam the in-game chatbox unless explicitly asked to.
-        self._push_vrchat_checkbox = ft.Checkbox(
-            label=t("logs.api.push_vrchat"),
-            value=False,
-        )
         composer = ft.Container(
             content=ft.Column(
                 [
                     self._prompt_toggle,
                     self._prompt_field,
-                    self._push_vrchat_checkbox,
                     ft.Row(
                         [self._text_field, self._send_button],
                         vertical_alignment=ft.CrossAxisAlignment.END,
                         spacing=8,
                     ),
                 ],
-                spacing=8,
+                spacing=10,
             ),
-            padding=ft.padding.only(left=16, right=16, top=10, bottom=12),
+            padding=ft.padding.only(left=16, right=16, top=14, bottom=12),
             border=ft.border.only(top=ft.BorderSide(1, "#3a3b3f")),
         )
 
@@ -331,7 +334,8 @@ class ApiRequestsView(ft.Column):
         self._prompt_toggle_label.value = t("logs.api.prompt")
         self._text_field.label = t("logs.api.text")
         self._send_button.tooltip = t("logs.api.send")
-        self._push_vrchat_checkbox.label = t("logs.api.push_vrchat")
+        self._push_vrchat_checkbox.label = t("logs.api.push_vrchat.short")
+        self._push_vrchat_checkbox.tooltip = t("logs.api.push_vrchat")
         self._empty_text.value = t("logs.api.empty")
         if self._model:
             self._render()

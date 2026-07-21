@@ -753,5 +753,6 @@
   "settings.steamvr_autolaunch.dev_build": "Auto-start with SteamVR requires the packaged app.",
   "settings.steamvr_autolaunch.failed": "Couldn't update SteamVR auto-start. Check the logs for details.",
   "api_view.title": "API Requests",
-  "logs.api.push_vrchat": "Also send to VRChat chatbox"
+  "logs.api.push_vrchat": "Also send to VRChat chatbox",
+  "logs.api.push_vrchat.short": "To VRChat"
 }

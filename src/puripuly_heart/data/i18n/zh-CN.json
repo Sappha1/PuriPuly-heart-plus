@@ -753,5 +753,6 @@
   "settings.steamvr_autolaunch.dev_build": "随 SteamVR 自动启动需要打包版应用。",
   "settings.steamvr_autolaunch.failed": "无法更新 SteamVR 自动启动。请查看日志了解详情。",
   "api_view.title": "API 请求",
-  "logs.api.push_vrchat": "同时发送到 VRChat 聊天框"
+  "logs.api.push_vrchat": "同时发送到 VRChat 聊天框",
+  "logs.api.push_vrchat.short": "发送到 VRChat"
 }

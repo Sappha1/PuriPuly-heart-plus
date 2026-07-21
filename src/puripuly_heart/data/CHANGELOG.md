@@ -2,6 +2,10 @@
 
 User-facing changes per build. The latest build's highlights also appear in-app when an update is ready.
 
+## r276 — 2026-07-20
+
+- The VRChat send checkbox moved up next to Clear with shorter wording ("To VRChat"); the composer has more breathing room
+
 ## r275 — 2026-07-20
 
 - The API tab System prompt box is collapsed by default — click the "System prompt" header to expand it (the prompt is still used when collapsed)

@@ -2,6 +2,10 @@
 
 User-facing changes per build. The latest build's highlights also appear in-app when an update is ready.
 
+## r278 — 2026-07-21
+
+- New "Remove OCR module…" option in the OCR right-click menu — frees ~340 MB; turning OCR on downloads it again anytime
+
 ## r277 — 2026-07-20
 
 - Realtime OCR is now an optional module: the installer has a checkbox (ticked by default), and slim installs get a one-time in-app download (~150 MB) the first time OCR is used

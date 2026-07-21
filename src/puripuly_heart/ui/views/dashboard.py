@@ -18,7 +18,7 @@ from puripuly_heart.ui.fonts import font_for_language
 from puripuly_heart.ui.i18n import get_locale, language_name, t
 from puripuly_heart.ui.overlay_peer_contract import OverlayPeerConsumerContract
 
-_BUILD_TAG = "r277"  #increment each build so user can confirm version
+_BUILD_TAG = "r278"  #increment each build so user can confirm version
 
 # ── VRCT-style dark palette ──────────────────────────────────────────────────
 _BG_MAIN = "#2e2f32"
@@ -479,6 +479,7 @@ class DashboardView(ft.Row):
         self.on_toggle_overlay = None
         self.on_toggle_peer_translation = None
         self.on_toggle_ocr = None  # (prototype) callback(enabled: bool)
+        self.on_ocr_remove_module = None  # callback() — remove-module confirm flow
         self.on_ocr_prewarm_change = None  # (prototype) callback(bool)
         self.on_ocr_region_toggle = None  # (prototype) callback()
         self.on_ocr_region_state = None  # (prototype) -> bool (region set?)
@@ -2521,6 +2522,16 @@ class DashboardView(ft.Row):
                         ft.Row([set_btn, border_btn, lock_pill], spacing=6,
                                tight=True),
                     ),
+                    # Remove the ~340MB OCR module to free disk space; the
+                    # download dialog reacquires it on the next OCR use.
+                    ft.Container(
+                        content=ft.Text(t("dashboard.ocr.menu.remove_module"),
+                                        size=11, color="#c76b6b"),
+                        padding=ft.padding.symmetric(horizontal=8, vertical=6),
+                        border_radius=6,
+                        on_click=self._on_ocr_remove_module_click,
+                        tooltip=t("dashboard.ocr.menu.remove_module.tooltip"),
+                    ),
                     ft.Container(height=6),
                 ],
                 spacing=0,
@@ -2530,6 +2541,13 @@ class DashboardView(ft.Row):
         )
         self._ocr_popover_close = self._open_popover_at(
             x, y, content, width=300.0, est_height=760.0)
+
+    def _on_ocr_remove_module_click(self, _e=None) -> None:
+        if callable(self._ocr_popover_close):
+            with contextlib.suppress(Exception):
+                self._ocr_popover_close()
+        if callable(self.on_ocr_remove_module):
+            self.on_ocr_remove_module()
 
     def _set_ocr_region(self) -> None:
         if not self._ocr_on:

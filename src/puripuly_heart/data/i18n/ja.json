@@ -761,5 +761,11 @@
   "ocr_module.cancel": "あとで",
   "ocr_module.close": "閉じる",
   "ocr_module.downloading": "OCRモジュールをダウンロード中…",
-  "ocr_module.failed": "ダウンロードに失敗しました。接続を確認して再試行するか、リリースページから PuriPulyHeartOCR-module.zip をダウンロードし、インストーラーでOCRオプションを有効にして再インストールしてください。"
+  "ocr_module.failed": "ダウンロードに失敗しました。接続を確認して再試行するか、リリースページから PuriPulyHeartOCR-module.zip をダウンロードし、インストーラーでOCRオプションを有効にして再インストールしてください。",
+  "dashboard.ocr.menu.remove_module": "OCRモジュールを削除…",
+  "dashboard.ocr.menu.remove_module.tooltip": "OCRエンジンをディスクから削除します（約340MB解放）。OCRをオンにすればいつでも再ダウンロードできます。",
+  "ocr_module.remove.title": "OCRモジュールを削除",
+  "ocr_module.remove.body": "リアルタイムOCRエンジンをディスクから削除します（約340MB解放）。OCR設定は保持されます。OCRをオンにすればいつでも再ダウンロードできます。削除しますか？",
+  "ocr_module.remove.confirm": "削除",
+  "ocr_module.remove.done": "OCRモジュールを削除しました — 約{mb}MBを解放。OCRをオンにすると再ダウンロードできます。"
 }

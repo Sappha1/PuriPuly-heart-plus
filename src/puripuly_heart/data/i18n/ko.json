@@ -761,5 +761,11 @@
   "ocr_module.cancel": "나중에",
   "ocr_module.close": "닫기",
   "ocr_module.downloading": "OCR 모듈 다운로드 중…",
-  "ocr_module.failed": "다운로드에 실패했습니다. 연결을 확인하고 다시 시도하거나, 릴리스 페이지에서 PuriPulyHeartOCR-module.zip을 내려받아 설치 프로그램에서 OCR 옵션을 켜고 다시 설치하세요."
+  "ocr_module.failed": "다운로드에 실패했습니다. 연결을 확인하고 다시 시도하거나, 릴리스 페이지에서 PuriPulyHeartOCR-module.zip을 내려받아 설치 프로그램에서 OCR 옵션을 켜고 다시 설치하세요.",
+  "dashboard.ocr.menu.remove_module": "OCR 모듈 제거…",
+  "dashboard.ocr.menu.remove_module.tooltip": "OCR 엔진을 디스크에서 삭제합니다(약 340MB 확보). OCR을 켜면 언제든 다시 다운로드할 수 있습니다.",
+  "ocr_module.remove.title": "OCR 모듈 제거",
+  "ocr_module.remove.body": "실시간 OCR 엔진을 디스크에서 삭제합니다(약 340MB 확보). OCR 설정은 유지됩니다. OCR을 켜면 언제든 다시 다운로드할 수 있습니다. 제거할까요?",
+  "ocr_module.remove.confirm": "제거",
+  "ocr_module.remove.done": "OCR 모듈이 제거되었습니다 — 약 {mb}MB 확보. OCR을 켜면 다시 다운로드할 수 있습니다."
 }

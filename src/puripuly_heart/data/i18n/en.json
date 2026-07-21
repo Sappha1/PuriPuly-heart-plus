@@ -761,5 +761,11 @@
   "ocr_module.cancel": "Not now",
   "ocr_module.close": "Close",
   "ocr_module.downloading": "Downloading the OCR module…",
-  "ocr_module.failed": "The download failed. Check your connection and try again — or download PuriPulyHeartOCR-module.zip from the release page and re-run the installer with the OCR option ticked."
+  "ocr_module.failed": "The download failed. Check your connection and try again — or download PuriPulyHeartOCR-module.zip from the release page and re-run the installer with the OCR option ticked.",
+  "dashboard.ocr.menu.remove_module": "Remove OCR module…",
+  "dashboard.ocr.menu.remove_module.tooltip": "Deletes the OCR engine from disk (frees ~340 MB). You can download it again anytime by turning OCR on.",
+  "ocr_module.remove.title": "Remove OCR module",
+  "ocr_module.remove.body": "This deletes the Realtime OCR engine from disk (frees ~340 MB). Your OCR settings are kept. You can download it again anytime by turning OCR on. Remove it?",
+  "ocr_module.remove.confirm": "Remove",
+  "ocr_module.remove.done": "OCR module removed — about {mb} MB freed. Turn OCR on to download it again."
 }

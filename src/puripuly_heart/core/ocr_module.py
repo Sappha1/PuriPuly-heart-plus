@@ -84,6 +84,36 @@ async def fetch_module_asset() -> tuple[str, int] | None:
     return None
 
 
+def remove_ocr_engine_dirs(bundled_dir: str | os.PathLike | None) -> int:
+    """Delete every installed OCR engine copy (downloaded module + the
+    installer-bundled dir when given). Returns bytes freed (best effort).
+    The download dialog reacquires the module on the next OCR use."""
+
+    def _dir_size(p: Path) -> int:
+        total = 0
+        try:
+            for f in p.rglob("*"):
+                if f.is_file():
+                    total += f.stat().st_size
+        except Exception:
+            pass
+        return total
+
+    freed = 0
+    targets = [modules_ocr_root()]
+    if bundled_dir:
+        targets.append(Path(bundled_dir))
+    for target in targets:
+        try:
+            if target.exists():
+                freed += _dir_size(target)
+                shutil.rmtree(target, ignore_errors=True)
+                logger.info("[OCRModule] removed %s", target)
+        except Exception as exc:
+            logger.warning("[OCRModule] removal failed for %s: %s", target, exc)
+    return freed
+
+
 async def download_and_install_module(
     progress: Callable[[float], None] | None = None,
 ) -> Path:

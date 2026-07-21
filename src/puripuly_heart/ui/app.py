@@ -164,6 +164,7 @@ class TranslatorApp:
         from puripuly_heart.ocr.manager import OcrOverlayManager
         self._ocr_manager = OcrOverlayManager()
         self.view_dashboard.on_toggle_ocr = self._on_toggle_ocr
+        self.view_dashboard.on_ocr_remove_module = self._on_ocr_remove_module
         self.view_dashboard.on_ocr_prewarm_change = self._ocr_manager.set_prewarm
         self.view_dashboard.on_ocr_region_toggle = self._ocr_manager.toggle_region
         self.view_dashboard.on_ocr_region_state = self._ocr_manager.region_enabled
@@ -2463,6 +2464,61 @@ class TranslatorApp:
         dlg.actions = [
             ft.TextButton(t("ocr_module.cancel"), on_click=_close),
             ft.TextButton(t("ocr_module.download"), on_click=_start_download),
+        ]
+        self.page.overlay.append(dlg)
+        dlg.open = True
+        with contextlib.suppress(Exception):
+            self.page.update()
+
+    def _on_ocr_remove_module(self) -> None:
+        """Confirm-and-remove for the OCR module (frees ~340 MB on disk).
+        Reacquisition is the normal download dialog on the next OCR use."""
+        from puripuly_heart.ui.i18n import t
+
+        dlg = ft.AlertDialog(
+            modal=True,
+            title=ft.Text(t("ocr_module.remove.title")),
+            content=ft.Text(t("ocr_module.remove.body"), size=13, width=420),
+        )
+
+        def _close(_e=None) -> None:
+            dlg.open = False
+            with contextlib.suppress(Exception):
+                self.page.update()
+
+        def _confirm(_e=None) -> None:
+            async def _task() -> None:
+                import os as _os
+
+                from puripuly_heart.core.ocr_module import remove_ocr_engine_dirs
+                from puripuly_heart.ocr.manager import _packaged_ocr_exe
+
+                with contextlib.suppress(Exception):
+                    self._ocr_manager.toggle(False)
+                dash = getattr(self, "view_dashboard", None)
+                if dash is not None:
+                    with contextlib.suppress(Exception):
+                        dash.set_ocr_on(False)
+                await __import__("asyncio").sleep(0.8)  # let the overlay exit
+                bundled_dir = _os.path.dirname(_os.path.dirname(_packaged_ocr_exe()))
+                freed = await __import__("asyncio").to_thread(
+                    remove_ocr_engine_dirs, bundled_dir)
+                dlg.content = ft.Text(
+                    t("ocr_module.remove.done").replace(
+                        "{mb}", str(max(1, freed // (1024 * 1024)))),
+                    size=13, width=420)
+                dlg.actions = [ft.TextButton(t("ocr_module.close"), on_click=_close)]
+                with contextlib.suppress(Exception):
+                    self.page.update()
+
+            dlg.actions = []
+            with contextlib.suppress(Exception):
+                self.page.update()
+            self.page.run_task(_task)
+
+        dlg.actions = [
+            ft.TextButton(t("ocr_module.cancel"), on_click=_close),
+            ft.TextButton(t("ocr_module.remove.confirm"), on_click=_confirm),
         ]
         self.page.overlay.append(dlg)
         dlg.open = True

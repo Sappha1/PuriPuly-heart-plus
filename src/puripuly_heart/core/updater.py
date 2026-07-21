@@ -119,6 +119,10 @@ from typing import Callable
 # in case an asset is ever published under the old name again.
 ZIP_ASSET_NAME = "PuriPulyHeartPlus.zip"
 LEGACY_ZIP_ASSET_NAME = "PuriPulyHeart.zip"
+# Slim update payload: the app WITHOUT the ~150MB OCR module. Preferred by the
+# updater so routine updates stop re-shipping OCR; the full zip stays as the
+# portable download and as fallback for releases without a slim asset.
+UPDATE_ZIP_ASSET_NAME = "PuriPulyHeartPlus-update.zip"
 VERSION_ASSET_NAME = "version.json"
 
 
@@ -162,6 +166,8 @@ async def fetch_remote_build() -> RemoteBuild | None:
             data: dict[str, Any] = resp.json()
             zip_url = ""
             zip_size = 0
+            update_zip_url = ""
+            update_zip_size = 0
             legacy_zip_url = ""
             legacy_zip_size = 0
             version_url = ""
@@ -170,11 +176,17 @@ async def fetch_remote_build() -> RemoteBuild | None:
                 if name == ZIP_ASSET_NAME:
                     zip_url = asset.get("browser_download_url", "")
                     zip_size = int(asset.get("size", 0) or 0)
+                elif name == UPDATE_ZIP_ASSET_NAME:
+                    update_zip_url = asset.get("browser_download_url", "")
+                    update_zip_size = int(asset.get("size", 0) or 0)
                 elif name == LEGACY_ZIP_ASSET_NAME:
                     legacy_zip_url = asset.get("browser_download_url", "")
                     legacy_zip_size = int(asset.get("size", 0) or 0)
                 elif name == VERSION_ASSET_NAME:
                     version_url = asset.get("browser_download_url", "")
+            # Prefer the slim update payload; fall back to the full zip.
+            if update_zip_url:
+                zip_url, zip_size = update_zip_url, update_zip_size
             if not zip_url:
                 zip_url, zip_size = legacy_zip_url, legacy_zip_size
             if not zip_url:
@@ -275,7 +287,13 @@ Get-Process -ErrorAction SilentlyContinue | Where-Object { $_.Path -like "$Dest*
     Stop-Process -Force -ErrorAction SilentlyContinue
 Start-Sleep -Milliseconds 700
 # Mirror the staged build over the install dir (retries ride out slow handle release).
-robocopy "$Stage" "$Dest" /MIR /R:30 /W:1 | Out-Null
+# Slim update zips carry no ocr\ folder: /MIR would DELETE the user's installed
+# OCR module, so exclude it from the purge when the stage doesn't include one.
+if (Test-Path (Join-Path $Stage 'ocr')) {
+    robocopy "$Stage" "$Dest" /MIR /R:30 /W:1 | Out-Null
+} else {
+    robocopy "$Stage" "$Dest" /MIR /XD (Join-Path $Dest 'ocr') /R:30 /W:1 | Out-Null
+}
 Start-Process -FilePath (Join-Path $Dest $ExeName)
 Start-Sleep -Milliseconds 500
 if ($Cleanup -and (Test-Path $Cleanup)) { Remove-Item $Cleanup -Recurse -Force -ErrorAction SilentlyContinue }

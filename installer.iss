@@ -77,6 +77,17 @@ Name: "japanese"; MessagesFile: "compiler:Languages\Japanese.isl"
 Name: "chinesesimplified"; MessagesFile: "installer\Languages\ChineseSimplified.isl"
 Name: "chinesetraditional"; MessagesFile: "installer\Languages\ChineseTraditional.isl"
 
+[Types]
+Name: "full"; Description: "{cm:TypeFull}"
+Name: "compact"; Description: "{cm:TypeCompact}"
+Name: "custom"; Description: "{cm:TypeCustom}"; Flags: iscustom
+
+[Components]
+Name: "main"; Description: "{cm:CompMain}"; Types: full compact custom; Flags: fixed
+; Checked by default (part of "full", the default type) — unticking gives the
+; slim install; the app offers the module download on first OCR use.
+Name: "ocr"; Description: "{cm:CompOcr}"; Types: full
+
 [Tasks]
 Name: "desktopicon"; Description: "{cm:CreateDesktopIcon}"; GroupDescription: "{cm:AdditionalIcons}"; Flags: unchecked
 ; Clean install: wipe ALL app data (settings, downloaded speech model, logs,
@@ -87,6 +98,31 @@ Name: "cleanslate"; Description: "{cm:CleanSlate}"; GroupDescription: "{cm:Clean
 Name: "quicklaunchicon"; Description: "{cm:CreateQuickLaunchIcon}"; GroupDescription: "{cm:AdditionalIcons}"; Flags: unchecked; OnlyBelowVersion: 6.1; Check: not IsAdminInstallMode
 
 [CustomMessages]
+english.TypeFull=Full installation (recommended)
+english.TypeCompact=Compact installation (no Realtime OCR)
+english.TypeCustom=Custom installation
+english.CompMain=PuriPulyHeart+ (required)
+english.CompOcr=Realtime OCR translation (~150 MB) — reads chat bubbles and world text off the screen
+korean.TypeFull=전체 설치 (권장)
+korean.TypeCompact=간단 설치 (실시간 OCR 제외)
+korean.TypeCustom=사용자 지정 설치
+korean.CompMain=PuriPulyHeart+ (필수)
+korean.CompOcr=실시간 OCR 번역 (~150 MB) — 화면의 채팅 말풍선과 월드 텍스트를 읽습니다
+japanese.TypeFull=フルインストール（推奨）
+japanese.TypeCompact=コンパクトインストール（リアルタイムOCRなし）
+japanese.TypeCustom=カスタムインストール
+japanese.CompMain=PuriPulyHeart+（必須）
+japanese.CompOcr=リアルタイムOCR翻訳（約150MB）— 画面上のチャットバブルやワールドの文字を読み取ります
+chinesesimplified.TypeFull=完整安装（推荐）
+chinesesimplified.TypeCompact=精简安装（不含实时 OCR）
+chinesesimplified.TypeCustom=自定义安装
+chinesesimplified.CompMain=PuriPulyHeart+（必需）
+chinesesimplified.CompOcr=实时 OCR 翻译（约 150 MB）— 直接读取屏幕上的聊天气泡和世界文字
+chinesetraditional.TypeFull=完整安裝（推薦）
+chinesetraditional.TypeCompact=精簡安裝（不含即時 OCR）
+chinesetraditional.TypeCustom=自訂安裝
+chinesetraditional.CompMain=PuriPulyHeart+（必需）
+chinesetraditional.CompOcr=即時 OCR 翻譯（約 150 MB）— 直接讀取螢幕上的聊天氣泡和世界文字
 english.CleanSlateGroup=Clean install:
 english.CleanSlate=Delete ALL old settings and app data (fresh start; API keys are kept)
 korean.CleanSlateGroup=깨끗한 설치:
@@ -134,7 +170,10 @@ Source: "{#MyStagedOverlayDir}\{#MyOverlayExeName}"; DestDir: "{app}"; Flags: ig
 ; Vendored OpenVR runtime DLL comes from dist\PuriPulyHeart\openvr_api.dll in the packaged tree built by build.spec.
 ; Installer build/install never resolves SteamVR paths for openvr_api.dll.
 ; Bundled CJK font is staged at {#MyPackagedAppDir}\{#NotoCjkFontRelativePath}; the recursive packaged-tree copy installs it to {app}\{#NotoCjkFontRelativePath}.
-Source: "{#MyPackagedAppDir}\*"; DestDir: "{app}"; Flags: ignoreversion recursesubdirs createallsubdirs; Excludes: "{#MyAppExeName},{#MyOverlayExeName}"
+Source: "{#MyPackagedAppDir}\*"; DestDir: "{app}"; Flags: ignoreversion recursesubdirs createallsubdirs; Excludes: "{#MyAppExeName},{#MyOverlayExeName},\ocr\*"
+; Optional Realtime OCR component (~150 MB): the frozen OCR overlay app. When
+; unticked, the app offers a one-time in-app download on first OCR use.
+Source: "{#MyPackagedAppDir}\ocr\*"; DestDir: "{app}\ocr"; Components: ocr; Flags: ignoreversion recursesubdirs createallsubdirs
 ; NOTE: Don't use "Flags: ignoreversion" on any shared system files
 
 [Icons]

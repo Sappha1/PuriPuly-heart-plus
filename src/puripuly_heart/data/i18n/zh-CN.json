@@ -754,5 +754,12 @@
   "settings.steamvr_autolaunch.failed": "无法更新 SteamVR 自动启动。请查看日志了解详情。",
   "api_view.title": "API 请求",
   "logs.api.push_vrchat": "同时发送到 VRChat 聊天框",
-  "logs.api.push_vrchat.short": "发送到 VRChat"
+  "logs.api.push_vrchat.short": "发送到 VRChat",
+  "ocr_module.title": "实时 OCR 模块",
+  "ocr_module.body": "实时 OCR 是可选模块（约 150 MB 下载），可直接读取屏幕上的聊天气泡和世界文字。现在下载吗？",
+  "ocr_module.download": "下载",
+  "ocr_module.cancel": "暂不",
+  "ocr_module.close": "关闭",
+  "ocr_module.downloading": "正在下载 OCR 模块…",
+  "ocr_module.failed": "下载失败。请检查网络后重试 — 或从发布页下载 PuriPulyHeartOCR-module.zip，并在安装程序中勾选 OCR 选项重新安装。"
 }

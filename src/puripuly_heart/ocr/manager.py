@@ -85,6 +85,30 @@ def _packaged_ocr_exe() -> str:
                         "ocr", "PuriPulyHeartOCR", "PuriPulyHeartOCR.exe")
 
 
+def _module_ocr_exe() -> str:
+    """Downloaded optional module (survives app updates). Empty when absent
+    or too old for this app build."""
+    try:
+        from puripuly_heart.core.ocr_module import installed_module_exe, module_ready
+
+        if module_ready():
+            return str(installed_module_exe())
+    except Exception:
+        pass
+    return ""
+
+
+def ocr_engine_available() -> bool:
+    """True when SOMETHING can run OCR: bundled copy, downloaded module, or
+    the dev venv. Used by the app to decide whether to offer the module
+    download instead of silently failing the toggle."""
+    if not getattr(sys, "frozen", False):
+        return True
+    return (os.path.exists(_packaged_ocr_exe())
+            or bool(_module_ocr_exe())
+            or os.path.exists(_DEV_VENV_PY))
+
+
 class OcrOverlayManager:
     def __init__(self, *, fps: float = 10.0, monitor: int = 1) -> None:
         self._proc: subprocess.Popen | None = None
@@ -318,9 +342,13 @@ class OcrOverlayManager:
         env = dict(os.environ)
         if getattr(sys, "frozen", False):
             packaged = _packaged_ocr_exe()
+            module_exe = _module_ocr_exe()
             if os.path.exists(packaged):
                 # Normal install: the bundled OCR overlay app.
                 cmd = [packaged, *flags]
+            elif module_exe:
+                # Downloaded optional module (installer box unticked / zip user).
+                cmd = [module_exe, *flags]
             elif os.path.exists(_DEV_VENV_PY):
                 # Dev machine running a repo test build: hot-swap from source.
                 env["PYTHONPATH"] = _DEV_SRC

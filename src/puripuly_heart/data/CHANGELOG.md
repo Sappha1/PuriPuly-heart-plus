@@ -2,6 +2,11 @@
 
 User-facing changes per build. The latest build's highlights also appear in-app when an update is ready.
 
+## r277 — 2026-07-20
+
+- Realtime OCR is now an optional module: the installer has a checkbox (ticked by default), and slim installs get a one-time in-app download (~150 MB) the first time OCR is used
+- Updates are now roughly half the size — the updater downloads a slim package and leaves your installed OCR module untouched
+
 ## r276 — 2026-07-20
 
 - The VRChat send checkbox moved up next to Clear with shorter wording ("To VRChat"); the composer has more breathing room

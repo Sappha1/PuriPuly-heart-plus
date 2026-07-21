@@ -18,7 +18,7 @@ from puripuly_heart.ui.fonts import font_for_language
 from puripuly_heart.ui.i18n import get_locale, language_name, t
 from puripuly_heart.ui.overlay_peer_contract import OverlayPeerConsumerContract
 
-_BUILD_TAG = "r276"  #increment each build so user can confirm version
+_BUILD_TAG = "r277"  #increment each build so user can confirm version
 
 # ── VRCT-style dark palette ──────────────────────────────────────────────────
 _BG_MAIN = "#2e2f32"
@@ -1652,6 +1652,16 @@ class DashboardView(ft.Row):
             enabled = not self._overlay_peer_contract.overlay.intent_enabled
         if self.on_toggle_overlay:
             self.on_toggle_overlay(enabled)
+
+    def set_ocr_on(self, on: bool) -> None:
+        """Set the OCR pill state programmatically (module download flow:
+        revert the optimistic flip when the module is missing, light it up
+        after the download completes and OCR actually starts)."""
+        self._ocr_on = bool(on)
+        self._ocr_btn.border = ft.border.all(1, _TOGGLE_ON if on else "#3a3b3f")
+        self._ocr_btn.content.color = _TOGGLE_ON if on else _TEXT_FAINT
+        with contextlib.suppress(Exception):
+            self._ocr_btn.update()
 
     def _on_ocr_btn_click(self, _e) -> None:
         # (Prototype) flip the OCR detection overlay on/off and reflect state in

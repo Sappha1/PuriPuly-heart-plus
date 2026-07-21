@@ -754,5 +754,12 @@
   "settings.steamvr_autolaunch.failed": "SteamVR 自動起動を更新できませんでした。詳細はログを確認してください。",
   "api_view.title": "APIリクエスト",
   "logs.api.push_vrchat": "VRChatチャットボックスにも送信",
-  "logs.api.push_vrchat.short": "VRChatへ"
+  "logs.api.push_vrchat.short": "VRChatへ",
+  "ocr_module.title": "リアルタイムOCRモジュール",
+  "ocr_module.body": "リアルタイムOCRはオプションモジュールです（約150MBのダウンロード）。画面上のチャットバブルやワールドの文字を直接読み取ります。今ダウンロードしますか？",
+  "ocr_module.download": "ダウンロード",
+  "ocr_module.cancel": "あとで",
+  "ocr_module.close": "閉じる",
+  "ocr_module.downloading": "OCRモジュールをダウンロード中…",
+  "ocr_module.failed": "ダウンロードに失敗しました。接続を確認して再試行するか、リリースページから PuriPulyHeartOCR-module.zip をダウンロードし、インストーラーでOCRオプションを有効にして再インストールしてください。"
 }

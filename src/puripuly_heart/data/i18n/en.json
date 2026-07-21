@@ -754,5 +754,12 @@
   "settings.steamvr_autolaunch.failed": "Couldn't update SteamVR auto-start. Check the logs for details.",
   "api_view.title": "API Requests",
   "logs.api.push_vrchat": "Also send to VRChat chatbox",
-  "logs.api.push_vrchat.short": "To VRChat"
+  "logs.api.push_vrchat.short": "To VRChat",
+  "ocr_module.title": "Realtime OCR module",
+  "ocr_module.body": "Realtime OCR is an optional module (~150 MB download). It reads chat bubbles and world text straight off your screen. Download it now?",
+  "ocr_module.download": "Download",
+  "ocr_module.cancel": "Not now",
+  "ocr_module.close": "Close",
+  "ocr_module.downloading": "Downloading the OCR module…",
+  "ocr_module.failed": "The download failed. Check your connection and try again — or download PuriPulyHeartOCR-module.zip from the release page and re-run the installer with the OCR option ticked."
 }

@@ -163,7 +163,7 @@ class TranslatorApp:
         # (Prototype) OCR detection overlay — self-contained, off by default.
         from puripuly_heart.ocr.manager import OcrOverlayManager
         self._ocr_manager = OcrOverlayManager()
-        self.view_dashboard.on_toggle_ocr = self._ocr_manager.toggle
+        self.view_dashboard.on_toggle_ocr = self._on_toggle_ocr
         self.view_dashboard.on_ocr_prewarm_change = self._ocr_manager.set_prewarm
         self.view_dashboard.on_ocr_region_toggle = self._ocr_manager.toggle_region
         self.view_dashboard.on_ocr_region_state = self._ocr_manager.region_enabled
@@ -2376,6 +2376,98 @@ class TranslatorApp:
             await self.controller.apply_settings(merged_settings)
 
         self._queue_settings_mutation_task(_task)
+
+    def _on_toggle_ocr(self, enabled: bool) -> bool:
+        """OCR toggle with module-aware onboarding: when no OCR engine exists
+        (installer box unticked / zip-slim install), offer the one-time module
+        download instead of failing silently."""
+        from puripuly_heart.ocr.manager import ocr_engine_available
+
+        if enabled and not ocr_engine_available():
+            # Revert the pill's optimistic flip; it lights up for real once
+            # the module is installed and OCR starts.
+            dash = getattr(self, "view_dashboard", None)
+            if dash is not None:
+                with contextlib.suppress(Exception):
+                    dash.set_ocr_on(False)
+            self._prompt_ocr_module_download()
+            return False
+        return self._ocr_manager.toggle(enabled)
+
+    def _prompt_ocr_module_download(self) -> None:
+        from puripuly_heart.ui.i18n import t
+
+        progress_bar = ft.ProgressBar(value=0, width=360)
+        progress_text = ft.Text("", size=12, color="#9a9da1")
+        body = ft.Column(
+            [ft.Text(t("ocr_module.body"), size=13)],
+            tight=True,
+            width=420,
+        )
+        dlg = ft.AlertDialog(
+            modal=True,
+            title=ft.Text(t("ocr_module.title")),
+            content=body,
+        )
+
+        def _close(_e=None) -> None:
+            dlg.open = False
+            with contextlib.suppress(Exception):
+                self.page.update()
+
+        def _start_download(_e=None) -> None:
+            dlg.actions = []
+            body.controls = [
+                ft.Text(t("ocr_module.downloading"), size=13),
+                progress_bar,
+                progress_text,
+            ]
+            with contextlib.suppress(Exception):
+                self.page.update()
+
+            async def _task() -> None:
+                from puripuly_heart.core.ocr_module import download_and_install_module
+
+                loop = __import__("asyncio").get_running_loop()
+
+                def _progress(frac: float) -> None:
+                    def _apply() -> None:
+                        progress_bar.value = frac
+                        progress_text.value = f"{int(frac * 100)}%"
+                        with contextlib.suppress(Exception):
+                            progress_bar.update()
+                            progress_text.update()
+
+                    loop.call_soon_threadsafe(_apply)
+
+                try:
+                    await download_and_install_module(_progress)
+                except Exception as exc:
+                    logger.warning("OCR module download failed: %s", exc)
+                    body.controls = [ft.Text(
+                        t("ocr_module.failed"), size=13, color="#e88a8a")]
+                    dlg.actions = [ft.TextButton(t("ocr_module.close"), on_click=_close)]
+                    with contextlib.suppress(Exception):
+                        self.page.update()
+                    return
+                _close()
+                # Module installed — turn OCR on for real and light the pill.
+                started = self._ocr_manager.toggle(True)
+                dash = getattr(self, "view_dashboard", None)
+                if started and dash is not None:
+                    with contextlib.suppress(Exception):
+                        dash.set_ocr_on(True)
+
+            self.page.run_task(_task)
+
+        dlg.actions = [
+            ft.TextButton(t("ocr_module.cancel"), on_click=_close),
+            ft.TextButton(t("ocr_module.download"), on_click=_start_download),
+        ]
+        self.page.overlay.append(dlg)
+        dlg.open = True
+        with contextlib.suppress(Exception):
+            self.page.update()
 
     def _on_send_custom_api_request(
         self, system_prompt: str, text: str, push_to_vrchat: bool = False

@@ -754,5 +754,12 @@
   "settings.steamvr_autolaunch.failed": "SteamVR 자동 시작을 업데이트할 수 없습니다. 로그를 확인하세요.",
   "api_view.title": "API 요청",
   "logs.api.push_vrchat": "VRChat 채팅창으로도 전송",
-  "logs.api.push_vrchat.short": "VRChat로"
+  "logs.api.push_vrchat.short": "VRChat로",
+  "ocr_module.title": "실시간 OCR 모듈",
+  "ocr_module.body": "실시간 OCR은 선택 모듈입니다(약 150MB 다운로드). 화면의 채팅 말풍선과 월드 텍스트를 바로 읽어냅니다. 지금 다운로드할까요?",
+  "ocr_module.download": "다운로드",
+  "ocr_module.cancel": "나중에",
+  "ocr_module.close": "닫기",
+  "ocr_module.downloading": "OCR 모듈 다운로드 중…",
+  "ocr_module.failed": "다운로드에 실패했습니다. 연결을 확인하고 다시 시도하거나, 릴리스 페이지에서 PuriPulyHeartOCR-module.zip을 내려받아 설치 프로그램에서 OCR 옵션을 켜고 다시 설치하세요."
 }

@@ -232,6 +232,13 @@ class ApiRequestsView(ft.Column):
         text = self._text_field.value or ""
         if not text.strip():
             return
+        # Clear on send, like the dashboard chat box (the prompt stays).
+        self._text_field.value = ""
+        if self.page:
+            try:
+                self._text_field.update()
+            except Exception:
+                pass
         if callable(self.on_send_custom_request):
             self.on_send_custom_request(prompt, text)
 

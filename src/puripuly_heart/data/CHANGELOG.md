@@ -2,6 +2,10 @@
 
 User-facing changes per build. The latest build's highlights also appear in-app when an update is ready.
 
+## r271 — 2026-07-20
+
+- The API tab text box clears after sending, like the chat box
+
 ## r270 — 2026-07-20
 
 - Fixed the API tab composer: pressing Enter/Send crashed silently (a leftover reference from the tab move) — sends work now

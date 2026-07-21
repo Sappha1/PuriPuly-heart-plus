@@ -85,6 +85,8 @@ class ApiRequestsView(ft.Column):
             spacing=8,
         )
 
+        # Collapsed by default — the big prompt box is in the way unless the
+        # user is actively editing it. The header row toggles it open.
         self._prompt_field = ft.TextField(
             label=t("logs.api.prompt"),
             multiline=True,
@@ -92,6 +94,22 @@ class ApiRequestsView(ft.Column):
             max_lines=8,
             text_size=12,
             border_radius=12,
+            visible=False,
+        )
+        self._prompt_toggle_icon = ft.Icon(
+            ft.Icons.EXPAND_MORE, size=16, color=COLOR_NEUTRAL)
+        self._prompt_toggle_label = ft.Text(
+            t("logs.api.prompt"), size=12, weight=ft.FontWeight.W_600,
+            color=COLOR_NEUTRAL)
+        self._prompt_toggle = ft.Container(
+            content=ft.Row(
+                [self._prompt_toggle_icon, self._prompt_toggle_label],
+                spacing=6,
+                vertical_alignment=ft.CrossAxisAlignment.CENTER,
+            ),
+            padding=ft.padding.symmetric(horizontal=4, vertical=4),
+            border_radius=6,
+            on_click=self._on_prompt_toggle,
         )
         self._text_field = ft.TextField(
             label=t("logs.api.text"),
@@ -120,6 +138,7 @@ class ApiRequestsView(ft.Column):
         composer = ft.Container(
             content=ft.Column(
                 [
+                    self._prompt_toggle,
                     self._prompt_field,
                     self._push_vrchat_checkbox,
                     ft.Row(
@@ -258,6 +277,16 @@ class ApiRequestsView(ft.Column):
             if _inspect.isawaitable(result):
                 await result
 
+    def _on_prompt_toggle(self, _e: ft.ControlEvent | object) -> None:
+        self._prompt_field.visible = not self._prompt_field.visible
+        self._prompt_toggle_icon.name = (
+            ft.Icons.EXPAND_LESS if self._prompt_field.visible else ft.Icons.EXPAND_MORE)
+        if self.page:
+            try:
+                self.update()
+            except Exception:
+                pass
+
     def _on_clear_click(self, _e: ft.ControlEvent | object) -> None:
         self._model.clear()
         self._render()
@@ -299,6 +328,7 @@ class ApiRequestsView(ft.Column):
         self._clear_button.text = t("dashboard.clear")
         self._clear_button.style = self._button_style(font_for_language(get_locale()))
         self._prompt_field.label = t("logs.api.prompt")
+        self._prompt_toggle_label.value = t("logs.api.prompt")
         self._text_field.label = t("logs.api.text")
         self._send_button.tooltip = t("logs.api.send")
         self._push_vrchat_checkbox.label = t("logs.api.push_vrchat")

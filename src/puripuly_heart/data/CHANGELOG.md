@@ -2,6 +2,10 @@
 
 User-facing changes per build. The latest build's highlights also appear in-app when an update is ready.
 
+## r275 — 2026-07-20
+
+- The API tab System prompt box is collapsed by default — click the "System prompt" header to expand it (the prompt is still used when collapsed)
+
 ## r274 — 2026-07-20
 
 - API Requests feed redesigned: color-coded entry cards (teal = outgoing, blue = response), muted metadata, the prompt in an indented block — and the feed no longer collides with the System prompt field

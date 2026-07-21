@@ -122,7 +122,10 @@ LEGACY_ZIP_ASSET_NAME = "PuriPulyHeart.zip"
 # Slim update payload: the app WITHOUT the ~150MB OCR module. Preferred by the
 # updater so routine updates stop re-shipping OCR; the full zip stays as the
 # portable download and as fallback for releases without a slim asset.
-UPDATE_ZIP_ASSET_NAME = "PuriPulyHeartPlus-update.zip"
+# Named to be unmistakably machine-only — the previous name
+# ("PuriPulyHeartPlus-update.zip") read like "the updated app" and invited
+# humans to download the wrong file.
+UPDATE_ZIP_ASSET_NAME = "updater-payload-internal.zip"
 VERSION_ASSET_NAME = "version.json"
 
 

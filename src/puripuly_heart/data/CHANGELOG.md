@@ -2,6 +2,10 @@
 
 User-facing changes per build. The latest build's highlights also appear in-app when an update is ready.
 
+## r279 — 2026-07-21
+
+- The auto-updater's internal package is renamed to "updater-payload-internal.zip" so nobody mistakes it for the app download
+
 ## r278 — 2026-07-21
 
 - New "Remove OCR module…" option in the OCR right-click menu — frees ~340 MB; turning OCR on downloads it again anytime

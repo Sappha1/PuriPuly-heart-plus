@@ -2,6 +2,10 @@
 
 User-facing changes per build. The latest build's highlights also appear in-app when an update is ready.
 
+## r272 — 2026-07-20
+
+- Clear button on the API Requests page, like the chat box
+
 ## r271 — 2026-07-20
 
 - The API tab text box clears after sending, like the chat box

@@ -56,9 +56,15 @@ class ApiRequestsView(ft.Column):
             weight=ft.FontWeight.BOLD,
             color=COLOR_NEUTRAL,
         )
+        self._clear_button = ft.TextButton(
+            text=t("dashboard.clear"),
+            icon=ft.Icons.CLEAR_ALL,
+            style=self._button_style(font_family),
+            on_click=self._on_clear_click,
+        )
         header = ft.Container(
             content=ft.Row(
-                [self._title_text, ft.Container(expand=True)],
+                [self._title_text, ft.Container(expand=True), self._clear_button],
                 alignment=ft.MainAxisAlignment.SPACE_BETWEEN,
                 vertical_alignment=ft.CrossAxisAlignment.CENTER,
             ),
@@ -213,6 +219,10 @@ class ApiRequestsView(ft.Column):
             if _inspect.isawaitable(result):
                 await result
 
+    def _on_clear_click(self, _e: ft.ControlEvent | object) -> None:
+        self._model.clear()
+        self._render()
+
     def set_prompt_if_empty(self, prompt: str) -> None:
         """Prefill the composer with the app's active prompt (called when the
         tab opens) — only when the user hasn't typed their own yet."""
@@ -246,6 +256,8 @@ class ApiRequestsView(ft.Column):
 
     def apply_locale(self) -> None:
         self._title_text.value = t("api_view.title")
+        self._clear_button.text = t("dashboard.clear")
+        self._clear_button.style = self._button_style(font_for_language(get_locale()))
         self._prompt_field.label = t("logs.api.prompt")
         self._text_field.label = t("logs.api.text")
         self._send_button.tooltip = t("logs.api.send")

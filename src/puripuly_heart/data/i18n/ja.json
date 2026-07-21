@@ -240,7 +240,7 @@
   "logs.api.text": "送信するテキスト",
   "logs.api.send": "プロバイダーへ送信",
   "logs.api.empty": "まだAPIリクエストはありません — 翻訳するとここに表示されます。",
-  "logs.api.not_sent": "（システムプロンプトとコンテキストは送信されません — このプロバイダーはテキストと言語ペアのみ受け取ります）",
+  "logs.api.not_sent": "（システムプロンプトとコンテキストは送信されません — このプロバイダーはテキストと言語ペアのみ受け取ります。プロンプト対応モデル：Gemma・DeepSeek・Gemini・Qwen・ローカルLLM）",
   "logs.conversation.hide": "システムログを見る",
   "logs.conversation.empty": "まだ会話ログはありません。",
   "update.available": "新しいバージョン v{version} が公開されました！",
@@ -752,5 +752,6 @@
   "settings.steamvr_autolaunch.steamvr_not_running": "SteamVR が起動していません。SteamVR を起動してからもう一度切り替えてください。",
   "settings.steamvr_autolaunch.dev_build": "SteamVR 自動起動はパッケージ版アプリが必要です。",
   "settings.steamvr_autolaunch.failed": "SteamVR 自動起動を更新できませんでした。詳細はログを確認してください。",
-  "api_view.title": "APIリクエスト"
+  "api_view.title": "APIリクエスト",
+  "logs.api.push_vrchat": "VRChatチャットボックスにも送信"
 }

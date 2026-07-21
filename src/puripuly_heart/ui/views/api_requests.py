@@ -31,7 +31,7 @@ _MAX_ENTRIES = 50
 class ApiRequestsView(ft.Column):
     def __init__(self) -> None:
         super().__init__(expand=True, spacing=16)
-        self.on_send_custom_request: Callable[[str, str], None] | None = None
+        self.on_send_custom_request: Callable[[str, str, bool], None] | None = None
         self._model: deque[dict] = deque(maxlen=_MAX_ENTRIES)
         self._build_ui()
 
@@ -115,10 +115,17 @@ class ApiRequestsView(ft.Column):
             tooltip=t("logs.api.send"),
             on_click=self._on_send_click,
         )
+        # OFF by default: the composer is a test bench — prompt experiments
+        # shouldn't spam the in-game chatbox unless explicitly asked to.
+        self._push_vrchat_checkbox = ft.Checkbox(
+            label=t("logs.api.push_vrchat"),
+            value=False,
+        )
         composer = ft.Container(
             content=ft.Column(
                 [
                     self._prompt_field,
+                    self._push_vrchat_checkbox,
                     ft.Row(
                         [self._text_field, self._send_button],
                         vertical_alignment=ft.CrossAxisAlignment.END,
@@ -250,7 +257,8 @@ class ApiRequestsView(ft.Column):
             except Exception:
                 pass
         if callable(self.on_send_custom_request):
-            self.on_send_custom_request(prompt, text)
+            self.on_send_custom_request(
+                prompt, text, bool(self._push_vrchat_checkbox.value))
 
     # ── Locale ───────────────────────────────────────────────────────────
 
@@ -261,6 +269,7 @@ class ApiRequestsView(ft.Column):
         self._prompt_field.label = t("logs.api.prompt")
         self._text_field.label = t("logs.api.text")
         self._send_button.tooltip = t("logs.api.send")
+        self._push_vrchat_checkbox.label = t("logs.api.push_vrchat")
         if not self._model:
             self._feed_text.value = t("logs.api.empty")
         if self.page:

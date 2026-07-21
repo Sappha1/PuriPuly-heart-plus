@@ -239,7 +239,7 @@
   "logs.api.text": "要发送的文本",
   "logs.api.send": "发送到服务商",
   "logs.api.empty": "尚未捕获任何 API 请求 — 翻译内容后将显示在这里。",
-  "logs.api.not_sent": "（系统提示词和上下文未发送 — 该服务商只接收文本和语言对）",
+  "logs.api.not_sent": "（系统提示词和上下文未发送 — 该服务商只接收文本和语言对。支持提示词的模型：Gemma、DeepSeek、Gemini、Qwen、本地 LLM）",
   "logs.conversation.hide": "查看系统日志",
   "logs.conversation.empty": "还没有对话记录。",
   "update.available": "新版本 v{version} 可用！",
@@ -752,5 +752,6 @@
   "settings.steamvr_autolaunch.steamvr_not_running": "SteamVR 未运行——请先启动 SteamVR，然后再切换此选项。",
   "settings.steamvr_autolaunch.dev_build": "随 SteamVR 自动启动需要打包版应用。",
   "settings.steamvr_autolaunch.failed": "无法更新 SteamVR 自动启动。请查看日志了解详情。",
-  "api_view.title": "API 请求"
+  "api_view.title": "API 请求",
+  "logs.api.push_vrchat": "同时发送到 VRChat 聊天框"
 }

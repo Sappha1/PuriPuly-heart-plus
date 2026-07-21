@@ -2,6 +2,11 @@
 
 User-facing changes per build. The latest build's highlights also appear in-app when an update is ready.
 
+## r273 — 2026-07-20
+
+- API tab: new "Also send to VRChat chatbox" checkbox (off by default) pushes the composer result in-game like a dashboard message
+- The "NOT sent" note now lists which models support prompts (Gemma, DeepSeek, Gemini, Qwen, Local LLMs)
+
 ## r272 — 2026-07-20
 
 - Clear button on the API Requests page, like the chat box

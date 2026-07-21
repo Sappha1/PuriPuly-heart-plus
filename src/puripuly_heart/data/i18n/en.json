@@ -245,7 +245,7 @@
   "logs.api.text": "Text to send",
   "logs.api.send": "Send to provider",
   "logs.api.empty": "No API requests captured yet — translate something and it will appear here.",
-  "logs.api.not_sent": "(system prompt & context NOT sent — this provider receives only the text and language pair)",
+  "logs.api.not_sent": "(system prompt & context NOT sent — this provider receives only the text and language pair. Prompt-capable models: Gemma, DeepSeek, Gemini, Qwen, Local LLMs)",
   "logs.conversation.hide": "System Logs",
   "logs.conversation.empty": "No conversation records yet.",
   "update.available": "New version v{version} is available!",
@@ -752,5 +752,6 @@
   "settings.steamvr_autolaunch.steamvr_not_running": "SteamVR isn't running — start SteamVR, then toggle this again.",
   "settings.steamvr_autolaunch.dev_build": "Auto-start with SteamVR requires the packaged app.",
   "settings.steamvr_autolaunch.failed": "Couldn't update SteamVR auto-start. Check the logs for details.",
-  "api_view.title": "API Requests"
+  "api_view.title": "API Requests",
+  "logs.api.push_vrchat": "Also send to VRChat chatbox"
 }

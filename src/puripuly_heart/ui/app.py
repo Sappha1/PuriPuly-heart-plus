@@ -2377,7 +2377,9 @@ class TranslatorApp:
 
         self._queue_settings_mutation_task(_task)
 
-    def _on_send_custom_api_request(self, system_prompt: str, text: str) -> None:
+    def _on_send_custom_api_request(
+        self, system_prompt: str, text: str, push_to_vrchat: bool = False
+    ) -> None:
         """API Requests view composer: hand-send a custom prompt/text to the
         ACTIVE translation provider and show the raw response in the view."""
 
@@ -2417,8 +2419,9 @@ class TranslatorApp:
                                             "USES_SYSTEM_PROMPT", True)),
             })
             try:
+                utterance_id = uuid4()
                 translation = await llm.translate(
-                    utterance_id=uuid4(),
+                    utterance_id=utterance_id,
                     text=text,
                     system_prompt=system_prompt,
                     source_language="",
@@ -2426,6 +2429,14 @@ class TranslatorApp:
                     context="",
                 )
                 view.append_api_response(provider, translation.text)
+                if push_to_vrchat and hub is not None:
+                    # Same chatbox pipeline as a dashboard message.
+                    with contextlib.suppress(Exception):
+                        await hub._enqueue_osc(
+                            utterance_id,
+                            transcript_text=text,
+                            translation_text=translation.text,
+                        )
             except Exception as exc:
                 view.append_api_response(provider, f"ERROR: {exc}")
 

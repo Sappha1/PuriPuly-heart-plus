@@ -71,22 +71,18 @@ class ApiRequestsView(ft.Column):
             padding=ft.padding.only(left=16, right=8, top=8, bottom=0),
         )
 
-        self._feed_text = ft.Text(
+        self._empty_text = ft.Text(
             t("logs.api.empty"),
-            size=14,
-            font_family="Consolas",
-            color=COLOR_ON_BACKGROUND,
-            selectable=True,
+            size=13,
+            color=COLOR_NEUTRAL,
+            italic=True,
         )
         self._feed_scroll = ft.Column(
-            controls=[
-                ft.Container(
-                    content=self._feed_text,
-                    padding=ft.padding.only(left=16, right=16, top=8, bottom=16),
-                )
-            ],
+            controls=[ft.Container(content=self._empty_text,
+                                   padding=ft.padding.only(left=16, right=16, top=8))],
             expand=True,
             scroll=ft.ScrollMode.AUTO,
+            spacing=8,
         )
 
         self._prompt_field = ft.TextField(
@@ -134,7 +130,8 @@ class ApiRequestsView(ft.Column):
                 ],
                 spacing=8,
             ),
-            padding=ft.padding.only(left=16, right=16, bottom=12),
+            padding=ft.padding.only(left=16, right=16, top=10, bottom=12),
+            border=ft.border.only(top=ft.BorderSide(1, "#3a3b3f")),
         )
 
         card_content = ft.Column(
@@ -188,33 +185,68 @@ class ApiRequestsView(ft.Column):
         })
         self._render()
 
+    def _entry_control(self, e: dict) -> ft.Control:
+        _TIME = "#6e7175"
+        _OUT = COLOR_PRIMARY          # teal: outbound request
+        _IN = "#6ab7e8"               # light blue: provider response
+        _MUTED = "#9a9da1"
+        _FAINT = "#6e7175"
+        rows: list[ft.Control] = []
+        if e.get("stage") == "response":
+            rows.append(ft.Row([
+                ft.Text(e.get("ts", ""), size=11, color=_TIME),
+                ft.Text("← " + str(e.get("provider", "")), size=12,
+                        weight=ft.FontWeight.W_700, color=_IN),
+            ], spacing=8))
+            rows.append(ft.Text(str(e.get("text", "")), size=14,
+                                color=COLOR_ON_BACKGROUND, selectable=True))
+            border_color = _IN
+        else:
+            langs = f"{e.get('source_language') or 'auto'} → {e.get('target_language', '')}"
+            rows.append(ft.Row([
+                ft.Text(e.get("ts", ""), size=11, color=_TIME),
+                ft.Text("→ " + str(e.get("provider", "")), size=12,
+                        weight=ft.FontWeight.W_700, color=_OUT),
+                ft.Text(str(e.get("stage", "")), size=11, color=_MUTED),
+                ft.Text(langs, size=11, color=_MUTED),
+            ], spacing=8, wrap=True))
+            rows.append(ft.Text(str(e.get("text", "")), size=14,
+                                color=COLOR_ON_BACKGROUND, selectable=True))
+            if e.get("prompt_sent", True):
+                ctx = e.get("context") or ""
+                if ctx:
+                    rows.append(ft.Text("context: " + ctx, size=12, color=_MUTED,
+                                        selectable=True))
+                prompt = e.get("system_prompt") or ""
+                if prompt:
+                    rows.append(ft.Container(
+                        content=ft.Text(prompt, size=11, color=_FAINT, selectable=True),
+                        padding=ft.padding.only(left=8, top=2),
+                        border=ft.border.only(left=ft.BorderSide(2, "#3a3b3f")),
+                    ))
+            else:
+                rows.append(ft.Text(t("logs.api.not_sent"), size=11, color=_FAINT,
+                                    italic=True))
+            border_color = _OUT
+        return ft.Container(
+            content=ft.Column(rows, spacing=4),
+            padding=ft.padding.symmetric(horizontal=12, vertical=8),
+            margin=ft.margin.only(left=16, right=16),
+            border_radius=10,
+            bgcolor="#2e2f33",
+            border=ft.border.only(left=ft.BorderSide(3, border_color)),
+        )
+
     def _render(self) -> None:
         if not self._model:
-            self._feed_text.value = t("logs.api.empty")
+            self._feed_scroll.controls = [ft.Container(
+                content=self._empty_text,
+                padding=ft.padding.only(left=16, right=16, top=8))]
         else:
-            blocks: list[str] = []
-            for e in self._model:
-                if e.get("stage") == "response":
-                    blocks.append(
-                        f"[{e.get('ts', '')}] ← {e.get('provider', '')} response:\n"
-                        f"{e.get('text', '')}"
-                    )
-                    continue
-                head = (
-                    f"[{e.get('ts', '')}] → {e.get('provider', '')} · {e.get('stage', '')} · "
-                    f"{e.get('source_language') or 'auto'} → {e.get('target_language', '')}"
-                )
-                body = [f"text: {e.get('text', '')}"]
-                if e.get("prompt_sent", True):
-                    body.append(f"context: {e.get('context') or '(none)'}")
-                    body.append(f"system_prompt:\n{e.get('system_prompt') or '(none)'}")
-                else:
-                    body.append(t("logs.api.not_sent"))
-                blocks.append(head + "\n" + "\n".join(body))
-            self._feed_text.value = ("\n" + "─" * 60 + "\n").join(blocks)
+            self._feed_scroll.controls = [self._entry_control(e) for e in self._model]
         if self.page:
             try:
-                self._feed_text.update()
+                self._feed_scroll.update()
             except Exception:
                 pass
 
@@ -270,7 +302,8 @@ class ApiRequestsView(ft.Column):
         self._text_field.label = t("logs.api.text")
         self._send_button.tooltip = t("logs.api.send")
         self._push_vrchat_checkbox.label = t("logs.api.push_vrchat")
-        if not self._model:
-            self._feed_text.value = t("logs.api.empty")
+        self._empty_text.value = t("logs.api.empty")
+        if self._model:
+            self._render()
         if self.page:
             self.update()

@@ -2,6 +2,10 @@
 
 User-facing changes per build. The latest build's highlights also appear in-app when an update is ready.
 
+## r274 — 2026-07-20
+
+- API Requests feed redesigned: color-coded entry cards (teal = outgoing, blue = response), muted metadata, the prompt in an indented block — and the feed no longer collides with the System prompt field
+
 ## r273 — 2026-07-20
 
 - API tab: new "Also send to VRChat chatbox" checkbox (off by default) pushes the composer result in-game like a dashboard message

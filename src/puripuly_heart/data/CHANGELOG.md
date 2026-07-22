@@ -2,6 +2,11 @@
 
 User-facing changes per build. The latest build's highlights also appear in-app when an update is ready.
 
+## r280 — 2026-07-21
+
+- Fixed every message printing TWICE in the chat log when translation is off — two code paths were both writing the same line; now there is exactly one
+- With voice auto-detect, untranslated speech on the overlay is now labeled by its actual script — English no longer gets routed through Chinese reading treatment
+
 ## r279 — 2026-07-21
 
 - The auto-updater's internal package is renamed to "updater-payload-internal.zip" so nobody mistakes it for the app download

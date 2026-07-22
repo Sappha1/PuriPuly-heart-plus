@@ -960,6 +960,14 @@ class ClientHub:
             or self._text_already_in_language(
                 text, self._target_language_for(self.self_runtime))
         ):
+            # Typed skips must emit TRANSLATION_SKIPPED like STT skips do — the
+            # dashboard no longer appends raw finals itself (that double-printed).
+            self._log_translation_skipped(
+                stage="typed",
+                runtime=self.self_runtime,
+                publish_chatbox=True,
+                transcript=transcript,
+            )
             await self._enqueue_osc(utterance_id, transcript_text=text, translation_text=None)
         else:
             await self._ensure_translation(transcript)
@@ -1294,10 +1302,20 @@ class ClientHub:
                 stage="peer_overlay_first_emit",
                 overwrite=False,
             )
+            source_language = self._source_language_for(self.peer_runtime)
+            if not self.peer_source_language:
+                # Voice auto-detect: _source_language_for's "assume the user's
+                # target language" fallback stamped ENGLISH speech as zh-CN on
+                # this no-translation path (r251 fixed the translation path
+                # only), sending latin text through Chinese reading treatment.
+                # Sniff the script; plain latin text gets "en" (no reading).
+                from puripuly_heart.core.transliteration import sniff_translit_language
+
+                source_language = sniff_translit_language(transcript.text, "") or "en"
             await self._emit_overlay_event(
                 self.overlay_event_adapter.transcript_final(
                     transcript,
-                    source_language=self._source_language_for(self.peer_runtime),
+                    source_language=source_language,
                     target_language=self._target_language_for(self.peer_runtime),
                 )
             )

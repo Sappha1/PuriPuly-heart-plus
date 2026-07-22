@@ -250,6 +250,35 @@ async def test_peer_translation_respects_master_translation_toggle() -> None:
 
 
 @pytest.mark.asyncio
+async def test_peer_final_with_translation_off_emits_exactly_one_skip_event() -> None:
+    # Regression (r280): with TRANS off the dashboard used to append raw finals
+    # itself on top of the TRANSLATION_SKIPPED chat entry, printing every peer
+    # line twice. The hub-side contract is one TRANSCRIPT_FINAL + one
+    # TRANSLATION_SKIPPED per final — the bridge is the only chat writer.
+    hub = ClientHub(
+        stt=None,
+        llm=None,
+        osc=RecordingOscQueue(),
+        clock=FakeClock(_now=10.0),
+        translation_enabled=False,
+    )
+
+    await hub.handle_peer_transcript_final_for_test(text="one clean utterance")
+
+    finals = 0
+    skips = 0
+    while not hub.ui_events.empty():
+        event = hub.ui_events.get_nowait()
+        if event.type == UIEventType.TRANSCRIPT_FINAL:
+            assert event.payload.text == "one clean utterance"
+            finals += 1
+        elif event.type == UIEventType.TRANSLATION_SKIPPED:
+            assert event.payload.text == "one clean utterance"
+            skips += 1
+    assert (finals, skips) == (1, 1)
+
+
+@pytest.mark.asyncio
 async def test_peer_transcripts_stay_peer_routed_across_runtime_swap_without_duplicates() -> None:
     old_peer = ManagedSTTProvider(
         backend=LabelledPeerBackend("old"),

@@ -1167,8 +1167,12 @@ async def test_submit_text_validates_input_and_enqueues_without_llm() -> None:
         await hub.submit_text("   ")
 
     utterance_id = await hub.submit_text("hello", source="You")
-    events = [await hub.ui_events.get(), await hub.ui_events.get()]
-    assert [event.type for event in events] == [UIEventType.TRANSCRIPT_FINAL, UIEventType.OSC_SENT]
+    events = [await hub.ui_events.get(), await hub.ui_events.get(), await hub.ui_events.get()]
+    assert [event.type for event in events] == [
+        UIEventType.TRANSCRIPT_FINAL,
+        UIEventType.TRANSLATION_SKIPPED,
+        UIEventType.OSC_SENT,
+    ]
     assert hub.osc.messages[-1].utterance_id == utterance_id
     assert hub.osc.messages[-1].text == "hello"
 
@@ -1180,9 +1184,13 @@ async def test_submit_text_clipboard_source_uses_manual_fallback_without_llm() -
     hub.translation_enabled = False
 
     utterance_id = await hub.submit_text("clipboard fallback", source="Clipboard")
-    events = [await hub.ui_events.get(), await hub.ui_events.get()]
+    events = [await hub.ui_events.get(), await hub.ui_events.get(), await hub.ui_events.get()]
 
-    assert [event.type for event in events] == [UIEventType.TRANSCRIPT_FINAL, UIEventType.OSC_SENT]
+    assert [event.type for event in events] == [
+        UIEventType.TRANSCRIPT_FINAL,
+        UIEventType.TRANSLATION_SKIPPED,
+        UIEventType.OSC_SENT,
+    ]
     assert events[0].source == "Clipboard"
     assert osc.messages[-1].utterance_id == utterance_id
     assert osc.messages[-1].text == "clipboard fallback"

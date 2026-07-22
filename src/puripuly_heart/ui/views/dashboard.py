@@ -18,7 +18,7 @@ from puripuly_heart.ui.fonts import font_for_language
 from puripuly_heart.ui.i18n import get_locale, language_name, t
 from puripuly_heart.ui.overlay_peer_contract import OverlayPeerConsumerContract
 
-_BUILD_TAG = "r279"  #increment each build so user can confirm version
+_BUILD_TAG = "r280"  #increment each build so user can confirm version
 
 # ── VRCT-style dark palette ──────────────────────────────────────────────────
 _BG_MAIN = "#2e2f32"
@@ -3621,17 +3621,6 @@ class DashboardView(ft.Row):
         except Exception:
             pass
 
-    def _append_raw_transcript(self, text: str, channel: str | None) -> None:
-        """Add a raw STT-only line to chat (used when translation is disabled)."""
-        if not text or not text.strip():
-            return
-        self.append_chat_entry(
-            channel=channel or "self",
-            source="stt",
-            source_text=text.strip(),
-            translated_text="",
-        )
-
     # ── Submit / input ───────────────────────────────────────────────────────
 
     def _on_submit(self, text: str):
@@ -5481,9 +5470,9 @@ class DashboardView(ft.Row):
         should_log: bool = False,
         debug_prefix: str | None = None,
     ) -> None:
-        # When translation is off, route final transcripts to the chat log directly
-        if not is_error and transcript_kind == "final" and not self.is_translation_on and text and text.strip():
-            self._append_raw_transcript(text, channel)
+        # Untranslated finals reach the chat log via the hub's TRANSLATION_SKIPPED
+        # event only. Appending here too printed every line twice with TRANS off
+        # (this pre-r255 fallback + the r255 event were both writing).
         font_family = font_for_language(language_code) if language_code else self._ui_font()
         self.display_card.set_display(
             text,

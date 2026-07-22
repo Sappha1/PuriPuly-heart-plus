@@ -802,9 +802,14 @@ class TestContextLogging:
         bundle = hub.get_or_create_bundle(utterance_id)
         assert bundle.translation is None
 
-        events = [await hub.ui_events.get(), await hub.ui_events.get()]
+        events = [
+            await hub.ui_events.get(),
+            await hub.ui_events.get(),
+            await hub.ui_events.get(),
+        ]
         assert [event.type for event in events] == [
             UIEventType.TRANSCRIPT_FINAL,
+            UIEventType.TRANSLATION_SKIPPED,
             UIEventType.OSC_SENT,
         ]
 

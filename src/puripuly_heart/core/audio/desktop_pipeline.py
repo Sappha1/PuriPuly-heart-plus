@@ -48,18 +48,30 @@ class DesktopPeerPipeline:
                 )
 
             frame_format = (frame.sample_rate_hz, frame.channels)
+            if source_format is not None and frame_format != source_format:
+                # The watchdog can reopen capture on a different device
+                # (unplug/replug, default switch) whose rate/channels differ —
+                # rebuild the resampler instead of killing the pipeline.
+                logger.info(
+                    "Desktop peer audio format changed: %sHz/%sch -> %sHz/%sch; "
+                    "rebuilding resampler",
+                    source_format[0],
+                    source_format[1],
+                    frame.sample_rate_hz,
+                    frame.channels,
+                )
+                assert resampler is not None
+                tail = resampler.flush()
+                if tail.size:
+                    yield self._build_output_frame(tail.reshape(-1))
+                source_format = None
+                resampler = None
             if source_format is None:
                 source_format = frame_format
                 resampler = MonoFirstStreamingResampler(
                     input_sample_rate_hz=frame.sample_rate_hz,
                     output_sample_rate_hz=self.target_sample_rate_hz,
                     input_channels=frame.channels,
-                )
-            elif frame_format != source_format:
-                raise ValueError(
-                    "source audio format changed during streaming: "
-                    f"expected {source_format[0]}Hz/{source_format[1]}ch, "
-                    f"got {frame.sample_rate_hz}Hz/{frame.channels}ch"
                 )
 
             assert resampler is not None

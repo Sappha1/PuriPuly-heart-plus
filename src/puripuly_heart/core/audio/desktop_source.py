@@ -1,10 +1,12 @@
 from __future__ import annotations
 
+import asyncio
 import contextlib
 import logging
 import platform
 import queue
 import time
+from collections.abc import Callable
 from dataclasses import dataclass, field
 from typing import Any, AsyncIterator, Sequence
 
@@ -182,6 +184,12 @@ class DesktopLoopbackAudioSource:
     def last_callback_status(self) -> object | None:
         return self._last_callback_status
 
+    def stream_is_active(self) -> bool | None:
+        """True/False from PortAudio, or None when the stream can't be queried."""
+        with contextlib.suppress(Exception):
+            return bool(self._stream.is_active())
+        return None
+
     async def frames(self) -> AsyncIterator[AudioFrameF32]:
         while True:
             item = await self._queue.async_q.get()
@@ -241,6 +249,270 @@ class DesktopLoopbackAudioSource:
         self._queue.close()
         with contextlib.suppress(Exception):
             await self._queue.wait_closed()
+
+
+@dataclass(frozen=True, slots=True)
+class DesktopLoopbackProbe:
+    """Fresh snapshot of the loopback devices Windows currently exposes."""
+
+    devices: tuple[DesktopLoopbackDevice, ...]
+    default_device: DesktopLoopbackDevice | None
+
+
+def _probe_loopback_devices() -> DesktopLoopbackProbe:
+    # PortAudio snapshots the device list at Pa_Initialize, so a long-lived
+    # manager never sees hot-plug changes — a fresh PyAudio() per probe does.
+    pyaudio = _import_pyaudiowpatch()
+    manager = pyaudio.PyAudio()
+    try:
+        devices = tuple(_enumerate_loopback_devices(manager))
+        default_device = _get_default_loopback_device(manager)
+    finally:
+        with contextlib.suppress(Exception):
+            manager.terminate()
+    return DesktopLoopbackProbe(devices=devices, default_device=default_device)
+
+
+@dataclass(slots=True)
+class ResilientDesktopLoopbackSource:
+    """DesktopLoopbackAudioSource with a starvation watchdog and auto-reopen.
+
+    WASAPI loopback dies without an error when its endpoint is invalidated
+    (headphones unplugged, driver power event, endpoint re-created): the
+    capture callback simply stops firing and the pipeline starves forever.
+    This wrapper notices "no frames for starvation_timeout_s", verifies the
+    stream is actually dead (loopback also goes quiet while nothing renders,
+    which is NOT a failure), and re-opens capture on whatever device is live.
+    """
+
+    device_name: str = ""
+    starvation_timeout_s: float = 10.0
+    reopen_backoff_s: tuple[float, ...] = (10.0, 20.0, 30.0)
+    fallback_recheck_interval_s: float = 30.0
+    log_basic: Callable[[str], object] | None = None
+    log_detailed: Callable[[str], object] | None = None
+    source_factory: Callable[[str], Any] = DesktopLoopbackAudioSource
+    probe_devices: Callable[[], DesktopLoopbackProbe] = _probe_loopback_devices
+
+    _inner: Any = field(init=False, default=None, repr=False)
+    _closed: bool = field(init=False, default=False)
+    _closed_event: asyncio.Event = field(init=False, repr=False)
+    _idle_logged: bool = field(init=False, default=False)
+    _last_fallback_recheck_monotonic_s: float = field(
+        init=False, default=float("-inf"), repr=False
+    )
+
+    def __post_init__(self) -> None:
+        self._closed_event = asyncio.Event()
+        # Eager first open, same semantics as the raw source: enabling peer
+        # with no loopback device at all still fails loudly right away.
+        self._inner = self.source_factory(self.device_name)
+
+    # Diagnostics passthrough (DiagnosticAudioSource and the controller read these).
+    @property
+    def resolved_device_name(self) -> str:
+        return getattr(self._inner, "resolved_device_name", "")
+
+    @property
+    def resolved_device_index(self) -> int:
+        return getattr(self._inner, "resolved_device_index", -1)
+
+    @property
+    def resolved_channels(self) -> int:
+        return getattr(self._inner, "resolved_channels", 1)
+
+    @property
+    def actual_sample_rate_hz(self) -> int:
+        return getattr(self._inner, "actual_sample_rate_hz", 48000)
+
+    @property
+    def used_default_fallback(self) -> bool:
+        return bool(getattr(self._inner, "used_default_fallback", False))
+
+    @property
+    def callback_status_count(self) -> int:
+        return getattr(self._inner, "callback_status_count", 0)
+
+    @property
+    def queue_drop_count(self) -> int:
+        return getattr(self._inner, "queue_drop_count", 0)
+
+    @property
+    def last_callback_status(self) -> object | None:
+        return getattr(self._inner, "last_callback_status", None)
+
+    def _emit_basic(self, message: str) -> None:
+        with contextlib.suppress(Exception):
+            if self.log_basic is not None:
+                self.log_basic(message)
+                return
+        logger.info(message)
+
+    def _emit_detailed(self, message: str) -> None:
+        with contextlib.suppress(Exception):
+            if self.log_detailed is not None:
+                self.log_detailed(message)
+                return
+        logger.debug(message)
+
+    async def frames(self) -> AsyncIterator[AudioFrameF32]:
+        while not self._closed:
+            inner = self._inner
+            if inner is None:
+                inner = await self._reopen_with_backoff()
+                if inner is None:
+                    return
+            iterator = inner.frames().__aiter__()
+            next_task: asyncio.Task | None = None
+            reopen_reason: str | None = None
+            try:
+                while True:
+                    if next_task is None:
+                        next_task = asyncio.ensure_future(iterator.__anext__())
+                    # asyncio.wait does NOT cancel on timeout — the generator
+                    # stays suspended and we can keep waiting on the same task
+                    # (wait_for would cancel it and kill the generator).
+                    done, _ = await asyncio.wait(
+                        {next_task}, timeout=self.starvation_timeout_s
+                    )
+                    if not done:
+                        if self._closed:
+                            return
+                        reopen_reason = await self._starved_health_reason(inner)
+                        if reopen_reason is None:
+                            if not self._idle_logged:
+                                self._idle_logged = True
+                                self._emit_detailed(
+                                    "[PeerAudio] No loopback frames for "
+                                    f"{self.starvation_timeout_s:.0f}s but device "
+                                    f"'{self.resolved_device_name}' looks healthy — "
+                                    "nothing is playing; still listening"
+                                )
+                            continue
+                        break
+                    task, next_task = next_task, None
+                    try:
+                        frame = task.result()
+                    except StopAsyncIteration:
+                        if self._closed:
+                            return
+                        reopen_reason = "capture stream ended unexpectedly"
+                        break
+                    except Exception as exc:
+                        if self._closed:
+                            return
+                        reopen_reason = f"capture stream failed: {exc}"
+                        break
+                    self._idle_logged = False
+                    yield frame
+                    if await self._saved_device_returned():
+                        reopen_reason = (
+                            f"saved output device '{self.device_name}' is available again"
+                        )
+                        break
+            finally:
+                if next_task is not None:
+                    next_task.cancel()
+                    with contextlib.suppress(BaseException):
+                        await next_task
+            if self._closed:
+                return
+            self._emit_basic(
+                f"[PeerAudio] Reopening desktop capture: {reopen_reason} "
+                f"(was device='{self.resolved_device_name}')"
+            )
+            await self._close_inner()
+
+    async def _starved_health_reason(self, inner: Any) -> str | None:
+        """Return why the stream should be reopened, or None if it's just idle."""
+        stream_active = None
+        with contextlib.suppress(Exception):
+            stream_active = inner.stream_is_active()
+        if stream_active is False:
+            return "stream reports inactive"
+
+        try:
+            probe = await asyncio.to_thread(self.probe_devices)
+        except Exception:
+            # Can't verify — don't churn the stream on a probe failure.
+            return None
+
+        open_name = str(getattr(inner, "resolved_device_name", "") or "")
+        current = next((d for d in probe.devices if d.name == open_name), None)
+        if current is None:
+            return f"device '{open_name}' disappeared"
+        if current.index != int(getattr(inner, "resolved_device_index", -1)):
+            return f"device '{open_name}' endpoint was re-created"
+        if not self.device_name or bool(getattr(inner, "used_default_fallback", False)):
+            default_name = probe.default_device.name if probe.default_device else ""
+            if default_name and default_name != open_name:
+                return f"default output changed to '{default_name}'"
+        return None
+
+    async def _saved_device_returned(self) -> bool:
+        """While running on a fallback device, watch for the saved one to return."""
+        if self._closed or not self.device_name:
+            return False
+        inner = self._inner
+        if inner is None or not bool(getattr(inner, "used_default_fallback", False)):
+            return False
+        now = time.monotonic()
+        if now - self._last_fallback_recheck_monotonic_s < self.fallback_recheck_interval_s:
+            return False
+        self._last_fallback_recheck_monotonic_s = now
+        try:
+            probe = await asyncio.to_thread(self.probe_devices)
+        except Exception:
+            return False
+        return any(d.name == self.device_name for d in probe.devices)
+
+    async def _reopen_with_backoff(self) -> Any | None:
+        attempt = 0
+        while not self._closed:
+            try:
+                # Must run ON the loop: the source's janus.Queue binds to the
+                # running loop at creation and raises in a worker thread. The
+                # ~100-300ms PyAudio init only happens on rare reopens.
+                inner = self.source_factory(self.device_name)
+            except Exception as exc:
+                delay = self.reopen_backoff_s[
+                    min(attempt, len(self.reopen_backoff_s) - 1)
+                ]
+                if attempt == 0:
+                    self._emit_basic(
+                        f"[PeerAudio] Could not reopen desktop capture ({exc}) — "
+                        f"retrying every {delay:.0f}s until an output device is back"
+                    )
+                else:
+                    self._emit_detailed(
+                        f"[PeerAudio] Capture reopen attempt {attempt + 1} failed: {exc}"
+                    )
+                attempt += 1
+                with contextlib.suppress(asyncio.TimeoutError, TimeoutError):
+                    await asyncio.wait_for(self._closed_event.wait(), timeout=delay)
+                continue
+            self._inner = inner
+            self._emit_basic(
+                "[PeerAudio] Capture reconnected: "
+                f"device='{getattr(inner, 'resolved_device_name', '')}' "
+                f"rate={getattr(inner, 'actual_sample_rate_hz', 0)}Hz "
+                f"fallback={bool(getattr(inner, 'used_default_fallback', False))}"
+            )
+            return inner
+        return None
+
+    async def _close_inner(self) -> None:
+        inner, self._inner = self._inner, None
+        if inner is not None:
+            with contextlib.suppress(Exception):
+                await inner.close()
+
+    async def close(self) -> None:
+        if self._closed:
+            return
+        self._closed = True
+        self._closed_event.set()
+        await self._close_inner()
 
 
 def _import_pyaudiowpatch() -> Any:

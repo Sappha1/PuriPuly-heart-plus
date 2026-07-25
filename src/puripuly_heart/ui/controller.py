@@ -56,7 +56,7 @@ from puripuly_heart.config.settings import (
     save_settings,
 )
 from puripuly_heart.core.audio.desktop_pipeline import DesktopPeerPipeline
-from puripuly_heart.core.audio.desktop_source import DesktopLoopbackAudioSource
+from puripuly_heart.core.audio.desktop_source import ResilientDesktopLoopbackSource
 from puripuly_heart.core.audio.diagnostics import compute_audio_frame_metrics
 from puripuly_heart.core.audio.gate import VrcMicAudioGate
 from puripuly_heart.core.audio.source import (
@@ -4824,7 +4824,14 @@ class GuiController:
         )
 
     def _create_peer_audio_source_from_runtime_config(self, config: PeerRuntimeConfig):
-        raw_source = DesktopLoopbackAudioSource(device_name=config.output_device)
+        # Resilient wrapper: survives headphone unplugs / endpoint re-creation by
+        # watching for frame starvation and reopening capture (2026-07-24: a
+        # mistaken unplug killed peer silently for 14 hours with zero log lines).
+        raw_source = ResilientDesktopLoopbackSource(
+            device_name=config.output_device,
+            log_basic=self.log_basic,
+            log_detailed=self.log_detailed,
+        )
         self.log_detailed(
             "[AudioDiag][Loopback][peer] "
             f"requested_device={config.output_device!r} "

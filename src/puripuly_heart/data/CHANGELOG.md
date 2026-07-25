@@ -2,6 +2,12 @@
 
 User-facing changes per build. The latest build's highlights also appear in-app when an update is ready.
 
+## r281 — 2026-07-24
+
+- Peer audio now survives headphone unplugs and device changes: if the capture feed dies (unplug, Bluetooth drop, driver power event) the app detects it within ~10 seconds and reconnects to whatever output device is live — no more silent deafness until restart
+- When your chosen output device comes back after being unplugged, capture switches back to it automatically
+- All of this is logged clearly ("Reopening desktop capture…", "Capture reconnected…") so device trouble is visible instead of invisible
+
 ## r280 — 2026-07-21
 
 - Fixed every message printing TWICE in the chat log when translation is off — two code paths were both writing the same line; now there is exactly one

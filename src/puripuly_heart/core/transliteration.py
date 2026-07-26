@@ -776,6 +776,25 @@ def transliterate_for_language(
     return ""
 
 
+def reading_script_root(text: str, language: str) -> str:
+    """Classify which per-language reading preference applies to this line.
+
+    Returns 'zh' (pinyin), 'ja' (romaji), 'ko' (romaja) or 'other' (latin).
+    Unknown/empty language falls back to sniffing the text's script, so
+    auto-detect entries still map to the right preference.
+    """
+    root = (language or "").lower().replace("_", "-").split("-")[0]
+    if not root:
+        root = (sniff_translit_language(text, "") or "").split("-")[0]
+    if root in ("zh", "cmn"):
+        return "zh"
+    if root in ("ja", "jpn"):
+        return "ja"
+    if root in ("ko", "kor"):
+        return "ko"
+    return "other"
+
+
 def sniff_translit_language(text: str, fallback: str = "") -> str:
     """Best-effort language from SCRIPT, for choosing a romanization system
     when the configured language can't be trusted (voice auto-detection,

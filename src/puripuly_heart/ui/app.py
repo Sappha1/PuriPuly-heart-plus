@@ -155,6 +155,7 @@ class TranslatorApp:
         self.view_dashboard.on_separate_target_pref_change = self._on_separate_target_pref_change
         self.view_dashboard.on_chatbox_format_change = self._on_chatbox_format_change
         self.view_dashboard.on_chat_log_format_change = self._on_chat_log_format_change
+        self.view_dashboard.on_chat_reading_flag_change = self._on_chat_reading_flag_change
         self.view_dashboard.on_request_current_translator = self._current_translator_model_value
         self.view_dashboard.on_request_deepl_usage_refresh = self._on_request_deepl_usage_refresh
         self.view_dashboard.on_request_stt_download = self._on_request_stt_download
@@ -2060,6 +2061,26 @@ class TranslatorApp:
                 return
             updated = copy.deepcopy(settings)
             updated.ui.chat_log_format = str(fmt)
+            await self.controller.apply_settings(updated)
+        self._queue_settings_mutation_task(_task)
+
+    def _on_chat_reading_flag_change(self, field: str, value: bool) -> None:
+        # Per-language chat reading lines (r284). The dashboard already renders
+        # new entries with the toggled flag; just persist it.
+        if field not in {
+            "chat_show_pinyin",
+            "chat_show_romaji",
+            "chat_show_romaja",
+            "chat_show_latin",
+        }:
+            return
+        import copy
+        async def _task():
+            settings = self.controller.settings
+            if settings is None:
+                return
+            updated = copy.deepcopy(settings)
+            setattr(updated.ui, field, bool(value))
             await self.controller.apply_settings(updated)
         self._queue_settings_mutation_task(_task)
 

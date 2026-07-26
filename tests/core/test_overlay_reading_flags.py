@@ -99,3 +99,50 @@ def test_old_config_without_keys_gets_locale_aware_default() -> None:
     assert loaded.overlay.show_pinyin is False  # zh UI -> own pinyin hidden
     assert loaded.overlay.show_romaji is True
     assert loaded.overlay.show_romaja is True
+
+
+def test_reading_script_root_classifier() -> None:
+    from puripuly_heart.core.transliteration import reading_script_root
+
+    assert reading_script_root("", "zh-CN") == "zh"
+    assert reading_script_root("", "cmn") == "zh"
+    assert reading_script_root("", "ja") == "ja"
+    assert reading_script_root("", "ko-KR") == "ko"
+    assert reading_script_root("", "en") == "other"
+    # Unknown language: sniff the script
+    assert reading_script_root(_ZH, "") == "zh"
+    assert reading_script_root(_JA, "") == "ja"
+    assert reading_script_root(_KO, "") == "ko"
+    assert reading_script_root("plain latin", "") == "other"
+
+
+def test_chat_reading_flags_first_run_defaults_and_roundtrip() -> None:
+    zh = new_settings_for_first_run("zh-CN").ui
+    assert (zh.chat_show_pinyin, zh.chat_show_romaji, zh.chat_show_romaja) == (
+        False,
+        True,
+        True,
+    )
+    ko = new_settings_for_first_run("ko-KR").ui
+    assert (ko.chat_show_pinyin, ko.chat_show_romaji, ko.chat_show_romaja) == (
+        True,
+        True,
+        False,
+    )
+
+    settings = new_settings_for_first_run("en-US")
+    settings.ui.chat_show_romaji = False
+    loaded = from_dict(to_dict(settings))
+    assert loaded.ui.chat_show_romaji is False
+    assert loaded.ui.chat_show_pinyin is True
+
+
+def test_chat_flags_old_config_gets_locale_aware_default() -> None:
+    settings = new_settings_for_first_run("ja-JP")
+    data = to_dict(settings)
+    for key in ("chat_show_pinyin", "chat_show_romaji", "chat_show_romaja", "chat_show_latin"):
+        data["ui"].pop(key, None)  # pre-r284 config
+    loaded = from_dict(data)
+    assert loaded.ui.chat_show_romaji is False  # ja UI -> own romaji hidden
+    assert loaded.ui.chat_show_pinyin is True
+    assert loaded.ui.chat_show_romaja is True

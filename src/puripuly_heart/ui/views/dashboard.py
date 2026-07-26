@@ -18,7 +18,7 @@ from puripuly_heart.ui.fonts import font_for_language
 from puripuly_heart.ui.i18n import get_locale, language_name, t
 from puripuly_heart.ui.overlay_peer_contract import OverlayPeerConsumerContract
 
-_BUILD_TAG = "r283"  #increment each build so user can confirm version
+_BUILD_TAG = "r284"  #increment each build so user can confirm version
 
 # ── VRCT-style dark palette ──────────────────────────────────────────────────
 _BG_MAIN = "#2e2f32"
@@ -421,6 +421,12 @@ class DashboardView(ft.Row):
         # "send translation only in game, but log everything" works.
         self._chat_log_format = "orig_read_trans"
         self.on_chat_log_format_change: object = None  # callback(fmt_id: str)
+        # Per-language chat reading lines (r284) — mirrors settings.ui.chat_show_*.
+        self._chat_show_pinyin = True
+        self._chat_show_romaji = True
+        self._chat_show_romaja = True
+        self._chat_show_latin = True
+        self.on_chat_reading_flag_change: object = None  # callback(field, value)
         self.translation_needs_key = False
         self.stt_needs_key = False
         self.last_sent_text = t("dashboard.ready")
@@ -514,6 +520,12 @@ class DashboardView(ft.Row):
                 _sd.get("languages", {}).get("separate_target_language", ""))
             self._chat_log_format = str(
                 _sd.get("ui", {}).get("chat_log_format", "orig_read_trans"))
+            _ui_sd = _sd.get("ui", {})
+            _loc_root = str(_ui_sd.get("locale", "") or "").lower().replace("_", "-").split("-")[0]
+            self._chat_show_pinyin = bool(_ui_sd.get("chat_show_pinyin", _loc_root != "zh"))
+            self._chat_show_romaji = bool(_ui_sd.get("chat_show_romaji", _loc_root != "ja"))
+            self._chat_show_romaja = bool(_ui_sd.get("chat_show_romaja", _loc_root != "ko"))
+            self._chat_show_latin = bool(_ui_sd.get("chat_show_latin", True))
         except Exception:
             pass
         self._ocr_prewarm = bool(_ocr_p.get("prewarm", True))
@@ -3492,6 +3504,21 @@ class DashboardView(ft.Row):
         except Exception:
             pass
 
+    def _chat_reading_allowed(self, text: str, lang: str) -> bool:
+        """Per-language chat reading preference (r284): a native reader hides
+        the reading for their own language, keeps the rest."""
+        try:
+            from puripuly_heart.core.transliteration import reading_script_root
+
+            root = reading_script_root(text or "", lang or "")
+        except Exception:
+            return True
+        return {
+            "zh": self._chat_show_pinyin,
+            "ja": self._chat_show_romaji,
+            "ko": self._chat_show_romaja,
+        }.get(root, self._chat_show_latin)
+
     def append_chat_entry(
         self,
         *,
@@ -3558,10 +3585,10 @@ class DashboardView(ft.Row):
             # even when the user's own display toggles differ.
             _want_pinyin = _want_romaji = True
         if has_translation:
-            translit_src = transliterate_for_language(
+            translit_src = "" if not self._chat_reading_allowed(source_text, src_lang) else transliterate_for_language(
                 source_text, src_lang, show_pinyin=_want_pinyin, show_romaji=_want_romaji, show_latin=_want_latin
             )
-            translit_tgt = transliterate_for_language(
+            translit_tgt = "" if not self._chat_reading_allowed(translated_text, tgt_lang) else transliterate_for_language(
                 translated_text, tgt_lang, show_pinyin=_want_pinyin, show_romaji=_want_romaji, show_latin=_want_latin
             )
             # Source text with optional transliteration (if source is CJK)
@@ -3580,7 +3607,7 @@ class DashboardView(ft.Row):
             else:
                 content_rows.append(ft.Text(translated_text.strip(), size=13, color=_TEXT_PRIMARY, weight=ft.FontWeight.W_500))
         elif translated_text:
-            translit = transliterate_for_language(
+            translit = "" if not self._chat_reading_allowed(translated_text, tgt_lang) else transliterate_for_language(
                 translated_text, tgt_lang, show_pinyin=_want_pinyin, show_romaji=_want_romaji, show_latin=_want_latin
             )
             if translit:
@@ -3652,7 +3679,7 @@ class DashboardView(ft.Row):
         for lang_code, text in extra_pairs:
             if not text.strip():
                 continue
-            translit = transliterate_for_language(
+            translit = "" if not self._chat_reading_allowed(text, lang_code) else transliterate_for_language(
                 text, lang_code, show_pinyin=_want_pinyin, show_romaji=_want_romaji, show_latin=_want_latin
             )
             if translit:
@@ -4523,6 +4550,46 @@ class DashboardView(ft.Row):
             _log_fmt_cur if _log_fmt_cur in fmt_ids else "orig_trans",
             self._pick_chat_log_fmt,
             "dashboard.translit.menu.log_short")
+
+        # ── per-language chat reading checkboxes (indented under the log format).
+        _chat_reading_spec = [
+            ("dashboard.overlay.reading.pinyin", "_chat_show_pinyin", "chat_show_pinyin"),
+            ("dashboard.overlay.reading.romaji", "_chat_show_romaji", "chat_show_romaji"),
+            ("dashboard.overlay.reading.romaja", "_chat_show_romaja", "chat_show_romaja"),
+            ("dashboard.overlay.reading.latin",  "_chat_show_latin",  "chat_show_latin"),
+        ]
+        _chat_reading_rows: list[Any] = []
+        for key, attr, field_name in _chat_reading_spec:
+            state = [getattr(self, attr)]
+            _lbl = ft.Text(t(key), size=11, color=_TEXT_PRIMARY, expand=True)
+            _chk_icon = ft.Icon(
+                ft.Icons.CHECK_BOX if state[0] else ft.Icons.CHECK_BOX_OUTLINE_BLANK,
+                size=14, color=_TOGGLE_ON if state[0] else _TEXT_FAINT,
+            )
+            def _on_chat_reading_row(_ev, _attr=attr, _fn=field_name, _s=state, _ic=_chk_icon):
+                _s[0] = not _s[0]
+                setattr(self, _attr, _s[0])
+                _ic.name = ft.Icons.CHECK_BOX if _s[0] else ft.Icons.CHECK_BOX_OUTLINE_BLANK
+                _ic.color = _TOGGLE_ON if _s[0] else _TEXT_FAINT
+                try:
+                    _ic.update()
+                except Exception: pass
+                if callable(self.on_chat_reading_flag_change):
+                    self.on_chat_reading_flag_change(_fn, _s[0])
+            _chat_reading_rows.append(ft.Container(
+                content=ft.Row([_chk_icon, _lbl], spacing=8,
+                               vertical_alignment=ft.CrossAxisAlignment.CENTER),
+                padding=ft.padding.only(left=26, right=10, top=4, bottom=4),
+                border_radius=5,
+                on_click=_on_chat_reading_row,
+                on_hover=lambda e: (
+                    setattr(e.control, "bgcolor", "#2a3040" if e.data == "true" else ft.Colors.TRANSPARENT)
+                    or (e.control.update() if e.control.page else None)
+                ),
+            ))
+        _log_fmt_section = ft.Column(
+            [_log_fmt_section, *_chat_reading_rows], spacing=0, tight=True,
+        )
 
         # ── overlay reading + grouped pinyin (On/Off pills), reading langs only ──
         extra_rows: list[Any] = []

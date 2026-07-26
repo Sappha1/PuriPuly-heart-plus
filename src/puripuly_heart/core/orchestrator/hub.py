@@ -1768,21 +1768,17 @@ class ClientHub:
     def _overlay_reading_allowed(self, text: str, language: str) -> bool:
         """Per-language reading-line preference (a zh native can hide pinyin but
         keep Korean romaja). Unknown language falls back to script sniffing."""
-        root = (language or "").lower().replace("_", "-").split("-")[0]
-        if not root:
-            try:
-                from puripuly_heart.core.transliteration import sniff_translit_language
+        try:
+            from puripuly_heart.core.transliteration import reading_script_root
 
-                root = (sniff_translit_language(text, "") or "").split("-")[0]
-            except Exception:
-                root = ""
-        if root in ("zh", "cmn"):
-            return self.overlay_show_pinyin
-        if root in ("ja", "jpn"):
-            return self.overlay_show_romaji
-        if root in ("ko", "kor"):
-            return self.overlay_show_romaja
-        return self.overlay_show_latin
+            root = reading_script_root(text, language)
+        except Exception:
+            return True
+        return {
+            "zh": self.overlay_show_pinyin,
+            "ja": self.overlay_show_romaji,
+            "ko": self.overlay_show_romaja,
+        }.get(root, self.overlay_show_latin)
 
     def _peer_text_passes_language_filter(self, text: str) -> bool:
         """Return False if the text should be rejected by the target-language-only filter."""

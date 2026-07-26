@@ -2,6 +2,12 @@
 
 User-facing changes per build. The latest build's highlights also appear in-app when an update is ready.
 
+## r284 — 2026-07-26
+
+- The per-language reading toggles now also cover the chat feed: options menu → under the "Chat log" format, tick/untick Chinese pinyin, Japanese romaji, Korean romaja, other Latin — independent from the overlay's toggles
+- Chat readings follow the same native default: your own UI language's reading starts hidden (zh → pinyin, ja → romaji, ko → romaja)
+- Menu labels no longer end in a garbled ellipsis on some fonts ("Remove OCR module..." and friends now use plain dots)
+
 ## r283 — 2026-07-26
 
 - New per-language reading lines on the overlay: right-click the overlay button → Display → untick just the readings you don't need (Chinese pinyin, Japanese romaji, Korean romaja, other Latin) — a Chinese reader can hide pinyin while keeping Korean romaja

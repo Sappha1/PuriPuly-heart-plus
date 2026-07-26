@@ -895,6 +895,12 @@ class UiSettings:
     unified_translation_ui: bool = True
     # In-app chat log format — independent of the chatbox output format.
     chat_log_format: str = "orig_read_trans"
+    # Per-language reading lines in the chat log (mirror of the overlay's r283
+    # flags, independent values). Native default: own language's reading off.
+    chat_show_pinyin: bool = True
+    chat_show_romaji: bool = True
+    chat_show_romaja: bool = True
+    chat_show_latin: bool = True
     # Debug: mirror every outbound translation API request (prompt, context,
     # text, languages) into the program log so the user can inspect exactly
     # what is sent to which server. Off by default.
@@ -1669,6 +1675,10 @@ def to_dict(settings: AppSettings) -> dict[str, Any]:
             "filter_peer_by_target_languages": settings.ui.filter_peer_by_target_languages,
             "unified_translation_ui": settings.ui.unified_translation_ui,
         "chat_log_format": settings.ui.chat_log_format,
+        "chat_show_pinyin": settings.ui.chat_show_pinyin,
+        "chat_show_romaji": settings.ui.chat_show_romaji,
+        "chat_show_romaja": settings.ui.chat_show_romaja,
+        "chat_show_latin": settings.ui.chat_show_latin,
             "log_api_request_content": settings.ui.log_api_request_content,
             "ptt_mute_sync": settings.ui.ptt_mute_sync,
             "show_pending_echo": settings.ui.show_pending_echo,
@@ -2572,6 +2582,9 @@ def new_settings_for_first_run(system_locale: str | None = None) -> AppSettings:
     settings.overlay.show_pinyin = own_root != "zh"
     settings.overlay.show_romaji = own_root != "ja"
     settings.overlay.show_romaja = own_root != "ko"
+    settings.ui.chat_show_pinyin = own_root != "zh"
+    settings.ui.chat_show_romaji = own_root != "ja"
+    settings.ui.chat_show_romaja = own_root != "ko"
     ensure_prompt_defaults(settings)
     # If the user is on a China timezone, default to Bing (Google is blocked there)
     normalized_locale = _normalize_first_run_locale(system_locale)
@@ -4003,6 +4016,16 @@ def from_dict(data: dict[str, Any]) -> AppSettings:
             filter_peer_by_target_languages=bool(ui_data.get("filter_peer_by_target_languages", False)),
             unified_translation_ui=bool(ui_data.get("unified_translation_ui", True)),
         chat_log_format=str(ui_data.get("chat_log_format", "orig_read_trans")),
+        chat_show_pinyin=bool(
+            ui_data.get("chat_show_pinyin", _ui_locale_root(ui_data) != "zh")
+        ),
+        chat_show_romaji=bool(
+            ui_data.get("chat_show_romaji", _ui_locale_root(ui_data) != "ja")
+        ),
+        chat_show_romaja=bool(
+            ui_data.get("chat_show_romaja", _ui_locale_root(ui_data) != "ko")
+        ),
+        chat_show_latin=bool(ui_data.get("chat_show_latin", True)),
         log_api_request_content=bool(ui_data.get("log_api_request_content", False)),
         ptt_mute_sync=bool(ui_data.get("ptt_mute_sync", False)),
             show_pending_echo=bool(ui_data.get("show_pending_echo", True)),

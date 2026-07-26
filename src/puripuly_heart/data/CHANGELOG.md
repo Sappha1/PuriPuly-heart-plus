@@ -2,6 +2,13 @@
 
 User-facing changes per build. The latest build's highlights also appear in-app when an update is ready.
 
+## r288 — 2026-07-26
+
+- The auto-detect badge now sits above the + button instead of squeezing the language card (no more truncated "Chinese (Simplifi...")
+- Turning auto-detect on now visually renames the picker to "Auto Detect" (and back to the pinned language when off)
+- The filtered-voice notice now uses your UI language for language names (no more "English" dropped into a Chinese sentence)
+- The overlay right-click menu no longer shows "show my text/messages" as ON after a restart when you had turned them off — the saved choice always applied, but the menu lied
+
 ## r287 — 2026-07-26
 
 - HOTFIX: r286's auto-detect badge and TRANS-off dimming were attached to the hidden separate-layout card — they now appear on the unified Translation card everyone actually sees (badge sits next to the Target language picker)

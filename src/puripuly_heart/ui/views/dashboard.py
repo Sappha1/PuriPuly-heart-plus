@@ -18,7 +18,7 @@ from puripuly_heart.ui.fonts import font_for_language
 from puripuly_heart.ui.i18n import get_locale, language_name, t
 from puripuly_heart.ui.overlay_peer_contract import OverlayPeerConsumerContract
 
-_BUILD_TAG = "r287"  #increment each build so user can confirm version
+_BUILD_TAG = "r288"  #increment each build so user can confirm version
 
 # ── VRCT-style dark palette ──────────────────────────────────────────────────
 _BG_MAIN = "#2e2f32"
@@ -526,6 +526,11 @@ class DashboardView(ft.Row):
             self._chat_show_romaji = bool(_ui_sd.get("chat_show_romaji", _loc_root != "ja"))
             self._chat_show_romaja = bool(_ui_sd.get("chat_show_romaja", _loc_root != "ko"))
             self._chat_show_latin = bool(_ui_sd.get("chat_show_latin", True))
+            # The right-click menu state must reflect the SAVED choice — these
+            # attrs were hardcoded True, so "show my text/messages" looked
+            # re-enabled on every launch even though the saved False applied.
+            self._self_in_overlay = bool(_ui_sd.get("self_in_overlay", True))
+            self._typed_in_overlay = bool(_ui_sd.get("typed_in_overlay", True))
         except Exception:
             pass
         self._ocr_prewarm = bool(_ocr_p.get("prewarm", True))
@@ -750,11 +755,12 @@ class DashboardView(ft.Row):
             spacing=4,
             vertical_alignment=ft.CrossAxisAlignment.CENTER,
         )
-        _tgt_plus_slot = ft.Container(content=self._plus_btn, width=_BTN_SLOT, alignment=ft.alignment.center_left)
         # Voice auto-detect badge: shows at a glance whether incoming voice is
         # auto-detected (teal) or pinned to specific language(s) (grey), and
         # toggles it with one click — the state used to be buried in the
         # options menu while silently deciding which languages get filtered.
+        # Lives INSIDE the fixed button slot, stacked above +, so it never
+        # steals width from the language card.
         self._auto_detect_badge_icons = []
 
         def _make_auto_detect_badge() -> ft.Container:
@@ -767,16 +773,24 @@ class DashboardView(ft.Row):
                 content=icon,
                 tooltip=t("dashboard.tooltip.auto_detect_badge"),
                 on_click=self._on_auto_detect_badge_click,
-                padding=ft.padding.only(left=2, right=2),
+                padding=ft.padding.only(left=4),
             )
             self._static_tooltip_registry.append(
                 (badge, "dashboard.tooltip.auto_detect_badge"))
             return badge
 
         self._make_auto_detect_badge = _make_auto_detect_badge
+        _tgt_plus_slot = ft.Container(
+            content=ft.Column(
+                [_make_auto_detect_badge(), self._plus_btn],
+                spacing=2, tight=True,
+            ),
+            width=_BTN_SLOT,
+            alignment=ft.alignment.center_left,
+        )
         _tgt1_with_plus = ft.Row(
-            [self._tgt1_lang_card, _make_auto_detect_badge(), _tgt_plus_slot],
-            spacing=2,
+            [self._tgt1_lang_card, _tgt_plus_slot],
+            spacing=4,
             vertical_alignment=ft.CrossAxisAlignment.CENTER,
         )
 
@@ -877,13 +891,16 @@ class DashboardView(ft.Row):
             padding=ft.padding.only(left=4),
         )
         self._peer_src_plus_slot = ft.Container(
-            content=self._peer_src_plus_btn,
+            content=ft.Column(
+                [self._make_auto_detect_badge(), self._peer_src_plus_btn],
+                spacing=2, tight=True,
+            ),
             width=_BTN_SLOT,
             alignment=ft.alignment.center_left,
         )
         _peer_src_row = ft.Row(
-            [self._peer_src_card, self._make_auto_detect_badge(), self._peer_src_plus_slot],
-            spacing=2,
+            [self._peer_src_card, self._peer_src_plus_slot],
+            spacing=4,
             vertical_alignment=ft.CrossAxisAlignment.CENTER,
         )
         self._extra_peer_src_rows_col = ft.Column(
@@ -2677,6 +2694,7 @@ class DashboardView(ft.Row):
         val = not bool(self._auto_detect_voice)
         self._auto_detect_voice = val
         self._sync_auto_detect_badge()
+        self._refresh_language_rows()
         if callable(self.on_auto_detect_voice_change):
             self.on_auto_detect_voice_change(val)
 
@@ -4695,6 +4713,7 @@ class DashboardView(ft.Row):
         def _on_adv(val: bool):
             self._auto_detect_voice = bool(val)
             self._sync_auto_detect_badge()
+            self._refresh_language_rows()
             if callable(self.on_auto_detect_voice_change):
                 self.on_auto_detect_voice_change(bool(val))
 
@@ -5524,7 +5543,12 @@ class DashboardView(ft.Row):
         return t(key, language=language_name(lang_code))
 
     def _refresh_language_rows(self) -> None:
-        src_name = language_name(self._effective_peer_source_lang_code())
+        # With voice auto-detect on, the picker shows "Auto Detect" — the
+        # pinned language is inert for incoming voice while the flag is set.
+        src_name = (
+            language_name("") if self._auto_detect_voice
+            else language_name(self._effective_peer_source_lang_code())
+        )
         tgt_name = language_name(self._effective_peer_target_lang_code())
         self._peer_src_card.content.controls[0].value = src_name
         self._peer_tgt_card.content.controls[0].value = tgt_name

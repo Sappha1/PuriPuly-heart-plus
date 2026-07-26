@@ -2021,16 +2021,19 @@ class ClientHub:
             if lang and lang.strip()
         ]
         try:
-            names = ", ".join(get_llm_language_name(lang) for lang in chosen) or "the chosen language"
+            # Locale-aware names (the core get_llm_language_name is English-only
+            # and would inject "English" into a zh/ja/ko sentence).
+            from puripuly_heart.ui.i18n import language_name as _lname
+
+            names = ", ".join(_lname(lang) for lang in chosen) or "the chosen language"
         except Exception:
             names = "the chosen language"
         detected = ""
         try:
             from puripuly_heart.core.transliteration import sniff_translit_language
+            from puripuly_heart.ui.i18n import language_name as _lname
 
-            detected = get_llm_language_name(
-                sniff_translit_language(transcript_text or "", "") or "en"
-            )
+            detected = _lname(sniff_translit_language(transcript_text or "", "") or "en")
         except Exception:
             detected = ""
         try:

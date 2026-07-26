@@ -2105,6 +2105,10 @@ class GuiController:
                 # Two-turn disabled — always render single-turn.
                 "single_turn_mode": True,  # was: self.settings.overlay.single_turn_mode
                 "show_romanization": getattr(self.settings.overlay, "show_romanization", True),
+                "show_pinyin": getattr(self.settings.overlay, "show_pinyin", True),
+                "show_romaji": getattr(self.settings.overlay, "show_romaji", True),
+                "show_romaja": getattr(self.settings.overlay, "show_romaja", True),
+                "show_latin": getattr(self.settings.overlay, "show_latin", True),
                 "show_translation": getattr(self.settings.overlay, "show_translation", True),
                 "show_peer_original": effective_show_peer_original(self.settings),
                 # Languages drive the edit-mode sample caption (peer speaks source,
@@ -2726,6 +2730,11 @@ class GuiController:
             or previous_single_turn != next_single_turn
             or getattr(previous_settings.overlay, "show_romanization", True)
             != getattr(next_settings.overlay, "show_romanization", True)
+            or any(
+                getattr(previous_settings.overlay, name, True)
+                != getattr(next_settings.overlay, name, True)
+                for name in ("show_pinyin", "show_romaji", "show_romaja", "show_latin")
+            )
             or getattr(previous_settings.overlay, "show_translation", True)
             != getattr(next_settings.overlay, "show_translation", True)
             or effective_show_peer_original(previous_settings)
@@ -2744,6 +2753,10 @@ class GuiController:
                     "outline_width": next_visual.outline_width,
                     "single_turn_mode": next_single_turn,
                     "show_romanization": getattr(next_settings.overlay, "show_romanization", True),
+                    "show_pinyin": getattr(next_settings.overlay, "show_pinyin", True),
+                    "show_romaji": getattr(next_settings.overlay, "show_romaji", True),
+                    "show_romaja": getattr(next_settings.overlay, "show_romaja", True),
+                    "show_latin": getattr(next_settings.overlay, "show_latin", True),
                     "show_translation": getattr(next_settings.overlay, "show_translation", True),
                     "show_peer_original": effective_show_peer_original(next_settings),
                     "peer_source_language": next_settings.languages.effective_peer_source,
@@ -4347,6 +4360,10 @@ class GuiController:
             self.hub.show_romaji = bool(getattr(settings.ui, "show_romaji", False))
             self.hub.show_latin = bool(getattr(settings.ui, "show_latin", False))
             self.hub.overlay_show_romanization = bool(getattr(settings.overlay, "show_romanization", True))
+            self.hub.overlay_show_pinyin = bool(getattr(settings.overlay, "show_pinyin", True))
+            self.hub.overlay_show_romaji = bool(getattr(settings.overlay, "show_romaji", True))
+            self.hub.overlay_show_romaja = bool(getattr(settings.overlay, "show_romaja", True))
+            self.hub.overlay_show_latin = bool(getattr(settings.overlay, "show_latin", True))
             self.hub.self_in_overlay = bool(getattr(settings.ui, "self_in_overlay", True))
             self.hub.typed_in_overlay = bool(getattr(settings.ui, "typed_in_overlay", True))
             self.hub.filter_peer_by_target_languages = bool(getattr(settings.ui, "filter_peer_by_target_languages", False))
@@ -4594,6 +4611,10 @@ class GuiController:
             self.hub.show_pinyin = bool(getattr(next_settings.ui, "show_pinyin", False))
             self.hub.show_romaji = bool(getattr(next_settings.ui, "show_romaji", False))
             self.hub.overlay_show_romanization = bool(getattr(next_settings.overlay, "show_romanization", True))
+            self.hub.overlay_show_pinyin = bool(getattr(next_settings.overlay, "show_pinyin", True))
+            self.hub.overlay_show_romaji = bool(getattr(next_settings.overlay, "show_romaji", True))
+            self.hub.overlay_show_romaja = bool(getattr(next_settings.overlay, "show_romaja", True))
+            self.hub.overlay_show_latin = bool(getattr(next_settings.overlay, "show_latin", True))
             self.hub.self_in_overlay = bool(getattr(next_settings.ui, "self_in_overlay", True))
             self.hub.typed_in_overlay = bool(getattr(next_settings.ui, "typed_in_overlay", True))
             self.hub.filter_peer_by_target_languages = bool(getattr(next_settings.ui, "filter_peer_by_target_languages", False))

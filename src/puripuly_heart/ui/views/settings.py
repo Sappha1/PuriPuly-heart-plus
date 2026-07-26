@@ -2804,7 +2804,7 @@ class SettingsView(ft.Column):
     def _stt_option_item(self, provider: STTProviderName) -> OptionItem:
         needs_key = self._stt_needs_key(provider)
         base_desc = t(f"provider.{provider.value}.description", default="")
-        description = (base_desc + " — " if base_desc else "") + "Requires API key" if needs_key else base_desc
+        description = (base_desc + " — " if base_desc else "") + t("settings_modal.requires_api_key_short") if needs_key else base_desc
         return OptionItem(
             value=provider.value,
             label=provider_label(provider.value),
@@ -3595,7 +3595,7 @@ class SettingsView(ft.Column):
             else:
                 needs_key = not _model_key_map.get(model, True)
             base_desc = t(f"settings.translation_model.{model.value}.description", default="")
-            description = (base_desc + " — " if base_desc else "") + "Requires API key" if needs_key else base_desc
+            description = (base_desc + " — " if base_desc else "") + t("settings_modal.requires_api_key_short") if needs_key else base_desc
             # NOT disabled when the key is missing: selecting the model is what
             # makes its key field appear below (visibility follows the active
             # provider), so greying it out dead-ended key entry. Translation

@@ -18,7 +18,7 @@ from puripuly_heart.ui.fonts import font_for_language
 from puripuly_heart.ui.i18n import get_locale, language_name, t
 from puripuly_heart.ui.overlay_peer_contract import OverlayPeerConsumerContract
 
-_BUILD_TAG = "r282"  #increment each build so user can confirm version
+_BUILD_TAG = "r283"  #increment each build so user can confirm version
 
 # ── VRCT-style dark palette ──────────────────────────────────────────────────
 _BG_MAIN = "#2e2f32"
@@ -998,6 +998,10 @@ class DashboardView(ft.Row):
         self._overlay_show_original: bool = True
         self._overlay_show_translation: bool = True
         self._overlay_show_romanization: bool = True
+        self._overlay_show_pinyin: bool = True
+        self._overlay_show_romaji: bool = True
+        self._overlay_show_romaja: bool = True
+        self._overlay_show_latin: bool = True
         self._overlay_locked: bool = False
         self._overlay_background_alpha: float = 0.5
         self._overlay_target_pref: str = "steamvr"  # stored preference (not active)
@@ -3007,6 +3011,45 @@ class DashboardView(ft.Row):
                 padding=ft.padding.only(left=18, right=10, top=6, bottom=6),
                 border_radius=5,
                 on_click=_on_row,
+                on_hover=lambda e: (
+                    setattr(e.control, "bgcolor", "#2a3040" if e.data == "true" else ft.Colors.TRANSPARENT)
+                    or (e.control.update() if e.control.page else None)
+                ),
+            ))
+
+        # ── per-language reading rows (indented under "Show pinyin/latin") ──────
+        # A native reader can hide the reading for their own language while keeping
+        # the others (zh user: no pinyin, still sees Korean romaja). These do not
+        # feed the summary pill — the master row above represents them.
+        _reading_spec = [
+            ("dashboard.overlay.reading.pinyin", "_overlay_show_pinyin", "show_pinyin"),
+            ("dashboard.overlay.reading.romaji", "_overlay_show_romaji", "show_romaji"),
+            ("dashboard.overlay.reading.romaja", "_overlay_show_romaja", "show_romaja"),
+            ("dashboard.overlay.reading.latin",  "_overlay_show_latin",  "show_latin"),
+        ]
+        for key, attr, field_name in _reading_spec:
+            state = [getattr(self, attr)]
+            _lbl = ft.Text(t(key), size=11, color=_TEXT_PRIMARY, expand=True)
+            _chk_icon = ft.Icon(
+                ft.Icons.CHECK_BOX if state[0] else ft.Icons.CHECK_BOX_OUTLINE_BLANK,
+                size=14, color=_TOGGLE_ON if state[0] else _TEXT_FAINT,
+            )
+            def _on_reading_row(_ev, _attr=attr, _fn=field_name, _s=state, _ic=_chk_icon):
+                _s[0] = not _s[0]
+                setattr(self, _attr, _s[0])
+                _ic.name = ft.Icons.CHECK_BOX if _s[0] else ft.Icons.CHECK_BOX_OUTLINE_BLANK
+                _ic.color = _TOGGLE_ON if _s[0] else _TEXT_FAINT
+                try:
+                    _ic.update()
+                except Exception: pass
+                if callable(self.on_overlay_display_toggle):
+                    self.on_overlay_display_toggle(_fn, _s[0])
+            _chk_rows.append(ft.Container(
+                content=ft.Row([_chk_icon, _lbl], spacing=8,
+                               vertical_alignment=ft.CrossAxisAlignment.CENTER),
+                padding=ft.padding.only(left=34, right=10, top=4, bottom=4),
+                border_radius=5,
+                on_click=_on_reading_row,
                 on_hover=lambda e: (
                     setattr(e.control, "bgcolor", "#2a3040" if e.data == "true" else ft.Colors.TRANSPARENT)
                     or (e.control.update() if e.control.page else None)

@@ -1055,6 +1055,12 @@ class OverlaySettings:
     # Show romanization (pinyin/romaji/latin) in the overlay. Off keeps it out of the
     # overlay while the chat log still shows it.
     show_romanization: bool = True
+    # Per-language reading lines, applied only while show_romanization is on. Lets a
+    # Chinese reader keep Korean romaja while hiding pinyin they don't need (r283).
+    show_pinyin: bool = True
+    show_romaji: bool = True
+    show_romaja: bool = True
+    show_latin: bool = True
     # When True (default), show_peer_original is ignored and the overlay instead
     # mirrors osc.chatbox_include_source, so "send translation only" in General
     # applies consistently to both the VRChat chatbox and the overlay. Clicking the
@@ -1078,6 +1084,14 @@ class OverlaySettings:
             self.auto_switch = True
         if not isinstance(self.show_romanization, bool):
             self.show_romanization = True
+        if not isinstance(self.show_pinyin, bool):
+            self.show_pinyin = True
+        if not isinstance(self.show_romaji, bool):
+            self.show_romaji = True
+        if not isinstance(self.show_romaja, bool):
+            self.show_romaja = True
+        if not isinstance(self.show_latin, bool):
+            self.show_latin = True
         if not isinstance(self.peer_original_follows_chatbox_format, bool):
             self.peer_original_follows_chatbox_format = True
         self.calibration.validate()
@@ -1558,6 +1572,10 @@ def to_dict(settings: AppSettings) -> dict[str, Any]:
             "show_self": settings.overlay.show_self,
             "single_turn_mode": settings.overlay.single_turn_mode,
             "show_romanization": settings.overlay.show_romanization,
+            "show_pinyin": settings.overlay.show_pinyin,
+            "show_romaji": settings.overlay.show_romaji,
+            "show_romaja": settings.overlay.show_romaja,
+            "show_latin": settings.overlay.show_latin,
             "peer_original_follows_chatbox_format": (
                 settings.overlay.peer_original_follows_chatbox_format
             ),
@@ -2538,11 +2556,22 @@ def _detect_china_timezone() -> bool:
         return False
 
 
+def _ui_locale_root(ui_data: Any) -> str:
+    """Language root of the UI locale ('zh-CN' -> 'zh') for native-reader defaults."""
+    raw = str(ui_data.get("locale", "") or "")
+    return raw.lower().replace("_", "-").split("-")[0]
+
+
 def new_settings_for_first_run(system_locale: str | None = None) -> AppSettings:
     if system_locale is None:
         system_locale = detect_system_locale()
     settings = AppSettings()
     settings.ui.locale = resolve_first_run_ui_locale(system_locale)
+    # Native readers don't want the reading line for their own language.
+    own_root = _ui_locale_root({"locale": settings.ui.locale})
+    settings.overlay.show_pinyin = own_root != "zh"
+    settings.overlay.show_romaji = own_root != "ja"
+    settings.overlay.show_romaja = own_root != "ko"
     ensure_prompt_defaults(settings)
     # If the user is on a China timezone, default to Bing (Google is blocked there)
     normalized_locale = _normalize_first_run_locale(system_locale)
@@ -3785,6 +3814,19 @@ def from_dict(data: dict[str, Any]) -> AppSettings:
             show_self=bool(overlay_data.get("show_self", True)),
             single_turn_mode=bool(overlay_data.get("single_turn_mode", True)),
             show_romanization=bool(overlay_data.get("show_romanization", True)),
+            # A native reader doesn't need the reading line for their OWN language
+            # (a zh user knows the hanzi; the pinyin is noise) — so that one
+            # defaults off, keyed on the UI locale. Other languages stay on.
+            show_pinyin=bool(
+                overlay_data.get("show_pinyin", _ui_locale_root(ui_data) != "zh")
+            ),
+            show_romaji=bool(
+                overlay_data.get("show_romaji", _ui_locale_root(ui_data) != "ja")
+            ),
+            show_romaja=bool(
+                overlay_data.get("show_romaja", _ui_locale_root(ui_data) != "ko")
+            ),
+            show_latin=bool(overlay_data.get("show_latin", True)),
             peer_original_follows_chatbox_format=bool(
                 overlay_data.get("peer_original_follows_chatbox_format", True)
             ),

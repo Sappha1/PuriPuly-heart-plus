@@ -1180,7 +1180,15 @@ class TranslatorApp:
     def _on_dashboard_overlay_display_toggle(self, field: str, value: bool) -> None:
         import copy as _copy
 
-        if field not in {"show_peer_original", "show_translation", "show_romanization"}:
+        if field not in {
+            "show_peer_original",
+            "show_translation",
+            "show_romanization",
+            "show_pinyin",
+            "show_romaji",
+            "show_romaja",
+            "show_latin",
+        }:
             return
         live = getattr(self.controller, "settings", None)
         if live is None:
@@ -1804,6 +1812,10 @@ class TranslatorApp:
                     dash._overlay_show_original = effective_show_peer_original(settings)
                     dash._overlay_show_translation = bool(getattr(_overlay, "show_translation", True))
                     dash._overlay_show_romanization = bool(getattr(_overlay, "show_romanization", True))
+                    dash._overlay_show_pinyin = bool(getattr(_overlay, "show_pinyin", True))
+                    dash._overlay_show_romaji = bool(getattr(_overlay, "show_romaji", True))
+                    dash._overlay_show_romaja = bool(getattr(_overlay, "show_romaja", True))
+                    dash._overlay_show_latin = bool(getattr(_overlay, "show_latin", True))
             except Exception:
                 pass
             try:

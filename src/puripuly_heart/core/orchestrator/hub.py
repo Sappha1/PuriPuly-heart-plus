@@ -131,6 +131,11 @@ class ClientHub:
     # When False, romanization (pinyin/romaji/latin) is suppressed in the OVERLAY only;
     # the chat log still shows it. Lets you keep pinyin in the log but not on-screen.
     overlay_show_romanization: bool = True
+    # Per-language reading lines (apply only while overlay_show_romanization is on).
+    overlay_show_pinyin: bool = True
+    overlay_show_romaji: bool = True
+    overlay_show_romaja: bool = True
+    overlay_show_latin: bool = True
     self_in_overlay: bool = True
     typed_in_overlay: bool = True
     extra_target_languages: list[str] = field(default_factory=list)
@@ -1743,11 +1748,14 @@ class ClientHub:
             return text
         if not text.strip():
             return text
+        if not self._overlay_reading_allowed(text, language):
+            return text
         if precomputed:
             return f"{precomputed}\n{text}"
         try:
             from puripuly_heart.core.transliteration import transliterate_for_language
-            # All scripts enabled: the language decides which reading applies.
+            # All scripts enabled: the language decides which reading applies;
+            # the per-language preference was already checked above.
             translit = transliterate_for_language(
                 text, language, show_pinyin=True, show_romaji=True, show_latin=True
             )
@@ -1756,6 +1764,25 @@ class ClientHub:
         except Exception:
             pass
         return text
+
+    def _overlay_reading_allowed(self, text: str, language: str) -> bool:
+        """Per-language reading-line preference (a zh native can hide pinyin but
+        keep Korean romaja). Unknown language falls back to script sniffing."""
+        root = (language or "").lower().replace("_", "-").split("-")[0]
+        if not root:
+            try:
+                from puripuly_heart.core.transliteration import sniff_translit_language
+
+                root = (sniff_translit_language(text, "") or "").split("-")[0]
+            except Exception:
+                root = ""
+        if root in ("zh", "cmn"):
+            return self.overlay_show_pinyin
+        if root in ("ja", "jpn"):
+            return self.overlay_show_romaji
+        if root in ("ko", "kor"):
+            return self.overlay_show_romaja
+        return self.overlay_show_latin
 
     def _peer_text_passes_language_filter(self, text: str) -> bool:
         """Return False if the text should be rejected by the target-language-only filter."""

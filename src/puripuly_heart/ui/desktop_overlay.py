@@ -340,6 +340,12 @@ class DesktopCaptionVisualState:
     # Whether romanization (pinyin/romaji) is shown — used so the edit-mode SAMPLE
     # matches the user's actual overlay romanization setting.
     show_romanization: bool = True
+    # Per-language reading flags (gate the sample's pinyin/romaji lines so the
+    # preview matches what the live overlay would actually show).
+    show_pinyin: bool = True
+    show_romaji: bool = True
+    show_romaja: bool = True
+    show_latin: bool = True
     # Whether single-turn mode is active — controls how many slots the sample shows.
     single_turn_mode: bool = True
     # Display toggles mirrored from presenter — used to make the sample match live output.
@@ -1518,6 +1524,10 @@ def _validated_visual_state(
         background_alpha=settings.background_alpha,
         outline_width=settings.outline_width,
         show_romanization=source.show_romanization,
+        show_pinyin=source.show_pinyin,
+        show_romaji=source.show_romaji,
+        show_romaja=source.show_romaja,
+        show_latin=source.show_latin,
         single_turn_mode=source.single_turn_mode,
         show_translation=source.show_translation,
         show_peer_original=source.show_peer_original,
@@ -2695,11 +2705,22 @@ class FletDesktopRendererWindow:
         source_text, source_roman = _desktop_sample_sentence_for(source_lang)
         reading_text, _reading_roman = _desktop_sample_sentence_for(reading_lang)
 
-        # Build peer secondary (source + optional romanization)
+        # Build peer secondary (source + optional romanization). The reading is
+        # gated per language, mirroring the live overlay's per-language flags.
+        def _reading_flag_for(lang: str) -> bool:
+            root = (lang or "").lower().replace("_", "-").split("-")[0]
+            if root in ("zh", "cmn"):
+                return bool(getattr(vs, "show_pinyin", True))
+            if root in ("ja", "jpn"):
+                return bool(getattr(vs, "show_romaji", True))
+            if root in ("ko", "kor"):
+                return bool(getattr(vs, "show_romaja", True))
+            return bool(getattr(vs, "show_latin", True))
+
         if show_peer_original:
             peer_secondary = (
                 f"{source_roman}\n{source_text}"
-                if (show_romanization and source_roman)
+                if (show_romanization and source_roman and _reading_flag_for(source_lang))
                 else source_text
             )
         else:
@@ -2724,7 +2745,11 @@ class FletDesktopRendererWindow:
         # secondary_text = English translation shown to peer.
         ja_original = "これはサンプルメッセージです"
         ja_romaji = "kore wa sanpuru messēji desu"
-        self_primary = f"{ja_romaji}\n{ja_original}" if show_romanization else ja_original
+        self_primary = (
+            f"{ja_romaji}\n{ja_original}"
+            if (show_romanization and _reading_flag_for("ja"))
+            else ja_original
+        )
         self_secondary = "This is a sample message" if show_translation else ""
 
         self_block = OverlayPresentationBlock(
@@ -4038,6 +4063,10 @@ def _parse_runtime_visual_state(payload: dict[str, object]) -> DesktopCaptionVis
     single_turn_raw = payload.get("single_turn_mode", True)
     show_translation_raw = payload.get("show_translation", True)
     show_peer_original_raw = payload.get("show_peer_original", True)
+    show_pinyin_raw = payload.get("show_pinyin", True)
+    show_romaji_raw = payload.get("show_romaji", True)
+    show_romaja_raw = payload.get("show_romaja", True)
+    show_latin_raw = payload.get("show_latin", True)
     peer_source_language_raw = payload.get("peer_source_language", "")
     peer_target_language_raw = payload.get("peer_target_language", "")
     return DesktopCaptionVisualState(
@@ -4045,6 +4074,10 @@ def _parse_runtime_visual_state(payload: dict[str, object]) -> DesktopCaptionVis
         background_alpha=float(background_alpha),
         outline_width=outline_width,
         show_romanization=bool(show_romanization_raw),
+        show_pinyin=bool(show_pinyin_raw),
+        show_romaji=bool(show_romaji_raw),
+        show_romaja=bool(show_romaja_raw),
+        show_latin=bool(show_latin_raw),
         single_turn_mode=bool(single_turn_raw),
         show_translation=bool(show_translation_raw),
         show_peer_original=bool(show_peer_original_raw),

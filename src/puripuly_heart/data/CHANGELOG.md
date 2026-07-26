@@ -2,6 +2,10 @@
 
 User-facing changes per build. The latest build's highlights also appear in-app when an update is ready.
 
+## r287 — 2026-07-26
+
+- HOTFIX: r286's auto-detect badge and TRANS-off dimming were attached to the hidden separate-layout card — they now appear on the unified Translation card everyone actually sees (badge sits next to the Target language picker)
+
 ## r286 — 2026-07-26
 
 - When incoming voice is dropped by the PEER language filter, the chat now tells you what happened and names the language ("Heard English speech, but PEER voice is set to Chinese…"), repeating at most every 5 minutes — no more silent nothing

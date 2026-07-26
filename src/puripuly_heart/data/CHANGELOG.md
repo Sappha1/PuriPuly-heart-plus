@@ -2,6 +2,12 @@
 
 User-facing changes per build. The latest build's highlights also appear in-app when an update is ready.
 
+## r282 — 2026-07-24
+
+- Fixed the desktop overlay failing with "bridge authentication failed" for users running a proxy/VPN tool (very common in China): the overlay's local connection was being routed into the system proxy — it now always connects directly
+- If the overlay process ever dies (e.g. killed by antivirus), turning the overlay on again now works instead of being locked out until an app restart
+- Overlay "can't connect" and "authentication rejected" are now reported as separate errors so the real cause is visible
+
 ## r281 — 2026-07-24
 
 - Peer audio now survives headphone unplugs and device changes: if the capture feed dies (unplug, Bluetooth drop, driver power event) the app detects it within ~10 seconds and reconnects to whatever output device is live — no more silent deafness until restart

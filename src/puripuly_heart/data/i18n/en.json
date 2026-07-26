@@ -166,6 +166,7 @@
   "settings.overlay.failure.manifest_invalid": "Overlay launch manifest is invalid",
   "settings.overlay.failure.contract_mismatch": "Overlay contract version mismatch",
   "settings.overlay.failure.bridge_auth_failed": "Overlay bridge authentication failed",
+  "settings.overlay.failure.bridge_unreachable": "Overlay could not connect to the app (blocked by security software or a proxy)",
   "settings.overlay.failure.startup_timeout": "Overlay startup timed out",
   "settings.overlay.failure.steamvr_not_installed": "SteamVR/OpenVR runtime is not installed",
   "settings.overlay.failure.steamvr_not_running": "SteamVR is off. If you want to use the desktop overlay, change it in Settings.",

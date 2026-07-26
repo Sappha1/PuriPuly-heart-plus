@@ -161,6 +161,7 @@
   "settings.overlay.failure.manifest_invalid": "オーバーレイ実行マニフェストが正しくありません",
   "settings.overlay.failure.contract_mismatch": "オーバーレイのコントラクトバージョンが合いません",
   "settings.overlay.failure.bridge_auth_failed": "オーバーレイブリッジの認証に失敗しました",
+  "settings.overlay.failure.bridge_unreachable": "オーバーレイがアプリに接続できませんでした（セキュリティソフトまたはプロキシにブロックされた可能性があります）",
   "settings.overlay.failure.startup_timeout": "オーバーレイの起動がタイムアウトしました",
   "settings.overlay.failure.steamvr_not_installed": "SteamVR/OpenVRランタイムがインストールされていません",
   "settings.overlay.failure.steamvr_not_running": "SteamVRがオフです。デスクトップオーバーレイを使いたい場合は、設定を変更してください。",

@@ -4416,14 +4416,20 @@ class DesktopOverlayRenderer:
     async def _connect_bridge(self) -> Any:
         timeout_s = max(0.1, self.manifest.startup_deadline_ms / 1000.0)
         try:
+            # proxy=None: websockets>=14 routes through http_proxy/ws_proxy env
+            # vars BY DEFAULT — Chinese users' local proxy tools (Clash etc.)
+            # swallowed this 127.0.0.1 connect and the overlay died at startup.
+            # The bridge is always loopback; never proxy it.
             return await asyncio.wait_for(
-                websockets.connect(self.manifest.bridge_url, ping_interval=None),
+                websockets.connect(
+                    self.manifest.bridge_url, ping_interval=None, proxy=None
+                ),
                 timeout=timeout_s,
             )
         except Exception as exc:
             raise DesktopOverlayStartupError(
-                "bridge_auth_failed",
-                "desktop overlay bridge authentication failed",
+                "bridge_unreachable",
+                "desktop overlay could not reach the app bridge",
             ) from exc
 
     async def _receive_initial_snapshot_and_runtime_controls(

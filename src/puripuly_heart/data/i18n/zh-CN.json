@@ -160,6 +160,7 @@
   "settings.overlay.failure.manifest_invalid": "叠加层启动清单无效",
   "settings.overlay.failure.contract_mismatch": "叠加层契约版本不匹配",
   "settings.overlay.failure.bridge_auth_failed": "叠加层桥接认证失败",
+  "settings.overlay.failure.bridge_unreachable": "叠加层无法连接到应用（可能被安全软件或代理拦截）",
   "settings.overlay.failure.startup_timeout": "叠加层启动超时",
   "settings.overlay.failure.steamvr_not_installed": "未安装 SteamVR/OpenVR 运行时",
   "settings.overlay.failure.steamvr_not_running": "SteamVR 尚未运行。如果您想使用桌面叠加层，请在设置中更改。",

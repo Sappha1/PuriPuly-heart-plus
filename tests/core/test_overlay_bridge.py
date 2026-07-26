@@ -681,3 +681,54 @@ async def test_overlay_bridge_snapshot_broadcast_logs_only_in_detailed_mode(
         and "elapsed_ms=" in message
         for message in broadcast_messages
     )
+
+
+@pytest.mark.asyncio
+async def test_overlay_bridge_allows_reauth_after_holder_disconnects() -> None:
+    # Regression (r282): the single-use token was never released when its
+    # holder died (crash, AV kill, failed first start), so every respawned
+    # overlay got auth_error until the whole app restarted.
+    bridge = OverlayBridge(session_token="expected-token")
+    await bridge.start()
+
+    try:
+        async with connect(bridge.url) as first:
+            await first.send(json.dumps({"type": "auth", "session_token": "expected-token"}))
+            first_reply = json.loads(await asyncio.wait_for(first.recv(), timeout=0.5))
+            assert first_reply["type"] == "snapshot"
+
+        # Holder is gone — a respawned overlay with the same manifest token
+        # must be able to authenticate again.
+        for _ in range(50):  # wait for the server to observe the disconnect
+            if not bridge._authenticated_connections:
+                break
+            await asyncio.sleep(0.02)
+        async with connect(bridge.url) as second:
+            await second.send(json.dumps({"type": "auth", "session_token": "expected-token"}))
+            second_reply = json.loads(await asyncio.wait_for(second.recv(), timeout=0.5))
+    finally:
+        await bridge.stop()
+
+    assert second_reply["type"] == "snapshot"
+
+
+@pytest.mark.asyncio
+async def test_overlay_bridge_rejects_replay_while_holder_connected() -> None:
+    bridge = OverlayBridge(session_token="expected-token")
+    await bridge.start()
+
+    try:
+        async with connect(bridge.url) as holder:
+            await holder.send(json.dumps({"type": "auth", "session_token": "expected-token"}))
+            holder_reply = json.loads(await asyncio.wait_for(holder.recv(), timeout=0.5))
+            assert holder_reply["type"] == "snapshot"
+
+            async with connect(bridge.url) as replay:
+                await replay.send(
+                    json.dumps({"type": "auth", "session_token": "expected-token"})
+                )
+                replay_reply = json.loads(await asyncio.wait_for(replay.recv(), timeout=0.5))
+    finally:
+        await bridge.stop()
+
+    assert replay_reply["type"] == "auth_error"

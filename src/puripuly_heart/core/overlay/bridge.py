@@ -205,6 +205,13 @@ class OverlayBridge:
         finally:
             if authenticated:
                 self._authenticated_connections.discard(connection)
+                if not self._authenticated_connections:
+                    # Release the single-use token once its holder is gone, so a
+                    # respawned overlay (crash, AV kill, failed first start) can
+                    # re-auth with the same manifest instead of being locked out
+                    # with auth_error until the whole app restarts. Replay while
+                    # a connection is live is still rejected above.
+                    self._token_consumed = False
                 if self.diagnostics is not None:
                     self.diagnostics.record_bridge(
                         "connection_detached",

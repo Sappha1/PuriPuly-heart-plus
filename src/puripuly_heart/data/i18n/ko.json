@@ -160,6 +160,7 @@
   "settings.overlay.failure.manifest_invalid": "오버레이 실행 매니페스트가 올바르지 않아요",
   "settings.overlay.failure.contract_mismatch": "오버레이 계약 버전이 맞지 않아요",
   "settings.overlay.failure.bridge_auth_failed": "오버레이 브리지 인증에 실패했어요",
+  "settings.overlay.failure.bridge_unreachable": "오버레이가 앱에 연결하지 못했어요 (보안 프로그램 또는 프록시 차단 가능성)",
   "settings.overlay.failure.startup_timeout": "오버레이 시작 시간이 초과됐어요",
   "settings.overlay.failure.steamvr_not_installed": "SteamVR/OpenVR 런타임이 설치되어 있지 않아요",
   "settings.overlay.failure.steamvr_not_running": "SteamVR이 꺼져 있어요. 혹시 데스크톱 오버레이를 쓰고싶다면 설정을 바꿔주세요.",

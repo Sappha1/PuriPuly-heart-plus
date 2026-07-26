@@ -175,6 +175,7 @@ _OVERLAY_FAILURE_REASONS = frozenset(
         "manifest_invalid",
         "contract_mismatch",
         "bridge_auth_failed",
+        "bridge_unreachable",
         "startup_timeout",
         "stale_overlay_build",
         "vendored_openvr_dll_missing",

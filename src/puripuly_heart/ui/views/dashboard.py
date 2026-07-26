@@ -18,7 +18,7 @@ from puripuly_heart.ui.fonts import font_for_language
 from puripuly_heart.ui.i18n import get_locale, language_name, t
 from puripuly_heart.ui.overlay_peer_contract import OverlayPeerConsumerContract
 
-_BUILD_TAG = "r285"  #increment each build so user can confirm version
+_BUILD_TAG = "r286"  #increment each build so user can confirm version
 
 # ── VRCT-style dark palette ──────────────────────────────────────────────────
 _BG_MAIN = "#2e2f32"
@@ -751,9 +751,25 @@ class DashboardView(ft.Row):
             vertical_alignment=ft.CrossAxisAlignment.CENTER,
         )
         _tgt_plus_slot = ft.Container(content=self._plus_btn, width=_BTN_SLOT, alignment=ft.alignment.center_left)
+        # Voice auto-detect badge: shows at a glance whether incoming voice is
+        # auto-detected (teal) or pinned to specific language(s) (grey), and
+        # toggles it with one click — the state used to be buried in the
+        # options menu while silently deciding which languages get filtered.
+        self._auto_detect_badge_icon = ft.Icon(
+            ft.Icons.AUTO_AWESOME, size=13,
+            color=_TOGGLE_ON if self._auto_detect_voice else _TEXT_FAINT,
+        )
+        self._auto_detect_badge = ft.Container(
+            content=self._auto_detect_badge_icon,
+            tooltip=t("dashboard.tooltip.auto_detect_badge"),
+            on_click=self._on_auto_detect_badge_click,
+            padding=ft.padding.only(left=2, right=2),
+        )
+        self._static_tooltip_registry.append(
+            (self._auto_detect_badge, "dashboard.tooltip.auto_detect_badge"))
         _tgt1_with_plus = ft.Row(
-            [self._tgt1_lang_card, _tgt_plus_slot],
-            spacing=4,
+            [self._tgt1_lang_card, self._auto_detect_badge, _tgt_plus_slot],
+            spacing=2,
             vertical_alignment=ft.CrossAxisAlignment.CENTER,
         )
 
@@ -923,6 +939,8 @@ class DashboardView(ft.Row):
         self._self_lang_row = None
         self._peer_lang_row = None
         self._lang_panel = lang_panel
+        # Initial muted state matches TRANS (off at construction until synced).
+        lang_panel.opacity = 1.0 if self.is_translation_on else 0.45
 
         # ── Sidebar nav — only Settings gear (others in top bar when active) ──
         self._sidebar_nav_icons: list[ft.Icon] = [
@@ -2647,10 +2665,41 @@ class DashboardView(ft.Row):
         with contextlib.suppress(Exception):
             self._sync_notice()
 
+    def _on_auto_detect_badge_click(self, _e=None) -> None:
+        val = not bool(self._auto_detect_voice)
+        self._auto_detect_voice = val
+        self._sync_auto_detect_badge()
+        if callable(self.on_auto_detect_voice_change):
+            self.on_auto_detect_voice_change(val)
+
+    def _sync_auto_detect_badge(self) -> None:
+        icon = getattr(self, "_auto_detect_badge_icon", None)
+        if icon is None:
+            return
+        icon.color = _TOGGLE_ON if self._auto_detect_voice else _TEXT_FAINT
+        try:
+            icon.update()
+        except Exception:
+            pass
+
     def _sync_translation_button_state(self) -> None:
         self._row_trans.set_state(self.is_translation_on, warning=self._translation_showing_warning)
         if hasattr(self, "_mini_trans_btn"):
             self._mini_trans_btn.set_state(self.is_translation_on, warning=self._translation_showing_warning)
+        # Mute the language panel while TRANS is off: the pickers still label
+        # incoming voice, but full brightness read as "translation is active"
+        # (a zh user tried zh->zh because the card looked live with TRANS off).
+        panel = getattr(self, "_lang_panel", None)
+        if panel is not None:
+            panel.opacity = 1.0 if self.is_translation_on else 0.45
+            panel.tooltip = (
+                None if self.is_translation_on
+                else t("dashboard.tooltip.lang_panel_trans_off")
+            )
+            try:
+                panel.update()
+            except Exception:
+                pass
 
     def _sync_overlay_peer_buttons(self) -> None:
         contract = self._overlay_peer_contract
@@ -4637,6 +4686,7 @@ class DashboardView(ft.Row):
 
         def _on_adv(val: bool):
             self._auto_detect_voice = bool(val)
+            self._sync_auto_detect_badge()
             if callable(self.on_auto_detect_voice_change):
                 self.on_auto_detect_voice_change(bool(val))
 

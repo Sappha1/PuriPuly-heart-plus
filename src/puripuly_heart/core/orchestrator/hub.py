@@ -144,6 +144,7 @@ class ClientHub:
     chatbox_send_peer_translation_only: bool = False
     loopback_selected_languages_only: bool = False
     _peer_language_filter_notice_shown: bool = False
+    _peer_language_filter_notice_last_s: float = float("-inf")
     _pending_overlay_transcripts: dict = field(default_factory=dict)
     # Utterances that came from the keyboard (submit_text). Typed text can be
     # in ANY language regardless of the configured "You speak" — these get
@@ -1191,9 +1192,9 @@ class ClientHub:
         runtime = self.peer_runtime
         if not self._peer_passes_source_language_filter(transcript.text):
             # Peer language filter excluded this voice (wrong language for the chosen
-            # peer source). Show a one-time explanation so new users understand why a
-            # voice they can hear isn't appearing, then discard.
-            await self._maybe_notify_peer_language_filtered()
+            # peer source). Explain it in the chat (throttled) so users understand why
+            # a voice they can hear isn't appearing, then discard.
+            await self._maybe_notify_peer_language_filtered(transcript.text)
             await self._emit_overlay_utterance_closed(
                 utterance_id=transcript.utterance_id,
                 channel="peer",
@@ -2002,14 +2003,18 @@ class ClientHub:
         top = langs[0]
         return top.lang.split("-")[0].lower() == target_base and top.prob >= 0.90
 
-    async def _maybe_notify_peer_language_filtered(self) -> None:
-        """Show a one-time-per-session explanation when a peer voice is filtered out.
+    async def _maybe_notify_peer_language_filtered(self, transcript_text: str = "") -> None:
+        """Explain in the chat when a peer voice is filtered out.
 
-        Without this, a new user hears someone speaking but sees nothing appear, with
-        no indication why. Shown once so it explains the behavior without spamming.
+        Without this, a user hears someone speaking but sees nothing appear, with no
+        indication why. One-time was not enough (the notice scrolled away hours before
+        the confusion) — repeat it, throttled to once per 5 minutes, and name the
+        language that was dropped so the mismatch is obvious.
         """
-        if self._peer_language_filter_notice_shown:
+        now = self.clock.now()
+        if now - self._peer_language_filter_notice_last_s < 300.0:
             return
+        self._peer_language_filter_notice_last_s = now
         self._peer_language_filter_notice_shown = True
         chosen = [
             lang for lang in ([self.peer_source_language] + list(self.extra_peer_source_languages))
@@ -2019,14 +2024,28 @@ class ClientHub:
             names = ", ".join(get_llm_language_name(lang) for lang in chosen) or "the chosen language"
         except Exception:
             names = "the chosen language"
+        detected = ""
+        try:
+            from puripuly_heart.core.transliteration import sniff_translit_language
+
+            detected = get_llm_language_name(
+                sniff_translit_language(transcript_text or "", "") or "en"
+            )
+        except Exception:
+            detected = ""
         try:
             from puripuly_heart.ui.i18n import t as _t
-            message = _t("dashboard.peer_filter.notice", names=names)
+            if detected:
+                message = _t(
+                    "dashboard.peer_filter.notice_detected", detected=detected, names=names
+                )
+            else:
+                message = _t("dashboard.peer_filter.notice", names=names)
         except Exception:
             message = (
-                f"Hid a peer voice that isn't {names}. Peer voice is set to a specific "
-                f"language, so other languages are excluded — choose 'Auto Detect' for "
-                f"peer voice to show every language."
+                f"Heard {detected or 'other-language'} speech, but PEER voice is set to "
+                f"{names} — it was filtered out. Enable voice auto-detect to show every "
+                f"language."
             )
         with contextlib.suppress(Exception):
             await self.ui_events.put(

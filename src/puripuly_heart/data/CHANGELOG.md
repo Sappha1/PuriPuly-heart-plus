@@ -2,6 +2,12 @@
 
 User-facing changes per build. The latest build's highlights also appear in-app when an update is ready.
 
+## r286 — 2026-07-26
+
+- When incoming voice is dropped by the PEER language filter, the chat now tells you what happened and names the language ("Heard English speech, but PEER voice is set to Chinese…"), repeating at most every 5 minutes — no more silent nothing
+- New auto-detect badge next to the Target language field: teal = incoming voice recognized in any language, grey = only the chosen PEER language passes; click it to toggle
+- The language panel dims while TRANS is off (with an explanatory tooltip), so it no longer looks like translation is active when it isn't
+
 ## r285 — 2026-07-26
 
 - The per-language chat reading checkboxes now only appear when the Chat log format actually includes a reading line (e.g. Original + Pinyin + Translation) — with Original + Translation they were shown ticked while doing nothing

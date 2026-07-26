@@ -2,6 +2,10 @@
 
 User-facing changes per build. The latest build's highlights also appear in-app when an update is ready.
 
+## r289 — 2026-07-26
+
+- Received chat entries now show the detected language while voice auto-detect is on ("Received [ZH] 16:37") — uses the translator's detection when available, script analysis otherwise
+
 ## r288 — 2026-07-26
 
 - The auto-detect badge now sits above the + button instead of squeezing the language card (no more truncated "Chinese (Simplifi...")

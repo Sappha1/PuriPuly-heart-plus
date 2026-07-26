@@ -18,7 +18,7 @@ from puripuly_heart.ui.fonts import font_for_language
 from puripuly_heart.ui.i18n import get_locale, language_name, t
 from puripuly_heart.ui.overlay_peer_contract import OverlayPeerConsumerContract
 
-_BUILD_TAG = "r288"  #increment each build so user can confirm version
+_BUILD_TAG = "r289"  #increment each build so user can confirm version
 
 # ── VRCT-style dark palette ──────────────────────────────────────────────────
 _BG_MAIN = "#2e2f32"
@@ -3691,12 +3691,28 @@ class DashboardView(ft.Row):
         else:
             content_rows.append(ft.Text(source_text.strip(), size=13, color=_TEXT_PRIMARY))
 
-        # Header: just "Sent 16:37" — clean timestamp label
+        # Header: "Sent 16:37" — plus the detected language for received
+        # entries while voice auto-detect is on ("Received [ZH] 16:37"), since
+        # what the recognizer heard isn't obvious in that mode. Uses the
+        # translator-detected hint when available, script sniff otherwise
+        # (src_lang already resolved that way above).
+        header_cells = [
+            ft.Text(direction, size=11, color=label_color, weight=ft.FontWeight.W_700),
+        ]
+        if (
+            is_peer
+            and not is_ocr
+            and getattr(self, "_auto_detect_voice", False)
+            and src_lang
+        ):
+            header_cells.append(ft.Text(
+                f" [{src_lang.split('-')[0].upper()}]",
+                size=10, color=label_color, weight=ft.FontWeight.W_600,
+                opacity=0.65,
+            ))
+        header_cells.append(ft.Text(f" {timestamp}", size=11, color=_TEXT_FAINT))
         header = ft.Row(
-            [
-                ft.Text(direction, size=11, color=label_color, weight=ft.FontWeight.W_700),
-                ft.Text(f" {timestamp}", size=11, color=_TEXT_FAINT),
-            ],
+            header_cells,
             spacing=0,
             tight=True,
         )

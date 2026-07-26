@@ -2,6 +2,10 @@
 
 User-facing changes per build. The latest build's highlights also appear in-app when an update is ready.
 
+## r285 — 2026-07-26
+
+- "Remove OCR module" menu row no longer has trailing dots
+
 ## r284 — 2026-07-26
 
 - The per-language reading toggles now also cover the chat feed: options menu → under the "Chat log" format, tick/untick Chinese pinyin, Japanese romaji, Korean romaja, other Latin — independent from the overlay's toggles

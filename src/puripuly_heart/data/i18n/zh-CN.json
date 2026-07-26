@@ -768,7 +768,7 @@
   "ocr_module.close": "关闭",
   "ocr_module.downloading": "正在下载 OCR 模块...",
   "ocr_module.failed": "下载失败。请检查网络后重试 — 或从发布页下载 PuriPulyHeartOCR-module.zip，并在安装程序中勾选 OCR 选项重新安装。",
-  "dashboard.ocr.menu.remove_module": "移除 OCR 模块...",
+  "dashboard.ocr.menu.remove_module": "移除 OCR 模块",
   "dashboard.ocr.menu.remove_module.tooltip": "从磁盘删除 OCR 引擎（释放约 340 MB）。随时打开 OCR 即可重新下载。",
   "ocr_module.remove.title": "移除 OCR 模块",
   "ocr_module.remove.body": "将从磁盘删除实时 OCR 引擎（释放约 340 MB）。您的 OCR 设置会保留。随时打开 OCR 即可重新下载。确定移除吗？",

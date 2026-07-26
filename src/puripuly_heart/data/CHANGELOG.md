@@ -4,7 +4,8 @@ User-facing changes per build. The latest build's highlights also appear in-app 
 
 ## r285 — 2026-07-26
 
-- "Remove OCR module" menu row no longer has trailing dots
+- The per-language chat reading checkboxes now only appear when the Chat log format actually includes a reading line (e.g. Original + Pinyin + Translation) — with Original + Translation they were shown ticked while doing nothing
+- Removed stray trailing dots from idle labels ("Remove OCR module", "Ready to translate", "Custom")
 
 ## r284 — 2026-07-26
 

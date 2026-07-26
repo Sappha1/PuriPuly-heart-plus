@@ -4546,9 +4546,22 @@ class DashboardView(ft.Row):
             _log_fmt_cur = "trans_only" if _log_fmt_cur not in (
                 "orig_trans", "orig_read_trans", "read_trans", "read_only",
                 "trans_only") else _log_fmt_cur
+        _READING_LOG_FMTS = ("orig_read_trans", "read_trans", "read_only")
+        _chat_reading_col_ref: list[Any] = [None]
+
+        def _pick_log_fmt_sync(fmt: str) -> None:
+            self._pick_chat_log_fmt(fmt)
+            _col = _chat_reading_col_ref[0]
+            if _col is not None:
+                _col.visible = fmt in _READING_LOG_FMTS
+                try:
+                    _col.update()
+                except Exception:
+                    pass
+
         _log_fmt_section = _mk_fmt_selector(
             _log_fmt_cur if _log_fmt_cur in fmt_ids else "orig_trans",
-            self._pick_chat_log_fmt,
+            _pick_log_fmt_sync,
             "dashboard.translit.menu.log_short")
 
         # ── per-language chat reading checkboxes (indented under the log format).
@@ -4587,8 +4600,16 @@ class DashboardView(ft.Row):
                     or (e.control.update() if e.control.page else None)
                 ),
             ))
+        # Only meaningful when the chosen log format has a reading line — hide
+        # otherwise ("Original + Translation" showed ticked pinyin boxes that
+        # did nothing, which read as "pinyin is on").
+        _chat_reading_col = ft.Column(
+            _chat_reading_rows, spacing=0, tight=True,
+            visible=_log_fmt_cur in _READING_LOG_FMTS,
+        )
+        _chat_reading_col_ref[0] = _chat_reading_col
         _log_fmt_section = ft.Column(
-            [_log_fmt_section, *_chat_reading_rows], spacing=0, tight=True,
+            [_log_fmt_section, _chat_reading_col], spacing=0, tight=True,
         )
 
         # ── overlay reading + grouped pinyin (On/Off pills), reading langs only ──

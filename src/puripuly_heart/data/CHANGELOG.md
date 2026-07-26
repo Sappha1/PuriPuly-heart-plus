@@ -2,13 +2,13 @@
 
 User-facing changes per build. The latest build's highlights also appear in-app when an update is ready.
 
-## r283 — 2026-07-24
+## r283 — 2026-07-26
 
 - New per-language reading lines on the overlay: right-click the overlay button → Display → untick just the readings you don't need (Chinese pinyin, Japanese romaji, Korean romaja, other Latin) — a Chinese reader can hide pinyin while keeping Korean romaja
 - The reading for your own UI language now starts hidden by default (a zh user doesn't need pinyin; ja → romaji hidden; ko → romaja hidden) — flip it back on anytime in the same menu
 - "Requires API key" in the Settings pickers is now translated (it always showed in English)
 
-## r282 — 2026-07-24
+## r282 — 2026-07-26
 
 - Fixed the desktop overlay failing with "bridge authentication failed" for users running a proxy/VPN tool (very common in China): the overlay's local connection was being routed into the system proxy — it now always connects directly
 - If the overlay process ever dies (e.g. killed by antivirus), turning the overlay on again now works instead of being locked out until an app restart

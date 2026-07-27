@@ -691,6 +691,8 @@
   "dashboard.you_speak": "あなたの言語",
   "dashboard.menu.auto_detect_voice": "音声の言語を自動検出",
   "dashboard.menu.auto_detect_voice.tooltip": "オンにすると、相手の音声の言語を自動検出します——音声認識ではターゲット言語の設定を上書きします。入力メッセージは引き続きターゲット言語に翻訳されます。",
+  "dashboard.menu.auto_detect_ignore_own": "自分の言語を無視",
+  "dashboard.menu.auto_detect_ignore_own.tooltip": "音声自動検出中に、自分の言語と判定された音声（通話に回り込んだ自分の声など）を除外します。判定は文字体系ベースのため、同じ文字を使う言語はまとめて扱われます。",
   "dashboard.peer_translate_to": "翻訳先",
   "dashboard.download": "ダウンロード",
   "dashboard.chat": "チャット",

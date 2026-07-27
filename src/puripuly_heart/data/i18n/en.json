@@ -691,6 +691,8 @@
   "dashboard.you_speak": "Your language",
   "dashboard.menu.auto_detect_voice": "Auto detect voice language",
   "dashboard.menu.auto_detect_voice.tooltip": "When on, the language of incoming voice is detected automatically — overriding the Target language for voice recognition. Typed messages still translate into the Target language.",
+  "dashboard.menu.auto_detect_ignore_own": "Ignore my language",
+  "dashboard.menu.auto_detect_ignore_own.tooltip": "While voice auto-detect is on, drop incoming speech detected as YOUR language (e.g. your own voice echoing through the call). Detection is script-based, so languages sharing an alphabet count together.",
   "dashboard.peer_translate_to": "Translate to",
   "dashboard.download": "Download",
   "dashboard.chat": "Chat",

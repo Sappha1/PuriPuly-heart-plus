@@ -140,6 +140,10 @@ class ClientHub:
     typed_in_overlay: bool = True
     extra_target_languages: list[str] = field(default_factory=list)
     filter_peer_by_target_languages: bool = False
+    # Auto-detect refinement: drop peer speech in the user's own source
+    # language (their own voice echoing through the call). Only meaningful
+    # while peer_source_language is empty (auto-detect).
+    auto_detect_ignore_own: bool = False
     chatbox_send_peer: bool = False
     chatbox_send_peer_translation_only: bool = False
     loopback_selected_languages_only: bool = False
@@ -1211,6 +1215,26 @@ class ClientHub:
                 finalize_latency=True,
             )
             return
+        if (
+            self.auto_detect_ignore_own
+            and not self.peer_source_language
+            and self._is_own_language_speech(transcript.text)
+        ):
+            # Opt-in: auto-detect ignores the user's own language (their voice
+            # bleeding back through the call). Detailed log only — the user
+            # asked for this drop explicitly, no banner needed.
+            self._emit_detailed(
+                "[Hub] Auto-detect ignored own-language peer speech: %r",
+                transcript.text[:60],
+                fallback_level=logging.INFO,
+            )
+            await self._emit_overlay_utterance_closed(
+                utterance_id=transcript.utterance_id,
+                channel="peer",
+                is_final=True,
+                finalize_latency=True,
+            )
+            return
         bundle = runtime.get_or_create_bundle(transcript.utterance_id)
         bundle.with_transcript(transcript)
         self._remember_source(transcript.utterance_id, source, channel="peer")
@@ -1878,6 +1902,20 @@ class ClientHub:
             return "thai"
         # All remaining supported languages use the Latin script.
         return "latin"
+
+    def _is_own_language_speech(self, text: str) -> bool:
+        """True when the text's detected script root matches the user's source
+        language root (script-level: latin languages are indistinguishable)."""
+        own = (self.source_language or "").lower().replace("_", "-").split("-")[0]
+        if not own:
+            return False
+        try:
+            from puripuly_heart.core.transliteration import sniff_translit_language
+
+            detected = (sniff_translit_language(text or "", "") or "en").split("-")[0]
+        except Exception:
+            return False
+        return detected == own
 
     def _peer_passes_source_language_filter(self, text: str) -> bool:
         """Drop peer transcripts whose script clearly isn't the chosen peer language.

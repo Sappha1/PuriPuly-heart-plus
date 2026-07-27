@@ -18,7 +18,7 @@ from puripuly_heart.ui.fonts import font_for_language
 from puripuly_heart.ui.i18n import get_locale, language_name, t
 from puripuly_heart.ui.overlay_peer_contract import OverlayPeerConsumerContract
 
-_BUILD_TAG = "r294"  #increment each build so user can confirm version
+_BUILD_TAG = "r295"  #increment each build so user can confirm version
 
 # ── VRCT-style dark palette ──────────────────────────────────────────────────
 _BG_MAIN = "#2e2f32"
@@ -406,6 +406,8 @@ class DashboardView(ft.Row):
         # instead of assumed to be the Target language (options menu pill).
         self._auto_detect_voice = False
         self.on_auto_detect_voice_change: object = None  # callback(value: bool)
+        self._auto_detect_ignore_own = False
+        self.on_auto_detect_ignore_own_change: object = None  # callback(value: bool)
         # "Separate text translation" pill (same options menu) — mirrors the
         # Settings row; ON = separate Text Translation box (unified OFF).
         self.on_separate_text_translation_change: object = None  # callback(value: bool)
@@ -516,6 +518,8 @@ class DashboardView(ft.Row):
                 _sd.get("ui", {}).get("unified_translation_ui", True))
             self._auto_detect_voice = bool(
                 _sd.get("languages", {}).get("auto_detect_peer_voice", False))
+            self._auto_detect_ignore_own = bool(
+                _sd.get("languages", {}).get("auto_detect_ignore_own", False))
             self._separate_target_pref = str(
                 _sd.get("languages", {}).get("separate_target_language", ""))
             self._chat_log_format = str(
@@ -4744,6 +4748,25 @@ class DashboardView(ft.Row):
         _adv_row = _section_row(
             t("dashboard.menu.auto_detect_voice"), _bool_pill(_adv_ref, _on_adv),
             tooltip=t("dashboard.menu.auto_detect_voice.tooltip"))
+
+        # Indented refinement: with auto-detect on, drop speech detected as the
+        # user's own language (their voice echoing back through the call).
+        _adio_ref = [bool(self._auto_detect_ignore_own)]
+
+        def _on_adio(val: bool):
+            self._auto_detect_ignore_own = bool(val)
+            if callable(self.on_auto_detect_ignore_own_change):
+                self.on_auto_detect_ignore_own_change(bool(val))
+
+        _adio_row = ft.Container(
+            content=_section_row(
+                t("dashboard.menu.auto_detect_ignore_own"),
+                _bool_pill(_adio_ref, _on_adio),
+                tooltip=t("dashboard.menu.auto_detect_ignore_own.tooltip"),
+            ),
+            padding=ft.padding.only(left=14),
+        )
+        _adv_row = ft.Column([_adv_row, _adio_row], spacing=0, tight=True)
 
         # ── separate text translation: mirrors the Settings row, applies live.
         _sep_ref = [not bool(self._unified_translation)]

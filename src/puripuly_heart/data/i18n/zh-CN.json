@@ -691,6 +691,8 @@
   "dashboard.you_speak": "你的语言",
   "dashboard.menu.auto_detect_voice": "自动检测语音语言",
   "dashboard.menu.auto_detect_voice.tooltip": "开启后，自动检测对方语音的语言——语音识别将覆盖上方设置的目标语言。输入的消息仍会翻译成目标语言。",
+  "dashboard.menu.auto_detect_ignore_own": "忽略我的语言",
+  "dashboard.menu.auto_detect_ignore_own.tooltip": "语音自动检测开启时，忽略被判定为你自己语言的语音（例如你自己的声音回传到通话中）。基于文字判别，使用相同文字的语言会被一并处理。",
   "dashboard.peer_translate_to": "翻译成",
   "dashboard.download": "下载",
   "dashboard.chat": "聊天",

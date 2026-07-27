@@ -4367,6 +4367,7 @@ class GuiController:
             self.hub.self_in_overlay = bool(getattr(settings.ui, "self_in_overlay", True))
             self.hub.typed_in_overlay = bool(getattr(settings.ui, "typed_in_overlay", True))
             self.hub.filter_peer_by_target_languages = bool(getattr(settings.ui, "filter_peer_by_target_languages", False))
+            self.hub.auto_detect_ignore_own = bool(getattr(settings.languages, "auto_detect_ignore_own", False))
             self.hub.chatbox_send_peer = bool(getattr(settings.ui, "chatbox_send_peer", False))
             self.hub.chatbox_send_peer_translation_only = bool(
                 getattr(settings.ui, "chatbox_send_peer_translation_only", False)
@@ -4618,6 +4619,7 @@ class GuiController:
             self.hub.self_in_overlay = bool(getattr(next_settings.ui, "self_in_overlay", True))
             self.hub.typed_in_overlay = bool(getattr(next_settings.ui, "typed_in_overlay", True))
             self.hub.filter_peer_by_target_languages = bool(getattr(next_settings.ui, "filter_peer_by_target_languages", False))
+            self.hub.auto_detect_ignore_own = bool(getattr(next_settings.languages, "auto_detect_ignore_own", False))
             self.hub.chatbox_send_peer = bool(getattr(next_settings.ui, "chatbox_send_peer", False))
             self.hub.chatbox_send_peer_translation_only = bool(
                 getattr(next_settings.ui, "chatbox_send_peer_translation_only", False)

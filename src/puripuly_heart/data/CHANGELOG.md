@@ -2,6 +2,11 @@
 
 User-facing changes per build. The latest build's highlights also appear in-app when an update is ready.
 
+## r295 — 2026-07-26
+
+- New option under Auto Detect Voice: "Ignore my language" — while auto-detect is on, speech detected as YOUR language (e.g. your own voice echoing through the call) is dropped. Off by default; options menu, indented under the auto-detect row
+- Note from the log check: switching to a favorites tab pins peer voice to that tab's language — other languages get filtered by design (the chat shows a notice naming the dropped language)
+
 ## r294 — 2026-07-26
 
 - The auto-detect badge is aligned exactly over the +/- button column (it sat slightly too far right)

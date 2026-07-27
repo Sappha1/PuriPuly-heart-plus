@@ -2,6 +2,10 @@
 
 User-facing changes per build. The latest build's highlights also appear in-app when an update is ready.
 
+## r294 — 2026-07-26
+
+- The auto-detect badge is aligned exactly over the +/- button column (it sat slightly too far right)
+
 ## r293 — 2026-07-26
 
 - The swap arrow no longer scrambles languages while auto-detect is on (it silently exchanged the hidden pinned values and moved extra rows between sections) — swap is disabled until auto-detect is off

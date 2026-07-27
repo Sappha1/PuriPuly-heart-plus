@@ -18,7 +18,7 @@ from puripuly_heart.ui.fonts import font_for_language
 from puripuly_heart.ui.i18n import get_locale, language_name, t
 from puripuly_heart.ui.overlay_peer_contract import OverlayPeerConsumerContract
 
-_BUILD_TAG = "r293"  #increment each build so user can confirm version
+_BUILD_TAG = "r294"  #increment each build so user can confirm version
 
 # ── VRCT-style dark palette ──────────────────────────────────────────────────
 _BG_MAIN = "#2e2f32"
@@ -943,7 +943,14 @@ class DashboardView(ft.Row):
                             self._lbl_peer_voice,
                             _peer_speaks_info,
                             ft.Container(expand=True),
-                            self._make_auto_detect_badge(),
+                            # Same 4px gap + fixed slot as the card rows below,
+                            # so the badge sits exactly over the +/- column.
+                            ft.Container(width=4),
+                            ft.Container(
+                                content=self._make_auto_detect_badge(),
+                                width=_BTN_SLOT,
+                                alignment=ft.alignment.center_left,
+                            ),
                         ],
                         spacing=0,
                         vertical_alignment=ft.CrossAxisAlignment.CENTER,

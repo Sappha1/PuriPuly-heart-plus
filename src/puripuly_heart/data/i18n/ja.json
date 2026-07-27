@@ -74,6 +74,8 @@
   "settings.low_latency_mode": "応答方式",
   "settings.mic_denoise": "マイクノイズ抑制",
   "settings.mic_denoise.tooltip": "音声認識の前に、マイクの定常的な背景ノイズ（ファン、エアコンなど）を除去します。騒がしい部屋で音声が認識されない場合はオンにしてください。",
+  "settings.peer_auto_gain": "相手音量オートゲイン",
+  "settings.peer_auto_gain.tooltip": "音声検出の前に、小さいデスクトップ音声を内部的に安定したレベルまで増幅します。Windowsの音量が低くても音声が単語ごとに分断されなくなります。聞こえる音は変わりません。",
   "dashboard.mic_noise_notice": "マイク音声から認識可能な音声が得られていません。アプリがVRChatと同じ入力デバイスを使用しているか設定で確認するか、ファンやエアコンの音がある場合はマイクノイズ抑制をオンにしてください。",
   "settings.translation_connection": "翻訳接続方式",
   "settings.translation_connection.managed": "マネージド",

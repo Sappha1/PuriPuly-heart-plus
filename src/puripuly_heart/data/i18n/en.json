@@ -76,6 +76,8 @@
   "settings.low_latency_mode": "Response mode",
   "settings.mic_denoise": "Mic noise suppression",
   "settings.mic_denoise.tooltip": "Cleans steady background noise (fans, AC) from your microphone before speech recognition. Turn ON if your speech is not being recognized in a noisy room.",
+  "settings.peer_auto_gain": "Peer volume auto-gain",
+  "settings.peer_auto_gain.tooltip": "Boosts quiet incoming desktop audio to a stable internal level before voice detection, so low Windows volume no longer fragments speech into one-word pieces. Does not change what you hear.",
   "dashboard.mic_noise_notice": "Your microphone audio is not producing recognizable speech. Check that the app is using the same input device as VRChat (Settings), or enable Mic noise suppression if a fan or AC is running.",
   "settings.translation_connection": "Translation Connection",
   "settings.translation_connection.managed": "Managed",

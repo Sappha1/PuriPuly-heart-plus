@@ -73,6 +73,8 @@
   "settings.low_latency_mode": "响应方式",
   "settings.mic_denoise": "麦克风降噪",
   "settings.mic_denoise.tooltip": "在语音识别前去除麦克风的持续背景噪音（风扇、空调等）。如果在嘈杂环境中语音无法被识别，请开启。",
+  "settings.peer_auto_gain": "对方音量自动增益",
+  "settings.peer_auto_gain.tooltip": "在语音检测前将过小的桌面音频内部增幅到稳定水平，即使 Windows 音量很低，语音也不会被切成单个词。不会改变你听到的声音。",
   "dashboard.mic_noise_notice": "麦克风音频未产生可识别的语音。请在设置中确认应用使用与 VRChat 相同的输入设备，或在有风扇/空调噪音时开启麦克风降噪。",
   "settings.translation_connection": "翻译连接方式",
   "settings.translation_connection.managed": "托管",

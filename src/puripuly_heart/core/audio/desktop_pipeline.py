@@ -23,14 +23,28 @@ class DesktopPeerAudioFrame:
     channels: int = 1
 
 
+# Auto-gain: boost quiet loopback audio to a stable level before VAD/STT.
+# Loopback captures POST-Windows-volume, so a user listening at 15% volume
+# feeds the detector near-silence and songs fragment into one-word segments.
+# Boost-only (never attenuates), capped, slewed, and silence-guarded.
+_AGC_TARGET_RMS = 0.05          # ~ -26 dBFS
+_AGC_MAX_GAIN = 6.0             # ~ +15.5 dB cap
+_AGC_SILENCE_RMS = 0.0015       # below this: hold gain, don't chase noise
+_AGC_EMA_ALPHA = 0.10           # smoothing for the level estimate
+_AGC_SLEW = 0.25                # max relative gain change per chunk
+
+
 @dataclass(slots=True)
 class DesktopPeerPipeline:
     source: AudioSource
     target_sample_rate_hz: int = 16000
+    auto_gain: bool = True
     is_detailed_enabled: Callable[[], bool] | None = None
     log_detailed: Callable[[str], object] | None = None
     _logged_formats: set[tuple[int, int]] = field(default_factory=set, init=False, repr=False)
     _diag_accumulated_audio_ms: float = field(default=0.0, init=False, repr=False)
+    _agc_rms_ema: float = field(default=0.0, init=False, repr=False)
+    _agc_gain: float = field(default=1.0, init=False, repr=False)
 
     async def frames(self) -> AsyncIterator[DesktopPeerAudioFrame]:
         resampler: MonoFirstStreamingResampler | None = None
@@ -82,7 +96,10 @@ class DesktopPeerPipeline:
                 normalized=normalized,
             )
             if normalized.size:
-                yield self._build_output_frame(normalized.reshape(-1))
+                chunk = normalized.reshape(-1)
+                if self.auto_gain:
+                    chunk = self._apply_auto_gain(chunk)
+                yield self._build_output_frame(chunk)
 
         if resampler is None:
             return
@@ -90,6 +107,25 @@ class DesktopPeerPipeline:
         tail = resampler.flush()
         if tail.size:
             yield self._build_output_frame(tail.reshape(-1))
+
+    def _apply_auto_gain(self, chunk: np.ndarray) -> np.ndarray:
+        rms = float(np.sqrt(np.mean(np.square(chunk), dtype=np.float64)))
+        if rms < _AGC_SILENCE_RMS:
+            # Near-silence: keep the current gain, don't amplify the noise floor.
+            if self._agc_gain != 1.0:
+                return np.clip(chunk * self._agc_gain, -1.0, 1.0).astype(np.float32)
+            return chunk
+        ema = self._agc_rms_ema
+        ema = rms if ema <= 0.0 else (1.0 - _AGC_EMA_ALPHA) * ema + _AGC_EMA_ALPHA * rms
+        self._agc_rms_ema = ema
+        desired = min(_AGC_MAX_GAIN, max(1.0, _AGC_TARGET_RMS / max(ema, 1e-6)))
+        gain = self._agc_gain
+        low, high = gain * (1.0 - _AGC_SLEW), gain * (1.0 + _AGC_SLEW)
+        gain = min(max(desired, low), high)
+        self._agc_gain = min(max(gain, 1.0), _AGC_MAX_GAIN)
+        if self._agc_gain == 1.0:
+            return chunk
+        return np.clip(chunk * self._agc_gain, -1.0, 1.0).astype(np.float32)
 
     async def close(self) -> None:
         await self.source.close()

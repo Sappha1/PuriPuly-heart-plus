@@ -543,6 +543,9 @@ class DesktopAudioSettings:
     vad_speech_threshold: float = 0.8
     vad_hangover_ms: int = DEFAULT_DESKTOP_AUDIO_VAD_HANGOVER_MS
     vad_pre_roll_ms: int = 500
+    # Boost quiet loopback audio to a stable internal level before detection
+    # (playback volume is untouched). Default ON (r299).
+    auto_gain: bool = True
 
     def validate(self) -> None:
         if self.output_device is None:
@@ -1579,6 +1582,7 @@ def to_dict(settings: AppSettings) -> dict[str, Any]:
             "vad_speech_threshold": settings.desktop_audio.vad_speech_threshold,
             "vad_hangover_ms": settings.desktop_audio.vad_hangover_ms,
             "vad_pre_roll_ms": settings.desktop_audio.vad_pre_roll_ms,
+            "auto_gain": settings.desktop_audio.auto_gain,
         },
         "overlay": {
             "target": _parse_overlay_target(settings.overlay.target),
@@ -3825,6 +3829,7 @@ def from_dict(data: dict[str, Any]) -> AppSettings:
                 desktop_audio_data.get("vad_hangover_ms", DEFAULT_DESKTOP_AUDIO_VAD_HANGOVER_MS)
             ),
             vad_pre_roll_ms=int(desktop_audio_data.get("vad_pre_roll_ms", 500)),
+            auto_gain=bool(desktop_audio_data.get("auto_gain", True)),
         ),
         overlay=OverlaySettings(
             target=_parse_overlay_target(overlay_data.get("target")),

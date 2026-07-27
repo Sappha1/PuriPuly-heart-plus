@@ -4870,6 +4870,7 @@ class GuiController:
         wrapped_source = self._wrap_diagnostic_audio_source(raw_source, channel_label="peer")
         return DesktopPeerPipeline(
             source=wrapped_source,
+            auto_gain=bool(getattr(self.settings.desktop_audio, "auto_gain", True)),
             target_sample_rate_hz=config.backend.sample_rate_hz,
             is_detailed_enabled=self._detailed_audio_diag_enabled,
             log_detailed=lambda message: self.log_detailed(message),

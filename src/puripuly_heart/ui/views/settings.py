@@ -1290,6 +1290,22 @@ class SettingsView(ft.Column):
             value=self._mic_denoise_text,
         )
 
+        self._auto_gain_text = self._build_clickable_text(
+            t("toggle.on"),
+            self._on_auto_gain_click,
+        )
+        self._auto_gain_title = ft.Text(
+            t("settings.peer_auto_gain"),
+            size=13,
+            weight=ft.FontWeight.BOLD,
+            color=COLOR_NEUTRAL,
+        )
+        self._auto_gain_card = self._wrap_unit_card(
+            title=self._info_title(self._auto_gain_title,
+                t("settings.peer_auto_gain.tooltip")),
+            value=self._auto_gain_text,
+        )
+
         # === General Tab Row 3: VRChat Mute Sync / Self VAD / Peer VAD ===
         self._self_vad_title = ft.Text(
             t("settings.section.self_vad_sensitivity"),
@@ -1357,7 +1373,8 @@ class SettingsView(ft.Column):
         )
         general_vad_row = ft.Column(
                 [microphone_test_card, self._self_vad_card,
-                 self._mic_denoise_card, self._peer_vad_card],
+                 self._mic_denoise_card, self._peer_vad_card,
+                 self._auto_gain_card],
                 spacing=0,
             )
         self._show_pinyin_text = self._build_clickable_text(
@@ -3137,6 +3154,9 @@ class SettingsView(ft.Column):
         )
         self._mic_denoise_text.content.value = t(
             "toggle.on" if getattr(settings.stt, "mic_denoise", False) else "toggle.off"
+        )
+        self._auto_gain_text.content.value = t(
+            "toggle.on" if getattr(settings.desktop_audio, "auto_gain", True) else "toggle.off"
         )
         # --- æ–°å¢žï¼šè¯»å– VRChat åŒæ­¥å¼€å…³çŠ¶æ€ ---
         self._vrc_mic_text.content.value = t(
@@ -5244,6 +5264,38 @@ class SettingsView(ft.Column):
         self._low_latency_text.content.value = t("toggle.on" if new_value else "toggle.off")
         if self.page:
             self._low_latency_text.update()
+        self._emit_settings_changed()
+
+    def _on_auto_gain_click(self, e) -> None:
+        if not self.page:
+            return
+        options = [
+            OptionItem(value="on", label=t("toggle.on"), description=""),
+            OptionItem(value="off", label=t("toggle.off"), description=""),
+        ]
+        current = "on" if getattr(self._settings.desktop_audio, "auto_gain", True) else "off"
+        modal = SettingsModal(
+            self.page,
+            t("settings.peer_auto_gain"),
+            options,
+            self._on_auto_gain_selected,
+            show_description=False,
+        )
+        modal.open(current)
+
+    def _on_auto_gain_selected(self, value: str) -> None:
+        if not self._settings:
+            return
+        new_value = value == "on"
+        old_value = bool(getattr(self._settings.desktop_audio, "auto_gain", True))
+        if new_value != old_value:
+            self._emit_runtime_detailed(
+                f"[Settings] Peer auto-gain changed: {old_value} -> {new_value}"
+            )
+        self._settings.desktop_audio.auto_gain = new_value
+        self._auto_gain_text.content.value = t("toggle.on" if new_value else "toggle.off")
+        if self.page:
+            self._auto_gain_text.update()
         self._emit_settings_changed()
 
     def _on_mic_denoise_click(self, e) -> None:

@@ -2,6 +2,10 @@
 
 User-facing changes per build. The latest build's highlights also appear in-app when an update is ready.
 
+## r299 — 2026-07-27
+
+- New "Peer volume auto-gain" (Settings, ON by default): quiet incoming desktop audio is boosted to a stable internal level before voice detection, so low Windows volume or communications ducking no longer fragments songs/speech into one-word pieces. Playback volume is untouched — you hear no difference
+
 ## r298 — 2026-07-27
 
 - New "Mic noise suppression" option (Settings, next to mic sensitivity): cleans steady background noise like fans and AC from your microphone before speech recognition — for setups where speech gets eaten as noise. Off by default

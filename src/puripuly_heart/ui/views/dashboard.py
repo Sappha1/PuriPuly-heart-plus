@@ -18,7 +18,7 @@ from puripuly_heart.ui.fonts import font_for_language
 from puripuly_heart.ui.i18n import get_locale, language_name, t
 from puripuly_heart.ui.overlay_peer_contract import OverlayPeerConsumerContract
 
-_BUILD_TAG = "r295"  #increment each build so user can confirm version
+_BUILD_TAG = "r296"  #increment each build so user can confirm version
 
 # ── VRCT-style dark palette ──────────────────────────────────────────────────
 _BG_MAIN = "#2e2f32"
@@ -4742,6 +4742,11 @@ class DashboardView(ft.Row):
             self._sync_auto_detect_badge()
             self._refresh_language_rows()
             self._rebuild_extra_peer_src_rows()
+            _adio_row.visible = bool(val)
+            try:
+                _adio_row.update()
+            except Exception:
+                pass
             if callable(self.on_auto_detect_voice_change):
                 self.on_auto_detect_voice_change(bool(val))
 
@@ -4751,20 +4756,44 @@ class DashboardView(ft.Row):
 
         # Indented refinement: with auto-detect on, drop speech detected as the
         # user's own language (their voice echoing back through the call).
-        _adio_ref = [bool(self._auto_detect_ignore_own)]
+        # Checkbox-row format (like the reading toggles); hidden entirely
+        # while auto-detect is off — it only applies in that mode.
+        _adio_state = [bool(self._auto_detect_ignore_own)]
+        _adio_icon = ft.Icon(
+            ft.Icons.CHECK_BOX if _adio_state[0] else ft.Icons.CHECK_BOX_OUTLINE_BLANK,
+            size=14, color=_TOGGLE_ON if _adio_state[0] else _TEXT_FAINT,
+        )
+        _adio_lbl = ft.Text(
+            t("dashboard.menu.auto_detect_ignore_own"),
+            size=11, color=_TEXT_PRIMARY, expand=True,
+        )
 
-        def _on_adio(val: bool):
-            self._auto_detect_ignore_own = bool(val)
+        def _on_adio_row(_ev):
+            _adio_state[0] = not _adio_state[0]
+            self._auto_detect_ignore_own = _adio_state[0]
+            _adio_icon.name = (
+                ft.Icons.CHECK_BOX if _adio_state[0] else ft.Icons.CHECK_BOX_OUTLINE_BLANK
+            )
+            _adio_icon.color = _TOGGLE_ON if _adio_state[0] else _TEXT_FAINT
+            try:
+                _adio_icon.update()
+            except Exception:
+                pass
             if callable(self.on_auto_detect_ignore_own_change):
-                self.on_auto_detect_ignore_own_change(bool(val))
+                self.on_auto_detect_ignore_own_change(_adio_state[0])
 
         _adio_row = ft.Container(
-            content=_section_row(
-                t("dashboard.menu.auto_detect_ignore_own"),
-                _bool_pill(_adio_ref, _on_adio),
-                tooltip=t("dashboard.menu.auto_detect_ignore_own.tooltip"),
+            content=ft.Row([_adio_icon, _adio_lbl], spacing=8,
+                           vertical_alignment=ft.CrossAxisAlignment.CENTER),
+            padding=ft.padding.only(left=26, right=10, top=4, bottom=4),
+            border_radius=5,
+            on_click=_on_adio_row,
+            tooltip=t("dashboard.menu.auto_detect_ignore_own.tooltip"),
+            visible=bool(self._auto_detect_voice),
+            on_hover=lambda e: (
+                setattr(e.control, "bgcolor", "#2a3040" if e.data == "true" else ft.Colors.TRANSPARENT)
+                or (e.control.update() if e.control.page else None)
             ),
-            padding=ft.padding.only(left=14),
         )
         _adv_row = ft.Column([_adv_row, _adio_row], spacing=0, tight=True)
 

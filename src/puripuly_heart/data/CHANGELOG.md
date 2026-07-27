@@ -2,6 +2,10 @@
 
 User-facing changes per build. The latest build's highlights also appear in-app when an update is ready.
 
+## r296 — 2026-07-26
+
+- "Ignore my language" is now a checkbox (matching the reading toggles) and only appears while Auto Detect Voice is on
+
 ## r295 — 2026-07-26
 
 - New option under Auto Detect Voice: "Ignore my language" — while auto-detect is on, speech detected as YOUR language (e.g. your own voice echoing through the call) is dropped. Off by default; options menu, indented under the auto-detect row

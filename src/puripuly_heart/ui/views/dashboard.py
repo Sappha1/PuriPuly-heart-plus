@@ -18,7 +18,7 @@ from puripuly_heart.ui.fonts import font_for_language
 from puripuly_heart.ui.i18n import get_locale, language_name, t
 from puripuly_heart.ui.overlay_peer_contract import OverlayPeerConsumerContract
 
-_BUILD_TAG = "r289"  #increment each build so user can confirm version
+_BUILD_TAG = "r290"  #increment each build so user can confirm version
 
 # ── VRCT-style dark palette ──────────────────────────────────────────────────
 _BG_MAIN = "#2e2f32"
@@ -786,12 +786,12 @@ class DashboardView(ft.Row):
                 spacing=2, tight=True,
             ),
             width=_BTN_SLOT,
-            alignment=ft.alignment.center_left,
+            alignment=ft.alignment.top_left,
         )
         _tgt1_with_plus = ft.Row(
             [self._tgt1_lang_card, _tgt_plus_slot],
             spacing=4,
-            vertical_alignment=ft.CrossAxisAlignment.CENTER,
+            vertical_alignment=ft.CrossAxisAlignment.START,
         )
 
         # Alt-source (bilingual quick-switch) controls — must be defined before lang_panel
@@ -896,12 +896,12 @@ class DashboardView(ft.Row):
                 spacing=2, tight=True,
             ),
             width=_BTN_SLOT,
-            alignment=ft.alignment.center_left,
+            alignment=ft.alignment.top_left,
         )
         _peer_src_row = ft.Row(
             [self._peer_src_card, self._peer_src_plus_slot],
             spacing=4,
-            vertical_alignment=ft.CrossAxisAlignment.CENTER,
+            vertical_alignment=ft.CrossAxisAlignment.START,
         )
         self._extra_peer_src_rows_col = ft.Column(
             [],

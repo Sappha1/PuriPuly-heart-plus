@@ -2,6 +2,10 @@
 
 User-facing changes per build. The latest build's highlights also appear in-app when an update is ready.
 
+## r290 — 2026-07-26
+
+- The auto-detect badge is now anchored to the top-right of the language row (above the +), matching the other controls' alignment
+
 ## r289 — 2026-07-26
 
 - Received chat entries now show the detected language while voice auto-detect is on ("Received [ZH] 16:37") — uses the translator's detection when available, script analysis otherwise

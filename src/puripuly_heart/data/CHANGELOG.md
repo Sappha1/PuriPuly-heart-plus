@@ -2,6 +2,11 @@
 
 User-facing changes per build. The latest build's highlights also appear in-app when an update is ready.
 
+## r291 — 2026-07-26
+
+- Fixed the auto-detect badge disappearing after adding an extra language with + — only the + hides at the cap now, so auto-detect can always be turned off
+- While auto-detect is on, extra pinned language rows dim to show they're inactive (auto-detect accepts every language)
+
 ## r290 — 2026-07-26
 
 - The auto-detect badge is now anchored to the top-right of the language row (above the +), matching the other controls' alignment

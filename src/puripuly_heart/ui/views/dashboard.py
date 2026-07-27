@@ -18,7 +18,7 @@ from puripuly_heart.ui.fonts import font_for_language
 from puripuly_heart.ui.i18n import get_locale, language_name, t
 from puripuly_heart.ui.overlay_peer_contract import OverlayPeerConsumerContract
 
-_BUILD_TAG = "r290"  #increment each build so user can confirm version
+_BUILD_TAG = "r291"  #increment each build so user can confirm version
 
 # ── VRCT-style dark palette ──────────────────────────────────────────────────
 _BG_MAIN = "#2e2f32"
@@ -2695,6 +2695,7 @@ class DashboardView(ft.Row):
         self._auto_detect_voice = val
         self._sync_auto_detect_badge()
         self._refresh_language_rows()
+        self._rebuild_extra_peer_src_rows()
         if callable(self.on_auto_detect_voice_change):
             self.on_auto_detect_voice_change(val)
 
@@ -4730,6 +4731,7 @@ class DashboardView(ft.Row):
             self._auto_detect_voice = bool(val)
             self._sync_auto_detect_badge()
             self._refresh_language_rows()
+            self._rebuild_extra_peer_src_rows()
             if callable(self.on_auto_detect_voice_change):
                 self.on_auto_detect_voice_change(bool(val))
 
@@ -5168,11 +5170,19 @@ class DashboardView(ft.Row):
                 on_click=lambda _, idx=i: self._on_remove_extra_peer_source(idx),
                 tooltip=t("dashboard.tooltip.remove_peer_lang"), width=_BTN_SLOT,
             )
-            rows.append(ft.Row([card, minus], spacing=4, vertical_alignment=ft.CrossAxisAlignment.CENTER))
+            row = ft.Row([card, minus], spacing=4, vertical_alignment=ft.CrossAxisAlignment.CENTER)
+            if getattr(self, "_auto_detect_voice", False):
+                row.opacity = 0.45
+                card.tooltip = t("dashboard.tooltip.auto_detect_badge")
+            rows.append(row)
         self._extra_peer_src_rows_col.controls = rows
-        # Show/hide the + slot next to the primary peer src card
-        slot_visible = len(self._extra_peer_source_lang_codes) < self._MAX_EXTRA_LANGS
-        self._peer_src_plus_slot.visible = slot_visible
+        # At the cap, hide only the + BUTTON — the auto-detect badge shares
+        # this slot and must stay reachable (hiding the whole slot left
+        # auto-detect stuck ON with no way to turn it off).
+        self._peer_src_plus_slot.visible = True
+        self._peer_src_plus_btn.visible = (
+            len(self._extra_peer_source_lang_codes) < self._MAX_EXTRA_LANGS
+        )
         try:
             if self._extra_peer_src_rows_col.page:
                 self._extra_peer_src_rows_col.update()

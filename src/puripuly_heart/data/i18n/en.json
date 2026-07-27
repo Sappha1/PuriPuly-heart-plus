@@ -497,6 +497,8 @@
   "about.special_thanks.name.ephedrine": "Ephedrine",
   "about.licenses": "Licenses",
   "about.version": "Version",
+  "common.on": "On",
+  "common.off": "Off",
   "toggle.on": "Fast Response",
   "toggle.on.description": "Starts translating while you speak",
   "toggle.off": "Stable",

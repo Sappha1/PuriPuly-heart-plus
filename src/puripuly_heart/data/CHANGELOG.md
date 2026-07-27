@@ -2,6 +2,10 @@
 
 User-facing changes per build. The latest build's highlights also appear in-app when an update is ready.
 
+## r301 — 2026-07-27
+
+- Fixed "Mic noise suppression" and "Peer volume auto-gain" showing "Fast Response"/"Stable" instead of On/Off — those labels belong to the low-latency setting and were reused by mistake, making the new toggles unreadable
+
 ## r300 — 2026-07-27
 
 - HOTFIX: r299 crashed at launch ("No such file or directory: ...qwen3-asr-0.6b-int8-sherpa.manifest.json") — a cleanup accidentally removed the speech model manifest from the build. If you downloaded r299, update to r300 (or reinstall)

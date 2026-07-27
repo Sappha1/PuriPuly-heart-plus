@@ -479,6 +479,8 @@
   "about.special_thanks.name.ephedrine": "Ephedrine",
   "about.licenses": "ライセンス",
   "about.version": "バージョン",
+  "common.on": "オン",
+  "common.off": "オフ",
   "toggle.on": "高速応答",
   "toggle.on.description": "話している間にすぐ翻訳を開始します",
   "toggle.off": "安定",

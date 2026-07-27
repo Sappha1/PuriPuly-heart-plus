@@ -478,6 +478,8 @@
   "about.special_thanks.name.ephedrine": "Ephedrine",
   "about.licenses": "许可证",
   "about.version": "版本",
+  "common.on": "开",
+  "common.off": "关",
   "toggle.on": "快速响应",
   "toggle.on.description": "说话时立即开始翻译",
   "toggle.off": "稳定",

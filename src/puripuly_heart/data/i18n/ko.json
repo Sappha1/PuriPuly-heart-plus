@@ -478,6 +478,8 @@
   "about.special_thanks.name.ephedrine": "Ephedrine",
   "about.licenses": "라이선스",
   "about.version": "버전",
+  "common.on": "켬",
+  "common.off": "끔",
   "toggle.on": "빠른 응답",
   "toggle.on.description": "말하는 동안 바로 번역을 시작해요",
   "toggle.off": "안정",

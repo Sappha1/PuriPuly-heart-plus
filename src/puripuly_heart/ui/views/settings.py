@@ -1275,7 +1275,7 @@ class SettingsView(ft.Column):
         )
 
         self._mic_denoise_text = self._build_clickable_text(
-            t("toggle.off"),
+            t("common.off"),
             self._on_mic_denoise_click,
         )
         self._mic_denoise_title = ft.Text(
@@ -1291,7 +1291,7 @@ class SettingsView(ft.Column):
         )
 
         self._auto_gain_text = self._build_clickable_text(
-            t("toggle.on"),
+            t("common.on"),
             self._on_auto_gain_click,
         )
         self._auto_gain_title = ft.Text(
@@ -3153,10 +3153,10 @@ class SettingsView(ft.Column):
             "toggle.on" if settings.stt.low_latency_mode else "toggle.off"
         )
         self._mic_denoise_text.content.value = t(
-            "toggle.on" if getattr(settings.stt, "mic_denoise", False) else "toggle.off"
+            "common.on" if getattr(settings.stt, "mic_denoise", False) else "common.off"
         )
         self._auto_gain_text.content.value = t(
-            "toggle.on" if getattr(settings.desktop_audio, "auto_gain", True) else "toggle.off"
+            "common.on" if getattr(settings.desktop_audio, "auto_gain", True) else "common.off"
         )
         # --- æ–°å¢žï¼šè¯»å– VRChat åŒæ­¥å¼€å…³çŠ¶æ€ ---
         self._vrc_mic_text.content.value = t(
@@ -5270,8 +5270,8 @@ class SettingsView(ft.Column):
         if not self.page:
             return
         options = [
-            OptionItem(value="on", label=t("toggle.on"), description=""),
-            OptionItem(value="off", label=t("toggle.off"), description=""),
+            OptionItem(value="on", label=t("common.on"), description=""),
+            OptionItem(value="off", label=t("common.off"), description=""),
         ]
         current = "on" if getattr(self._settings.desktop_audio, "auto_gain", True) else "off"
         modal = SettingsModal(
@@ -5293,7 +5293,7 @@ class SettingsView(ft.Column):
                 f"[Settings] Peer auto-gain changed: {old_value} -> {new_value}"
             )
         self._settings.desktop_audio.auto_gain = new_value
-        self._auto_gain_text.content.value = t("toggle.on" if new_value else "toggle.off")
+        self._auto_gain_text.content.value = t("common.on" if new_value else "common.off")
         if self.page:
             self._auto_gain_text.update()
         self._emit_settings_changed()
@@ -5302,8 +5302,8 @@ class SettingsView(ft.Column):
         if not self.page:
             return
         options = [
-            OptionItem(value="on", label=t("toggle.on"), description=""),
-            OptionItem(value="off", label=t("toggle.off"), description=""),
+            OptionItem(value="on", label=t("common.on"), description=""),
+            OptionItem(value="off", label=t("common.off"), description=""),
         ]
         current = "on" if getattr(self._settings.stt, "mic_denoise", False) else "off"
         modal = SettingsModal(
@@ -5325,7 +5325,7 @@ class SettingsView(ft.Column):
                 f"[Settings] Mic noise suppression changed: {old_value} -> {new_value}"
             )
         self._settings.stt.mic_denoise = new_value
-        self._mic_denoise_text.content.value = t("toggle.on" if new_value else "toggle.off")
+        self._mic_denoise_text.content.value = t("common.on" if new_value else "common.off")
         if self.page:
             self._mic_denoise_text.update()
         self._emit_settings_changed()

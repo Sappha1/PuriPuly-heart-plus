@@ -18,7 +18,7 @@ from puripuly_heart.ui.fonts import font_for_language
 from puripuly_heart.ui.i18n import get_locale, language_name, t
 from puripuly_heart.ui.overlay_peer_contract import OverlayPeerConsumerContract
 
-_BUILD_TAG = "r292"  #increment each build so user can confirm version
+_BUILD_TAG = "r293"  #increment each build so user can confirm version
 
 # ── VRCT-style dark palette ──────────────────────────────────────────────────
 _BG_MAIN = "#2e2f32"
@@ -939,7 +939,12 @@ class DashboardView(ft.Row):
                     self._alt_src_row,
                     ft.Divider(height=5, color=_DIVIDER, thickness=1),
                     ft.Row(
-                        [self._lbl_peer_voice, _peer_speaks_info],
+                        [
+                            self._lbl_peer_voice,
+                            _peer_speaks_info,
+                            ft.Container(expand=True),
+                            self._make_auto_detect_badge(),
+                        ],
                         spacing=0,
                         vertical_alignment=ft.CrossAxisAlignment.CENTER,
                     ),
@@ -1204,11 +1209,7 @@ class DashboardView(ft.Row):
             ft.Icons.GRAPHIC_EQ, _voice_key,
             self._peer_panel,
             trailing=ft.Row(
-                [
-                    self._make_auto_detect_badge(),
-                    self._build_lang_swap_btn(),
-                    self._build_translit_gear(),
-                ],
+                [self._build_lang_swap_btn(), self._build_translit_gear()],
                 spacing=2, tight=True,
             ))
         self._voice_section_lbl = self._section_header_labels[-1][0]
@@ -4398,9 +4399,10 @@ class DashboardView(ft.Row):
     def _on_swap_languages(self, _e=None) -> None:
         logger.info("[LangNotify] SWAP BUTTON clicked (event=%r)", _e)
         src, tgt = self._source_lang_code, self._peer_source_lang_code
-        if not src or not tgt:
-            # Auto Detect / legacy-empty can't move into the concrete
-            # Target language slot — nothing sensible to swap.
+        if self._auto_detect_voice or not src or not tgt:
+            # Auto Detect (flag or legacy-empty) can't move into the concrete
+            # slots — swapping while it's active exchanged the HIDDEN pinned
+            # values and migrated extra rows across sections. No-op instead.
             return
         self._source_lang_code, self._peer_source_lang_code = tgt, src
         # Extras swap too: the second "Your language" (alt) and the extra
@@ -5167,18 +5169,19 @@ class DashboardView(ft.Row):
                 on_click=lambda _, idx=i: self._on_remove_extra_peer_source(idx),
                 tooltip=t("dashboard.tooltip.remove_peer_lang"), width=_BTN_SLOT,
             )
-            row = ft.Row([card, minus], spacing=4, vertical_alignment=ft.CrossAxisAlignment.CENTER)
-            if getattr(self, "_auto_detect_voice", False):
-                row.opacity = 0.45
-                card.tooltip = t("dashboard.tooltip.auto_detect_badge")
-            rows.append(row)
+            rows.append(ft.Row([card, minus], spacing=4, vertical_alignment=ft.CrossAxisAlignment.CENTER))
         self._extra_peer_src_rows_col.controls = rows
+        # Auto-detect accepts every language — pinned extras are inert, so
+        # hide them (and the +) entirely while it's on; they return on off.
+        auto_on = bool(getattr(self, "_auto_detect_voice", False))
+        self._extra_peer_src_rows_col.visible = not auto_on
         # At the cap, hide only the + BUTTON — the auto-detect badge shares
         # this slot and must stay reachable (hiding the whole slot left
         # auto-detect stuck ON with no way to turn it off).
         self._peer_src_plus_slot.visible = True
         self._peer_src_plus_btn.visible = (
-            len(self._extra_peer_source_lang_codes) < self._MAX_EXTRA_LANGS
+            not auto_on
+            and len(self._extra_peer_source_lang_codes) < self._MAX_EXTRA_LANGS
         )
         try:
             if self._extra_peer_src_rows_col.page:

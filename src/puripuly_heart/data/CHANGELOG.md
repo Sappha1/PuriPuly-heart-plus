@@ -2,6 +2,12 @@
 
 User-facing changes per build. The latest build's highlights also appear in-app when an update is ready.
 
+## r293 — 2026-07-26
+
+- The swap arrow no longer scrambles languages while auto-detect is on (it silently exchanged the hidden pinned values and moved extra rows between sections) — swap is disabled until auto-detect is off
+- The auto-detect badge now sits on the "Target language" label row itself, right-aligned — bound to the field it controls
+- While auto-detect is on, extra pinned language rows and the + are hidden entirely (they're inactive); they come back when you turn it off
+
 ## r292 — 2026-07-26
 
 - The auto-detect badge moved to the Translation card's header, next to the swap and options icons at the top right — the language rows are back to their normal layout

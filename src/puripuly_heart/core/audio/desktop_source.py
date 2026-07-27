@@ -259,6 +259,52 @@ class DesktopLoopbackProbe:
     default_device: DesktopLoopbackDevice | None
 
 
+def _probe_endpoint_activity(device: DesktopLoopbackDevice, duration_s: float = 0.5) -> float:
+    """Open a loopback endpoint briefly and return the captured RMS.
+
+    Used to find WHERE audio is actually playing when the default-bound
+    capture sits on a silent endpoint (SteamVR routes to the HMD without
+    changing the Windows default). Returns 0.0 on any failure.
+    """
+    pyaudio = _import_pyaudiowpatch()
+    manager = pyaudio.PyAudio()
+    chunks: list[np.ndarray] = []
+    try:
+        continue_flag = getattr(pyaudio, "paContinue", 0)
+
+        def _cb(in_data, _fc, _ti, _sf):
+            if in_data:
+                chunks.append(np.frombuffer(in_data, dtype=np.float32).copy())
+            return (None, continue_flag)
+
+        stream = manager.open(
+            format=getattr(pyaudio, "paFloat32"),
+            channels=device.channels,
+            rate=device.sample_rate_hz,
+            input=True,
+            input_device_index=device.index,
+            frames_per_buffer=1024,
+            stream_callback=_cb,
+        )
+        stream.start_stream()
+        time.sleep(duration_s)
+        with contextlib.suppress(Exception):
+            stream.stop_stream()
+        with contextlib.suppress(Exception):
+            stream.close()
+    except Exception:
+        return 0.0
+    finally:
+        with contextlib.suppress(Exception):
+            manager.terminate()
+    if not chunks:
+        return 0.0
+    samples = np.concatenate(chunks)
+    if samples.size == 0:
+        return 0.0
+    return float(np.sqrt(np.mean(np.square(samples), dtype=np.float64)))
+
+
 def _probe_loopback_devices() -> DesktopLoopbackProbe:
     # PortAudio snapshots the device list at Pa_Initialize, so a long-lived
     # manager never sees hot-plug changes — a fresh PyAudio() per probe does.
@@ -293,6 +339,9 @@ class ResilientDesktopLoopbackSource:
     log_detailed: Callable[[str], object] | None = None
     source_factory: Callable[[str], Any] = DesktopLoopbackAudioSource
     probe_devices: Callable[[], DesktopLoopbackProbe] = _probe_loopback_devices
+    probe_activity: Callable[[DesktopLoopbackDevice], float] = _probe_endpoint_activity
+    audio_seek_min_rms: float = 0.001
+    audio_seek_interval_s: float = 30.0
 
     _inner: Any = field(init=False, default=None, repr=False)
     _closed: bool = field(init=False, default=False)
@@ -301,6 +350,10 @@ class ResilientDesktopLoopbackSource:
     _last_fallback_recheck_monotonic_s: float = field(
         init=False, default=float("-inf"), repr=False
     )
+    _last_audio_seek_monotonic_s: float = field(
+        init=False, default=float("-inf"), repr=False
+    )
+    _preferred_next_device: str = field(init=False, default="", repr=False)
 
     def __post_init__(self) -> None:
         self._closed_event = asyncio.Event()
@@ -447,6 +500,24 @@ class ResilientDesktopLoopbackSource:
             default_name = probe.default_device.name if probe.default_device else ""
             if default_name and default_name != open_name:
                 return f"default output changed to '{default_name}'"
+        if not self.device_name:
+            # Default-bound and silent while the default itself looks fine:
+            # audio may be playing on a NON-default endpoint (SteamVR routes
+            # to the HMD without touching the Windows default). Sample the
+            # other endpoints and follow the sound.
+            now = time.monotonic()
+            if now - self._last_audio_seek_monotonic_s >= self.audio_seek_interval_s:
+                self._last_audio_seek_monotonic_s = now
+                for device in probe.devices:
+                    if device.name == open_name:
+                        continue
+                    try:
+                        rms = await asyncio.to_thread(self.probe_activity, device)
+                    except Exception:
+                        continue
+                    if rms >= self.audio_seek_min_rms:
+                        self._preferred_next_device = device.name
+                        return f"audio is playing on '{device.name}'"
         return None
 
     async def _saved_device_returned(self) -> bool:
@@ -469,11 +540,13 @@ class ResilientDesktopLoopbackSource:
     async def _reopen_with_backoff(self) -> Any | None:
         attempt = 0
         while not self._closed:
+            target_device = self._preferred_next_device or self.device_name
+            self._preferred_next_device = ""
             try:
                 # Must run ON the loop: the source's janus.Queue binds to the
                 # running loop at creation and raises in a worker thread. The
                 # ~100-300ms PyAudio init only happens on rare reopens.
-                inner = self.source_factory(self.device_name)
+                inner = self.source_factory(target_device)
             except Exception as exc:
                 delay = self.reopen_backoff_s[
                     min(attempt, len(self.reopen_backoff_s) - 1)

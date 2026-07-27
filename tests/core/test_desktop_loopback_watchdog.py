@@ -230,3 +230,64 @@ async def test_pipeline_rebuilds_resampler_on_format_change() -> None:
     outputs = [frame async for frame in pipeline.frames()]
     assert outputs, "pipeline must keep producing across a format change"
     assert all(f.sample_rate_hz == 16000 for f in outputs)
+
+
+@pytest.mark.asyncio
+async def test_silent_default_capture_follows_audio_to_other_endpoint() -> None:
+    # SteamVR case: default-bound capture sits on the silent headphones while
+    # sound plays on the HMD endpoint — the watchdog must follow the audio.
+    on_headphones = FakeInnerSource(resolved_device_name="Headphones", resolved_device_index=7)
+    on_hmd = FakeInnerSource(resolved_device_name="Index HMD", resolved_device_index=9)
+    hmd = DesktopLoopbackDevice(index=9, name="Index HMD", channels=2, sample_rate_hz=48000)
+    headphones = DesktopLoopbackDevice(index=7, name="Headphones", channels=2, sample_rate_hz=48000)
+    logs: list[str] = []
+    probed: list[str] = []
+
+    def activity(device):
+        probed.append(device.name)
+        return 0.2 if device.name == "Index HMD" else 0.0
+
+    source, created = _make_source(
+        [on_headphones, on_hmd],
+        _probe(headphones, hmd, default=headphones),
+        device_name="",
+        log_basic=logs.append,
+    )
+    source.probe_activity = activity
+    source.audio_seek_interval_s = 0.0
+    on_headphones.feed(_frame())
+    on_hmd.feed(_frame())
+
+    it = source.frames().__aiter__()
+    await asyncio.wait_for(it.__anext__(), 1.0)
+    # Starvation on the (present, "healthy") default -> seek -> HMD has audio.
+    assert (await asyncio.wait_for(it.__anext__(), 3.0)) is not None
+    assert len(created) == 2
+    assert created[1] is on_hmd
+    assert "Index HMD" in probed
+    assert any("audio is playing on 'Index HMD'" in m for m in logs)
+    await source.close()
+
+
+@pytest.mark.asyncio
+async def test_pinned_device_never_audio_seeks() -> None:
+    pinned = FakeInnerSource(resolved_device_name="Speakers", resolved_device_index=3)
+    other = DesktopLoopbackDevice(index=9, name="Index HMD", channels=2, sample_rate_hz=48000)
+    probed: list[str] = []
+
+    source, created = _make_source(
+        [pinned], _probe(_SPEAKERS, other, default=_SPEAKERS), device_name="Speakers"
+    )
+    source.probe_activity = lambda d: probed.append(d.name) or 1.0
+    source.audio_seek_interval_s = 0.0
+    pinned.feed(_frame())
+
+    it = source.frames().__aiter__()
+    await asyncio.wait_for(it.__anext__(), 1.0)
+    late = asyncio.ensure_future(it.__anext__())
+    await asyncio.sleep(0.25)  # several starvation ticks
+    assert probed == []       # pinned: no seeking
+    assert len(created) == 1
+    pinned.feed(_frame())
+    await asyncio.wait_for(late, 1.0)
+    await source.close()

@@ -2,6 +2,10 @@
 
 User-facing changes per build. The latest build's highlights also appear in-app when an update is ready.
 
+## r302 — 2026-07-27
+
+- Fixed peer capture getting stuck on silent headphones while in SteamVR: when the capture device is on "default" and goes silent, the app now checks the other output devices for actual sound and follows it (SteamVR plays through the HMD without changing the Windows default — the capture used to sit on the headphones forever). Works both directions when you enter/leave VR
+
 ## r301 — 2026-07-27
 
 - Fixed "Mic noise suppression" and "Peer volume auto-gain" showing "Fast Response"/"Stable" instead of On/Off — those labels belong to the low-latency setting and were reused by mistake, making the new toggles unreadable

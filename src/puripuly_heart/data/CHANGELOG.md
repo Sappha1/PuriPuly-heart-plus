@@ -2,6 +2,10 @@
 
 User-facing changes per build. The latest build's highlights also appear in-app when an update is ready.
 
+## r292 — 2026-07-26
+
+- The auto-detect badge moved to the Translation card's header, next to the swap and options icons at the top right — the language rows are back to their normal layout
+
 ## r291 — 2026-07-26
 
 - Fixed the auto-detect badge disappearing after adding an extra language with + — only the + hides at the cap now, so auto-detect can always be turned off

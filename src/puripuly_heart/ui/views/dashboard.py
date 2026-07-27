@@ -18,7 +18,7 @@ from puripuly_heart.ui.fonts import font_for_language
 from puripuly_heart.ui.i18n import get_locale, language_name, t
 from puripuly_heart.ui.overlay_peer_contract import OverlayPeerConsumerContract
 
-_BUILD_TAG = "r291"  #increment each build so user can confirm version
+_BUILD_TAG = "r292"  #increment each build so user can confirm version
 
 # ── VRCT-style dark palette ──────────────────────────────────────────────────
 _BG_MAIN = "#2e2f32"
@@ -781,17 +781,13 @@ class DashboardView(ft.Row):
 
         self._make_auto_detect_badge = _make_auto_detect_badge
         _tgt_plus_slot = ft.Container(
-            content=ft.Column(
-                [_make_auto_detect_badge(), self._plus_btn],
-                spacing=2, tight=True,
-            ),
-            width=_BTN_SLOT,
-            alignment=ft.alignment.top_left,
+            content=self._plus_btn, width=_BTN_SLOT,
+            alignment=ft.alignment.center_left,
         )
         _tgt1_with_plus = ft.Row(
             [self._tgt1_lang_card, _tgt_plus_slot],
             spacing=4,
-            vertical_alignment=ft.CrossAxisAlignment.START,
+            vertical_alignment=ft.CrossAxisAlignment.CENTER,
         )
 
         # Alt-source (bilingual quick-switch) controls — must be defined before lang_panel
@@ -891,17 +887,14 @@ class DashboardView(ft.Row):
             padding=ft.padding.only(left=4),
         )
         self._peer_src_plus_slot = ft.Container(
-            content=ft.Column(
-                [self._make_auto_detect_badge(), self._peer_src_plus_btn],
-                spacing=2, tight=True,
-            ),
+            content=self._peer_src_plus_btn,
             width=_BTN_SLOT,
-            alignment=ft.alignment.top_left,
+            alignment=ft.alignment.center_left,
         )
         _peer_src_row = ft.Row(
             [self._peer_src_card, self._peer_src_plus_slot],
             spacing=4,
-            vertical_alignment=ft.CrossAxisAlignment.START,
+            vertical_alignment=ft.CrossAxisAlignment.CENTER,
         )
         self._extra_peer_src_rows_col = ft.Column(
             [],
@@ -1211,7 +1204,11 @@ class DashboardView(ft.Row):
             ft.Icons.GRAPHIC_EQ, _voice_key,
             self._peer_panel,
             trailing=ft.Row(
-                [self._build_lang_swap_btn(), self._build_translit_gear()],
+                [
+                    self._make_auto_detect_badge(),
+                    self._build_lang_swap_btn(),
+                    self._build_translit_gear(),
+                ],
                 spacing=2, tight=True,
             ))
         self._voice_section_lbl = self._section_header_labels[-1][0]

@@ -231,6 +231,9 @@ class LocalQwenSherpaSTTBackend(STTBackend):
     # Mean per-token log-prob below which a transcript is dropped as garbage. None
     # disables the confidence filter entirely (no transcripts dropped on confidence).
     min_avg_logprob: float | None = LOCAL_QWEN_MIN_AVG_LOGPROB
+    # Spectral noise gate for steady background noise (fans/AC). Applied to
+    # each segment before decoding; opt-in (settings.stt.mic_denoise).
+    denoise: bool = False
     diagnostics_enabled: Callable[[], bool] | None = None
     on_model_loading: object = None  # Callable[[str], None] — fired (with channel "self"|"peer") before model init
     on_model_loaded: object = None   # Callable[[str], None] — fired (with channel "self"|"peer") after model init
@@ -369,6 +372,13 @@ class LocalQwenSherpaSTTBackend(STTBackend):
             if self.hotwords:
                 set_option("hotwords", ",".join(self.hotwords))
         np.clip(samples, -1.0, 1.0, out=samples)
+        if self.denoise:
+            try:
+                from puripuly_heart.core.audio.noise_gate import spectral_denoise
+
+                samples = spectral_denoise(samples, LOCAL_QWEN_RECOGNIZER_SAMPLE_RATE_HZ)
+            except Exception:
+                pass  # never let cleanup break recognition
         stream.accept_waveform(LOCAL_QWEN_RECOGNIZER_SAMPLE_RATE_HZ, samples)
         recognizer.decode_stream(stream)
         result = getattr(stream, "result", None)

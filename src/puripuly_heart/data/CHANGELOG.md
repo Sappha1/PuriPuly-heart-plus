@@ -2,6 +2,11 @@
 
 User-facing changes per build. The latest build's highlights also appear in-app when an update is ready.
 
+## r298 — 2026-07-27
+
+- New "Mic noise suppression" option (Settings, next to mic sensitivity): cleans steady background noise like fans and AC from your microphone before speech recognition — for setups where speech gets eaten as noise. Off by default
+- After 3 unrecognizable mic transcriptions the chat now shows an actionable notice (check the input device / enable noise suppression) instead of staying silent until the 20th
+
 ## r297 — 2026-07-27
 
 - Fixed English messages tagged [ZH] under auto-detect: the language tag sniffed the text but fell back to the pinned language for Latin script — English now tags [EN] (and gets English treatment for readings), Chinese still tags [ZH]

@@ -2,6 +2,8 @@ from __future__ import annotations
 
 import asyncio
 import contextlib
+
+from puripuly_heart.domain.events import UIEvent, UIEventType
 import copy
 import inspect
 import json
@@ -4908,6 +4910,22 @@ class GuiController:
         counts = self._local_qwen_hallucination_detection_counts
         counts[channel] = counts.get(channel, 0) + 1
         count = counts[channel]
+        if channel == "self" and count == 3:
+            # Early, actionable chat notice (the full advisory modal waits for
+            # 20): three mic transcriptions already looked like noise — the
+            # user is likely speaking into a device the app isn't listening
+            # to, or steady background noise is drowning them out.
+            with contextlib.suppress(Exception):
+                from puripuly_heart.ui.i18n import t as _t
+
+                self.hub.ui_events.put_nowait(
+                    UIEvent(
+                        type=UIEventType.ERROR,
+                        payload=_t("dashboard.mic_noise_notice"),
+                        channel="self",
+                        runtime_log_handled=True,
+                    )
+                )
         self.log_detailed(
             "[STT][SuppressedFinalNotification] "
             f"local_qwen_guidance count={count} "

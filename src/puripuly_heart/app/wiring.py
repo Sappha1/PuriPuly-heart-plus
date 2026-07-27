@@ -580,6 +580,7 @@ def create_stt_backend(
             model_dir=default_local_stt_model_dir(),
             sample_rate_hz=STT_INTERNAL_SAMPLE_RATE_HZ,
             stream_label="self",
+            denoise=bool(getattr(settings.stt, "mic_denoise", False)),
             language_hint=get_local_qwen_language_hint(settings.languages.source_language),
             min_avg_logprob=(
                 LOCAL_QWEN_MIN_AVG_LOGPROB

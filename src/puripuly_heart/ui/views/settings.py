@@ -1274,6 +1274,22 @@ class SettingsView(ft.Column):
             value=self._low_latency_text,
         )
 
+        self._mic_denoise_text = self._build_clickable_text(
+            t("toggle.off"),
+            self._on_mic_denoise_click,
+        )
+        self._mic_denoise_title = ft.Text(
+            t("settings.mic_denoise"),
+            size=13,
+            weight=ft.FontWeight.BOLD,
+            color=COLOR_NEUTRAL,
+        )
+        self._mic_denoise_card = self._wrap_unit_card(
+            title=self._info_title(self._mic_denoise_title,
+                t("settings.mic_denoise.tooltip")),
+            value=self._mic_denoise_text,
+        )
+
         # === General Tab Row 3: VRChat Mute Sync / Self VAD / Peer VAD ===
         self._self_vad_title = ft.Text(
             t("settings.section.self_vad_sensitivity"),
@@ -1340,7 +1356,8 @@ class SettingsView(ft.Column):
             ),
         )
         general_vad_row = ft.Column(
-                [microphone_test_card, self._self_vad_card, self._peer_vad_card],
+                [microphone_test_card, self._self_vad_card,
+                 self._mic_denoise_card, self._peer_vad_card],
                 spacing=0,
             )
         self._show_pinyin_text = self._build_clickable_text(
@@ -3117,6 +3134,9 @@ class SettingsView(ft.Column):
         self._peer_pre_roll_field.value = str(settings.desktop_audio.vad_pre_roll_ms)
         self._low_latency_text.content.value = t(
             "toggle.on" if settings.stt.low_latency_mode else "toggle.off"
+        )
+        self._mic_denoise_text.content.value = t(
+            "toggle.on" if getattr(settings.stt, "mic_denoise", False) else "toggle.off"
         )
         # --- æ–°å¢žï¼šè¯»å– VRChat åŒæ­¥å¼€å…³çŠ¶æ€ ---
         self._vrc_mic_text.content.value = t(
@@ -5224,6 +5244,38 @@ class SettingsView(ft.Column):
         self._low_latency_text.content.value = t("toggle.on" if new_value else "toggle.off")
         if self.page:
             self._low_latency_text.update()
+        self._emit_settings_changed()
+
+    def _on_mic_denoise_click(self, e) -> None:
+        if not self.page:
+            return
+        options = [
+            OptionItem(value="on", label=t("toggle.on"), description=""),
+            OptionItem(value="off", label=t("toggle.off"), description=""),
+        ]
+        current = "on" if getattr(self._settings.stt, "mic_denoise", False) else "off"
+        modal = SettingsModal(
+            self.page,
+            t("settings.mic_denoise"),
+            options,
+            self._on_mic_denoise_selected,
+            show_description=False,
+        )
+        modal.open(current)
+
+    def _on_mic_denoise_selected(self, value: str) -> None:
+        if not self._settings:
+            return
+        new_value = value == "on"
+        old_value = bool(getattr(self._settings.stt, "mic_denoise", False))
+        if new_value != old_value:
+            self._emit_runtime_detailed(
+                f"[Settings] Mic noise suppression changed: {old_value} -> {new_value}"
+            )
+        self._settings.stt.mic_denoise = new_value
+        self._mic_denoise_text.content.value = t("toggle.on" if new_value else "toggle.off")
+        if self.page:
+            self._mic_denoise_text.update()
         self._emit_settings_changed()
 
     def _on_prompt_change(self, value: str) -> None:

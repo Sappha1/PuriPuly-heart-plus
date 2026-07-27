@@ -2,6 +2,11 @@
 
 User-facing changes per build. The latest build's highlights also appear in-app when an update is ready.
 
+## r300 — 2026-07-27
+
+- HOTFIX: r299 crashed at launch ("No such file or directory: ...qwen3-asr-0.6b-int8-sherpa.manifest.json") — a cleanup accidentally removed the speech model manifest from the build. If you downloaded r299, update to r300 (or reinstall)
+- The build now refuses to package without that manifest, so this cannot ship again
+
 ## r299 — 2026-07-27
 
 - New "Peer volume auto-gain" (Settings, ON by default): quiet incoming desktop audio is boosted to a stable internal level before voice detection, so low Windows volume or communications ducking no longer fragments songs/speech into one-word pieces. Playback volume is untouched — you hear no difference

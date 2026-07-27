@@ -26,6 +26,12 @@ from PyInstaller.utils.hooks import collect_data_files, collect_dynamic_libs
 src_path = Path("src").resolve()
 sys.path.insert(0, str(src_path))
 
+# The local STT model manifest MUST ship — its absence crashes the app at
+# launch (r299 shipped without it after a cleanup deleted data/models).
+_stt_manifest = Path("src/puripuly_heart/data/models/qwen3-asr-0.6b-int8-sherpa.manifest.json").resolve()
+if not _stt_manifest.exists():
+    raise SystemExit(f"STT model manifest missing from source tree: {_stt_manifest}")
+
 overlay_staged_path = Path("build").resolve() / "overlay" / "PuriPulyHeartOverlay.exe"
 if not overlay_staged_path.exists():
     raise SystemExit(

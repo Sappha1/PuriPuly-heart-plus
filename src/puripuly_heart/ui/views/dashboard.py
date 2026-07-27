@@ -18,7 +18,7 @@ from puripuly_heart.ui.fonts import font_for_language
 from puripuly_heart.ui.i18n import get_locale, language_name, t
 from puripuly_heart.ui.overlay_peer_contract import OverlayPeerConsumerContract
 
-_BUILD_TAG = "r296"  #increment each build so user can confirm version
+_BUILD_TAG = "r297"  #increment each build so user can confirm version
 
 # ── VRCT-style dark palette ──────────────────────────────────────────────────
 _BG_MAIN = "#2e2f32"
@@ -3640,10 +3640,12 @@ class DashboardView(ft.Row):
         elif is_peer:
             src_lang = src_lang_hint or self._peer_source_lang_code
             if not src_lang_hint and getattr(self, "_auto_detect_voice", False):
-                # Auto detect voice: the configured Target language is only
-                # an assumption — trust the text's script instead, or the
-                # reading line vanishes when the speech is another language.
-                src_lang = sniff_translit_language(source_text or "", src_lang)
+                # Auto detect voice: trust the text's script, NOT the pinned
+                # code. Passing the pinned language as the sniff fallback
+                # returned it verbatim for latin text — English lines were
+                # tagged [ZH] and routed through Chinese reading treatment
+                # (same trap the overlay path fixed in r280).
+                src_lang = sniff_translit_language(source_text or "", "") or "en"
             tgt_lang = self._effective_peer_target_lang_code()  # always has a value
         else:
             src_lang = src_lang_hint or self._source_lang_code

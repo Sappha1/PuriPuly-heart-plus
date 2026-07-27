@@ -2,6 +2,10 @@
 
 User-facing changes per build. The latest build's highlights also appear in-app when an update is ready.
 
+## r297 — 2026-07-27
+
+- Fixed English messages tagged [ZH] under auto-detect: the language tag sniffed the text but fell back to the pinned language for Latin script — English now tags [EN] (and gets English treatment for readings), Chinese still tags [ZH]
+
 ## r296 — 2026-07-26
 
 - "Ignore my language" is now a checkbox (matching the reading toggles) and only appears while Auto Detect Voice is on

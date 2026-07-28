@@ -161,7 +161,11 @@ logger = logging.getLogger(__name__)
 
 # Hardcoded STT session reset deadline (not configurable via settings)
 STT_RESET_DEADLINE_S = 300.0
-OVERLAY_STARTUP_TIMEOUT_MS = 3000
+# 3s was too tight in the real world: the overlay is a separate frozen
+# process (Python + Flutter view) and on the FIRST launch after an update
+# Windows Defender scans the freshly-written exe, easily pushing startup
+# past 3s -> "Overlay startup timed out" on perfectly healthy machines.
+OVERLAY_STARTUP_TIMEOUT_MS = 20000
 OVERLAY_SHUTDOWN_GRACE_S = 0.05
 DESKTOP_BOUNDS_PERSIST_DEBOUNCE_S = 0.05
 DESKTOP_INTERACTION_MODE_EDIT = "edit"

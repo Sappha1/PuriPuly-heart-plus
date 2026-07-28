@@ -2,6 +2,11 @@
 
 User-facing changes per build. The latest build's highlights also appear in-app when an update is ready.
 
+## r304 — 2026-07-27
+
+- Fixed "Overlay startup timed out": the 3-second limit was too tight — the first launch after an update (while Windows scans the new files) routinely exceeded it. Now 20 seconds
+- Fixed r303 being too strict: the "Target language" field also sets what language your PARTNER speaks, so your own language is selectable there again (an English user talking to English speakers needs it). Same-language blocking still applies to real translation pairs
+
 ## r303 — 2026-07-27
 
 - Language pickers now grey out the other half of the current pair (per tab), so pointless same-language setups like English -> English or Chinese -> Chinese can't be selected — applies to Your language, Target language, extra targets, and the peer reading language

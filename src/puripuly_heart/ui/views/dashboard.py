@@ -18,7 +18,7 @@ from puripuly_heart.ui.fonts import font_for_language
 from puripuly_heart.ui.i18n import get_locale, language_name, t
 from puripuly_heart.ui.overlay_peer_contract import OverlayPeerConsumerContract
 
-_BUILD_TAG = "r303"  #increment each build so user can confirm version
+_BUILD_TAG = "r304"  #increment each build so user can confirm version
 
 # ── VRCT-style dark palette ──────────────────────────────────────────────────
 _BG_MAIN = "#2e2f32"
@@ -4346,8 +4346,13 @@ class DashboardView(ft.Row):
         pair is source <-> peer_source. Separate layout: source <-> target.
         """
         if picking_source:
-            other = (self._peer_source_lang_code if self._unified_translation
-                     else self._target_lang_code)
+            if self._unified_translation:
+                # Unified: the counterpart field is the PEER VOICE language —
+                # a speech-recognition hint, not a translation target. English
+                # user + English partner is a legitimate setup (transcription
+                # without translation), so nothing is disabled here.
+                return set()
+            other = self._target_lang_code
         else:
             other = self._source_lang_code
         return {other} if other else set()
@@ -5042,11 +5047,12 @@ class DashboardView(ft.Row):
         # No Auto Detect entry here: the "Target language" must be concrete —
         # it drives the typed-message target in the unified view. Voice
         # auto-detection is its own toggle in the options (gear) menu.
+        # No disabled entries: this field sets what language the PARTNER
+        # speaks (recognition hint). Matching the user's own language is
+        # valid — same-language rooms still need transcription.
         modal = LanguageModal(
             page=self.page, languages=self._LANG_OPTIONS,
             on_select=self._on_peer_source_select,
-            disabled_codes={self._source_lang_code} if (
-                self._unified_translation and self._source_lang_code) else set(),
         )
         modal.open(current=self._peer_source_lang_code, recent=self._recent_source_langs)
 

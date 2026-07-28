@@ -71,6 +71,8 @@
   "settings.vad.peer_hangover_ms": "对方拖尾 (ms)",
   "settings.vad.peer_pre_roll_ms": "对方前置缓冲 (ms)",
   "settings.low_latency_mode": "响应方式",
+  "settings.mic_auto_gain": "麦克风自动增益",
+  "settings.mic_auto_gain.tooltip": "在语音识别前将过小的麦克风音量内部增幅到稳定水平，即使麦克风音量很低也能被识别。不会改变对方听到的声音。",
   "settings.mic_denoise": "麦克风降噪",
   "settings.mic_denoise.tooltip": "在语音识别前去除麦克风的持续背景噪音（风扇、空调等）。如果在嘈杂环境中语音无法被识别，请开启。",
   "settings.peer_auto_gain": "对方音量自动增益",

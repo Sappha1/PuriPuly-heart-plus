@@ -6103,7 +6103,16 @@ class GuiController:
                 return
 
             self._vad = vad
-            self._audio_source = self._wrap_diagnostic_audio_source(source, channel_label="self")
+            # Boost a quiet mic before the VAD/recognizer sees it (r305) —
+            # the peer channel has had this since r299; a quiet mic was the
+            # remaining path where real speech arrived as near-silence.
+            from puripuly_heart.core.audio.auto_gain import AutoGainAudioSource
+
+            gained = AutoGainAudioSource(
+                source=source,
+                enabled=bool(getattr(self.settings.stt, "mic_auto_gain", True)),
+            )
+            self._audio_source = self._wrap_diagnostic_audio_source(gained, channel_label="self")
             self._mic_task = asyncio.create_task(self._run_mic_loop())
 
     async def _stop_mic_loop(self) -> None:

@@ -1274,6 +1274,22 @@ class SettingsView(ft.Column):
             value=self._low_latency_text,
         )
 
+        self._mic_auto_gain_text = self._build_clickable_text(
+            t("common.on"),
+            self._on_mic_auto_gain_click,
+        )
+        self._mic_auto_gain_title = ft.Text(
+            t("settings.mic_auto_gain"),
+            size=13,
+            weight=ft.FontWeight.BOLD,
+            color=COLOR_NEUTRAL,
+        )
+        self._mic_auto_gain_card = self._wrap_unit_card(
+            title=self._info_title(self._mic_auto_gain_title,
+                t("settings.mic_auto_gain.tooltip")),
+            value=self._mic_auto_gain_text,
+        )
+
         self._mic_denoise_text = self._build_clickable_text(
             t("common.off"),
             self._on_mic_denoise_click,
@@ -1373,8 +1389,8 @@ class SettingsView(ft.Column):
         )
         general_vad_row = ft.Column(
                 [microphone_test_card, self._self_vad_card,
-                 self._mic_denoise_card, self._peer_vad_card,
-                 self._auto_gain_card],
+                 self._mic_auto_gain_card, self._mic_denoise_card,
+                 self._peer_vad_card, self._auto_gain_card],
                 spacing=0,
             )
         self._show_pinyin_text = self._build_clickable_text(
@@ -3154,6 +3170,9 @@ class SettingsView(ft.Column):
         )
         self._mic_denoise_text.content.value = t(
             "common.on" if getattr(settings.stt, "mic_denoise", False) else "common.off"
+        )
+        self._mic_auto_gain_text.content.value = t(
+            "common.on" if getattr(settings.stt, "mic_auto_gain", True) else "common.off"
         )
         self._auto_gain_text.content.value = t(
             "common.on" if getattr(settings.desktop_audio, "auto_gain", True) else "common.off"
@@ -5296,6 +5315,35 @@ class SettingsView(ft.Column):
         self._auto_gain_text.content.value = t("common.on" if new_value else "common.off")
         if self.page:
             self._auto_gain_text.update()
+        self._emit_settings_changed()
+
+    def _on_mic_auto_gain_click(self, e) -> None:
+        if not self.page:
+            return
+        options = [
+            OptionItem(value="on", label=t("common.on"), description=""),
+            OptionItem(value="off", label=t("common.off"), description=""),
+        ]
+        current = "on" if getattr(self._settings.stt, "mic_auto_gain", True) else "off"
+        modal = SettingsModal(
+            self.page, t("settings.mic_auto_gain"), options,
+            self._on_mic_auto_gain_selected, show_description=False,
+        )
+        modal.open(current)
+
+    def _on_mic_auto_gain_selected(self, value: str) -> None:
+        if not self._settings:
+            return
+        new_value = value == "on"
+        old_value = bool(getattr(self._settings.stt, "mic_auto_gain", True))
+        if new_value != old_value:
+            self._emit_runtime_detailed(
+                f"[Settings] Mic auto-gain changed: {old_value} -> {new_value}"
+            )
+        self._settings.stt.mic_auto_gain = new_value
+        self._mic_auto_gain_text.content.value = t("common.on" if new_value else "common.off")
+        if self.page:
+            self._mic_auto_gain_text.update()
         self._emit_settings_changed()
 
     def _on_mic_denoise_click(self, e) -> None:

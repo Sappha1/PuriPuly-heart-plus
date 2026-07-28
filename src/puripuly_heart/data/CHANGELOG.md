@@ -2,6 +2,11 @@
 
 User-facing changes per build. The latest build's highlights also appear in-app when an update is ready.
 
+## r305 — 2026-07-27
+
+- New "Mic auto-gain" (Settings, ON by default): a quiet microphone is boosted to a stable internal level before speech recognition, so low mic volume no longer makes your speech go unheard. What others hear is unchanged
+- Near-silent audio no longer turns into invented text: when a segment is essentially silence, the recognizer's output must be much more confident to be accepted — this kills the stray "虚构"/"的答案是" style junk at the source instead of blocklisting phrases
+
 ## r304 — 2026-07-27
 
 - Fixed "Overlay startup timed out": the 3-second limit was too tight — the first launch after an update (while Windows scans the new files) routinely exceeded it. Now 20 seconds

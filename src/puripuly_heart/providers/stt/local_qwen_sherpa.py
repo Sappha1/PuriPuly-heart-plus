@@ -38,6 +38,12 @@ _KNOWN_HALLUCINATION_LOG_REDACTION = "<known-local-qwen-hallucination>"
 # never dropped; actual avg_logprob values are logged so this can be tightened from
 # real-world logs if needed.
 LOCAL_QWEN_MIN_AVG_LOGPROB = -2.3
+# Segments this quiet (post gain/denoise) are near-silence: the model reliably
+# invents stock phrases from them ("虚构", "的答案是"), and those inventions
+# score just above the normal confidence bar. Hold quiet audio to a stricter
+# bar instead of blocklisting individual phrases (r305).
+LOCAL_QWEN_QUIET_SEGMENT_RMS = 0.0075          # ~ -42 dBFS
+LOCAL_QWEN_QUIET_MIN_AVG_LOGPROB = -1.0
 logger = logging.getLogger(__name__)
 
 
@@ -391,6 +397,21 @@ class LocalQwenSherpaSTTBackend(STTBackend):
         # log-prob, log it so the threshold can be calibrated from real logs, and
         # drop the transcript when it falls below LOCAL_QWEN_MIN_AVG_LOGPROB.
         avg_logprob = _mean_log_prob(getattr(result, "ys_log_probs", None))
+        segment_rms = float(np.sqrt(np.mean(np.square(samples), dtype=np.float64)))
+        if (
+            text
+            and avg_logprob is not None
+            and segment_rms < LOCAL_QWEN_QUIET_SEGMENT_RMS
+            and avg_logprob < LOCAL_QWEN_QUIET_MIN_AVG_LOGPROB
+        ):
+            logger.info(
+                "%s dropped quiet-segment hallucination rms=%.5f avg_logprob=%.3f text=%r",
+                _audio_diag_prefix(self.stream_label),
+                segment_rms,
+                avg_logprob,
+                text,
+            )
+            return ""
         detected_lang = getattr(result, "lang", None)
         if text and (avg_logprob is not None or detected_lang):
             logger.info(

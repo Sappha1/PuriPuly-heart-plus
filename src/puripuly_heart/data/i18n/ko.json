@@ -71,6 +71,8 @@
   "settings.vad.peer_hangover_ms": "상대 행오버 (ms)",
   "settings.vad.peer_pre_roll_ms": "상대 프리롤 (ms)",
   "settings.low_latency_mode": "응답 방식",
+  "settings.mic_auto_gain": "마이크 자동 게인",
+  "settings.mic_auto_gain.tooltip": "음성 인식 전에 작은 마이크 음성을 내부적으로 안정된 레벨로 증폭합니다. 마이크 음량이 낮아도 인식됩니다. 상대방이 듣는 소리는 변하지 않습니다.",
   "settings.mic_denoise": "마이크 소음 억제",
   "settings.mic_denoise.tooltip": "음성 인식 전에 마이크의 일정한 배경 소음(팬, 에어컨 등)을 제거합니다. 시끄러운 방에서 음성이 인식되지 않으면 켜세요.",
   "settings.peer_auto_gain": "상대 볼륨 자동 게인",

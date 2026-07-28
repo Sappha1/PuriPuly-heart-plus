@@ -574,12 +574,17 @@ class STTSettings:
     # Spectral noise gate on the mic before recognition — for steady noise
     # (fans/AC) that makes the local model hallucinate. Opt-in (r298).
     mic_denoise: bool = False
+    # Boost a quiet microphone to a stable internal level before recognition
+    # (what you hear/send to VRChat is untouched). Default ON (r305).
+    mic_auto_gain: bool = True
 
     def validate(self) -> None:
         if not isinstance(self.local_low_confidence_filter, bool):
             self.local_low_confidence_filter = True
         if not isinstance(self.mic_denoise, bool):
             self.mic_denoise = False
+        if not isinstance(self.mic_auto_gain, bool):
+            self.mic_auto_gain = True
         if self.drain_timeout_s <= 0:
             raise ValueError("drain_timeout_s must be > 0")
         if not (0.0 <= self.vad_speech_threshold <= 1.0):
@@ -1611,6 +1616,7 @@ def to_dict(settings: AppSettings) -> dict[str, Any]:
             "custom_vocabulary_enabled": settings.stt.custom_vocabulary_enabled,
             "custom_terms": _parse_custom_terms(settings.stt.custom_terms),
             "mic_denoise": settings.stt.mic_denoise,
+            "mic_auto_gain": settings.stt.mic_auto_gain,
         },
         "deepgram_stt": {
             "model": settings.deepgram_stt.model,
@@ -3903,6 +3909,7 @@ def from_dict(data: dict[str, Any]) -> AppSettings:
         stt=STTSettings(
             drain_timeout_s=float(stt_data.get("drain_timeout_s", 2.0)),
             mic_denoise=bool(stt_data.get("mic_denoise", False)),
+            mic_auto_gain=bool(stt_data.get("mic_auto_gain", True)),
             vad_speech_threshold=(lambda v: 0.35 if v >= 0.9 else v)(float(vad_threshold_raw)) if vad_threshold_raw is not None else 0.35,
             low_latency_mode=bool(stt_data.get("low_latency_mode", False)),
             low_latency_vad_hangover_ms=int(stt_data.get("low_latency_vad_hangover_ms", 600)),

@@ -74,6 +74,8 @@
   "settings.vad.peer_hangover_ms": "Peer Hangover (ms)",
   "settings.vad.peer_pre_roll_ms": "Peer Pre-roll (ms)",
   "settings.low_latency_mode": "Response mode",
+  "settings.mic_auto_gain": "Mic auto-gain",
+  "settings.mic_auto_gain.tooltip": "Boosts a quiet microphone to a stable internal level before speech recognition, so low mic volume no longer makes your speech go unrecognized. Does not change what others hear.",
   "settings.mic_denoise": "Mic noise suppression",
   "settings.mic_denoise.tooltip": "Cleans steady background noise (fans, AC) from your microphone before speech recognition. Turn ON if your speech is not being recognized in a noisy room.",
   "settings.peer_auto_gain": "Peer volume auto-gain",

@@ -72,6 +72,8 @@
   "settings.vad.peer_hangover_ms": "相手ハングオーバー (ms)",
   "settings.vad.peer_pre_roll_ms": "相手プリロール (ms)",
   "settings.low_latency_mode": "応答方式",
+  "settings.mic_auto_gain": "マイクオートゲイン",
+  "settings.mic_auto_gain.tooltip": "音声認識の前に、小さいマイク音声を内部的に安定したレベルまで増幅します。マイク音量が低くても認識されるようになります。相手に聞こえる音は変わりません。",
   "settings.mic_denoise": "マイクノイズ抑制",
   "settings.mic_denoise.tooltip": "音声認識の前に、マイクの定常的な背景ノイズ（ファン、エアコンなど）を除去します。騒がしい部屋で音声が認識されない場合はオンにしてください。",
   "settings.peer_auto_gain": "相手音量オートゲイン",

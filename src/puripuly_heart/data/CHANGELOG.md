@@ -2,6 +2,10 @@
 
 User-facing changes per build. The latest build's highlights also appear in-app when an update is ready.
 
+## r303 — 2026-07-27
+
+- Language pickers now grey out the other half of the current pair (per tab), so pointless same-language setups like English -> English or Chinese -> Chinese can't be selected — applies to Your language, Target language, extra targets, and the peer reading language
+
 ## r302 — 2026-07-27
 
 - Fixed peer capture getting stuck on silent headphones while in SteamVR: when the capture device is on "default" and goes silent, the app now checks the other output devices for actual sound and follows it (SteamVR plays through the HMD without changing the Windows default — the capture used to sit on the headphones forever). Works both directions when you enter/leave VR

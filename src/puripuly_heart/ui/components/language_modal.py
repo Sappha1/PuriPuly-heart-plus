@@ -46,11 +46,15 @@ class LanguageModal:
         on_select: Callable[[str], None],
         *,
         toggles: list[LanguageModalToggle] | None = None,
+        disabled_codes: set[str] | None = None,
     ):
         self._page = page
         self._languages = languages
         self._on_select = on_select
         self._toggles = toggles or []
+        # Codes rendered greyed-out and unclickable (e.g. the current source
+        # language inside the target picker — X -> X is a pointless no-op).
+        self._disabled_codes = disabled_codes or set()
         self._dialog: ft.AlertDialog | None = None
         self._all_lang_items: list[tuple[str, ft.Container]] = []
         self._lang_list_view: ft.ListView | None = None
@@ -256,13 +260,19 @@ class LanguageModal:
         for code, _name in self._languages:
             name = language_name(code)
             is_selected = code == current
+            is_disabled = code in self._disabled_codes and not is_selected
+            text_color = COLOR_ON_BACKGROUND
+            if is_selected:
+                text_color = COLOR_PRIMARY
+            elif is_disabled:
+                text_color = "#5a5b60"
             item = ft.Container(
                 content=ft.Row(
                     [
                         ft.Text(
                             name,
                             size=14,
-                            color=COLOR_PRIMARY if is_selected else COLOR_ON_BACKGROUND,
+                            color=text_color,
                             weight=ft.FontWeight.W_600 if is_selected else ft.FontWeight.NORMAL,
                             expand=True,
                         ),
@@ -279,8 +289,11 @@ class LanguageModal:
                 bgcolor=_BG_ITEM_SELECTED if is_selected else ft.Colors.TRANSPARENT,
                 border_radius=6,
                 padding=ft.padding.symmetric(horizontal=12, vertical=9),
-                on_click=lambda e, sel=code: self._select(sel),
-                on_hover=lambda e, is_sel=is_selected: self._on_item_hover(e, is_sel),
+                on_click=None if is_disabled else (lambda e, sel=code: self._select(sel)),
+                on_hover=None if is_disabled else (
+                    lambda e, is_sel=is_selected: self._on_item_hover(e, is_sel)
+                ),
+                opacity=0.55 if is_disabled else 1.0,
             )
             result.append((name.lower(), item))
         return result

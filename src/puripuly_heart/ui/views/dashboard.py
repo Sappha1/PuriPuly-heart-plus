@@ -18,7 +18,7 @@ from puripuly_heart.ui.fonts import font_for_language
 from puripuly_heart.ui.i18n import get_locale, language_name, t
 from puripuly_heart.ui.overlay_peer_contract import OverlayPeerConsumerContract
 
-_BUILD_TAG = "r302"  #increment each build so user can confirm version
+_BUILD_TAG = "r303"  #increment each build so user can confirm version
 
 # ── VRCT-style dark palette ──────────────────────────────────────────────────
 _BG_MAIN = "#2e2f32"
@@ -4339,10 +4339,26 @@ class DashboardView(ft.Row):
             + "\n" + t("dashboard.tooltip.right_click_change")
         )
 
+    def _translation_pair_counterpart(self, *, picking_source: bool) -> set[str]:
+        """The language(s) to grey out so X -> X pairs can't be built (per tab).
+
+        Unified layout: typed messages target the partner's language, so the
+        pair is source <-> peer_source. Separate layout: source <-> target.
+        """
+        if picking_source:
+            other = (self._peer_source_lang_code if self._unified_translation
+                     else self._target_lang_code)
+        else:
+            other = self._source_lang_code
+        return {other} if other else set()
+
     def _open_source_dialog(self, _=None):
         auto_label = t("language.auto", default="Auto Detect")
         source_langs = [("", auto_label)] + list(self._LANG_OPTIONS)
-        modal = LanguageModal(page=self.page, languages=source_langs, on_select=self._on_source_select)
+        modal = LanguageModal(
+            page=self.page, languages=source_langs, on_select=self._on_source_select,
+            disabled_codes=self._translation_pair_counterpart(picking_source=True),
+        )
         modal.open(current=self._source_lang_code, recent=self._recent_source_langs)
 
     def _open_target_dialog(self, _=None):
@@ -4350,6 +4366,7 @@ class DashboardView(ft.Row):
             page=self.page,
             languages=self._LANG_OPTIONS,
             on_select=self._on_target_select,
+            disabled_codes=self._translation_pair_counterpart(picking_source=False),
         )
         modal.open(current=self._target_lang_code, recent=self._recent_target_langs)
 
@@ -4360,6 +4377,7 @@ class DashboardView(ft.Row):
             page=self.page,
             languages=self._LANG_OPTIONS,
             on_select=lambda code, i=idx: self._on_extra_target_select(i, code),
+            disabled_codes=self._translation_pair_counterpart(picking_source=False),
         )
         modal.open(current=self._extra_target_lang_codes[idx], recent=self._recent_target_langs)
 
@@ -5024,11 +5042,21 @@ class DashboardView(ft.Row):
         # No Auto Detect entry here: the "Target language" must be concrete —
         # it drives the typed-message target in the unified view. Voice
         # auto-detection is its own toggle in the options (gear) menu.
-        modal = LanguageModal(page=self.page, languages=self._LANG_OPTIONS, on_select=self._on_peer_source_select)
+        modal = LanguageModal(
+            page=self.page, languages=self._LANG_OPTIONS,
+            on_select=self._on_peer_source_select,
+            disabled_codes={self._source_lang_code} if (
+                self._unified_translation and self._source_lang_code) else set(),
+        )
         modal.open(current=self._peer_source_lang_code, recent=self._recent_source_langs)
 
     def _open_peer_target_dialog(self, _=None):
-        modal = LanguageModal(page=self.page, languages=self._LANG_OPTIONS, on_select=self._on_peer_target_select)
+        modal = LanguageModal(
+            page=self.page, languages=self._LANG_OPTIONS,
+            on_select=self._on_peer_target_select,
+            disabled_codes={self._peer_source_lang_code} if (
+                self._peer_source_lang_code and not self._auto_detect_voice) else set(),
+        )
         modal.open(current=self._effective_peer_target_lang_code(), recent=self._recent_target_langs)
 
     def _open_extra_peer_target_dialog(self, idx: int = 0, _e=None):

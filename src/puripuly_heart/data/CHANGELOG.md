@@ -2,6 +2,11 @@
 
 User-facing changes per build. The latest build's highlights also appear in-app when an update is ready.
 
+## r307 — 2026-07-28
+
+- Fixed runaway "怪怪怪怪…" style messages reaching the chat: the repetition detector only recognised loops that started at the very beginning of a line, so anything with a few normal characters in front slipped through
+- The local speech model's stock filler on silence ("的答案", "虚构", …) is now treated as the hallucination it is, on both the mic and incoming voice
+
 ## r306 — 2026-07-28
 
 - Corrected the dates shown in this list: r304 and r305 were stamped 07-27 but were built on 07-28

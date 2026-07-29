@@ -94,3 +94,36 @@ def test_quiet_segment_hallucination_is_dropped() -> None:
 
     loud = (np.random.default_rng(4).normal(0, 0.08, 16000)).astype(np.float32)
     assert backend._decode_f32_sync(_Rec(), loud) == "虚构"
+
+
+def test_repetition_run_after_prefix_is_caught() -> None:
+    """r307: a loop that starts mid-string used to reach the chatbox."""
+    from puripuly_heart.core.stt.local_qwen_hallucination import is_repetition_loop
+
+    assert is_repetition_loop("這不看一" + "怪" * 180)   # screenshot case
+    assert is_repetition_loop("怪" * 200)
+    assert is_repetition_loop("hello " + "ha" * 40)
+
+
+def test_repetition_detector_keeps_real_speech() -> None:
+    from puripuly_heart.core.stt.local_qwen_hallucination import is_repetition_loop
+
+    for text in (
+        "I want to do the Terraria summon boss.",
+        "no no no no no no",
+        "我真的被打破了 我先把这个看起来吧",
+        "That's right, and I mean it, really.",
+        "ありがとうございました",
+    ):
+        assert not is_repetition_loop(text), text
+
+
+def test_stock_qwen_filler_is_treated_as_hallucination() -> None:
+    from puripuly_heart.core.stt.local_qwen_hallucination import (
+        KNOWN_LOCAL_QWEN_HALLUCINATIONS,
+    )
+
+    for phrase in ("的答案", "的答案是", "虚构", "虚构人物"):
+        assert phrase in KNOWN_LOCAL_QWEN_HALLUCINATIONS
+    # A real sentence containing the fragment must NOT be an exact match.
+    assert "这是我的答案是什么" not in KNOWN_LOCAL_QWEN_HALLUCINATIONS

@@ -3,7 +3,14 @@ from __future__ import annotations
 import re
 from collections import Counter
 
-KNOWN_LOCAL_QWEN_HALLUCINATIONS = frozenset({"leşme", "acia", "system"})
+KNOWN_LOCAL_QWEN_HALLUCINATIONS = frozenset({
+    "leşme", "acia", "system",
+    # Qwen's stock Chinese filler on near-silence/noise. Observed dozens of
+    # times across two users' logs on ENGLISH-only audio (both channels, with
+    # and without a language hint). Matched as a WHOLE utterance only — these
+    # are bare fragments ("'s answer", "fictional"), never a real sentence.
+    "的答案", "的答案是", "虚构", "虚构人物", "我可以不因为",
+})
 
 # A "stuck" STT loop repeats a short unit many times ("什么?什么?什么?..."). Require a
 # high repeat count + dominance so ordinary repetition ("no no no") is NOT suppressed.
@@ -11,6 +18,12 @@ _REPETITION_MIN_UNITS = 8
 # NOTE: ，(U+FF0C, the standard Chinese comma) was originally missing here, which let
 # "等等，等等，等等，…" walls parse as ONE unit and evade detection entirely.
 _REPETITION_SPLIT_RE = re.compile(r"[\s,，.。、!！?？;；:：…·]+")
+
+
+# A contiguous run of one short unit this many times, covering this much of the
+# text, is a degenerate loop — well above ordinary emphasis ("no no no no").
+_RUN_MIN_REPS = 12
+_RUN_MIN_COVERAGE = 0.6
 
 
 def is_repetition_loop(text: str) -> bool:
@@ -32,6 +45,24 @@ def is_repetition_loop(text: str) -> bool:
         if reps >= _REPETITION_MIN_UNITS and s[: unit_len * reps] == s[:unit_len] * reps:
             if unit_len * reps >= n * 0.85:
                 return True
+    # Run ANYWHERE in the string: the model often emits a few plausible chars and
+    # then locks into a loop ("這不看一" + "怪"x180). The prefix defeated both checks
+    # above, so a message of hundreds of identical characters reached the chatbox.
+    for unit_len in range(1, 5):
+        i = 0
+        while i + unit_len <= n:
+            unit = s[i : i + unit_len]
+            if not unit.strip():
+                i += 1
+                continue
+            reps = 1
+            j = i + unit_len
+            while j + unit_len <= n and s[j : j + unit_len] == unit:
+                reps += 1
+                j += unit_len
+            if reps >= _RUN_MIN_REPS and (reps * unit_len) >= n * _RUN_MIN_COVERAGE:
+                return True
+            i = max(j - unit_len, i) + 1
     return False
 
 # Prefixes that indicate the model hallucinated a structured/code output

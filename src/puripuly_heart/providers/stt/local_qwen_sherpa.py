@@ -482,8 +482,10 @@ class _LocalQwenSherpaSession(STTBackendSession):
         self._buffer_f32.clear()
         audio_ms = _sample_count_duration_ms(samples_f32.size, self.backend.sample_rate_hz)
         diag_enabled = self._diagnostics_enabled()
-        if diag_enabled:
-            self._log_decode_start_diagnostics(samples_f32)
+        # r313: always log decode_start — one line per utterance with rms/peak
+        # is the difference between diagnosing a user's junk-transcript log in
+        # one pass and guessing (two logs arrived without it this week).
+        self._log_decode_start_diagnostics(samples_f32)
 
         try:
             started_at = time.perf_counter()

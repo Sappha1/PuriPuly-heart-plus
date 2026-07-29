@@ -2,6 +2,10 @@
 
 User-facing changes per build. The latest build's highlights also appear in-app when an update is ready.
 
+## r313 — 2026-07-28
+
+- The standard log now answers audio-plumbing questions by itself (no settings to enable): which capture device each channel actually opened (name, rate, channels), the loudness of every segment sent to speech recognition, a per-minute "pace" check that exposes devices delivering a different sample rate than they claim, and every 2 minutes a survey of ALL output devices' live levels — so a log directly shows when the call is playing through a device the app isn't listening to
+
 ## r312 — 2026-07-28
 
 - Four more noise-hallucination patterns are now caught before they reach chat or VRChat (all seen live in a user's log): number walls like "# 2".."# 27" sent as one message, stock phrases with numbers attached ("...的答案是：100"), the same phrase repeated back-to-back ("格力空调，格力空调"), and long template/recursive loops ("这个角色的身高和体重的比是1.75:60" x8, the recursive Xiaoming-story). Real sentences that merely contain these fragments are unaffected

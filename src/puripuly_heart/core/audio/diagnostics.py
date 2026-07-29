@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import contextlib
+import time
 from collections.abc import Callable
 from dataclasses import dataclass, field
 from enum import StrEnum
@@ -276,16 +277,77 @@ class DiagnosticAudioSource(AudioSource):
     fault_profile_provider: Callable[[], AudioFaultProfile | str | None] | None = None
     summary_interval_audio_ms: int = 1000
     extra_fields_provider: Callable[[], dict[str, object]] | None = None
+    # Always-on plumbing health (r313): one open banner + a pace line every
+    # 60s at BASIC level, so a plain log answers "which device, and is the
+    # audio clock sane" without the user enabling detailed diagnostics. A
+    # pace ratio far from 1.0 means the device delivers a different sample
+    # rate than it claims (pitch-shifted capture -> STT junk).
+    log_basic: Callable[[str], object] | None = None
+    pace_interval_s: float = 60.0
     _accumulated_audio_ms: float = field(init=False, default=0.0)
     _sequence_index: int = field(init=False, default=0)
+    _open_banner_logged: bool = field(init=False, default=False)
+    _pace_audio_s: float = field(init=False, default=0.0)
+    _pace_wall_start_s: float = field(init=False, default=0.0)
 
     def _current_fault_profile(self) -> AudioFaultProfile:
         if self.fault_profile_provider is not None:
             return normalize_audio_fault_profile(self.fault_profile_provider())
         return normalize_audio_fault_profile(self.fault_profile)
 
+    def _extra_fields_safe(self) -> dict[str, object]:
+        with contextlib.suppress(Exception):
+            if self.extra_fields_provider is not None:
+                return dict(self.extra_fields_provider())
+        return {}
+
+    def _log_basic_safe(self, message: str) -> None:
+        if self.log_basic is None:
+            return
+        with contextlib.suppress(Exception):
+            self.log_basic(message)
+
+    def _maybe_log_open_banner(self) -> None:
+        if self._open_banner_logged:
+            return
+        self._open_banner_logged = True
+        fields = self._extra_fields_safe()
+        self._log_basic_safe(
+            f"[Audio][{self.channel_label}] Capture opened: "
+            f"device={fields.get('resolved_device_name')!r} "
+            f"idx={fields.get('resolved_device_index')} "
+            f"ch={fields.get('resolved_channels')} "
+            f"rate={fields.get('actual_sample_rate_hz')} "
+            f"default_fallback={fields.get('used_default_fallback')}"
+        )
+
+    def _track_pace(self, frame: AudioFrameF32) -> None:
+        with contextlib.suppress(Exception):
+            channels = max(1, int(getattr(frame, "channels", 1) or 1))
+            rate = max(1, int(frame.sample_rate_hz))
+            self._pace_audio_s += frame.samples.size / (rate * channels)
+            now = time.monotonic()
+            if self._pace_wall_start_s == 0.0:
+                self._pace_wall_start_s = now
+                return
+            wall = now - self._pace_wall_start_s
+            if wall < self.pace_interval_s:
+                return
+            ratio = self._pace_audio_s / wall if wall > 0 else 0.0
+            fields = self._extra_fields_safe()
+            self._log_basic_safe(
+                f"[Audio][{self.channel_label}] Pace: audio_s={self._pace_audio_s:.1f} "
+                f"wall_s={wall:.1f} ratio={ratio:.2f} "
+                f"queue_drops={fields.get('queue_drops')} "
+                f"callback_statuses={fields.get('callback_statuses')}"
+            )
+            self._pace_audio_s = 0.0
+            self._pace_wall_start_s = now
+
     async def frames(self) -> AsyncIterator[AudioFrameF32]:
         async for frame in self.source.frames():
+            self._maybe_log_open_banner()
+            self._track_pace(frame)
             profile = self._safe_current_fault_profile()
             detailed_enabled = self._safe_detailed_enabled()
             if profile is AudioFaultProfile.NONE and not detailed_enabled:

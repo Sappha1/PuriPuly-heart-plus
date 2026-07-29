@@ -5046,6 +5046,7 @@ class GuiController:
             channel_label=channel_label,
             is_detailed_enabled=self._detailed_audio_diag_enabled,
             log_detailed=lambda message: self.log_detailed(message),
+            log_basic=lambda message: self.log_basic(message),
             fault_profile_provider=lambda: (
                 self._debug_capture_fault_profile
                 if self._debug_audio_fault_allowed()

@@ -280,6 +280,7 @@ async def test_pinned_device_never_audio_seeks() -> None:
     )
     source.probe_activity = lambda d: probed.append(d.name) or 1.0
     source.audio_seek_interval_s = 0.0
+    source.endpoint_survey_interval_s = -1.0  # r313 survey probes too — off here
     pinned.feed(_frame())
 
     it = source.frames().__aiter__()
@@ -291,3 +292,29 @@ async def test_pinned_device_never_audio_seeks() -> None:
     pinned.feed(_frame())
     await asyncio.wait_for(late, 1.0)
     await source.close()
+
+
+@pytest.mark.asyncio
+async def test_endpoint_survey_logs_all_endpoint_levels() -> None:
+    """r313: a basic-level survey names every endpoint's live level so a log
+    shows whether the call plays through the captured device or another one."""
+    inner = FakeInnerSource(resolved_device_name="Speakers")
+    hmd = DesktopLoopbackDevice(index=9, name="Index HMD", channels=2, sample_rate_hz=48000)
+    logs: list[str] = []
+    source, _ = _make_source(
+        [inner], _probe(_SPEAKERS, hmd, default=_SPEAKERS),
+        device_name="Speakers", log_basic=logs.append,
+    )
+    source.probe_activity = lambda d: 0.2 if d.name == "Index HMD" else 0.0
+    source.endpoint_survey_interval_s = 0.0
+    inner.feed(_frame())
+    inner.feed(_frame())
+
+    it = source.frames().__aiter__()
+    await asyncio.wait_for(it.__anext__(), 1.0)
+    await asyncio.sleep(0.05)  # let the survey task run
+    await source.close()
+    survey = [m for m in logs if "[EndpointAudio]" in m]
+    assert survey, logs
+    assert "'Index HMD'=-14dB" in survey[0]
+    assert "'Speakers'=silent (capturing)" in survey[0]

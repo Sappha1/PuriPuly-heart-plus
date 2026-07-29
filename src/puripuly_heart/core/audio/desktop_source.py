@@ -5,6 +5,7 @@ import contextlib
 import logging
 import platform
 import queue
+import math
 import time
 from collections.abc import Callable
 from dataclasses import dataclass, field
@@ -342,6 +343,10 @@ class ResilientDesktopLoopbackSource:
     probe_activity: Callable[[DesktopLoopbackDevice], float] = _probe_endpoint_activity
     audio_seek_min_rms: float = 0.001
     audio_seek_interval_s: float = 30.0
+    # r313: periodic survey of ALL loopback endpoints' live audio levels at
+    # BASIC log level — answers "is the call actually playing through the
+    # device we capture, or through another one" straight from a user's log.
+    endpoint_survey_interval_s: float = 120.0
 
     _inner: Any = field(init=False, default=None, repr=False)
     _closed: bool = field(init=False, default=False)
@@ -350,6 +355,8 @@ class ResilientDesktopLoopbackSource:
     _last_fallback_recheck_monotonic_s: float = field(
         init=False, default=float("-inf"), repr=False
     )
+    _last_endpoint_survey_monotonic_s: float = field(init=False, default=0.0)
+    _endpoint_survey_running: bool = field(init=False, default=False)
     _last_audio_seek_monotonic_s: float = field(
         init=False, default=float("-inf"), repr=False
     )
@@ -457,6 +464,7 @@ class ResilientDesktopLoopbackSource:
                         reopen_reason = f"capture stream failed: {exc}"
                         break
                     self._idle_logged = False
+                    self._maybe_start_endpoint_survey()
                     yield frame
                     if await self._saved_device_returned():
                         reopen_reason = (
@@ -475,6 +483,52 @@ class ResilientDesktopLoopbackSource:
                 f"(was device='{self.resolved_device_name}')"
             )
             await self._close_inner()
+
+    def _maybe_start_endpoint_survey(self) -> None:
+        if self.endpoint_survey_interval_s < 0:  # disabled (tests)
+            return
+        now = time.monotonic()
+        if self._endpoint_survey_running:
+            return
+        if (
+            self._last_endpoint_survey_monotonic_s
+            and now - self._last_endpoint_survey_monotonic_s
+            < self.endpoint_survey_interval_s
+        ):
+            return
+        self._last_endpoint_survey_monotonic_s = now
+        self._endpoint_survey_running = True
+        asyncio.get_running_loop().create_task(self._run_endpoint_survey())
+
+    async def _run_endpoint_survey(self) -> None:
+        """Log every loopback endpoint's live level (r313). One line like:
+        [EndpointAudio] capturing 'A' | 'A'=-18dB 'B'=silent 'C'=-52dB —
+        if the loud endpoint is not the captured one, the user's call plays
+        through a device the app is not listening to."""
+        try:
+            open_name = self.resolved_device_name or self.device_name or ""
+            probe = await asyncio.to_thread(self.probe_devices)
+            parts: list[str] = []
+            for device in probe.devices:
+                try:
+                    rms = await asyncio.to_thread(self.probe_activity, device)
+                except Exception:
+                    parts.append(f"{device.name!r}=probe-failed")
+                    continue
+                if rms <= 1e-6:
+                    level = "silent"
+                else:
+                    level = f"{20.0 * math.log10(max(rms, 1e-6)):.0f}dB"
+                mark = " (capturing)" if device.name == open_name else ""
+                parts.append(f"{device.name!r}={level}{mark}")
+            if parts:
+                self._emit_basic(
+                    f"[EndpointAudio] capturing {open_name!r} | " + ", ".join(parts)
+                )
+        except Exception:
+            pass
+        finally:
+            self._endpoint_survey_running = False
 
     async def _starved_health_reason(self, inner: Any) -> str | None:
         """Return why the stream should be reopened, or None if it's just idle."""

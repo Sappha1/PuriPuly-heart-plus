@@ -5578,7 +5578,13 @@ class GuiController:
         peak_abs = float(np.max(np.abs(samples)))
         if peak_abs <= 1e-6:
             return 0.0
-        return min(1.0, peak_abs)
+        # dB meter, not raw amplitude (r314). The old `min(1.0, peak)` put
+        # 100% at hard digital clipping, so a strong mic (-24 dBFS peaks)
+        # read "6%" and every healthy setup looked broken. Map -50..0 dBFS
+        # onto 0..100% like other voice apps: normal speech lands mid-range,
+        # yelling approaches the top, clipping is 100%.
+        level_db = 20.0 * math.log10(peak_abs)
+        return min(1.0, max(0.0, (level_db + 50.0) / 50.0))
 
     @staticmethod
     def _format_microphone_test_route_log(

@@ -2,6 +2,10 @@
 
 User-facing changes per build. The latest build's highlights also appear in-app when an update is ready.
 
+## r314 — 2026-07-29
+
+- The Microphone test percentage now uses a decibel scale like other voice apps: normal speech reads around 50-60%, shouting near the top, and 100% means actual clipping. Previously 100% was raw digital maximum, so even a loud, healthy mic never showed more than single digits — making working mics look broken
+
 ## r313 — 2026-07-28
 
 - The standard log now answers audio-plumbing questions by itself (no settings to enable): which capture device each channel actually opened (name, rate, channels), the loudness of every segment sent to speech recognition, a per-minute "pace" check that exposes devices delivering a different sample rate than they claim, and every 2 minutes a survey of ALL output devices' live levels — so a log directly shows when the call is playing through a device the app isn't listening to

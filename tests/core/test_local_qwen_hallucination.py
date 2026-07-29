@@ -18,10 +18,14 @@ def _load_detector_module():
         raise
 
 
-def test_known_local_qwen_hallucination_set_contains_only_selected_artifacts() -> None:
+def test_known_local_qwen_hallucination_set_contains_core_artifacts() -> None:
+    # r307/r312 expanded the set from field data (two users' logs); assert the
+    # core artifacts are present rather than pinning the exact contents.
     module = _load_detector_module()
 
-    assert module.KNOWN_LOCAL_QWEN_HALLUCINATIONS == frozenset({"leşme", "acia"})
+    assert {"leşme", "acia", "的答案是", "虚构", "格力空调"} <= set(
+        module.KNOWN_LOCAL_QWEN_HALLUCINATIONS
+    )
 
 
 @pytest.mark.parametrize("text", ["leşme", "acia", "  leşme  ", "\tacia\r\n"])
@@ -33,8 +37,18 @@ def test_known_local_qwen_hallucination_detector_accepts_exact_artifacts_after_s
     assert module.is_known_local_qwen_hallucination(text) is True
 
 
-@pytest.mark.parametrize("text", ["的答案", "虚构", "夫", "夫夫", "格力"])
-def test_known_local_qwen_hallucination_detector_rejects_chinese_looking_exclusions(
+@pytest.mark.parametrize(
+    "text",
+    [
+        "夫夫",
+        # Stock fragments EMBEDDED in real sentences must never match — only
+        # bare whole-utterance junk does.
+        "这是我的答案是什么意思呢朋友",
+        "我家的格力空调坏了要修一下才行呢",
+        "他喜欢虚构小说和故事",
+    ],
+)
+def test_known_local_qwen_hallucination_detector_rejects_real_speech(
     text: str,
 ) -> None:
     module = _load_detector_module()
@@ -45,8 +59,30 @@ def test_known_local_qwen_hallucination_detector_rejects_chinese_looking_exclusi
 @pytest.mark.parametrize(
     "text",
     [
+        # r312 field data (Anhui user): mic noise emitted these verbatim.
+        "的答案是：1000",
+        "格力空调，格力空调。",
+        "虚构一个故事",
+        "合并成一个句子。",
+        chr(10).join(f"# {i}" for i in range(2, 28)),  # one-utterance number wall
+        "夫",   # single char = junk since r298
         "",
         "   ",
+    ],
+)
+def test_known_local_qwen_hallucination_detector_accepts_field_junk(
+    text: str,
+) -> None:
+    module = _load_detector_module()
+
+    assert module.is_known_local_qwen_hallucination(text) is True
+
+
+@pytest.mark.parametrize(
+    "text",
+    [
+        # NB: "" / "   " moved to the junk side — trivial output has been
+        # suppressed since the r298 single-char rule.
         "Leşme",
         "LEŞME",
         "lesme",

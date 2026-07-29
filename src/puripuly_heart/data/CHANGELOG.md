@@ -2,6 +2,10 @@
 
 User-facing changes per build. The latest build's highlights also appear in-app when an update is ready.
 
+## r312 — 2026-07-28
+
+- Four more noise-hallucination patterns are now caught before they reach chat or VRChat (all seen live in a user's log): number walls like "# 2".."# 27" sent as one message, stock phrases with numbers attached ("...的答案是：100"), the same phrase repeated back-to-back ("格力空调，格力空调"), and long template/recursive loops ("这个角色的身高和体重的比是1.75:60" x8, the recursive Xiaoming-story). Real sentences that merely contain these fragments are unaffected
+
 ## r311 — 2026-07-28
 
 - The "local speech recognition isn't working" warning no longer recommends Deepgram or links an external GitHub guide (both belonged to the original upstream project, not this fork). It now explains the actual cause — noise or silence reaching the model — and what to check: the Windows default microphone, the device PEER listens to (remote desktop tools and virtual audio devices are common culprits), and the Mic noise suppression setting

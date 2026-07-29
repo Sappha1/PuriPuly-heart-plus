@@ -10,7 +10,19 @@ KNOWN_LOCAL_QWEN_HALLUCINATIONS = frozenset({
     # and without a language hint). Matched as a WHOLE utterance only — these
     # are bare fragments ("'s answer", "fictional"), never a real sentence.
     "的答案", "的答案是", "虚构", "虚构人物", "我可以不因为",
+    # Instruction-corpus regurgitation on noise (Anhui user, r310 log): bare
+    # prompts the model was trained on, emitted verbatim from mic noise.
+    "虚构一个故事", "合并成一个句子", "格力空调", "格力",
 })
+
+# Stock terms for the normalized checks below: junk if the text minus digits
+# and punctuation is exactly one of these, or that term repeated back-to-back
+# ("的答案是：100。", "格力空调，格力空调。").
+_STOCK_TERMS = (
+    "的答案是", "的答案", "虚构一个故事", "虚构人物", "虚构", "格力空调", "格力",
+    "合并成一个句子", "我可以不因为",
+)
+_PUNCT_DIGIT_STRIP_RE = re.compile(r"[\s\d.。,，!！?？;；:：、…·（）()\-—‘’“”'\"#*]+")
 
 # A "stuck" STT loop repeats a short unit many times ("什么?什么?什么?..."). Require a
 # high repeat count + dominance so ordinary repetition ("no no no") is NOT suppressed.
@@ -44,6 +56,30 @@ def is_repetition_loop(text: str) -> bool:
         reps = n // unit_len
         if reps >= _REPETITION_MIN_UNITS and s[: unit_len * reps] == s[:unit_len] * reps:
             if unit_len * reps >= n * 0.85:
+                return True
+    # Long-unit loop: one clause repeated many times with separators. The unit
+    # cap of 16 above missed "这个角色的身高和体重的比是1.75:60" x8 (19 chars,
+    # dominance 0.67) — a whole story-template loop shipped to VRChat (r312).
+    if len(units) >= 6:
+        unit, count = Counter(units).most_common(1)[0]
+        if 17 <= len(unit) <= 40 and count >= 4 and count / len(units) >= 0.5:
+            return True
+    # Recursive-phrase loop ("小明的爸爸是小明的爸爸，小明的爸爸的爸爸是小小明
+    # 的爸爸…"): the units all differ so unit counting fails, but one short
+    # gram recurs absurdly often. Whitespace-free grams only — English prose
+    # legitimately repeats "the"; CJK recursion is what this targets (r312).
+    if len(s) >= 60:
+        compact = s
+        for gram_len in (3, 4, 5, 6):
+            best = 0
+            for i in range(len(compact) - gram_len + 1):
+                gram = compact[i : i + gram_len]
+                if not gram.strip() or any(ch.isspace() for ch in gram):
+                    continue
+                count = compact.count(gram)
+                if count > best:
+                    best = count
+            if best >= 8 and best * gram_len >= len(compact) * 0.25:
                 return True
     # Run ANYWHERE in the string: the model often emits a few plausible chars and
     # then locks into a loop ("這不看一" + "怪"x180). The prefix defeated both checks
@@ -88,7 +124,9 @@ _TRIVIAL_CHARS = frozenset(".。,，!！?？;；:：、…")
 _MARKUP_LINE_RE = re.compile(r"<[a-zA-Z]+[=>\"]")
 # Bare numbered-list line ("#1", "12.", "3"). Walls of these are OCR/subtitle
 # hallucinations, not speech.
-_NUMBER_LINE_RE = re.compile(r"^#?\d{1,4}\.?$")
+# r312: "# 2" (space after #) and "3)" / "4、" list styles — a Chinese user's
+# mic emitted "# 2".."# 27" as one utterance and the missing \s* let it ship.
+_NUMBER_LINE_RE = re.compile(r"^#?\s*\d{1,4}[.。)）、]?$")
 
 
 def _is_multiline_garbage(stripped: str) -> bool:
@@ -113,6 +151,21 @@ def is_known_local_qwen_hallucination(text: str) -> bool:
     stripped = text.strip()
     if stripped in KNOWN_LOCAL_QWEN_HALLUCINATIONS:
         return True
+    # Normalized stock-term checks (r312): drop digits/punctuation, then junk
+    # if what remains is exactly a stock term or that term repeated ("的答案是：
+    # 100。", "格力空调，格力空调。"). Real sentences EMBED these fragments in
+    # other words, so their residue never equals the bare term.
+    residue = _PUNCT_DIGIT_STRIP_RE.sub("", stripped)
+    if residue:
+        for term in _STOCK_TERMS:
+            if residue == term:
+                return True
+            if (
+                len(residue) > len(term)
+                and len(residue) % len(term) == 0
+                and residue == term * (len(residue) // len(term))
+            ):
+                return True
     # Single-char or pure punctuation output
     if len(stripped) <= 1:
         return True

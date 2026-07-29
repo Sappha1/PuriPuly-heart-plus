@@ -702,18 +702,31 @@ def resolve_peer_stt_config(settings: AppSettings) -> ResolvedPeerSTTConfig:
         )
 
     if provider == STTProviderName.LOCAL_QWEN:
+        from puripuly_heart.core.language import get_local_qwen_language_hint
+
         return ResolvedPeerSTTConfig(
             provider=provider,
             source_language=peer_source_language,
             sample_rate_hz=STT_INTERNAL_SAMPLE_RATE_HZ,
             keyterms=(),
-            # NO language hint for the peer channel — always let Qwen's built-in LID
-            # self-detect. Forcing the decode language makes the model TRANSLATE foreign
-            # speech into the forced language (e.g. peer=Chinese + an English speaker
-            # produced Chinese text), which defeats the peer source-language filter
-            # because the transcript already looks like the expected language. Hint-free,
-            # English speech decodes as English and the hub filter discards it.
-            language_hint=None,
+            # Peer hint policy (revised r308, measured against the shipped model):
+            # the old rule was "never hint, forcing the language makes Qwen TRANSLATE".
+            # Direct measurement: English speech decoded with hint="Chinese" came back as ENGLISH
+            # text (only punctuation went full-width) — no translation. Meanwhile
+            # hint-free LID is what mis-fires on low-SNR game/voice audio and produces
+            # fluent-looking CHINESE from English speech (two users, r303-r305 logs).
+            # So: when the user has PINNED what their partners speak, pass it through as
+            # a hint to bias LID correctly; Auto Detect stays hint-free by definition.
+            # NB: use voice_peer_source_language (empty under Auto Detect), NOT
+            # the effective_peer_source above — that one falls back to the USER's
+            # own language, which would smuggle a hint in while auto-detect is on.
+            language_hint=(
+                get_local_qwen_language_hint(
+                    settings.languages.voice_peer_source_language
+                )
+                if settings.languages.voice_peer_source_language
+                else None
+            ),
         )
 
     if provider in (STTProviderName.GOOGLE_STT, STTProviderName.WHISPER):

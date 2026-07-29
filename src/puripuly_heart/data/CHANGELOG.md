@@ -2,6 +2,10 @@
 
 User-facing changes per build. The latest build's highlights also appear in-app when an update is ready.
 
+## r308 — 2026-07-28
+
+- Incoming English (or any language) should stop arriving as Chinese with the local Qwen model: when you have set what language your partners speak, that choice is now passed to the recognizer so it stops guessing. Guessing is what produced fluent-looking Chinese from English speech on noisy game audio. "Auto Detect" still lets the model decide on its own
+
 ## r307 — 2026-07-28
 
 - Fixed runaway "怪怪怪怪…" style messages reaching the chat: the repetition detector only recognised loops that started at the very beginning of a line, so anything with a few normal characters in front slipped through

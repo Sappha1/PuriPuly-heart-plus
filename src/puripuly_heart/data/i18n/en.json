@@ -708,7 +708,7 @@
   "dashboard.tooltip.swap_languages": "Swap Your language and Target language.",
   "dashboard.tooltip.add_target": "Add target language",
   "dashboard.tooltip.auto_detect_badge": "Voice auto-detect: when on (teal), incoming voice is recognized in any language; when off, only the chosen PEER language passes. Click to toggle.",
-  "dashboard.tooltip.lang_panel_trans_off": "Translation is OFF — these languages still label incoming voice and typed sends, but nothing is translated.",
+  "dashboard.tooltip.lang_panel_trans_off": "Translation is OFF — every language you hear is shown as-is (nothing is filtered out), and each received line is tagged with the language that was detected. These settings still tell the app what to expect from your partners.",
   "dashboard.tooltip.add_second_spoken": "Add second spoken language (bilingual quick-switch)",
   "dashboard.tooltip.remove_second_spoken": "Remove second spoken language",
   "dashboard.tooltip.add_peer_target": "Add peer target language",

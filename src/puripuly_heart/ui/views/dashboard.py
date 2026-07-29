@@ -18,7 +18,7 @@ from puripuly_heart.ui.fonts import font_for_language
 from puripuly_heart.ui.i18n import get_locale, language_name, t
 from puripuly_heart.ui.overlay_peer_contract import OverlayPeerConsumerContract
 
-_BUILD_TAG = "r308"  #increment each build so user can confirm version
+_BUILD_TAG = "r309"  #increment each build so user can confirm version
 
 # ── VRCT-style dark palette ──────────────────────────────────────────────────
 _BG_MAIN = "#2e2f32"
@@ -3639,7 +3639,12 @@ class DashboardView(ft.Row):
             tgt_lang = self._source_lang_code  # translated into user's lang
         elif is_peer:
             src_lang = src_lang_hint or self._peer_source_lang_code
-            if not src_lang_hint and getattr(self, "_auto_detect_voice", False):
+            # Any-language mode: voice auto-detect, or TRANS off (r309 stopped
+            # filtering then, so a pinned language no longer means much).
+            _any_language = bool(
+                getattr(self, "_auto_detect_voice", False) or not self.is_translation_on
+            )
+            if not src_lang_hint and _any_language:
                 # Auto detect voice: trust the text's script, NOT the pinned
                 # code. Passing the pinned language as the sniff fallback
                 # returned it verbatim for latin text — English lines were
@@ -3714,8 +3719,10 @@ class DashboardView(ft.Row):
         if (
             is_peer
             and not is_ocr
-            and getattr(self, "_auto_detect_voice", False)
             and src_lang
+            and bool(
+                getattr(self, "_auto_detect_voice", False) or not self.is_translation_on
+            )
         ):
             header_cells.append(ft.Text(
                 f" [{src_lang.split('-')[0].upper()}]",

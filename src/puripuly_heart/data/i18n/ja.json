@@ -708,7 +708,7 @@
   "dashboard.tooltip.swap_languages": "「あなたの言語」と「ターゲット言語」を入れ替えます。",
   "dashboard.tooltip.add_target": "対象言語を追加",
   "dashboard.tooltip.auto_detect_badge": "音声自動検出：オン（緑）のときはどの言語も認識されます。オフのときは選択した相手言語のみ通過します。クリックで切り替え。",
-  "dashboard.tooltip.lang_panel_trans_off": "翻訳はオフです — 言語設定は音声のラベル付けには使われますが、翻訳は行われません。",
+  "dashboard.tooltip.lang_panel_trans_off": "翻訳はオフです — 聞こえた言語はすべてそのまま表示され（除外されません）、受信した各行には検出された言語のタグが付きます。この設定は相手の言語の想定として引き続き使われます。",
   "dashboard.tooltip.add_second_spoken": "2 つ目の発話言語を追加（バイリンガル切替）",
   "dashboard.tooltip.remove_second_spoken": "2 つ目の発話言語を削除",
   "dashboard.tooltip.add_peer_target": "相手の対象言語を追加",

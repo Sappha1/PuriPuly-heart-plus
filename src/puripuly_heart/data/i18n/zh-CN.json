@@ -708,7 +708,7 @@
   "dashboard.tooltip.swap_languages": "交换“你的语言”与“目标语言”。",
   "dashboard.tooltip.add_target": "添加目标语言",
   "dashboard.tooltip.auto_detect_badge": "语音自动检测：开启（青色）时识别任何语言；关闭时只接收所选的对方语言。点击切换。",
-  "dashboard.tooltip.lang_panel_trans_off": "翻译已关闭 — 语言设置仍用于标记语音，但不会进行翻译。",
+  "dashboard.tooltip.lang_panel_trans_off": "翻译已关闭 — 听到的所有语言都会原样显示（不会被过滤），每条接收消息都会标注检测到的语言。这些设置仍用于告知应用对方可能使用的语言。",
   "dashboard.tooltip.add_second_spoken": "添加第二种口语（双语快速切换）",
   "dashboard.tooltip.remove_second_spoken": "移除第二种口语",
   "dashboard.tooltip.add_peer_target": "添加对方目标语言",

@@ -1194,7 +1194,9 @@ class ClientHub:
     ) -> None:
         _ = parent_utterance_id
         runtime = self.peer_runtime
-        if not self._peer_passes_source_language_filter(transcript.text):
+        if self._peer_language_filter_active() and not self._peer_passes_source_language_filter(
+            transcript.text
+        ):
             # Peer language filter excluded this voice (wrong language for the chosen
             # peer source). Explain it in the chat (throttled) so users understand why
             # a voice they can hear isn't appearing, then discard.
@@ -1916,6 +1918,17 @@ class ClientHub:
         except Exception:
             return False
         return detected == own
+
+    def _peer_language_filter_active(self) -> bool:
+        """Only hide 'wrong language' peer speech while we are TRANSLATING.
+
+        The pinned peer language has two jobs: it tells the recognizer what to
+        expect, and it filters out everything else. The second job only earns
+        its keep when translation is running — with TRANS off the user just
+        wants to read what people said, in whatever language they said it, so
+        discarding it is pure loss (r309).
+        """
+        return self._translation_enabled_for_runtime(self.peer_runtime)
 
     def _peer_passes_source_language_filter(self, text: str) -> bool:
         """Drop peer transcripts whose script clearly isn't the chosen peer language.

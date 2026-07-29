@@ -2,6 +2,12 @@
 
 User-facing changes per build. The latest build's highlights also appear in-app when an update is ready.
 
+## r309 — 2026-07-28
+
+- With translation OFF, incoming speech is no longer hidden for being "the wrong language" — you now see everything that was heard, in whatever language it was spoken. Filtering by language only applies while you are actually translating
+- Received lines are tagged with the detected language ([EN], [ZH], ...) whenever any language can arrive — that is, with translation off or voice auto-detect on — so you can always tell what the recognizer thought it heard
+- The Translation card's tooltip now spells this out while translation is off
+
 ## r308 — 2026-07-28
 
 - Incoming English (or any language) should stop arriving as Chinese with the local Qwen model: when you have set what language your partners speak, that choice is now passed to the recognizer so it stops guessing. Guessing is what produced fluent-looking Chinese from English speech on noisy game audio. "Auto Detect" still lets the model decide on its own

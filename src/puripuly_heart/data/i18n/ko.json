@@ -708,7 +708,7 @@
   "dashboard.tooltip.swap_languages": "'내 언어'와 '대상 언어'를 서로 바꿉니다.",
   "dashboard.tooltip.add_target": "대상 언어 추가",
   "dashboard.tooltip.auto_detect_badge": "음성 자동 감지: 켜짐(청록)일 때 모든 언어가 인식됩니다. 꺼짐일 때는 선택한 상대 언어만 통과합니다. 클릭하여 전환.",
-  "dashboard.tooltip.lang_panel_trans_off": "번역이 꺼져 있습니다 — 언어 설정은 음성 라벨링에만 사용되며 번역은 수행되지 않습니다.",
+  "dashboard.tooltip.lang_panel_trans_off": "번역이 꺼져 있습니다 — 들리는 모든 언어가 그대로 표시되며(필터링 없음), 수신된 각 줄에는 감지된 언어 태그가 붙습니다. 이 설정은 상대 언어 예상값으로 계속 사용됩니다.",
   "dashboard.tooltip.add_second_spoken": "두 번째 사용 언어 추가 (이중 언어 빠른 전환)",
   "dashboard.tooltip.remove_second_spoken": "두 번째 사용 언어 제거",
   "dashboard.tooltip.add_peer_target": "상대 대상 언어 추가",

@@ -2,6 +2,10 @@
 
 User-facing changes per build. The latest build's highlights also appear in-app when an update is ready.
 
+## r310 — 2026-07-28
+
+- REVERTED r308: telling the speech model which language to expect makes it TRANSLATE short phrases instead of transcribing them (Japanese audio came out as English sentences, English audio came out as Chinese). Long clear sentences hid the problem, short ones exposed it. Incoming speech is transcribed in whatever language it was actually spoken again
+
 ## r309 — 2026-07-28
 
 - With translation OFF, incoming speech is no longer hidden for being "the wrong language" — you now see everything that was heard, in whatever language it was spoken. Filtering by language only applies while you are actually translating

@@ -702,31 +702,25 @@ def resolve_peer_stt_config(settings: AppSettings) -> ResolvedPeerSTTConfig:
         )
 
     if provider == STTProviderName.LOCAL_QWEN:
-        from puripuly_heart.core.language import get_local_qwen_language_hint
-
         return ResolvedPeerSTTConfig(
             provider=provider,
             source_language=peer_source_language,
             sample_rate_hz=STT_INTERNAL_SAMPLE_RATE_HZ,
             keyterms=(),
-            # Peer hint policy (revised r308, measured against the shipped model):
-            # the old rule was "never hint, forcing the language makes Qwen TRANSLATE".
-            # Direct measurement: English speech decoded with hint="Chinese" came back as ENGLISH
-            # text (only punctuation went full-width) — no translation. Meanwhile
-            # hint-free LID is what mis-fires on low-SNR game/voice audio and produces
-            # fluent-looking CHINESE from English speech (two users, r303-r305 logs).
-            # So: when the user has PINNED what their partners speak, pass it through as
-            # a hint to bias LID correctly; Auto Detect stays hint-free by definition.
-            # NB: use voice_peer_source_language (empty under Auto Detect), NOT
-            # the effective_peer_source above — that one falls back to the USER's
-            # own language, which would smuggle a hint in while auto-detect is on.
-            language_hint=(
-                get_local_qwen_language_hint(
-                    settings.languages.voice_peer_source_language
-                )
-                if settings.languages.voice_peer_source_language
-                else None
-            ),
+            # NO language hint for the peer channel. r308 briefly passed the
+            # user's pinned peer language here; r310 reverted it after measuring
+            # the shipped model on SHORT segments (what the VAD actually emits):
+            #
+            #   EN speech, 1.3s slice, hint=None    -> "Hear me."      (transcribe)
+            #   EN speech, 1.3s slice, hint=Chinese -> "听我。"         (TRANSLATED)
+            #   JA speech, 1.3s slice, hint=English -> "The way of the king." (TRANSLATED)
+            #
+            # Long clean segments hide this (they transcribe correctly whatever
+            # the hint), which is why r308's testing missed it. Forcing a hint
+            # therefore turns the recognizer into a translator and makes foreign
+            # speech LOOK like the expected language — the exact failure the peer
+            # language filter cannot catch. Hint-free LID is the lesser evil.
+            language_hint=None,
         )
 
     if provider in (STTProviderName.GOOGLE_STT, STTProviderName.WHISPER):

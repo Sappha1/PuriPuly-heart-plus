@@ -2,6 +2,10 @@
 
 User-facing changes per build. The latest build's highlights also appear in-app when an update is ready.
 
+## r311 — 2026-07-28
+
+- The "local speech recognition isn't working" warning no longer recommends Deepgram or links an external GitHub guide (both belonged to the original upstream project, not this fork). It now explains the actual cause — noise or silence reaching the model — and what to check: the Windows default microphone, the device PEER listens to (remote desktop tools and virtual audio devices are common culprits), and the Mic noise suppression setting
+
 ## r310 — 2026-07-28
 
 - REVERTED r308: telling the speech model which language to expect makes it TRANSLATE short phrases instead of transcribing them (Japanese audio came out as English sentences, English audio came out as Chinese). Long clear sentences hid the problem, short ones exposed it. Incoming speech is transcribed in whatever language it was actually spoken again

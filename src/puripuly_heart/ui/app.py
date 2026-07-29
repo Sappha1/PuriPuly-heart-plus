@@ -858,15 +858,9 @@ class TranslatorApp:
         dialog.open()
 
     def show_local_qwen_hallucination_dialog(self) -> None:
-        dialog = LocalQwenHallucinationDialog(
-            self.page,
-            on_open_guide=self._open_local_qwen_guide,
-        )
+        dialog = LocalQwenHallucinationDialog(self.page)
         self._local_qwen_hallucination_dialog = dialog
         dialog.open()
-
-    def _open_local_qwen_guide(self) -> None:
-        webbrowser.open(founder_readme_url_for_locale(get_locale()))
 
     def _accept_peer_translation_eula_and_enable(self) -> None:
         async def _task():

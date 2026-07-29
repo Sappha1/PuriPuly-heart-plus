@@ -14,20 +14,20 @@ from puripuly_heart.ui.i18n import t
 
 
 class LocalQwenHallucinationDialog:
+    # r311: self-contained device guidance only — the old body recommended
+    # Deepgram and linked the upstream founder's GitHub guide, neither of
+    # which belongs to this fork.
     action_labels = [
         "local_qwen_hallucination.close",
-        "local_qwen_hallucination.open_guide",
     ]
 
     def __init__(
         self,
         page: ft.Page,
         *,
-        on_open_guide: Callable[[], None],
         on_close: Callable[[], None] | None = None,
     ) -> None:
         self._page = page
-        self._on_open_guide_callback = on_open_guide
         self._on_close_callback = on_close
         self._dialog: ft.AlertDialog | None = None
         self._dialog_result: WarmDocumentDialogResult | None = None
@@ -36,10 +36,8 @@ class LocalQwenHallucinationDialog:
         result = open_warm_document_dialog(
             self._page,
             body_paragraphs=split_body_paragraphs(t("local_qwen_hallucination.body")),
-            primary_label=t("local_qwen_hallucination.open_guide"),
-            primary_action=self._on_open_guide,
-            secondary_label=t("local_qwen_hallucination.close"),
-            secondary_action=self._on_close,
+            primary_label=t("local_qwen_hallucination.close"),
+            primary_action=self._on_close,
             glow_factory=create_glow_stack,
         )
         self._dialog = result.dialog
@@ -49,9 +47,6 @@ class LocalQwenHallucinationDialog:
         if self._dialog is None:
             return
         self._page.close(self._dialog)
-
-    def _on_open_guide(self) -> None:
-        self._on_open_guide_callback()
 
     def _on_close(self) -> None:
         if self._on_close_callback is not None:

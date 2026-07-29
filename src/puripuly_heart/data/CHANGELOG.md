@@ -2,12 +2,16 @@
 
 User-facing changes per build. The latest build's highlights also appear in-app when an update is ready.
 
-## r305 — 2026-07-27
+## r306 — 2026-07-28
+
+- Corrected the dates shown in this list: r304 and r305 were stamped 07-27 but were built on 07-28
+
+## r305 — 2026-07-28
 
 - New "Mic auto-gain" (Settings, ON by default): a quiet microphone is boosted to a stable internal level before speech recognition, so low mic volume no longer makes your speech go unheard. What others hear is unchanged
 - Near-silent audio no longer turns into invented text: when a segment is essentially silence, the recognizer's output must be much more confident to be accepted — this kills the stray "虚构"/"的答案是" style junk at the source instead of blocklisting phrases
 
-## r304 — 2026-07-27
+## r304 — 2026-07-28
 
 - Fixed "Overlay startup timed out": the 3-second limit was too tight — the first launch after an update (while Windows scans the new files) routinely exceeded it. Now 20 seconds
 - Fixed r303 being too strict: the "Target language" field also sets what language your PARTNER speaks, so your own language is selectable there again (an English user talking to English speakers needs it). Same-language blocking still applies to real translation pairs

@@ -2,6 +2,10 @@
 
 User-facing changes per build. The latest build's highlights also appear in-app when an update is ready.
 
+## r315 — 2026-07-29
+
+- Fixed the overlay silently going invisible while still showing as active: a rare startup timing collision (first caption arriving mid-resize) could kill the overlay's message reader without any error — window stayed on screen, connection stayed "connected", but nothing rendered again until a manual toggle. The overlay now watches for the app's once-a-second heartbeat and restarts itself within 30 seconds if traffic stops, the silent failure path now logs and restarts instead of continuing headless, and the app side detects a dead overlay connection instead of reporting it connected forever
+
 ## r314 — 2026-07-29
 
 - The Microphone test percentage now uses a decibel scale like other voice apps: normal speech reads around 50-60%, shouting near the top, and 100% means actual clipping. Previously 100% was raw digital maximum, so even a loud, healthy mic never showed more than single digits — making working mics look broken

@@ -69,6 +69,8 @@ _SENSITIVE_EVENT_KEYS = {
 }
 _STARTUP_FAILURE_EXIT_CODE = 1
 _RUNTIME_FAILURE_EXIT_CODE = 1
+# Restart if no bridge message (heartbeats arrive every 1s) for this long.
+BRIDGE_TRAFFIC_STALL_S = 30.0
 _SUCCESS_EXIT_CODE = 0
 _REQUIRED_MANIFEST_STRING_FIELDS = {
     "app_version",
@@ -4455,7 +4457,14 @@ class DesktopOverlayRenderer:
             # The bridge is always loopback; never proxy it.
             return await asyncio.wait_for(
                 websockets.connect(
-                    self.manifest.bridge_url, ping_interval=None, proxy=None
+                    self.manifest.bridge_url,
+                    # r315: protocol-level keepalive so a half-dead transport
+                    # is detected even if app-level traffic wedges. 20s+20s is
+                    # far above any UI stall; pongs are answered by the server
+                    # library independent of app code.
+                    ping_interval=20,
+                    ping_timeout=20,
+                    proxy=None,
                 ),
                 timeout=timeout_s,
             )
@@ -4539,6 +4548,7 @@ class DesktopOverlayRenderer:
         return tuple(controls)
 
     def _start_runtime_tasks(self, websocket: Any) -> None:
+        self._last_bridge_inbound_monotonic = time.monotonic()
         self._tasks = {
             asyncio.create_task(self._bridge_reader_loop(websocket)),
             asyncio.create_task(self._parent_monitor_loop()),
@@ -4558,7 +4568,19 @@ class DesktopOverlayRenderer:
                 try:
                     result = task.result()
                 except asyncio.CancelledError:
-                    continue
+                    if self._shutdown_event.is_set():
+                        continue
+                    # r315: a runtime task cancelled OUTSIDE shutdown is a bug,
+                    # and silently continuing here is how the overlay ran
+                    # headless for 90 minutes (dead bridge reader, live window,
+                    # nothing rendered, nothing logged). Fail loudly so the
+                    # supervisor restarts us.
+                    logger.warning(
+                        "[DesktopOverlay] Runtime task cancelled outside "
+                        "shutdown — treating as fatal"
+                    )
+                    await self._emit_runtime_error("runtime_task_cancelled")
+                    return _RuntimeOutcome(_RUNTIME_FAILURE_EXIT_CODE)
                 except Exception as exc:
                     logger.warning(
                         "[DesktopOverlay] Runtime task failed: exception_type=%s",
@@ -4594,6 +4616,7 @@ class DesktopOverlayRenderer:
         return _RuntimeOutcome(_RUNTIME_FAILURE_EXIT_CODE)
 
     async def _handle_bridge_message(self, raw_message: object) -> _RuntimeOutcome | None:
+        self._last_bridge_inbound_monotonic = time.monotonic()
         try:
             message = _load_bridge_message(raw_message)
         except ValueError:
@@ -4687,11 +4710,37 @@ class DesktopOverlayRenderer:
         return _RuntimeOutcome(_SUCCESS_EXIT_CODE)
 
     async def _heartbeat_loop(self) -> None:
+        # r315: real inbound watchdog (this loop used to be an idle stub).
+        # The bridge sends a heartbeat every second, so a healthy overlay
+        # receives SOMETHING at least every second. On 2026-07-29 the bridge
+        # reader died silently mid-startup (its CancelledError was swallowed)
+        # and the overlay ran headless for 90+ minutes — window on screen,
+        # websocket ESTABLISHED, zero captions rendered, zero log lines. If
+        # no bridge traffic arrives for BRIDGE_TRAFFIC_STALL_S, exit with a
+        # failure outcome so the supervisor restarts us within seconds.
         while not self._shutdown_event.is_set():
             try:
                 await asyncio.wait_for(self._shutdown_event.wait(), timeout=1.0)
             except TimeoutError:
+                pass
+            else:
+                return None
+            stalled_s = time.monotonic() - self._last_bridge_inbound_monotonic
+            if stalled_s < BRIDGE_TRAFFIC_STALL_S:
                 continue
+            logger.warning(
+                "[DesktopOverlay] No bridge traffic for %.0fs "
+                "(heartbeats expected every second) — restarting overlay",
+                stalled_s,
+            )
+            with contextlib.suppress(Exception):
+                await self._emit_runtime_error("bridge_traffic_stalled")
+            websocket = self._websocket
+            if websocket is not None:
+                with contextlib.suppress(Exception):
+                    await asyncio.wait_for(websocket.close(), timeout=2.0)
+            return _RuntimeOutcome(_RUNTIME_FAILURE_EXIT_CODE)
+        return None
 
     async def _emit_runtime_error(self, failure_reason: str) -> None:
         await self._emit_lifecycle({"type": "runtime_error", "failure_reason": failure_reason})

@@ -25,6 +25,9 @@ class OverlayBridge:
     session_token: str
     initial_snapshot: dict[str, object] | OverlayPresentationSnapshot | None = None
     heartbeat_interval_ms: int = 1000
+    # r315: cap per-connection broadcast sends; a wedged consumer otherwise
+    # parks send() forever in flow control once socket buffers fill.
+    broadcast_send_timeout_s: float = 5.0
     host: str = "127.0.0.1"
     port: int = 0
     overlay_instance_id: str | None = None
@@ -266,7 +269,16 @@ class OverlayBridge:
         stale_connections: list[ServerConnection] = []
         for connection in tuple(self._authenticated_connections):
             try:
-                await connection.send(message)
+                # r315: bounded send. A wedged overlay consumer fills the
+                # socket buffers and then a bare send() parks forever inside
+                # websockets' flow control — freezing this loop (and the
+                # heartbeat task calling it) with no exception, while the
+                # supervisor keeps reporting "connected". Timeout -> treat as
+                # stale, close, and let the supervisor see a real disconnect.
+                await asyncio.wait_for(
+                    connection.send(message),
+                    timeout=self.broadcast_send_timeout_s,
+                )
             except Exception as exc:
                 stale_connections.append(connection)
                 logger.warning(
@@ -287,6 +299,11 @@ class OverlayBridge:
 
         for connection in stale_connections:
             self._authenticated_connections.discard(connection)
+            with contextlib.suppress(Exception):
+                # Force the transport shut so the overlay's reader (if alive)
+                # sees ConnectionClosed and the supervisor gets a lifecycle
+                # transition instead of a zombie "connected" state (r315).
+                await asyncio.wait_for(connection.close(), timeout=2.0)
 
         self._log_broadcast_marker(
             stage="finish",

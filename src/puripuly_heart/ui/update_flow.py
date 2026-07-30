@@ -28,6 +28,18 @@ logger = logging.getLogger(__name__)
 _FAKE_UPDATE_ENV = "PPH_FAKE_UPDATE"
 
 
+# r317: an auto-download that completes within this window of app start is
+# applied immediately (restart into the new build) — the user asked for
+# launches to always land on the newest version. Beyond it (2-hourly re-check
+# found something mid-session) the restart stays a button press. 10 minutes
+# covers slow mainland-China downloads of the ~314MB payload.
+LAUNCH_AUTO_APPLY_WINDOW_S = 600.0
+
+
+def should_auto_apply_on_launch(seconds_since_app_start: float) -> bool:
+    return 0.0 <= seconds_since_app_start <= LAUNCH_AUTO_APPLY_WINDOW_S
+
+
 def dev_fake_update_enabled() -> bool:
     return bool(os.environ.get(_FAKE_UPDATE_ENV))
 

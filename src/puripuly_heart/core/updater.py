@@ -18,6 +18,58 @@ logger = logging.getLogger(__name__)
 
 GITHUB_API_URL = f"https://api.github.com/repos/{GITHUB_REPO}/releases/latest"
 GITHUB_RELEASES_URL = f"https://github.com/{GITHUB_REPO}/releases/latest"
+# r317 China fallback: api.github.com is blocked on the mainland, but jsDelivr
+# mirrors repo FILES and is generally reachable there. version.json is now
+# committed to the repo root each release, so blocked users still learn that
+# an update exists (build/tag/notes). Release assets have stable names on the
+# fixed v2.2.0 release, so the download URLs are constructible without the API
+# (the download itself still goes to GitHub's asset host, which is
+# intermittently reachable in China — failures land in the normal retry UI).
+RELEASE_TAG = "v2.2.0"
+JSDELIVR_VERSION_URL = (
+    f"https://cdn.jsdelivr.net/gh/{GITHUB_REPO}@master/version.json"
+)
+
+
+def _remote_build_from_version_payload(data: object) -> "RemoteBuild | None":
+    """Build a RemoteBuild from a bare version.json payload (jsDelivr path)."""
+    if not isinstance(data, dict):
+        return None
+    try:
+        build = int(data.get("build", -1))
+    except (TypeError, ValueError):
+        return None
+    if build <= 0:
+        return None
+    tag = str(data.get("tag") or f"r{build}")
+    notes_raw = data.get("notes")
+    notes = tuple(str(n) for n in notes_raw) if isinstance(notes_raw, list) else ()
+    base = f"https://github.com/{GITHUB_REPO}/releases/download/{RELEASE_TAG}"
+    return RemoteBuild(
+        build=build,
+        tag=tag,
+        zip_url=f"{base}/updater-payload-internal.zip",
+        zip_size=0,
+        notes=notes,
+        date=str(data.get("date") or ""),
+    )
+
+
+async def _fetch_remote_build_via_jsdelivr() -> "RemoteBuild | None":
+    try:
+        async with httpx.AsyncClient(timeout=6.0, follow_redirects=True) as client:
+            resp = await client.get(JSDELIVR_VERSION_URL)
+            if resp.status_code != 200:
+                return None
+            remote = _remote_build_from_version_payload(resp.json())
+            if remote is not None:
+                logger.info(
+                    "[Updater] GitHub API unreachable — using jsDelivr mirror "
+                    "(found %s)", remote.tag
+                )
+            return remote
+    except Exception:
+        return None
 
 
 @dataclass(slots=True)
@@ -165,7 +217,7 @@ async def fetch_remote_build() -> RemoteBuild | None:
                 GITHUB_API_URL, headers={"Accept": "application/vnd.github.v3+json"}
             )
             if resp.status_code != 200:
-                return None
+                return await _fetch_remote_build_via_jsdelivr()
             data: dict[str, Any] = resp.json()
             zip_url = ""
             zip_size = 0
@@ -193,7 +245,7 @@ async def fetch_remote_build() -> RemoteBuild | None:
             if not zip_url:
                 zip_url, zip_size = legacy_zip_url, legacy_zip_size
             if not zip_url:
-                return None
+                return await _fetch_remote_build_via_jsdelivr()
             build = -1
             tag = ""
             notes: tuple = ()
@@ -221,7 +273,7 @@ async def fetch_remote_build() -> RemoteBuild | None:
             )
     except Exception as exc:
         logger.debug(f"fetch_remote_build failed: {exc}")
-        return None
+        return await _fetch_remote_build_via_jsdelivr()
 
 
 def update_staging_dir() -> Path:

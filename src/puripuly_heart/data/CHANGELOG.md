@@ -2,6 +2,12 @@
 
 User-facing changes per build. The latest build's highlights also appear in-app when an update is ready.
 
+## r317 — 2026-07-30
+
+- The app now updates itself at launch: when the automatic download finishes within the first 10 minutes, it restarts straight into the new build (your session settings restore themselves) — so launching the app means launching the newest version. Updates found later in a session still wait for you to press the restart button. The existing "auto-download updates" setting turns this off
+- The update check now works from mainland China: when GitHub's API is blocked, the app reads the version info through the jsDelivr mirror instead, so you still see that an update exists and what changed
+- Overlay captions no longer leave one or two words dangling on their own line: a line that barely overflows shrinks slightly to fit on one line, and genuinely long lines split into balanced halves at natural breaks (Chinese lines never start with closing punctuation)
+
 ## r316 — 2026-07-29
 
 - The overlay no longer blocks mouse clicks in its screen area during startup: the brief "overlay active" banner required the window to be interactive to display at all, eating clicks for a few seconds on every launch. The banner is retired on locked starts — the overlay is click-through from its very first frame, and the dashboard button already shows that it's active

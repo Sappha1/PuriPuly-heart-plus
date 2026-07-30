@@ -1439,6 +1439,76 @@ def _estimated_caption_char_width(char: str, font_size: int) -> float:
     return font_size * _DESKTOP_CAPTION_CJK_WIDTH_EM
 
 
+# r317 caption fitting: a line that BARELY overflows (<=25%) shrinks its font
+# up to 20% and stays on one line; a genuinely long line gets BALANCED breaks
+# (near-equal halves) instead of greedy wrap, so "…I just fired two / shots."
+# can't happen. CJK lines never start with closing punctuation.
+_CAPTION_SHRINK_MAX_RATIO = 1.25
+_CAPTION_MIN_FONT_SCALE = 0.8
+_CAPTION_NO_LINE_START = set("。，、！？：；）」』”…!?,.;:)]’")
+_CAPTION_NO_LINE_END = set("（「『“([‘")
+
+
+def _caption_break_candidates(text: str) -> list[int]:
+    """Positions i where a line break is allowed BEFORE text[i]."""
+    candidates: list[int] = []
+    for i in range(1, len(text)):
+        prev, char = text[i - 1], text[i]
+        if prev.isspace():
+            candidates.append(i)
+            continue
+        if prev in _CAPTION_NO_LINE_END or char in _CAPTION_NO_LINE_START:
+            continue
+        if _is_caption_cjk_or_hangul(ord(prev)) or _is_caption_cjk_or_hangul(ord(char)):
+            candidates.append(i)
+    return candidates
+
+
+def _fit_caption_text(
+    text: str, font_size: int, avail_width: float, max_lines: int
+) -> tuple[str, int]:
+    """Return (possibly re-broken text, possibly reduced font size)."""
+    if avail_width <= 0 or chr(10) in text:
+        return text, font_size
+    estimated = _estimated_caption_line_width(text, font_size)
+    if estimated <= avail_width:
+        return text, font_size
+    ratio = estimated / avail_width
+    if ratio <= _CAPTION_SHRINK_MAX_RATIO:
+        scale = max(_CAPTION_MIN_FONT_SCALE, avail_width / estimated)
+        shrunk = int(font_size * scale)
+        if _estimated_caption_line_width(text, shrunk) <= avail_width:
+            return text, shrunk
+    candidates = _caption_break_candidates(text)
+    if not candidates:
+        return text, font_size
+    line_count = min(max(2, math.ceil(ratio)), max(2, max_lines))
+    ideal = estimated / line_count
+    breaks: list[int] = []
+    accumulated = 0.0
+    boundary = ideal
+    candidate_index = 0
+    for i, char in enumerate(text):
+        accumulated += _estimated_caption_char_width(char, font_size)
+        while candidate_index < len(candidates) and candidates[candidate_index] <= i:
+            candidate_index += 1
+        if accumulated >= boundary and len(breaks) < line_count - 1:
+            # break at the nearest allowed position at-or-before here
+            usable = [c for c in candidates if c <= i + 1 and (not breaks or c > breaks[-1])]
+            if usable:
+                breaks.append(usable[-1])
+                boundary += ideal
+    if not breaks:
+        return text, font_size
+    parts: list[str] = []
+    start = 0
+    for b in breaks:
+        parts.append(text[start:b].strip())
+        start = b
+    parts.append(text[start:].strip())
+    return chr(10).join(part for part in parts if part), font_size
+
+
 def _is_caption_cjk_or_hangul(codepoint: int) -> bool:
     return (
         0x1100 <= codepoint <= 0x11FF
@@ -1883,6 +1953,10 @@ def _build_flet_text(
     line: DesktopCaptionLine,
     text_width: float,
 ) -> Any:
+    fitted_text, fitted_size = _fit_caption_text(
+        line.text, line.font_size, text_width, line.max_lines
+    )
+    line = replace(line, text=fitted_text, font_size=fitted_size)
     return ft.Text(
         value=line.text,
         width=text_width,

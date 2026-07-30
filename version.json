@@ -1,0 +1,10 @@
+{
+  "build": 317,
+  "tag": "r317",
+  "date": "2026-07-30",
+  "notes": [
+    "The app now updates itself at launch — starting it means starting the newest version (updates found mid-session still wait for your restart click)",
+    "The update check works from mainland China via a CDN mirror when GitHub is blocked",
+    "Overlay captions no longer leave one or two words dangling on their own line"
+  ]
+}

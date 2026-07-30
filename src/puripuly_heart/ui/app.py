@@ -4,6 +4,7 @@ import copy
 import inspect
 import logging
 import tempfile
+import time
 import webbrowser
 from pathlib import Path
 
@@ -446,7 +447,7 @@ class TranslatorApp:
         """Feed the shared self-update flow into the dashboard sidebar button
         and the top-nav update pill, and route their clicks."""
         from puripuly_heart.core.updater import sweep_leftover_update_files
-        from puripuly_heart.ui.update_flow import get_update_flow
+        from puripuly_heart.ui.update_flow import get_update_flow, should_auto_apply_on_launch
 
         # Used to run when the About Updates card was built; that card is gone,
         # so clean stale staging/zip leftovers here at startup instead.
@@ -559,6 +560,8 @@ class TranslatorApp:
 
         flow.on_notice = _on_flow_notice
 
+        _app_started_monotonic = time.monotonic()
+
         def _restart_and_close() -> None:
             if flow.launch_restart():
                 window = self.page.window
@@ -589,9 +592,19 @@ class TranslatorApp:
                     _maybe_announce_available()
             if flow.state == "ready":
                 if flow.auto_initiated:
-                    # Auto-downloaded: never restart on our own — tell the user
-                    # the restart button is armed and let them press it.
-                    _maybe_announce_ready()
+                    # r317: auto-apply at launch. If the auto-download finished
+                    # within the launch grace window, restart into the new build
+                    # right away — the app auto-restores its session state, so
+                    # "launch" simply lands on the newest version. A download
+                    # that completes LATER (the 2-hourly re-check found a new
+                    # release mid-session) never restarts on its own — it arms
+                    # the button and announces, as before.
+                    if should_auto_apply_on_launch(
+                        time.monotonic() - _app_started_monotonic
+                    ):
+                        _restart_and_close()
+                    else:
+                        _maybe_announce_ready()
                 else:
                     # User-initiated download: finish the one-click update.
                     _restart_and_close()

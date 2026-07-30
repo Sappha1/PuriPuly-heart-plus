@@ -240,6 +240,9 @@ class LocalQwenSherpaSTTBackend(STTBackend):
     # Spectral noise gate for steady background noise (fans/AC). Applied to
     # each segment before decoding; opt-in (settings.stt.mic_denoise).
     denoise: bool = False
+    # r318: shared SpeakerEmbedder (core/speaker_embedder.py) — set on the
+    # PEER backend when speaker identification is enabled; None otherwise.
+    speaker_embedder: object | None = None
     diagnostics_enabled: Callable[[], bool] | None = None
     on_model_loading: object = None  # Callable[[str], None] — fired (with channel "self"|"peer") before model init
     on_model_loaded: object = None   # Callable[[str], None] — fired (with channel "self"|"peer") after model init
@@ -518,7 +521,22 @@ class _LocalQwenSherpaSession(STTBackendSession):
                 inference_ms,
                 rtf,
             )
-            await self._events.put(STTBackendTranscriptEvent(text=text, is_final=True))
+            speaker_embedding: tuple[float, ...] | None = None
+            embedder = getattr(self.backend, "speaker_embedder", None)
+            if embedder is not None:
+                try:
+                    vector = await asyncio.to_thread(embedder.embed, samples_f32)
+                    if vector is not None:
+                        speaker_embedding = tuple(float(x) for x in vector)
+                except Exception:
+                    logger.debug("speaker embedding failed", exc_info=True)
+            await self._events.put(
+                STTBackendTranscriptEvent(
+                    text=text,
+                    is_final=True,
+                    speaker_embedding=speaker_embedding,
+                )
+            )
 
     async def stop(self) -> None:
         self._log_summary_once()

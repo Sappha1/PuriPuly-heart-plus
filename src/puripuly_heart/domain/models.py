@@ -35,6 +35,11 @@ class Transcript:
     is_final: bool
     created_at: float | None = None  # monotonic seconds (Clock)
     channel: ChannelId = "self"
+    # r318 speaker identification (peer channel): raw voiceprint on the way
+    # INTO the hub; resolved name/cluster on the way OUT to the UI.
+    speaker_embedding: tuple[float, ...] | None = None
+    speaker_name: str = ""
+    speaker_cluster_id: int = -1
 
     def __post_init__(self) -> None:
         _validate_channel(self.channel)
@@ -56,6 +61,9 @@ class Translation:
     source_text_len: int | None
     logical_turn_key: str | None
     romanization: str | None = None
+    # r318: resolved speaker identity for peer captions (see Transcript).
+    speaker_name: str = ""
+    speaker_cluster_id: int = -1
 
     def __init__(
         self,
@@ -75,6 +83,8 @@ class Translation:
         source_text_len: int | None = None,
         logical_turn_key: str | None = None,
         romanization: str | None = None,
+        speaker_name: str = "",
+        speaker_cluster_id: int = -1,
     ) -> None:
         if text is not None and translated_text is not None and text != translated_text:
             raise ValueError("text and translated_text must match when both are set")
@@ -118,6 +128,8 @@ class Translation:
             "logical_turn_key",
             logical_turn_key if logical_turn_key is not None else f"{channel}:{utterance_id}",
         )
+        object.__setattr__(self, "speaker_name", speaker_name)
+        object.__setattr__(self, "speaker_cluster_id", speaker_cluster_id)
         object.__setattr__(self, "romanization", romanization)
 
     @property

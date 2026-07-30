@@ -621,6 +621,7 @@ class ManagedSTTProvider:
         text: str,
         is_final: bool,
         created_at: float,
+        speaker_embedding: tuple[float, ...] | None = None,
     ) -> Transcript:
         return Transcript(
             utterance_id=utterance_id,
@@ -628,6 +629,7 @@ class ManagedSTTProvider:
             is_final=is_final,
             created_at=created_at,
             channel=self.channel,
+            speaker_embedding=speaker_embedding,
         )
 
     def _drop_stale_pending_final_utterance_ids(self) -> None:
@@ -743,6 +745,7 @@ class ManagedSTTProvider:
                     text=ev.text,
                     is_final=ev.is_final,
                     created_at=created_at,
+                    speaker_embedding=getattr(ev, "speaker_embedding", None),
                 )
                 if ev.is_final:
                     await self._events.put(STTFinalEvent(utterance_id, transcript))

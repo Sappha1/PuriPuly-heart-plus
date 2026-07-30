@@ -32,6 +32,13 @@ _stt_manifest = Path("src/puripuly_heart/data/models/qwen3-asr-0.6b-int8-sherpa.
 if not _stt_manifest.exists():
     raise SystemExit(f"STT model manifest missing from source tree: {_stt_manifest}")
 
+# r318: the bundled speaker-embedding model must ship too — captions silently
+# lose speaker tags without it (embedder degrades to None, no crash, but a
+# build without the file is a broken release).
+_speaker_model = Path("src/puripuly_heart/data/models/speaker/eres2net_base_zh_16k.onnx").resolve()
+if not _speaker_model.exists():
+    raise SystemExit(f"Speaker embedding model missing from source tree: {_speaker_model}")
+
 overlay_staged_path = Path("build").resolve() / "overlay" / "PuriPulyHeartOverlay.exe"
 if not overlay_staged_path.exists():
     raise SystemExit(
@@ -140,6 +147,7 @@ runtime_binaries += collect_vendored_openvr_runtime_binaries()
 
 # Hidden imports for dynamic imports
 hiddenimports = [
+    "kaldi_native_fbank",  # r318 speaker-ID features (imported lazily)
     "puripuly_heart.providers.stt.deepgram",
     "puripuly_heart.providers.stt.qwen_asr",
     "puripuly_heart.providers.stt.soniox",

@@ -10,6 +10,9 @@ import numpy as np
 class STTBackendTranscriptEvent:
     text: str
     is_final: bool
+    # r318: unit-norm voiceprint of the segment (tuple for hashability under
+    # frozen slots), None when speaker ID is off / segment too short.
+    speaker_embedding: tuple[float, ...] | None = None
 
 
 class STTBackendSession(Protocol):

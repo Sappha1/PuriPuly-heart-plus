@@ -1,10 +1,9 @@
 {
-  "build": 317,
-  "tag": "r317",
+  "build": 318,
+  "tag": "r318",
   "date": "2026-07-30",
   "notes": [
-    "The app now updates itself at launch — starting it means starting the newest version (updates found mid-session still wait for your restart click)",
-    "The update check works from mainland China via a CDN mirror when GitHub is blocked",
-    "Overlay captions no longer leave one or two words dangling on their own line"
+    "New: speaker identification — voices in a group call are tagged Speaker 1, Speaker 2, ... and clicking a tag lets you name a voice you know; it is recognized again in future sessions. Voiceprints stay on your PC only",
+    "Settings toggle: \"Identify speakers\" (on by default)"
   ]
 }

@@ -144,6 +144,10 @@ class ClientHub:
     # language (their own voice echoing through the call). Only meaningful
     # while peer_source_language is empty (auto-detect).
     auto_detect_ignore_own: bool = False
+    # r318: SpeakerRegistry set by the controller when speaker ID is enabled;
+    # None = feature off, captions stay unlabeled.
+    speaker_registry: object | None = None
+    _speaker_by_utterance: dict = field(default_factory=dict)
     chatbox_send_peer: bool = False
     chatbox_send_peer_translation_only: bool = False
     loopback_selected_languages_only: bool = False
@@ -640,12 +644,27 @@ class ClientHub:
             parent_utterance_id=parent_utterance_id,
             peer_turn_id=peer_turn_id,
         )
+        speaker_name = ""
+        speaker_cluster_id = -1
+        registry = self.speaker_registry
+        if registry is not None and transcript.speaker_embedding is not None:
+            try:
+                match = registry.match(transcript.speaker_embedding)
+                if match.kind == "named":
+                    speaker_name = match.label
+                    speaker_cluster_id = match.cluster_id
+                elif match.kind == "cluster":
+                    speaker_cluster_id = match.cluster_id
+            except Exception:
+                logger.debug("[SpeakerID] match failed", exc_info=True)
         return parent_utterance_id, Transcript(
             utterance_id=peer_turn_id,
             text=transcript.text,
             is_final=True,
             created_at=transcript.created_at,
             channel="peer",
+            speaker_name=speaker_name,
+            speaker_cluster_id=speaker_cluster_id,
         )
 
     def _emit_exception_summary(
@@ -3252,10 +3271,15 @@ class ClientHub:
                 romanization = first_line
                 translated_text = rest
 
+        speaker_name, speaker_cluster_id = self._speaker_by_utterance.get(
+            translation.utterance_id, ("", -1)
+        )
         return Translation(
             utterance_id=translation.utterance_id,
             translated_text=translated_text,
             source_text=text,
+            speaker_name=speaker_name,
+            speaker_cluster_id=speaker_cluster_id,
             source_language=self._language_or_fallback(
                 translation.source_language,
                 source_language,
@@ -3403,6 +3427,19 @@ class ClientHub:
         if not self._translation_enabled_for_runtime(runtime):
             return
         utterance_id = transcript.utterance_id
+        # r318: the Translation pipeline only carries text — remember the
+        # speaker identity by utterance so _normalize_translation can attach
+        # it to the outgoing Translation (the chat's translated path).
+        if transcript.channel == "peer" and (
+            transcript.speaker_name or transcript.speaker_cluster_id >= 0
+        ):
+            self._speaker_by_utterance[utterance_id] = (
+                transcript.speaker_name,
+                transcript.speaker_cluster_id,
+            )
+            if len(self._speaker_by_utterance) > 512:
+                for stale in list(self._speaker_by_utterance)[:256]:
+                    self._speaker_by_utterance.pop(stale, None)
         if utterance_id in runtime.translation_tasks:
             return
         task = asyncio.create_task(

@@ -4374,6 +4374,9 @@ class GuiController:
             self.hub.typed_in_overlay = bool(getattr(settings.ui, "typed_in_overlay", True))
             self.hub.filter_peer_by_target_languages = bool(getattr(settings.ui, "filter_peer_by_target_languages", False))
             self.hub.auto_detect_ignore_own = bool(getattr(settings.languages, "auto_detect_ignore_own", False))
+            self.hub.speaker_registry = (
+                self._speaker_registry() if getattr(settings.stt, "speaker_id", True) else None
+            )
             self.hub.chatbox_send_peer = bool(getattr(settings.ui, "chatbox_send_peer", False))
             self.hub.chatbox_send_peer_translation_only = bool(
                 getattr(settings.ui, "chatbox_send_peer_translation_only", False)
@@ -4625,6 +4628,11 @@ class GuiController:
             self.hub.self_in_overlay = bool(getattr(next_settings.ui, "self_in_overlay", True))
             self.hub.typed_in_overlay = bool(getattr(next_settings.ui, "typed_in_overlay", True))
             self.hub.filter_peer_by_target_languages = bool(getattr(next_settings.ui, "filter_peer_by_target_languages", False))
+            self.hub.speaker_registry = (
+                self._speaker_registry()
+                if getattr(next_settings.stt, "speaker_id", True)
+                else None
+            )
             self.hub.auto_detect_ignore_own = bool(getattr(next_settings.languages, "auto_detect_ignore_own", False))
             self.hub.chatbox_send_peer = bool(getattr(next_settings.ui, "chatbox_send_peer", False))
             self.hub.chatbox_send_peer_translation_only = bool(
@@ -5020,6 +5028,29 @@ class GuiController:
         self._debug_capture_fault_profile = "none"
         self._debug_stt_fault_profile = "none"
         self.log_detailed("[AudioDiag][DebugFault] capture_profile=none stt_profile=none")
+
+    _speaker_registry_instance: object | None = None
+
+    def _speaker_registry(self):
+        """Lazy per-process SpeakerRegistry (r318); voices.json lives beside
+        settings.json — local only."""
+        if self._speaker_registry_instance is None:
+            from puripuly_heart.core.speaker_id import SpeakerRegistry
+
+            store = self.config_path.parent / "voices.json"
+            self._speaker_registry_instance = SpeakerRegistry(store)
+        return self._speaker_registry_instance
+
+    def enroll_speaker(self, cluster_id: int, name: str) -> bool:
+        """Name a session voice cluster (from the chat tag dialog)."""
+        try:
+            ok = bool(self._speaker_registry().enroll_cluster(int(cluster_id), name))
+        except Exception:
+            logger.warning("[SpeakerID] enroll failed", exc_info=True)
+            return False
+        if ok:
+            self.log_basic(f"[SpeakerID] Voice named: cluster={cluster_id}")
+        return ok
 
     def _wrap_diagnostic_audio_source(
         self,

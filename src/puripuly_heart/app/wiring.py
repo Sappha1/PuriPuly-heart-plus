@@ -665,6 +665,22 @@ def create_stt_backend(
     raise ValueError(f"Unsupported STT provider: {settings.provider.stt}")
 
 
+_SPEAKER_EMBEDDER_SINGLETON: object | None = None
+
+
+def _shared_speaker_embedder(settings: "AppSettings"):
+    """One lazy SpeakerEmbedder per process (r318); None when disabled so the
+    STT session skips embedding entirely."""
+    if not bool(getattr(settings.stt, "speaker_id", True)):
+        return None
+    global _SPEAKER_EMBEDDER_SINGLETON
+    if _SPEAKER_EMBEDDER_SINGLETON is None:
+        from puripuly_heart.core.speaker_embedder import SpeakerEmbedder
+
+        _SPEAKER_EMBEDDER_SINGLETON = SpeakerEmbedder()
+    return _SPEAKER_EMBEDDER_SINGLETON
+
+
 def resolve_peer_stt_config(settings: AppSettings) -> ResolvedPeerSTTConfig:
     peer_source_language = settings.languages.effective_peer_source
     keyterms: tuple[str, ...] = ()
@@ -848,6 +864,7 @@ def create_peer_stt_backend(
             diagnostics_enabled=diagnostics_enabled,
             on_model_loading=on_model_loading,
             on_model_loaded=on_model_loaded,
+            speaker_embedder=_shared_speaker_embedder(settings),
         )
 
     if resolved.provider == STTProviderName.GOOGLE_STT:

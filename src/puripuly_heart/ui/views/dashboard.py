@@ -18,7 +18,7 @@ from puripuly_heart.ui.fonts import font_for_language
 from puripuly_heart.ui.i18n import get_locale, language_name, t
 from puripuly_heart.ui.overlay_peer_contract import OverlayPeerConsumerContract
 
-_BUILD_TAG = "r317"  #increment each build so user can confirm version
+_BUILD_TAG = "r318"  #increment each build so user can confirm version
 
 # ── VRCT-style dark palette ──────────────────────────────────────────────────
 _BG_MAIN = "#2e2f32"
@@ -3604,6 +3604,42 @@ class DashboardView(ft.Row):
             "ko": self._chat_show_romaja,
         }.get(root, self._chat_show_latin)
 
+    def _open_speaker_name_dialog(self, cluster_id: int, current_label: str) -> None:
+        """Name (enroll) the voice behind a chat entry's speaker tag (r318)."""
+        if self.page is None:
+            return
+        name_field = ft.TextField(
+            value="" if current_label.startswith(t("dashboard.speaker_n").split("{")[0].strip()) else current_label,
+            hint_text=t("dashboard.speaker_name_dialog.hint"),
+            autofocus=True,
+            dense=True,
+        )
+
+        def _close(_e=None) -> None:
+            dialog.open = False
+            with contextlib.suppress(Exception):
+                self.page.update()
+
+        def _save(_e=None) -> None:
+            name = (name_field.value or "").strip()
+            enroll = getattr(self, "on_enroll_speaker", None)
+            if name and callable(enroll):
+                with contextlib.suppress(Exception):
+                    enroll(cluster_id, name)
+            _close()
+
+        name_field.on_submit = _save
+        dialog = ft.AlertDialog(
+            modal=True,
+            title=ft.Text(t("dashboard.speaker_name_dialog.title"), size=14),
+            content=ft.Container(content=name_field, width=280),
+            actions=[
+                ft.TextButton(t("common.cancel"), on_click=_close),
+                ft.TextButton(t("common.save"), on_click=_save),
+            ],
+        )
+        self.page.open(dialog)
+
     def append_chat_entry(
         self,
         *,
@@ -3612,6 +3648,8 @@ class DashboardView(ft.Row):
         source_text: str,
         translated_text: str,
         src_lang_hint: str = "",
+        speaker_name: str = "",
+        speaker_cluster_id: int = -1,
     ) -> None:
         if self._chat_list_view is None:
             return
@@ -3729,6 +3767,40 @@ class DashboardView(ft.Row):
                 size=10, color=label_color, weight=ft.FontWeight.W_600,
                 opacity=0.65,
             ))
+        if is_peer and not is_ocr and (speaker_name or speaker_cluster_id >= 0):
+            # r318 speaker tag. Named voices show their name; anonymous ones
+            # show a localized "Speaker N". Tapping the tag names the voice
+            # (chat entries have no other click affordance by design — the
+            # whole log sits in a SelectionArea and right-click belongs to
+            # Flutter's native copy menu).
+            tag_text = speaker_name or t("dashboard.speaker_n").format(
+                n=speaker_cluster_id
+            )
+            header_cells.append(
+                ft.GestureDetector(
+                    content=ft.Container(
+                        content=ft.Text(
+                            f" · {tag_text}",
+                            size=10,
+                            color=label_color,
+                            weight=ft.FontWeight.W_600,
+                            opacity=0.8,
+                        ),
+                        tooltip=t("dashboard.tooltip.speaker_tag"),
+                    ),
+                    on_tap=(
+                        (lambda e, cid=speaker_cluster_id, current=tag_text:
+                            self._open_speaker_name_dialog(cid, current))
+                        if speaker_cluster_id >= 0
+                        else None
+                    ),
+                    mouse_cursor=(
+                        ft.MouseCursor.CLICK
+                        if speaker_cluster_id >= 0
+                        else ft.MouseCursor.BASIC
+                    ),
+                )
+            )
         header_cells.append(ft.Text(f" {timestamp}", size=11, color=_TEXT_FAINT))
         header = ft.Row(
             header_cells,

@@ -28,6 +28,7 @@ dependencies = [
   "websockets",
   "deepgram-sdk>=5.0.0,<6.0.0",
   "sherpa-onnx>=1.12.36",
+  "kaldi-native-fbank>=1.21",
   "keyring>=25.0",
   "flet==0.28.3",
   "flet-desktop==0.28.3",

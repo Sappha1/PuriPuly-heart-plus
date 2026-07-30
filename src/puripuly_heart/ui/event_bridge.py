@@ -107,6 +107,8 @@ class UIEventBridge:
                 source_text=source_text or translated_text,
                 translated_text=translated_text,
                 src_lang_hint=translation.source_language or "",
+                speaker_name=getattr(translation, "speaker_name", ""),
+                speaker_cluster_id=getattr(translation, "speaker_cluster_id", -1),
             )
 
     def _append_chat_entry(
@@ -117,6 +119,8 @@ class UIEventBridge:
         source_text: str,
         translated_text: str,
         src_lang_hint: str = "",
+        speaker_name: str = "",
+        speaker_cluster_id: int = -1,
     ) -> None:
         dash = getattr(self.app, "view_dashboard", None)
         append_chat = getattr(dash, "append_chat_entry", None)
@@ -129,6 +133,8 @@ class UIEventBridge:
                 source_text=source_text,
                 translated_text=translated_text,
                 src_lang_hint=src_lang_hint,
+                speaker_name=speaker_name,
+                speaker_cluster_id=speaker_cluster_id,
             )
         except Exception:
             logger.exception("Failed to append chat entry")
@@ -291,6 +297,8 @@ class UIEventBridge:
                 source=event.source or "Mic",
                 source_text=transcript.text,
                 translated_text="",
+                speaker_name=getattr(transcript, "speaker_name", ""),
+                speaker_cluster_id=getattr(transcript, "speaker_cluster_id", -1),
             )
             return
 

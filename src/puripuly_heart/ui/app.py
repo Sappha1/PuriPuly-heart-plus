@@ -142,6 +142,9 @@ class TranslatorApp:
 
         # Link Dashboard callbacks
         self.view_dashboard.on_send_message = self._on_manual_submit
+        self.view_dashboard.on_enroll_speaker = (
+            lambda cluster_id, name: self.controller.enroll_speaker(cluster_id, name)
+        )
         self.view_dashboard.on_toggle_translation = self._on_translation_toggle
         self.view_dashboard.on_toggle_stt = self._on_stt_toggle
         self.view_dashboard.on_toggle_overlay = self._on_overlay_toggle

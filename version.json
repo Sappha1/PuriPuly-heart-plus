@@ -1,9 +1,9 @@
 {
-  "build": 323,
-  "tag": "r323",
+  "build": 324,
+  "tag": "r324",
   "date": "2026-07-30",
   "notes": [
-    "The after-update announcement is now a proper dialog listing the full changes with a Close button (instead of a small toast)",
-    "Launch update checks retry over the first 10 minutes; chat lines with an identified speaker use the name as the header"
+    "The changelog is now multilingual — What's New and the after-update dialog show changes in your UI language (Chinese/Japanese/Korean from r298 onward, older history in English)",
+    "The after-update announcement is a proper dialog with the full change list and a Close button"
   ]
 }

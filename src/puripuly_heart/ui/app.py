@@ -3266,13 +3266,15 @@ async def main_gui(page: ft.Page, *, config_path, debug_ui_preview: bool = False
                     if previous_build > 0:
                         # r323 (user request): a proper DIALOG — "the program
                         # updated, here's what changed" + Close — not a toast.
-                        from puripuly_heart.core.updater import current_build_notes
+                        from puripuly_heart.core.changelog import (
+                            current_build_notes_localized,
+                        )
                         from puripuly_heart.ui.components.glow import create_glow_stack
                         from puripuly_heart.ui.components.warm_document_dialog import (
                             open_warm_document_dialog,
                         )
 
-                        bullets = current_build_notes()
+                        bullets = current_build_notes_localized(get_locale())
                         paragraphs = [
                             t("app.updated_dialog.title").format(tag=f"r{running_build}"),
                         ] + [f"•  {bullet}" for bullet in bullets]

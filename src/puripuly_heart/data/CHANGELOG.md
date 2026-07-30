@@ -2,6 +2,10 @@
 
 User-facing changes per build. The latest build's highlights also appear in-app when an update is ready.
 
+## r324 — 2026-07-30
+
+- The changelog is now multilingual: switch the UI language and the What's New panel and the after-update dialog immediately show the changes in your language — Chinese, Japanese, and Korean cover everything from r298 onward; older history falls back to English
+
 ## r323 — 2026-07-30
 
 - The after-update announcement is now a proper dialog: "PuriPulyHeart+ updated to rNNN — what's new" with the full list of changes and a Close button, instead of a small toast that slid away

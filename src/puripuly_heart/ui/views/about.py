@@ -20,27 +20,15 @@ _CENTER_ALIGNMENT = ft.alignment.Alignment(0, 0)
 
 
 def _load_changelog_entries() -> list:
-    """Parse the packaged CHANGELOG.md into (heading, bullets) pairs."""
+    """Changelog as (heading, bullets) pairs — in the CURRENT UI language
+    where a translation exists, English otherwise (r324)."""
     try:
-        text = (
-            resources.files("puripuly_heart.data")
-            .joinpath("CHANGELOG.md")
-            .read_text(encoding="utf-8")
-        )
+        from puripuly_heart.core.changelog import changelog_sections
+        from puripuly_heart.ui.i18n import get_locale
+
+        return changelog_sections(get_locale())
     except Exception:
         return []
-    entries = []
-    title, bullets = None, []
-    for line in text.splitlines():
-        if line.startswith("## "):
-            if title is not None:
-                entries.append((title, bullets))
-            title, bullets = line[3:].strip(), []
-        elif line.startswith("- ") and title is not None:
-            bullets.append(line[2:].strip())
-    if title is not None:
-        entries.append((title, bullets))
-    return entries
 
 
 def _load_third_party_notices() -> str:

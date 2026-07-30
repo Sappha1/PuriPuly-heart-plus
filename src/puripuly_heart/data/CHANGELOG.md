@@ -2,6 +2,11 @@
 
 User-facing changes per build. The latest build's highlights also appear in-app when an update is ready.
 
+## r328 — 2026-07-30
+
+- The what's-new dialog can finally open: the dialog component required two buttons and the update announcement only has Close, so it crashed at the moment of display on every launch (visible only as a log line). Single-button dialogs are now supported — this also quietly fixes the local-speech-recognition advisory, which had the same latent crash
+- The update marker is now saved before the dialog is shown, so a display problem can never again put the announcement into a fail-forever loop
+
 ## r327 — 2026-07-30
 
 - Fixed automatic updates never actually running: the launch update check, the retry logic, and the after-update dialog were all accidentally placed inside a disabled leftover code branch from this build's testing days — every update so far only happened when you clicked "Check for updates" yourself. The whole update system now genuinely runs at launch: check, auto-download, auto-apply, and the what's-new dialog. A safeguard test now prevents update code from ever landing in that dead branch again

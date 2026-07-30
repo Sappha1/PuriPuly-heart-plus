@@ -122,3 +122,35 @@ def test_update_machinery_not_nested_under_dead_guard() -> None:
             f"'{forbidden}' is nested under _OCR_PROTO_NO_UPDATES again — "
             "that branch is dead code (guard is hardcoded True)"
         )
+
+
+def test_warm_dialog_accepts_single_button() -> None:
+    """r328: the update dialog (and r311 advisory) have only Close; the old
+    two-label requirement made open_warm_document_dialog raise on EVERY
+    launch announcement."""
+    from puripuly_heart.ui.components.warm_document_dialog import (
+        open_warm_document_dialog,
+    )
+
+    class _FakePage:
+        def __init__(self):
+            self.opened = None
+
+        def open(self, dialog):
+            self.opened = dialog
+
+        def close(self, dialog):
+            pass
+
+        def update(self):
+            pass
+
+    page = _FakePage()
+    result = open_warm_document_dialog(
+        page,
+        body_paragraphs=["Updated to r328", "•  a change"],
+        primary_label="Close",
+        primary_action=lambda: None,
+    )
+    assert result.dialog is not None
+    assert page.opened is result.dialog

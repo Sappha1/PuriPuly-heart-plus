@@ -3272,6 +3272,13 @@ async def main_gui(page: ft.Page, *, config_path, debug_ui_preview: bool = False
                 getattr(app.controller, "settings_created_fresh", False)
             )
             if running_build > 0 and previous_build != running_build:
+                # r328: stamp FIRST — a dialog failure must cost one missed
+                # announcement, not an every-launch retry loop (the r327
+                # dialog raised before the stamp line, so the failure
+                # repeated on every start with only a log line to show).
+                settings_obj.ui.last_run_build = running_build
+                if config_path is not None:
+                    save_settings(config_path, settings_obj)
                 if previous_build > 0 or not fresh_install:
                     # r323 (user request): a proper DIALOG — "the program
                     # updated, here's what changed" + Close — not a toast.
@@ -3296,9 +3303,6 @@ async def main_gui(page: ft.Page, *, config_path, debug_ui_preview: bool = False
                         primary_action=lambda: None,
                         glow_factory=create_glow_stack,
                     )
-                settings_obj.ui.last_run_build = running_build
-                if config_path is not None:
-                    save_settings(config_path, settings_obj)
     except Exception:
         logger.exception("post-update notice failed")
 

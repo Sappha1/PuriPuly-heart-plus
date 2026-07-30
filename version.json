@@ -1,8 +1,8 @@
 {
-  "build": 327,
-  "tag": "r327",
+  "build": 328,
+  "tag": "r328",
   "date": "2026-07-30",
   "notes": [
-    "Fixed automatic updates never actually running (all update-at-launch code sat in a disabled leftover branch — updates only ever happened via the manual Check button). Launch check, auto-download, auto-apply, and the what's-new dialog now genuinely work"
+    "The what's-new dialog can finally open (the dialog component required two buttons; the announcement's single Close crashed it at display time on every launch). Update markers now save before display so announcements can never fail-loop again"
   ]
 }

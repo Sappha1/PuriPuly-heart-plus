@@ -116,20 +116,27 @@ def open_warm_document_dialog(
         return normalized
 
     if actions is None:
-        if primary_label is None or secondary_label is None:
-            raise ValueError("primary_label and secondary_label are required")
-        initial_actions = normalize_actions(
-            (
+        if primary_label is None:
+            raise ValueError("primary_label is required")
+        # r328: single-button dialogs are legal (the post-update "what's new"
+        # dialog and the r311 local-STT advisory both have only Close). The
+        # old two-label requirement made them raise at open — the update
+        # announcement failed on EVERY launch with only a log line to show.
+        specs: list[WarmDocumentDialogAction] = []
+        if secondary_label is not None:
+            specs.append(
                 WarmDocumentDialogAction(
                     label=secondary_label,
                     on_select=secondary_action,
-                ),
-                WarmDocumentDialogAction(
-                    label=primary_label,
-                    on_select=primary_action,
-                ),
+                )
+            )
+        specs.append(
+            WarmDocumentDialogAction(
+                label=primary_label,
+                on_select=primary_action,
             )
         )
+        initial_actions = normalize_actions(tuple(specs))
     else:
         initial_actions = normalize_actions(actions)
 

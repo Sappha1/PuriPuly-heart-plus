@@ -1,10 +1,11 @@
 {
-  "build": 333,
-  "tag": "r333",
+  "build": 334,
+  "tag": "r334",
   "date": "2026-07-30",
   "notes": [
-    "The what's-new card shows the release date and hugs its text (no empty space)",
-    "The version menu's \"Changelog\" entry opens the full history of every build",
-    "Clearer opt-out: \"Don't show what's new on startup\""
+    "Settings is split into six tabs — General, Audio, VRChat, API, Prompt, Overlay",
+    "Audio groups devices, voice detection and voice processing under headings",
+    "\"Show my messages in the overlay\" was two switches that could disagree; now it's one",
+    "The version menu lists \"Changelog\" first, then \"Check for updates\""
   ]
 }

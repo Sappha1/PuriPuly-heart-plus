@@ -18,7 +18,7 @@ from puripuly_heart.ui.fonts import font_for_language
 from puripuly_heart.ui.i18n import get_locale, language_name, t
 from puripuly_heart.ui.overlay_peer_contract import OverlayPeerConsumerContract
 
-_BUILD_TAG = "r332"  #increment each build so user can confirm version
+_BUILD_TAG = "r333"  #increment each build so user can confirm version
 
 # ── VRCT-style dark palette ──────────────────────────────────────────────────
 _BG_MAIN = "#2e2f32"
@@ -3638,8 +3638,8 @@ class DashboardView(ft.Row):
             [
                 (t("dashboard.title_menu.check_updates"), None,
                  lambda: self._invoke_optional("on_check_updates")),
-                (t("dashboard.title_menu.whats_new"), None,
-                 lambda: self._invoke_optional("on_show_whats_new")),
+                (t("dashboard.title_menu.changelog"), None,
+                 lambda: self._invoke_optional("on_show_changelog")),
             ],
         )
 

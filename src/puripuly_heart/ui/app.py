@@ -150,7 +150,7 @@ class TranslatorApp:
         )
         # r332: version-label menu actions.
         self.view_dashboard.on_check_updates = self._title_menu_check_updates
-        self.view_dashboard.on_show_whats_new = self._title_menu_show_whats_new
+        self.view_dashboard.on_show_changelog = self._title_menu_show_changelog
         self.view_dashboard.on_toggle_translation = self._on_translation_toggle
         self.view_dashboard.on_toggle_stt = self._on_stt_toggle
         self.view_dashboard.on_toggle_overlay = self._on_overlay_toggle
@@ -901,26 +901,12 @@ class TranslatorApp:
 
         self.page.run_task(_run)
 
-    def _title_menu_show_whats_new(self) -> None:
-        """Open the compact notes dialog on demand (r332)."""
-        from puripuly_heart.core.changelog import current_build_notes_localized
-        from puripuly_heart.core.updater import current_build_number
-        from puripuly_heart.ui.components.update_notes_dialog import (
-            open_update_notes_dialog,
-        )
-
-        build = current_build_number()
-        bullets = list(current_build_notes_localized(get_locale()))
-        if not bullets:
-            bullets = [t("app.updated_notice_fallback")]
-        open_update_notes_dialog(
-            self.page,
-            header=t("app.updated_dialog.title").format(
-                tag=f"r{build}" if build > 0 else ""
-            ),
-            bullets=bullets,
-            close_label=t("common.close"),
-        )
+    def _title_menu_show_changelog(self) -> None:
+        """r333: open the FULL changelog (the About page's list of every
+        build), not just the newest build's bullets — asked for explicitly:
+        "show the full change log like the one in settings"."""
+        with contextlib.suppress(Exception):
+            self._on_nav_change(3)  # About / What's new view
 
     def show_local_qwen_hallucination_dialog(self) -> None:
         dialog = LocalQwenHallucinationDialog(self.page)
@@ -3350,6 +3336,10 @@ async def main_gui(page: ft.Page, *, config_path, debug_ui_preview: bool = False
                             if config_path is not None:
                                 save_settings(config_path, settings_obj)
 
+                    from puripuly_heart.core.changelog import (
+                        current_build_heading_date,
+                    )
+
                     open_update_notes_dialog(
                         page,
                         header=t("app.updated_dialog.title").format(
@@ -3357,6 +3347,7 @@ async def main_gui(page: ft.Page, *, config_path, debug_ui_preview: bool = False
                         ),
                         bullets=bullets,
                         close_label=t("common.close"),
+                        release_date=current_build_heading_date(get_locale()),
                         hide_future_label=t("app.updated_dialog.hide_future"),
                         on_hide_future_changed=_set_hide_future,
                     )

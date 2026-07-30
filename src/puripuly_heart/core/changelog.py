@@ -82,6 +82,22 @@ def changelog_sections(locale: str | None) -> list[tuple[str, list[str]]]:
     return merged
 
 
+def current_build_heading_date(locale: str | None) -> str:
+    """Release date of the newest changelog section (r333) — users who update
+    days later need to see WHEN the build was published, not just its number.
+    Headings look like "r332 — 2026-07-30"; returns "" if absent."""
+    sections = changelog_sections(locale)
+    if not sections:
+        return ""
+    heading = sections[0][0]
+    for separator in ("—", "-", "–"):
+        if separator in heading:
+            tail = heading.split(separator, 1)[1].strip()
+            if tail:
+                return tail
+    return ""
+
+
 def current_build_notes_localized(
     locale: str | None, max_bullets: int = 6
 ) -> list[str]:
@@ -92,4 +108,8 @@ def current_build_notes_localized(
     return sections[0][1][:max_bullets]
 
 
-__all__ = ["changelog_sections", "current_build_notes_localized"]
+__all__ = [
+    "changelog_sections",
+    "current_build_heading_date",
+    "current_build_notes_localized",
+]

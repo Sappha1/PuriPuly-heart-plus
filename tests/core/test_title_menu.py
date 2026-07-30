@@ -20,7 +20,7 @@ def test_title_menu_strings_exist_in_every_locale(locale: str) -> None:
     for key in (
         "dashboard.tooltip.title_menu",
         "dashboard.title_menu.check_updates",
-        "dashboard.title_menu.whats_new",
+        "dashboard.title_menu.changelog",
         "app.update_check.up_to_date",
         "app.update_check.available",
         "app.update_check.failed",
@@ -45,14 +45,25 @@ def test_optout_label_names_what_it_hides(locale: str) -> None:
     assert subject in label
 
 
+def test_changelog_menu_opens_the_full_view_not_a_dialog() -> None:
+    """r333: 'Changelog' must navigate to the About page's full list of every
+    build ("show the full change log like the one in settings"), not open the
+    single-build notes dialog."""
+    app_source = Path("src/puripuly_heart/ui/app.py").read_text(encoding="utf-8")
+    start = app_source.index("def _title_menu_show_changelog")
+    body = app_source[start:start + 700]
+    assert "_on_nav_change(3)" in body            # About / changelog view
+    assert "open_update_notes_dialog" not in body
+
+
 def test_dashboard_exposes_title_menu_handlers() -> None:
     """The menu must call out through the documented callback attributes."""
     source = Path("src/puripuly_heart/ui/views/dashboard.py").read_text(encoding="utf-8")
     assert "_on_title_menu_tap" in source
     assert "on_check_updates" in source
-    assert "on_show_whats_new" in source
+    assert "on_show_changelog" in source
     assert "self._sidebar_title_button" in source
 
     app_source = Path("src/puripuly_heart/ui/app.py").read_text(encoding="utf-8")
     assert "view_dashboard.on_check_updates" in app_source
-    assert "view_dashboard.on_show_whats_new" in app_source
+    assert "view_dashboard.on_show_changelog" in app_source

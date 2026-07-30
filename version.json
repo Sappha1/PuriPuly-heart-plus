@@ -1,9 +1,10 @@
 {
-  "build": 332,
-  "tag": "r332",
+  "build": 333,
+  "tag": "r333",
   "date": "2026-07-30",
   "notes": [
-    "The app name and version in the top-left is now a menu with \"Check for updates\" and \"What's new\"",
-    "Clearer opt-out wording in the what's-new dialog: \"Don't show what's new on new versions\""
+    "The what's-new card shows the release date and hugs its text (no empty space)",
+    "The version menu's \"Changelog\" entry opens the full history of every build",
+    "Clearer opt-out: \"Don't show what's new on startup\""
   ]
 }

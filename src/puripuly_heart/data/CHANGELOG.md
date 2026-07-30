@@ -2,6 +2,13 @@
 
 User-facing changes per build. The latest build's highlights also appear in-app when an update is ready.
 
+## r333 — 2026-07-30
+
+- The what's-new card now shows the build's release date, so it's clear when the version actually came out even if you update days later
+- Tighter card: it hugs the text instead of padding to a fixed height, so there's no empty space under the last line
+- The version menu's second entry is now "Changelog" and opens the full history of every build (the same list as in Settings), instead of only the newest one
+- Clearer opt-out wording again: "Don't show what's new on startup"
+
 ## r332 — 2026-07-30
 
 - The app name and version in the top-left is now a menu: click it for "Check for updates" and "What's new" — the update actions now sit next to the version they act on

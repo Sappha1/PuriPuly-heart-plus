@@ -188,10 +188,12 @@ def test_compact_update_dialog_shape() -> None:
     card = dialog.content
     assert card.width == DIALOG_WIDTH
     column = card.content
-    header_text, _divider, body_container, action_row = column.controls
+    header_row, _divider, body_container, action_row = column.controls
+    header_text = header_row.controls[0]          # r333: header is a Row now
     assert header_text.value == "What's new in r329"
     assert "✨" not in header_text.value          # no extravagant title
-    assert body_container.height <= MAX_BODY_HEIGHT
+    # r333: short content is unclamped so the card hugs it (no dead space)
+    assert body_container.height is None
     assert len(body_container.content.controls) == 2
     # exactly one action, right-aligned, and it closes
     assert dialog.modal is False                 # r331: click-outside closes
@@ -199,7 +201,76 @@ def test_compact_update_dialog_shape() -> None:
     assert page.opened is None
 
 
-def test_long_bullet_gets_enough_height_to_read() -> None:
+def test_short_notes_leave_no_dead_space() -> None:
+    # r333: r331 always set an estimated height, overshooting short entries
+    # and leaving a visible gap under the last bullet.
+    from puripuly_heart.ui.components.update_notes_dialog import (
+        open_update_notes_dialog,
+    )
+
+    class _Page:
+        def __init__(self):
+            self.opened = None
+
+        def open(self, dialog):
+            self.opened = dialog
+
+        def close(self, dialog):
+            self.opened = None
+
+    dialog = open_update_notes_dialog(
+        _Page(), header="What is new in r333", bullets=["one short change"],
+        close_label="Close",
+    )
+    body_container = dialog.content.content.controls[2]
+    assert body_container.height is None          # hugs content
+    assert body_container.content.scroll is None  # no scrollbar when it fits
+
+
+def test_release_date_is_shown_when_provided() -> None:
+    # r333: someone updating days later needs to know WHEN the build shipped.
+    from puripuly_heart.ui.components.update_notes_dialog import (
+        open_update_notes_dialog,
+    )
+
+    class _Page:
+        def __init__(self):
+            self.opened = None
+
+        def open(self, dialog):
+            self.opened = dialog
+
+        def close(self, dialog):
+            self.opened = None
+
+    dialog = open_update_notes_dialog(
+        _Page(), header="What is new in r333", bullets=["a change"],
+        close_label="Close", release_date="2026-07-30",
+    )
+    header_row = dialog.content.content.controls[0]
+    assert any(
+        getattr(c, "value", "") == "2026-07-30" for c in header_row.controls
+    )
+
+    plain = open_update_notes_dialog(
+        _Page(), header="What is new", bullets=["a change"], close_label="Close",
+    )
+    assert len(plain.content.content.controls[0].controls) == 1  # no date cell
+
+
+def test_changelog_date_matches_heading() -> None:
+    from puripuly_heart.core.changelog import (
+        changelog_sections,
+        current_build_heading_date,
+    )
+
+    heading = changelog_sections("en")[0][0]
+    date = current_build_heading_date("en")
+    assert date and date in heading
+    assert date == current_build_heading_date("zh-CN")   # same across locales
+
+
+def test_long_bullet_still_scrolls_within_the_cap() -> None:
     # r331: r329 assumed one line per bullet and clipped a long entry
     # mid-sentence ("...failed to match in the other place" was cut off).
     from puripuly_heart.ui.components.update_notes_dialog import (

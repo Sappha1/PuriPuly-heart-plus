@@ -3122,6 +3122,19 @@ class FletDesktopRendererWindow:
             return
         if self._interaction_mode != _DESKTOP_INTERACTION_MODE_PASS_THROUGH:
             return
+        # r316: banner retired on locked boots — the ONLY case this method armed.
+        # Compositing the banner requires dropping click-through (verified live,
+        # r197-r208), so every launch ate mouse clicks over the overlay area for
+        # the banner's ~2.5s life. The user reported the dead zone; the soft-
+        # reveal path already skips the banner for the same class of reason and
+        # points at the dashboard button state as the "overlay active" feedback.
+        # Boot now does the same: locked overlays are click-through from the
+        # first frame. (Machinery kept below for possible future edit-mode use.)
+        logger.info(
+            "[DesktopOverlay][Banner] skipped on locked boot — window stays "
+            "click-through (dashboard button shows the active state)"
+        )
+        return
         self._startup_active_banner_shown = True
         # Mount the banner nearly invisible, then animate to full opacity: the fade-IN
         # makes Flutter submit a continuous stream of frames, which reliably gets the

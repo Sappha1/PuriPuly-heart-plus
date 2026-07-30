@@ -158,3 +158,41 @@ async def test_cancelled_task_during_shutdown_stays_graceful() -> None:
         renderer._wait_for_runtime_outcome(), timeout=3.0
     )
     assert outcome.exit_code != _RUNTIME_FAILURE_EXIT_CODE
+
+
+class _FakeWindow:
+    def __init__(self) -> None:
+        self.ignore_mouse_events = False
+
+    def update(self) -> None:
+        pass
+
+
+class _FakePage:
+    def __init__(self) -> None:
+        self.window = _FakeWindow()
+
+
+@pytest.mark.asyncio
+async def test_locked_boot_is_click_through_immediately() -> None:
+    """r316: the startup banner used to force the window interactive for its
+    ~2.5s life on every locked launch, eating mouse clicks over the overlay
+    area. Locked boots now skip the banner and stay click-through."""
+    from puripuly_heart.ui.desktop_overlay import (
+        _DESKTOP_INTERACTION_MODE_PASS_THROUGH,
+        FletDesktopRendererWindow,
+    )
+
+    renderer = FletDesktopRendererWindow.__new__(FletDesktopRendererWindow)
+    renderer._page = _FakePage()
+    renderer._interaction_mode = _DESKTOP_INTERACTION_MODE_PASS_THROUGH
+    renderer._startup_active_banner_shown = False
+    renderer._active_banner_until = None
+    renderer._relayout_in_progress = False
+    renderer._suppress_content = False
+
+    renderer._arm_active_banner_on_reveal()
+
+    assert renderer._active_banner_until is None  # banner never armed
+    renderer._apply_interaction_window_chrome()
+    assert renderer._page.window.ignore_mouse_events is True  # clicks pass

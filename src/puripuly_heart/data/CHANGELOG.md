@@ -2,6 +2,10 @@
 
 User-facing changes per build. The latest build's highlights also appear in-app when an update is ready.
 
+## r316 — 2026-07-29
+
+- The overlay no longer blocks mouse clicks in its screen area during startup: the brief "overlay active" banner required the window to be interactive to display at all, eating clicks for a few seconds on every launch. The banner is retired on locked starts — the overlay is click-through from its very first frame, and the dashboard button already shows that it's active
+
 ## r315 — 2026-07-29
 
 - Fixed the overlay silently going invisible while still showing as active: a rare startup timing collision (first caption arriving mid-resize) could kill the overlay's message reader without any error — window stayed on screen, connection stayed "connected", but nothing rendered again until a manual toggle. The overlay now watches for the app's once-a-second heartbeat and restarts itself within 30 seconds if traffic stops, the silent failure path now logs and restarts instead of continuing headless, and the app side detects a dead overlay connection instead of reporting it connected forever

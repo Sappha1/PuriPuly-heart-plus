@@ -148,6 +148,9 @@ class TranslatorApp:
         self.view_dashboard.on_speaker_name_lookup = (
             lambda cluster_id: self.controller.speaker_name_for_cluster(cluster_id)
         )
+        # r332: version-label menu actions.
+        self.view_dashboard.on_check_updates = self._title_menu_check_updates
+        self.view_dashboard.on_show_whats_new = self._title_menu_show_whats_new
         self.view_dashboard.on_toggle_translation = self._on_translation_toggle
         self.view_dashboard.on_toggle_stt = self._on_stt_toggle
         self.view_dashboard.on_toggle_overlay = self._on_overlay_toggle
@@ -875,6 +878,49 @@ class TranslatorApp:
         )
         self._peer_translation_eula_dialog = dialog
         dialog.open()
+
+    def _title_menu_check_updates(self) -> None:
+        """Manual check from the version label (r332) — same flow as the
+        sidebar button, with a status snackbar either way."""
+        from puripuly_heart.ui.update_flow import get_update_flow
+
+        async def _run() -> None:
+            flow = get_update_flow()
+            await flow.check()
+            if flow.state == "available":
+                message = flow.sidebar_tooltip() or t("app.update_check.available")
+                color = ft.Colors.TEAL_700
+            elif flow.last_error:
+                message = t("app.update_check.failed").format(reason=flow.last_error)
+                color = ft.Colors.RED_400
+            else:
+                message = t("app.update_check.up_to_date")
+                color = ft.Colors.TEAL_700
+            with contextlib.suppress(Exception):
+                self._show_snackbar(message, color)
+
+        self.page.run_task(_run)
+
+    def _title_menu_show_whats_new(self) -> None:
+        """Open the compact notes dialog on demand (r332)."""
+        from puripuly_heart.core.changelog import current_build_notes_localized
+        from puripuly_heart.core.updater import current_build_number
+        from puripuly_heart.ui.components.update_notes_dialog import (
+            open_update_notes_dialog,
+        )
+
+        build = current_build_number()
+        bullets = list(current_build_notes_localized(get_locale()))
+        if not bullets:
+            bullets = [t("app.updated_notice_fallback")]
+        open_update_notes_dialog(
+            self.page,
+            header=t("app.updated_dialog.title").format(
+                tag=f"r{build}" if build > 0 else ""
+            ),
+            bullets=bullets,
+            close_label=t("common.close"),
+        )
 
     def show_local_qwen_hallucination_dialog(self) -> None:
         dialog = LocalQwenHallucinationDialog(self.page)

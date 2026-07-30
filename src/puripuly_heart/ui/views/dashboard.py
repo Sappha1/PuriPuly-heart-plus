@@ -18,7 +18,7 @@ from puripuly_heart.ui.fonts import font_for_language
 from puripuly_heart.ui.i18n import get_locale, language_name, t
 from puripuly_heart.ui.overlay_peer_contract import OverlayPeerConsumerContract
 
-_BUILD_TAG = "r331"  #increment each build so user can confirm version
+_BUILD_TAG = "r332"  #increment each build so user can confirm version
 
 # ── VRCT-style dark palette ──────────────────────────────────────────────────
 _BG_MAIN = "#2e2f32"
@@ -1145,11 +1145,36 @@ class DashboardView(ft.Row):
         )
         self._sidebar_puri_text = ft.Text("PuriPulyHeart+", size=14, weight=ft.FontWeight.BOLD, color=_TOGGLE_ON)
         self._sidebar_tag_text = ft.Text(_BUILD_TAG, size=10, color=_TEXT_FAINT)
+        # r332 (user request): the app name + build is now a menu — "Check for
+        # updates" and "What's new" belong next to the version they act on,
+        # instead of only living in Settings/About.
+        self._sidebar_title_button = ft.GestureDetector(
+            content=ft.Container(
+                content=ft.Row(
+                    [self._sidebar_puri_text, self._sidebar_tag_text],
+                    spacing=6,
+                    tight=True,
+                    vertical_alignment=ft.CrossAxisAlignment.CENTER,
+                ),
+                padding=ft.padding.symmetric(horizontal=4, vertical=2),
+                border_radius=4,
+                tooltip=t("dashboard.tooltip.title_menu"),
+                on_hover=lambda e: (
+                    setattr(
+                        e.control,
+                        "bgcolor",
+                        "#3f4044" if e.data == "true" else ft.Colors.TRANSPARENT,
+                    )
+                    or (e.control.update() if e.control.page else None)
+                ),
+            ),
+            mouse_cursor=ft.MouseCursor.CLICK,
+            on_tap_down=self._on_title_menu_tap,
+        )
         self._sidebar_header_spacer = ft.Container(expand=True)
         self._sidebar_header_row = ft.Row(
             [
-                self._sidebar_puri_text,
-                self._sidebar_tag_text,
+                self._sidebar_title_button,
                 self._sidebar_header_spacer,
                 self._collapse_btn_ctrl,
             ],
@@ -3603,6 +3628,26 @@ class DashboardView(ft.Row):
             "ja": self._chat_show_romaji,
             "ko": self._chat_show_romaja,
         }.get(root, self._chat_show_latin)
+
+    def _on_title_menu_tap(self, e) -> None:
+        """Version-label menu: check for updates / show what's new (r332)."""
+        x, y = self._tap_xy(e)
+        self._open_context_menu(
+            x,
+            y,
+            [
+                (t("dashboard.title_menu.check_updates"), None,
+                 lambda: self._invoke_optional("on_check_updates")),
+                (t("dashboard.title_menu.whats_new"), None,
+                 lambda: self._invoke_optional("on_show_whats_new")),
+            ],
+        )
+
+    def _invoke_optional(self, attribute: str) -> None:
+        callback = getattr(self, attribute, None)
+        if callable(callback):
+            with contextlib.suppress(Exception):
+                callback()
 
     def _retro_label_speaker_tags(self, cluster_id: int, name: str) -> None:
         """Rewrite every rendered tag of this cluster to the new name (r321)."""

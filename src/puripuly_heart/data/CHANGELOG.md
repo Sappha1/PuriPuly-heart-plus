@@ -2,6 +2,11 @@
 
 User-facing changes per build. The latest build's highlights also appear in-app when an update is ready.
 
+## r332 — 2026-07-30
+
+- The app name and version in the top-left is now a menu: click it for "Check for updates" and "What's new" — the update actions now sit next to the version they act on
+- Clearer wording on the opt-out in the what's-new dialog: "Don't show what's new on new versions" (it used to say "Don't show this after updates")
+
 ## r331 — 2026-07-30
 
 - The what's-new dialog no longer cuts off longer entries — its height now follows the actual wrapped text (Chinese and Japanese included)

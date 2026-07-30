@@ -1,9 +1,9 @@
 {
-  "build": 331,
-  "tag": "r331",
+  "build": 332,
+  "tag": "r332",
   "date": "2026-07-30",
   "notes": [
-    "The what's-new dialog no longer cuts off longer entries, can be dismissed by clicking outside, and has a \"Don't show this after updates\" checkbox (also in Settings)",
-    "If an update file is still uploading, the app waits and retries by itself instead of showing a red failure"
+    "The app name and version in the top-left is now a menu with \"Check for updates\" and \"What's new\"",
+    "Clearer opt-out wording in the what's-new dialog: \"Don't show what's new on new versions\""
   ]
 }

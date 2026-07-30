@@ -72,6 +72,11 @@ class SpeakerRegistry:
         self._named_counts: dict[str, int] = {}
         self._clusters: list[_Cluster] = []
         self._next_cluster_number = 1
+        # Session map cluster_id -> enrolled name. Makes naming sticky for the
+        # rest of the session even when a borderline sample re-matches its
+        # cluster (>=0.52) but misses the stricter named threshold (>=0.60) —
+        # without this, a just-named voice could keep showing "Speaker N".
+        self._cluster_names: dict[int, str] = {}
         self._load()
 
     # ── persistence ──────────────────────────────────────────────────────
@@ -142,6 +147,7 @@ class SpeakerRegistry:
                 cluster_id = -1
                 if best_cluster is not None and best_cluster_sim >= CLUSTER_MATCH_THRESHOLD:
                     cluster_id = best_cluster.cluster_id
+                    self._cluster_names.setdefault(cluster_id, best_name)
                 return SpeakerMatch("named", best_name, cluster_id, best_name_sim)
 
             if best_cluster is not None and best_cluster_sim >= CLUSTER_MATCH_THRESHOLD:
@@ -150,6 +156,11 @@ class SpeakerRegistry:
                     + CENTROID_EMA_ALPHA * vector
                 )
                 best_cluster.count += 1
+                session_name = self._cluster_names.get(best_cluster.cluster_id, "")
+                if session_name:
+                    return SpeakerMatch(
+                        "named", session_name, best_cluster.cluster_id, best_cluster_sim
+                    )
                 return SpeakerMatch(
                     "cluster",
                     self._cluster_label(best_cluster.cluster_id),
@@ -201,6 +212,7 @@ class SpeakerRegistry:
             else:
                 self._named[name] = cluster.centroid.copy()
                 self._named_counts[name] = cluster.count
+            self._cluster_names[cluster_id] = name
             self._save()
             return True
 
@@ -217,9 +229,15 @@ class SpeakerRegistry:
         with self._lock:
             return sorted(self._named)
 
+    def name_for_cluster(self, cluster_id: int) -> str:
+        """The name this session's cluster was enrolled under, if any."""
+        with self._lock:
+            return self._cluster_names.get(cluster_id, "")
+
     def reset_session(self) -> None:
         with self._lock:
             self._clusters.clear()
+            self._cluster_names.clear()
             self._next_cluster_number = 1
 
 

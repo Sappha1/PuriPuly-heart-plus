@@ -5041,6 +5041,12 @@ class GuiController:
             self._speaker_registry_instance = SpeakerRegistry(store)
         return self._speaker_registry_instance
 
+    def speaker_name_for_cluster(self, cluster_id: int) -> str:
+        try:
+            return str(self._speaker_registry().name_for_cluster(int(cluster_id)))
+        except Exception:
+            return ""
+
     def enroll_speaker(self, cluster_id: int, name: str) -> bool:
         """Name a session voice cluster (from the chat tag dialog)."""
         try:

@@ -2,6 +2,10 @@
 
 User-facing changes per build. The latest build's highlights also appear in-app when an update is ready.
 
+## r321 — 2026-07-30
+
+- Naming a voice now behaves the way you'd expect: every line already in the chat updates from "Speaker N" to the name immediately, reopening the dialog shows the saved name instead of an empty box, and a just-named voice can no longer slip back to "Speaker N" on borderline matches for the rest of the session. (The name itself was always being saved — only the feedback was missing)
+
 ## r320 — 2026-07-30
 
 - The overlay's pinyin and Chinese lines now get the same no-orphan treatment the translation line got in r317: a line that barely overflows shrinks slightly onto one line, and a genuinely long line splits into balanced halves instead of leaving one or two characters alone at the bottom ("...变回 / 来了。"). Covers both pinyin-over-character and block layouts

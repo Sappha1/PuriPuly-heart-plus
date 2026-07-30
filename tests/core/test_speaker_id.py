@@ -163,3 +163,45 @@ async def test_peer_transcript_without_embedding_stays_unlabeled(tmp_path) -> No
         ev = hub.ui_events.get_nowait()
     assert ev.payload.speaker_cluster_id == -1
     assert ev.payload.speaker_name == ""
+
+
+# ── r321: naming must be sticky and recallable ────────────────────────────
+
+def test_named_cluster_stays_named_in_threshold_gap(registry) -> None:
+    """A sample matching its cluster (>=0.52) but missing the named bar
+    (>=0.60) must STILL show the enrolled name for the session."""
+    import numpy as np
+    from puripuly_heart.core.speaker_id import (
+        CLUSTER_MATCH_THRESHOLD,
+        NAMED_MATCH_THRESHOLD,
+    )
+
+    base = _voice(70)
+    match = registry.match(base)
+    registry.enroll_cluster(match.cluster_id, "Baby")
+
+    # craft a vector with cosine ~0.56 to the centroid: in the gap
+    rng = np.random.default_rng(71)
+    ortho = rng.normal(0, 1, base.shape[0]).astype(np.float32)
+    ortho -= float(np.dot(ortho, base)) * base
+    ortho /= np.linalg.norm(ortho)
+    target = 0.56
+    gap_vector = target * base + float(np.sqrt(1 - target**2)) * ortho
+    sim = float(np.dot(gap_vector, base))
+    assert CLUSTER_MATCH_THRESHOLD < sim < NAMED_MATCH_THRESHOLD
+
+    result = registry.match(gap_vector)
+    assert result.kind == "named"
+    assert result.label == "Baby"
+
+
+def test_name_for_cluster_lookup_and_reset(registry) -> None:
+    m = registry.match(_voice(80))
+    assert registry.name_for_cluster(m.cluster_id) == ""
+    registry.enroll_cluster(m.cluster_id, "Momo")
+    assert registry.name_for_cluster(m.cluster_id) == "Momo"
+    registry.reset_session()
+    assert registry.name_for_cluster(m.cluster_id) == ""   # session map cleared
+    # but the enrollment survives: a close voice is greeted by name
+    again = registry.match(_near(_voice(80), 81))
+    assert again.kind == "named" and again.label == "Momo"

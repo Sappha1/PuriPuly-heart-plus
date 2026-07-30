@@ -18,7 +18,7 @@ from puripuly_heart.ui.fonts import font_for_language
 from puripuly_heart.ui.i18n import get_locale, language_name, t
 from puripuly_heart.ui.overlay_peer_contract import OverlayPeerConsumerContract
 
-_BUILD_TAG = "r320"  #increment each build so user can confirm version
+_BUILD_TAG = "r321"  #increment each build so user can confirm version
 
 # ── VRCT-style dark palette ──────────────────────────────────────────────────
 _BG_MAIN = "#2e2f32"
@@ -3604,12 +3604,27 @@ class DashboardView(ft.Row):
             "ko": self._chat_show_romaja,
         }.get(root, self._chat_show_latin)
 
+    def _retro_label_speaker_tags(self, cluster_id: int, name: str) -> None:
+        """Rewrite every rendered tag of this cluster to the new name (r321)."""
+        registry = getattr(self, "_speaker_tag_controls", None)
+        if not registry:
+            return
+        for tag in registry.get(cluster_id, []):
+            with contextlib.suppress(Exception):
+                tag.value = f" · {name}"
+                tag.update()
+
     def _open_speaker_name_dialog(self, cluster_id: int, current_label: str) -> None:
         """Name (enroll) the voice behind a chat entry's speaker tag (r318)."""
         if self.page is None:
             return
+        lookup = getattr(self, "on_speaker_name_lookup", None)
+        known_name = ""
+        if callable(lookup):
+            with contextlib.suppress(Exception):
+                known_name = str(lookup(cluster_id) or "")
         name_field = ft.TextField(
-            value="" if current_label.startswith(t("dashboard.speaker_n").split("{")[0].strip()) else current_label,
+            value=known_name,
             hint_text=t("dashboard.speaker_name_dialog.hint"),
             autofocus=True,
             dense=True,
@@ -3626,6 +3641,7 @@ class DashboardView(ft.Row):
             if name and callable(enroll):
                 with contextlib.suppress(Exception):
                     enroll(cluster_id, name)
+                self._retro_label_speaker_tags(cluster_id, name)
             _close()
 
         name_field.on_submit = _save
@@ -3776,16 +3792,26 @@ class DashboardView(ft.Row):
             tag_text = speaker_name or t("dashboard.speaker_n").format(
                 n=speaker_cluster_id
             )
+            tag_control = ft.Text(
+                f" · {tag_text}",
+                size=10,
+                color=label_color,
+                weight=ft.FontWeight.W_600,
+                opacity=0.8,
+            )
+            if speaker_cluster_id >= 0:
+                # r321: remember rendered tags so naming a voice retro-labels
+                # every line already on screen (previously old lines kept
+                # "Speaker N" forever, which read as "the save didn't work").
+                registry = getattr(self, "_speaker_tag_controls", None)
+                if registry is None:
+                    registry = {}
+                    self._speaker_tag_controls = registry
+                registry.setdefault(speaker_cluster_id, []).append(tag_control)
             header_cells.append(
                 ft.GestureDetector(
                     content=ft.Container(
-                        content=ft.Text(
-                            f" · {tag_text}",
-                            size=10,
-                            color=label_color,
-                            weight=ft.FontWeight.W_600,
-                            opacity=0.8,
-                        ),
+                        content=tag_control,
                         tooltip=t("dashboard.tooltip.speaker_tag"),
                     ),
                     on_tap=(

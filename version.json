@@ -1,9 +1,8 @@
 {
-  "build": 320,
-  "tag": "r320",
+  "build": 321,
+  "tag": "r321",
   "date": "2026-07-30",
   "notes": [
-    "Overlay pinyin and Chinese caption lines no longer leave one or two characters alone on a line (same no-orphan fitting the translation line already had)",
-    "HOTFIX from r319: speaker tags now actually appear on a normal launch — if you have r318, update"
+    "Naming a voice now updates all existing chat lines immediately, the dialog remembers the saved name, and a named voice can't slip back to \"Speaker N\" mid-session"
   ]
 }

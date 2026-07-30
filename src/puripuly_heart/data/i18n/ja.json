@@ -549,6 +549,8 @@
   "dashboard.ocr.state.off": "OCR オフ",
   "dashboard.ocr.font.custom": "カスタム",
   "common.cancel": "キャンセル",
+  "common.close": "閉じる",
+  "app.updated_dialog.title": "✨ PuriPulyHeart+ が {tag} に更新されました — 新機能：",
   "app.updated_notice": "✨ {tag} に更新しました — {summary}",
   "app.updated_notice_fallback": "詳細は「新機能」をご覧ください",
   "common.save": "保存",

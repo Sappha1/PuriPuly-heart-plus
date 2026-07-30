@@ -594,6 +594,8 @@
   "dashboard.ocr.state.off": "OCR off",
   "dashboard.ocr.font.custom": "Custom",
   "common.cancel": "Cancel",
+  "common.close": "Close",
+  "app.updated_dialog.title": "✨ PuriPulyHeart+ updated to {tag} — what's new:",
   "app.updated_notice": "✨ Updated to {tag} — {summary}",
   "app.updated_notice_fallback": "see What's new for details",
   "common.save": "Save",

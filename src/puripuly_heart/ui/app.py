@@ -3255,10 +3255,7 @@ async def main_gui(page: ft.Page, *, config_path, debug_ui_preview: bool = False
         # me of the changes but i never see anything").
         try:
             from puripuly_heart.config.settings import save_settings
-            from puripuly_heart.core.updater import (
-                current_build_number,
-                current_build_top_notes,
-            )
+            from puripuly_heart.core.updater import current_build_number
 
             settings_obj = getattr(app.controller, "settings", None)
             config_path = getattr(app.controller, "config_path", None)
@@ -3267,12 +3264,27 @@ async def main_gui(page: ft.Page, *, config_path, debug_ui_preview: bool = False
                 previous_build = int(getattr(settings_obj.ui, "last_run_build", 0) or 0)
                 if running_build > 0 and previous_build != running_build:
                     if previous_build > 0:
-                        summary = current_build_top_notes()
-                        message = t("app.updated_notice").format(
-                            tag=f"r{running_build}",
-                            summary=summary or t("app.updated_notice_fallback"),
+                        # r323 (user request): a proper DIALOG — "the program
+                        # updated, here's what changed" + Close — not a toast.
+                        from puripuly_heart.core.updater import current_build_notes
+                        from puripuly_heart.ui.components.glow import create_glow_stack
+                        from puripuly_heart.ui.components.warm_document_dialog import (
+                            open_warm_document_dialog,
                         )
-                        app._show_snackbar(message, ft.Colors.TEAL_700, duration=12000)
+
+                        bullets = current_build_notes()
+                        paragraphs = [
+                            t("app.updated_dialog.title").format(tag=f"r{running_build}"),
+                        ] + [f"•  {bullet}" for bullet in bullets]
+                        if not bullets:
+                            paragraphs.append(t("app.updated_notice_fallback"))
+                        open_warm_document_dialog(
+                            page,
+                            body_paragraphs=paragraphs,
+                            primary_label=t("common.close"),
+                            primary_action=lambda: None,
+                            glow_factory=create_glow_stack,
+                        )
                     settings_obj.ui.last_run_build = running_build
                     if config_path is not None:
                         save_settings(config_path, settings_obj)

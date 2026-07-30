@@ -1,10 +1,9 @@
 {
-  "build": 322,
-  "tag": "r322",
+  "build": 323,
+  "tag": "r323",
   "date": "2026-07-30",
   "notes": [
-    "After a self-update the app now shows a one-time notice with the new build and top changes — no more silent updates",
-    "The launch update check retries over the first 10 minutes instead of giving up after one attempt",
-    "Chat lines with an identified speaker use the name as the header (\"Baby 02:14\" instead of \"Received · Baby 02:14\")"
+    "The after-update announcement is now a proper dialog listing the full changes with a Close button (instead of a small toast)",
+    "Launch update checks retry over the first 10 minutes; chat lines with an identified speaker use the name as the header"
   ]
 }

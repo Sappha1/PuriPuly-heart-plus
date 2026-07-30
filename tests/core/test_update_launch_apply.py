@@ -62,3 +62,12 @@ def test_last_run_build_roundtrip() -> None:
     settings.ui.last_run_build = 322
     loaded = from_dict(to_dict(settings))
     assert loaded.ui.last_run_build == 322
+
+
+def test_current_build_notes_returns_full_bullets() -> None:
+    from puripuly_heart.core.updater import current_build_notes
+
+    bullets = current_build_notes()
+    assert bullets                                   # latest section has bullets
+    assert all(not b.startswith("#") for b in bullets)
+    assert all(len(b) > 10 for b in bullets)         # real sentences, untruncated

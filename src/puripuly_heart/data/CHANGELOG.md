@@ -2,6 +2,10 @@
 
 User-facing changes per build. The latest build's highlights also appear in-app when an update is ready.
 
+## r323 — 2026-07-30
+
+- The after-update announcement is now a proper dialog: "PuriPulyHeart+ updated to rNNN — what's new" with the full list of changes and a Close button, instead of a small toast that slid away
+
 ## r322 — 2026-07-30
 
 - After a self-update, the app now tells you: a one-time notice on the next launch shows the new build number and the top changes — no more silent updates

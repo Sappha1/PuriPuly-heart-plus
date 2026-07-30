@@ -2,6 +2,10 @@
 
 User-facing changes per build. The latest build's highlights also appear in-app when an update is ready.
 
+## r329 — 2026-07-30
+
+- The what's-new dialog is now a small, clean card instead of a huge panel: about a third of the width, plain "What's new in rNNN" heading, tighter text, and a single Close button in the corner
+
 ## r328 — 2026-07-30
 
 - The what's-new dialog can finally open: the dialog component required two buttons and the update announcement only has Close, so it crashed at the moment of display on every launch (visible only as a log line). Single-button dialogs are now supported — this also quietly fixes the local-speech-recognition advisory, which had the same latent crash

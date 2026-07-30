@@ -549,7 +549,7 @@
   "dashboard.ocr.font.custom": "직접 입력",
   "common.cancel": "취소",
   "common.close": "닫기",
-  "app.updated_dialog.title": "✨ PuriPulyHeart+가 {tag}(으)로 업데이트되었습니다 — 새로운 기능:",
+  "app.updated_dialog.title": "{tag}의 새로운 기능",
   "app.updated_notice": "✨ {tag}(으)로 업데이트됨 — {summary}",
   "app.updated_notice_fallback": "자세한 내용은 '새로운 기능'을 확인하세요",
   "common.save": "저장",

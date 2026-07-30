@@ -549,7 +549,7 @@
   "dashboard.ocr.font.custom": "自定义",
   "common.cancel": "取消",
   "common.close": "关闭",
-  "app.updated_dialog.title": "✨ PuriPulyHeart+ 已更新到 {tag} — 更新内容：",
+  "app.updated_dialog.title": "{tag} 更新内容",
   "app.updated_notice": "✨ 已更新到 {tag} — {summary}",
   "app.updated_notice_fallback": "详情请查看“新功能”",
   "common.save": "保存",

@@ -3280,28 +3280,26 @@ async def main_gui(page: ft.Page, *, config_path, debug_ui_preview: bool = False
                 if config_path is not None:
                     save_settings(config_path, settings_obj)
                 if previous_build > 0 or not fresh_install:
-                    # r323 (user request): a proper DIALOG — "the program
-                    # updated, here's what changed" + Close — not a toast.
+                    # r329: compact purpose-built dialog. The warm document
+                    # dialog (600px, large body, X + text button) filled the
+                    # window for a few changelog lines — "way too huge".
                     from puripuly_heart.core.changelog import (
                         current_build_notes_localized,
                     )
-                    from puripuly_heart.ui.components.glow import create_glow_stack
-                    from puripuly_heart.ui.components.warm_document_dialog import (
-                        open_warm_document_dialog,
+                    from puripuly_heart.ui.components.update_notes_dialog import (
+                        open_update_notes_dialog,
                     )
 
-                    bullets = current_build_notes_localized(get_locale())
-                    paragraphs = [
-                        t("app.updated_dialog.title").format(tag=f"r{running_build}"),
-                    ] + [f"•  {bullet}" for bullet in bullets]
+                    bullets = list(current_build_notes_localized(get_locale()))
                     if not bullets:
-                        paragraphs.append(t("app.updated_notice_fallback"))
-                    open_warm_document_dialog(
+                        bullets = [t("app.updated_notice_fallback")]
+                    open_update_notes_dialog(
                         page,
-                        body_paragraphs=paragraphs,
-                        primary_label=t("common.close"),
-                        primary_action=lambda: None,
-                        glow_factory=create_glow_stack,
+                        header=t("app.updated_dialog.title").format(
+                            tag=f"r{running_build}"
+                        ),
+                        bullets=bullets,
+                        close_label=t("common.close"),
                     )
     except Exception:
         logger.exception("post-update notice failed")

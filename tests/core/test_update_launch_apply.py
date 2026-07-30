@@ -154,3 +154,47 @@ def test_warm_dialog_accepts_single_button() -> None:
     )
     assert result.dialog is not None
     assert page.opened is result.dialog
+
+
+def test_compact_update_dialog_shape() -> None:
+    """r329: the announcement dialog must stay small — the 600px warm
+    document dialog filled the window for a handful of bullets."""
+    import flet as ft
+
+    from puripuly_heart.ui.components.update_notes_dialog import (
+        DIALOG_WIDTH,
+        MAX_BODY_HEIGHT,
+        open_update_notes_dialog,
+    )
+
+    class _FakePage:
+        def __init__(self):
+            self.opened = None
+
+        def open(self, dialog):
+            self.opened = dialog
+
+        def close(self, dialog):
+            self.opened = None
+
+    assert DIALOG_WIDTH <= 420          # compact, not 600
+    page = _FakePage()
+    dialog = open_update_notes_dialog(
+        page,
+        header="What's new in r329",
+        bullets=["first change", "second change"],
+        close_label="Close",
+    )
+    card = dialog.content
+    assert card.width == DIALOG_WIDTH
+    column = card.content
+    header_text, _divider, body_container, action_row = column.controls
+    assert header_text.value == "What's new in r329"
+    assert "✨" not in header_text.value          # no extravagant title
+    assert body_container.height <= MAX_BODY_HEIGHT
+    assert len(body_container.content.controls) == 2
+    # exactly one action, right-aligned, and it closes
+    assert len(action_row.controls) == 1
+    assert action_row.alignment == ft.MainAxisAlignment.END
+    action_row.controls[0].on_click(None)
+    assert page.opened is None

@@ -1,8 +1,8 @@
 {
-  "build": 328,
-  "tag": "r328",
+  "build": 329,
+  "tag": "r329",
   "date": "2026-07-30",
   "notes": [
-    "The what's-new dialog can finally open (the dialog component required two buttons; the announcement's single Close crashed it at display time on every launch). Update markers now save before display so announcements can never fail-loop again"
+    "The what's-new dialog is now a small clean card instead of a huge panel — about a third the width, plain heading, single Close button"
   ]
 }

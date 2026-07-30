@@ -4154,6 +4154,18 @@ def from_dict(data: dict[str, Any]) -> AppSettings:
     return settings
 
 
+def _reconcile_self_in_overlay(settings: "AppSettings") -> None:
+    """r334: ui.self_in_overlay (hub gate) and overlay.show_self (presenter
+    gate) were two switches for ONE user-visible behaviour — "do my own
+    messages appear in the overlay" — surfaced as separate cards in General
+    and Overlay. Effective behaviour was the AND of both, so migrate to that
+    value and keep them locked together from here on.
+    """
+    merged = bool(settings.ui.self_in_overlay) and bool(settings.overlay.show_self)
+    settings.ui.self_in_overlay = merged
+    settings.overlay.show_self = merged
+
+
 def load_settings(path: Path) -> AppSettings:
     raw = json.loads(path.read_text(encoding="utf-8"))
     if not isinstance(raw, dict):
@@ -4162,6 +4174,7 @@ def load_settings(path: Path) -> AppSettings:
     settings = from_dict(migrated)
     if changed:
         save_settings(path, settings)
+    _reconcile_self_in_overlay(settings)
     return settings
 
 

@@ -7167,8 +7167,11 @@ def test_settings_subtab_labels_render_from_i18n(monkeypatch: pytest.MonkeyPatch
             _subtab_text_value(view._settings_subtab_shell.button_by_key[key])
             for key in settings_view._SETTINGS_SUBTAB_ORDER
         ] == [
-            t("settings.subtab.api"),
+            # r334: General was split into General / Audio / VRChat.
             t("settings.subtab.general"),
+            t("settings.subtab.audio"),
+            t("settings.subtab.vrchat"),
+            t("settings.subtab.api"),
             t("settings.subtab.prompt"),
             t("settings.subtab.overlay"),
         ]

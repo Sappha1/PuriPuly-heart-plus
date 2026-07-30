@@ -67,3 +67,11 @@ def test_dashboard_exposes_title_menu_handlers() -> None:
     app_source = Path("src/puripuly_heart/ui/app.py").read_text(encoding="utf-8")
     assert "view_dashboard.on_check_updates" in app_source
     assert "view_dashboard.on_show_changelog" in app_source
+
+
+def test_title_menu_lists_changelog_before_check_for_updates() -> None:
+    """r334: reading what changed is the common reason to open this menu."""
+    source = Path("src/puripuly_heart/ui/views/dashboard.py").read_text(encoding="utf-8")
+    body = source[source.index("def _on_title_menu_tap") :]
+    body = body[: body.index("def _invoke_optional")]
+    assert body.index("title_menu.changelog") < body.index("title_menu.check_updates")

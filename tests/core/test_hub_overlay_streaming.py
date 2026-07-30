@@ -43,6 +43,17 @@ _HUB_ACTIVE_SELF_MIRROR_FIELDS = {
 }
 
 
+def _drain_ui_events(hub: ClientHub) -> list:
+    """Drain hub.ui_events, dropping API_REQUEST telemetry events.
+
+    Since r261 the hub emits an API_REQUEST UIEvent before every LLM call
+    (it feeds the API Requests view). These tests assert the semantic event
+    flow, so the capture-feed events are filtered out before asserting.
+    """
+    events = [hub.ui_events.get_nowait() for _ in range(hub.ui_events.qsize())]
+    return [event for event in events if event.type is not UIEventType.API_REQUEST]
+
+
 def test_hub_does_not_declare_active_self_overlay_mirror_fields() -> None:
     assert _HUB_ACTIVE_SELF_MIRROR_FIELDS.isdisjoint(ClientHub.__dataclass_fields__)
 
@@ -541,6 +552,7 @@ async def test_hub_self_translation_overlay_uses_translation_languages_not_curre
         overlay_sink=presenter,
         source_language="ko",
         target_language="en",
+        overlay_show_romanization=False,
     )
     utterance_id = uuid4()
     await hub._emit_overlay_event(
@@ -673,6 +685,7 @@ async def test_hub_peer_translation_overlay_uses_translation_languages_not_curre
         target_language="en",
         peer_source_language="en",
         peer_target_language="ko",
+        overlay_show_romanization=False,
     )
     utterance_id = uuid4()
 
@@ -792,6 +805,7 @@ async def test_hub_self_final_transcript_preserves_active_display_language_metad
         overlay_sink=presenter,
         source_language="ko",
         target_language="en",
+        overlay_show_romanization=False,
     )
     merge_id = uuid4()
     buffer = _MergeBuffer(
@@ -893,6 +907,7 @@ async def test_hub_peer_overlay_snapshot_uses_peer_specific_source_and_target_la
         peer_source_language="ja",
         peer_target_language="zh-TW",
         peer_translation_enabled=True,
+        overlay_show_romanization=False,
     )
 
     await hub.translate_peer_text_for_test("こんにちは")
@@ -1483,10 +1498,15 @@ async def test_peer_overlay_translation_defers_bookkeeping_cleanup_until_chatbox
     saw_live_peer_state = False
 
     async def fake_enqueue(
-        self, enqueue_utterance_id, *, transcript_text: str, translation_text: str | None
+        self,
+        enqueue_utterance_id,
+        *,
+        transcript_text: str,
+        translation_text: str | None,
+        precomputed_translit: str | None = None,
     ):
         nonlocal saw_live_peer_state
-        _ = (self, transcript_text, translation_text)
+        _ = (self, transcript_text, translation_text, precomputed_translit)
         peer_turn_id = next(
             event.utterance_id
             for event in hub.overlay_sink.events
@@ -1752,7 +1772,7 @@ async def test_peer_without_overlay_sink_succeeds_via_translate() -> None:
     )
 
     utterance_id = await hub.translate_peer_text_for_test("안녕")
-    events = [await hub.ui_events.get(), await hub.ui_events.get()]
+    events = _drain_ui_events(hub)
 
     assert llm.calls == ["안녕"]
     assert [event.type for event in events] == [
@@ -1892,7 +1912,7 @@ async def test_peer_translation_failure_finalizes_source_only_turn_and_emits_err
         "peer_transcript_final",
         "utterance_closed",
     ]
-    ui_events = [hub.ui_events.get_nowait() for _ in range(hub.ui_events.qsize())]
+    ui_events = _drain_ui_events(hub)
     assert [event.type for event in ui_events] == [
         UIEventType.TRANSCRIPT_FINAL,
         UIEventType.ERROR,
@@ -1910,6 +1930,7 @@ async def test_legacy_peer_handle_transcript_gates_overlay_until_translation() -
         osc=RecordingOscQueue(),
         overlay_sink=sink,
         peer_translation_enabled=True,
+        overlay_show_romanization=False,
     )
     utterance_id = uuid4()
     transcript = Transcript(
@@ -1949,6 +1970,7 @@ async def test_peer_translation_overlay_waits_for_translation_and_includes_sourc
         osc=RecordingOscQueue(),
         overlay_sink=sink,
         peer_translation_enabled=True,
+        overlay_show_romanization=False,
     )
     parent_vad_id = uuid4()
 
@@ -1993,6 +2015,7 @@ async def test_peer_translation_emits_final_only_overlay_events() -> None:
         osc=RecordingOscQueue(),
         overlay_sink=sink,
         peer_translation_enabled=True,
+        overlay_show_romanization=False,
     )
 
     await hub.translate_peer_text_for_test("안녕")
@@ -2030,6 +2053,7 @@ async def test_peer_overlay_events_arrive_before_translation_done_and_preserve_p
         osc=RecordingOscQueue(),
         overlay_sink=sink,
         peer_translation_enabled=True,
+        overlay_show_romanization=False,
     )
     hub.active_chatbox_channel = "peer"
     original_put = hub.ui_events.put
@@ -2042,7 +2066,7 @@ async def test_peer_overlay_events_arrive_before_translation_done_and_preserve_p
 
     await hub.translate_peer_text_for_test("안녕")
 
-    events = [hub.ui_events.get_nowait() for _ in range(hub.ui_events.qsize())]
+    events = _drain_ui_events(hub)
 
     assert [event.type for event in events] == [
         UIEventType.TRANSCRIPT_FINAL,
@@ -2050,7 +2074,7 @@ async def test_peer_overlay_events_arrive_before_translation_done_and_preserve_p
         UIEventType.OSC_SENT,
     ]
     assert events[1].payload.text == "hello"
-    assert events[2].payload.text == "안녕 (hello)"
+    assert events[2].payload.text == "안녕\nhello"
     assert events[2].channel == "peer"
     translation_event_order = [event.type for event in sink.events]
     assert translation_event_order == [
@@ -2083,11 +2107,12 @@ async def test_self_osc_sent_channel_uses_utterance_runtime_when_peer_chatbox_ac
 
     assert [event.type for event in events] == [
         UIEventType.TRANSCRIPT_FINAL,
+        UIEventType.TRANSLATION_SKIPPED,
         UIEventType.OSC_SENT,
     ]
-    assert events[1].utterance_id == utterance_id
-    assert events[1].payload.text == "self text"
-    assert events[1].channel == "self"
+    assert events[2].utterance_id == utterance_id
+    assert events[2].payload.text == "self text"
+    assert events[2].channel == "self"
     assert hub.ui_events.empty()
 
 
@@ -2123,7 +2148,7 @@ async def test_peer_overlay_emit_failures_still_emit_translation_done_and_osc_se
     hub.ui_events.put = recording_put  # type: ignore[method-assign]
 
     utterance_id = await hub.translate_peer_text_for_test("안녕")
-    events = [await hub.ui_events.get() for _ in range(3)]
+    events = _drain_ui_events(hub)
 
     assert call_order == [
         "ui:TRANSCRIPT_FINAL",
@@ -2144,9 +2169,9 @@ async def test_peer_overlay_emit_failures_still_emit_translation_done_and_osc_se
     assert events[1].utterance_id == utterance_id
     assert events[1].payload.text == "hello"
     assert events[2].utterance_id == utterance_id
-    assert events[2].payload.text == "안녕 (hello)"
+    assert events[2].payload.text == "안녕\nhello"
     assert events[2].channel == "peer"
-    assert osc.messages[0].text == "안녕 (hello)"
+    assert osc.messages[0].text == "안녕\nhello"
     assert hub.last_error_source == "overlay_sink"
     assert hub.ui_events.empty()
 
@@ -2165,7 +2190,7 @@ async def test_overlay_sink_failures_do_not_break_chatbox_or_translation_complet
     await hub.submit_text("self text", source="You")
     await asyncio.gather(*hub.self_runtime.translation_tasks.values(), return_exceptions=True)
 
-    assert osc.messages[0].text == "self text (hello)"
+    assert osc.messages[0].text == "self text\nhello"
     assert hub.last_error_source == "overlay_sink"
 
 
@@ -2189,10 +2214,12 @@ async def test_hub_emits_self_translation_to_overlay_after_translation_completio
         if event.type == "translation_final" and event.channel == "self"
     ]
 
-    assert osc.messages[0].text == "self text (hello)"
-    assert [event.type for event in sink.events[:2]] == [
+    assert osc.messages[0].text == "self text\nhello"
+    assert [event.type for event in sink.events] == [
         "self_transcript_final",
+        "self_active_update",
         "translation_final",
+        "utterance_closed",
     ]
     assert translation_events[-1].text == "hello"
     assert translation_events[-1].text != osc.messages[0].text
@@ -2229,8 +2256,10 @@ async def test_hub_newer_self_row_replaces_older_translated_self_row_without_pro
 
     second_id = await hub.submit_text("second", source="You")
 
-    assert [block.id for block in presenter.snapshot().blocks] == [f"self:{second_id}"]
-    assert presenter.snapshot().blocks[0].secondary_text == ""
+    # Self finals stay hidden until their translation lands, so the older
+    # translated row keeps the (single) visible slot while "second" is pending.
+    assert [block.id for block in presenter.snapshot().blocks] == [f"self:{first_id}"]
+    assert presenter.snapshot().blocks[0].secondary_text == "translated first"
 
     await asyncio.gather(*hub.self_runtime.translation_tasks.values(), return_exceptions=True)
 
@@ -2253,6 +2282,7 @@ async def test_hub_closes_self_overlay_line_after_translation_completion() -> No
 
     assert [event.type for event in sink.events] == [
         "self_transcript_final",
+        "self_active_update",
         "translation_final",
         "utterance_closed",
     ]
@@ -2319,7 +2349,7 @@ async def test_peer_translation_failure_falls_back_to_transcript_for_active_peer
     hub.active_chatbox_channel = "peer"
 
     utterance_id = await hub.translate_peer_text_for_test("안녕")
-    events = [await hub.ui_events.get() for _ in range(3)]
+    events = _drain_ui_events(hub)
 
     assert [event.type for event in sink.events] == [
         "peer_transcript_final",

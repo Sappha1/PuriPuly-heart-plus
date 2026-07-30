@@ -86,7 +86,10 @@ logger = logging.getLogger(__name__)
 _CJK_START = 0x3000
 _CENTER_ALIGNMENT = ft.alignment.Alignment(0, 0)
 _CENTER_RIGHT_ALIGNMENT = ft.alignment.Alignment(1, 0)
-_SETTINGS_SUBTAB_ORDER = ("general", "api", "prompt", "overlay")
+# r334: Audio and VRChat split out of the catch-all "General" tab. Order runs
+# most-used first: General, Audio (device/recognition troubleshooting), VRChat
+# integration, then the provider/prompt/overlay tabs.
+_SETTINGS_SUBTAB_ORDER = ("general", "audio", "vrchat", "api", "prompt", "overlay")
 _OVERLAY_DISTANCE_MIN = 0.5
 _OVERLAY_DISTANCE_MAX = 2.0
 _OVERLAY_DISTANCE_DIVISIONS = 30
@@ -287,6 +290,24 @@ class SettingsView(ft.Column):
             content,
             expand=expand,
             height=height,
+        )
+
+    def _section_header(self, key: str) -> ft.Control:
+        """Small muted heading inside a settings tab (r334) — a long tab still
+        scans when its cards are grouped under what they affect."""
+        label = ft.Text(
+            t(key),
+            size=11,
+            weight=ft.FontWeight.W_700,
+            color=COLOR_NEUTRAL,
+            opacity=0.75,
+        )
+        if not hasattr(self, "_section_header_labels"):
+            self._section_header_labels = []
+        self._section_header_labels.append((key, label))
+        return ft.Container(
+            content=label,
+            padding=ft.padding.only(left=2, top=14, bottom=4),
         )
 
     def _wrap_unit_card(
@@ -1251,11 +1272,6 @@ class SettingsView(ft.Column):
                 "Usually your headset output or speakers — what you hear."),
             value=self._loopback_audio_text,
         )
-        general_audio_row = ft.Column(
-                [host_api_card, mic_audio_card, loopback_audio_card],
-                spacing=0,
-            )
-
         # === API Tab Row 2: Response Mode / Routing / Fallback ===
         self._low_latency_text = self._build_clickable_text(
             t("toggle.off"),
@@ -1419,13 +1435,6 @@ class SettingsView(ft.Column):
                 expand=True,
             ),
         )
-        general_vad_row = ft.Column(
-                [microphone_test_card, self._self_vad_card,
-                 self._mic_auto_gain_card, self._mic_denoise_card,
-                 self._peer_vad_card, self._auto_gain_card,
-                 self._speaker_id_card, self._update_notes_card],
-                spacing=0,
-            )
         self._show_pinyin_text = self._build_clickable_text(
             t("settings.show_pinyin.off"),
             self._on_show_pinyin_click,
@@ -1562,20 +1571,59 @@ class SettingsView(ft.Column):
             value=self._log_api_requests_text,
         )
 
-        general_clipboard_row = ft.Column(
-                [
-                    clipboard_auto_translate_card,
-                    vrc_mic_card,
-                    ptt_mute_sync_card,
-                    live_preview_card,
-                    chatbox_send_peer_card,
-                    separate_text_card,
-                    self_in_overlay_card,
-                    steamvr_autolaunch_card,
-                    auto_download_updates_card,
-                ],
-                spacing=0,
-            )
+        # r334: "General" had become 24 cards in four themeless rows — every
+        # new feature landed there because that is where there was room. Split
+        # by WHAT a setting affects: app-wide preferences stay in General,
+        # capture/recognition moves to Audio, game integration to VRChat.
+        general_updates_row = ft.Column(
+            [
+                self._section_header("settings.section.updates"),
+                auto_download_updates_card,
+                self._update_notes_card,
+            ],
+            spacing=0,
+        )
+        audio_devices_row = ft.Column(
+            [
+                self._section_header("settings.section.audio_devices"),
+                host_api_card,
+                mic_audio_card,
+                loopback_audio_card,
+                microphone_test_card,
+            ],
+            spacing=0,
+        )
+        audio_detection_row = ft.Column(
+            [
+                self._section_header("settings.section.voice_detection"),
+                self._self_vad_card,
+                self._peer_vad_card,
+            ],
+            spacing=0,
+        )
+        audio_processing_row = ft.Column(
+            [
+                self._section_header("settings.section.voice_processing"),
+                self._mic_auto_gain_card,
+                self._mic_denoise_card,
+                self._auto_gain_card,
+                self._speaker_id_card,
+            ],
+            spacing=0,
+        )
+        vrchat_row = ft.Column(
+            [
+                self._section_header("settings.section.vrchat"),
+                vrc_mic_card,
+                ptt_mute_sync_card,
+                live_preview_card,
+                chatbox_send_peer_card,
+                steamvr_autolaunch_card,
+                clipboard_auto_translate_card,
+                separate_text_card,
+            ],
+            spacing=0,
+        )
 
         # === Peer STT card ===
         self._peer_provider_title = ft.Text(
@@ -2405,10 +2453,14 @@ class SettingsView(ft.Column):
                 ],
                 "general": [
                     general_primary_row,
-                    general_audio_row,
-                    general_vad_row,
-                    general_clipboard_row,
+                    general_updates_row,
                 ],
+                "audio": [
+                    audio_devices_row,
+                    audio_detection_row,
+                    audio_processing_row,
+                ],
+                "vrchat": [vrchat_row],
                 "prompt": [row7, persona_card, request_format_card],
                 "overlay": [
                     overlay_row1,
@@ -4865,7 +4917,11 @@ class SettingsView(ft.Column):
     def _on_overlay_show_self_click(self, e) -> None:
         if not self._settings or self._overlay_show_self_button.disabled:
             return
+        # r334: one card, both stores — General's duplicate wrote
+        # ui.self_in_overlay (hub gate) while this wrote overlay.show_self
+        # (presenter gate); they could disagree and silently fight.
         self._settings.overlay.show_self = not self._settings.overlay.show_self
+        self._settings.ui.self_in_overlay = self._settings.overlay.show_self
         self._sync_overlay_controls()
         self._emit_settings_changed()
 
@@ -5616,6 +5672,9 @@ class SettingsView(ft.Column):
         self._settings_subtab_shell.set_font_family(font_for_language(get_locale()))
         for key in _SETTINGS_SUBTAB_ORDER:
             self._settings_subtab_shell.set_tab_label(key, self._settings_subtab_label(key))
+        # r334: section headings inside the tabs follow the locale too.
+        for header_key, header_label in getattr(self, "_section_header_labels", ()):
+            header_label.value = t(header_key)
 
         # Re-translate every row built via _info_title_keyed (title + its tooltip) so
         # a runtime UI-language change updates them without an app restart.

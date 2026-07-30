@@ -14,35 +14,6 @@ from puripuly_heart.ui.views import dashboard as dashboard_module
 from tests.helpers.flet_page import attach_dummy_page
 
 
-class FakePowerButton:
-    def __init__(self, label, icon, on_click, **kwargs):
-        self.icon = icon
-        self.kwargs = dict(kwargs)
-        self.label = label
-        self.on_click = on_click
-        self.states: list[dict[str, object]] = []
-
-    def set_state(
-        self,
-        is_on: bool,
-        needs_key: bool = False,
-        *,
-        status_text: str | None = None,
-        helper_text: str | None = None,
-    ):
-        self.states.append(
-            {
-                "is_on": is_on,
-                "needs_key": needs_key,
-                "status_text": status_text,
-                "helper_text": helper_text,
-            }
-        )
-
-    def set_label(self, label: str) -> None:
-        self.label = label
-
-
 class FakeDisplayCard:
     def __init__(self, on_submit, on_input_focus_change=None):
         self._on_submit = on_submit
@@ -97,38 +68,6 @@ class FakeDisplayCard:
         self.focus_calls += 1
 
 
-class FakeLanguageCard:
-    def __init__(
-        self,
-        on_self_source_click,
-        on_self_target_click,
-        on_self_swap_click,
-        on_peer_source_click,
-        on_peer_target_click,
-        on_peer_swap_click,
-    ):
-        self.on_self_source_click = on_self_source_click
-        self.on_self_target_click = on_self_target_click
-        self.on_self_swap_click = on_self_swap_click
-        self.on_peer_source_click = on_peer_source_click
-        self.on_peer_target_click = on_peer_target_click
-        self.on_peer_swap_click = on_peer_swap_click
-        self.languages: list[tuple[str, str, str, str]] = []
-        self.row_labels: list[tuple[str, str]] = []
-
-    def set_languages(
-        self,
-        self_source: str,
-        self_target: str,
-        peer_source: str,
-        peer_target: str,
-    ) -> None:
-        self.languages.append((self_source, self_target, peer_source, peer_target))
-
-    def set_row_labels(self, self_label: str, peer_label: str) -> None:
-        self.row_labels.append((self_label, peer_label))
-
-
 class FakeLanguageModal:
     opened: list[tuple[str, list[str]]] = []
 
@@ -141,21 +80,39 @@ class FakeLanguageModal:
 
 
 def _make_dashboard(monkeypatch: pytest.MonkeyPatch):
-    monkeypatch.setattr(dashboard_module, "PowerButton", FakePowerButton)
+    # DashboardView.__init__ reads the real user settings.json for the
+    # unified-translation / auto-detect prefs — point "~" at a non-existent
+    # home so every test run exercises the shipped defaults.
+    monkeypatch.setenv("USERPROFILE", r"C:\puripuly-heart-tests-no-home")
+    monkeypatch.setenv("HOME", r"C:\puripuly-heart-tests-no-home")
     monkeypatch.setattr(dashboard_module, "DisplayCard", FakeDisplayCard)
-    monkeypatch.setattr(dashboard_module, "LanguageCard", FakeLanguageCard)
     monkeypatch.setattr(dashboard_module, "LanguageModal", FakeLanguageModal)
-    monkeypatch.setattr(dashboard_module, "create_background_glow_stack", lambda content: content)
     monkeypatch.setattr(dashboard_module, "font_for_language", lambda code: f"font-{code}")
-    monkeypatch.setattr(dashboard_module, "language_name", lambda code: f"name-{code}")
+    monkeypatch.setattr(
+        dashboard_module,
+        "language_name",
+        lambda code: f"name-{code}" if code else "Auto Detect",
+    )
     monkeypatch.setattr(dashboard_module, "get_locale", lambda: "en")
     view = dashboard_module.DashboardView()
     FakeLanguageModal.opened = []
     return view
 
 
-def _button_labels(row) -> list[str]:
-    return [slot.content.label for slot in row.controls]
+def _row_label(row) -> str:
+    return row._label_text.value
+
+
+def _row_icon(row) -> str:
+    return row.content.controls[0].name
+
+
+def _row_dot(row) -> str:
+    return row._dot.bgcolor
+
+
+def _card_text(card) -> str:
+    return card.content.controls[0].value
 
 
 def _make_overlay_peer_contract(
@@ -197,21 +154,20 @@ def _make_overlay_peer_contract(
     )
 
 
-def test_dashboard_initial_peer_language_defaults_to_english_to_korean(
+def test_dashboard_initial_peer_language_defaults_to_auto_detect_and_follow_self(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     view = _make_dashboard(monkeypatch)
 
     assert view._source_lang_code == "ko"
     assert view._target_lang_code == "en"
-    assert view._peer_source_lang_code == "en"
-    assert view._peer_target_lang_code == "ko"
-    assert view.language_card.languages[-1] == (
-        "name-ko",
-        "name-en",
-        "name-en",
-        "name-ko",
-    )
+    assert view._peer_source_lang_code == ""
+    assert view._peer_target_lang_code == ""
+    assert view._effective_peer_target_lang_code() == "ko"
+    assert _card_text(view._src_lang_card) == "name-ko"
+    assert _card_text(view._tgt1_lang_card) == "name-en"
+    assert _card_text(view._peer_src_card) == "Auto Detect"
+    assert _card_text(view._peer_tgt_card) == "name-ko"
 
 
 def test_dashboard_stt_toggle_warning_and_enable_flow(monkeypatch: pytest.MonkeyPatch) -> None:
@@ -241,14 +197,18 @@ def test_dashboard_translation_toggle_controls_power_state(monkeypatch: pytest.M
     view.on_toggle_translation = lambda enabled: seen.append(enabled)
     view.translation_needs_key = True
 
+    # Translation starts ON by default, so the first toggle turns it off; the
+    # next toggle hits the missing-key warning, the one after acknowledges it,
+    # and the final toggle (key present) turns translation back on.
     view._toggle_translation()
     view._toggle_translation()
     view.translation_needs_key = False
     view._toggle_translation()
     view._toggle_translation()
 
-    assert seen == [False, False, True, False]
-    assert view.is_power_on is False
+    assert seen == [False, False, False, True]
+    assert view.is_translation_on is True
+    assert view.is_power_on is True
     assert any(
         call[0] == dashboard_module.t("dashboard.warn_llm_key")
         for call in view.display_card.display_calls
@@ -297,11 +257,9 @@ def test_dashboard_translation_visual_commit_forwards_metadata_and_runtime_log(
 def test_dashboard_submit_and_language_selection_paths(monkeypatch: pytest.MonkeyPatch) -> None:
     view = _make_dashboard(monkeypatch)
     sends: list[tuple[str, str]] = []
-    lang_changes: list[tuple[str, str, str, str]] = []
+    lang_changes: list[tuple] = []
     view.on_send_message = lambda source, text: sends.append((source, text))
-    view.on_language_change = lambda src, tgt, peer_src, peer_tgt: lang_changes.append(
-        (src, tgt, peer_src, peer_tgt)
-    )
+    view.on_language_change = lambda *args: lang_changes.append(args)
 
     view._on_submit("hello")
     view._on_source_select("ja")
@@ -311,51 +269,48 @@ def test_dashboard_submit_and_language_selection_paths(monkeypatch: pytest.Monke
     assert sends == [("You", "hello")]
     assert view._recent_source_langs == ["ja"]
     assert view._recent_target_langs == ["fr"]
-    assert lang_changes[-1] == ("fr", "ja", "en", "ko")
-    assert view.language_card.languages[-1] == ("name-fr", "name-ja", "name-en", "name-ko")
+    assert lang_changes[-1] == ("fr", "ja", "", "", 0, [], [])
+    assert _card_text(view._src_lang_card) == "name-fr"
+    assert _card_text(view._tgt1_lang_card) == "name-ja"
 
 
 def test_dashboard_tab_in_focused_message_input_swaps_self_languages_only(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     view = _make_dashboard(monkeypatch)
-    changes: list[tuple[str, str, str, str]] = []
-    view.on_language_change = lambda src, tgt, peer_src, peer_tgt: changes.append(
-        (src, tgt, peer_src, peer_tgt)
-    )
+    changes: list[tuple] = []
+    view.on_language_change = lambda *args: changes.append(args)
+    # Unified view mirrors the typed-output target onto the peer's language,
+    # so ko/en/ja/fr settles as source=ko target=ja.
     view.set_languages_from_codes("ko", "en", "ja", "fr")
     view.display_card.set_input_focus_for_test(True)
 
     handled = view.handle_message_input_tab_key()
 
     assert handled is True
-    assert view._source_lang_code == "en"
+    assert view._source_lang_code == "ja"
     assert view._target_lang_code == "ko"
     assert view._peer_source_lang_code == "ja"
     assert view._peer_target_lang_code == "fr"
-    assert changes[-1] == ("en", "ko", "ja", "fr")
-    assert view.language_card.languages[-1] == ("name-en", "name-ko", "name-ja", "name-fr")
-    assert view.display_card.focus_calls == 1
+    assert changes[-1] == ("ja", "ko", "ja", "fr", 0, [], [])
 
 
 def test_dashboard_tab_ignored_when_message_input_is_not_focused(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     view = _make_dashboard(monkeypatch)
-    changes: list[tuple[str, str, str, str]] = []
-    view.on_language_change = lambda src, tgt, peer_src, peer_tgt: changes.append(
-        (src, tgt, peer_src, peer_tgt)
-    )
+    changes: list[tuple] = []
+    view.on_language_change = lambda *args: changes.append(args)
     view.set_languages_from_codes("ko", "en", "ja", "fr")
+    changes_after_setup = len(changes)
     view.display_card.set_input_focus_for_test(False)
 
     handled = view.handle_message_input_tab_key()
 
     assert handled is False
     assert view._source_lang_code == "ko"
-    assert view._target_lang_code == "en"
-    assert changes == []
-    assert view.display_card.focus_calls == 0
+    assert view._target_lang_code == "ja"
+    assert len(changes) == changes_after_setup
 
 
 def test_dashboard_recent_languages_caps_and_notifies(monkeypatch: pytest.MonkeyPatch) -> None:
@@ -396,19 +351,16 @@ def test_dashboard_public_setters_update_components(monkeypatch: pytest.MonkeyPa
         dashboard_module.t("dashboard.managed_auth_pending"),
         "info",
     )
-    assert view.language_card.languages[-1] == ("name-ko", "name-en", "name-ko", "name-en")
-    assert view.trans_button.states[-1] == {
-        "is_on": False,
-        "needs_key": True,
-        "status_text": None,
-        "helper_text": None,
-    }
-    assert view.stt_button.states[-1] == {
-        "is_on": False,
-        "needs_key": True,
-        "status_text": None,
-        "helper_text": None,
-    }
+    assert view._source_lang_code == "ko"
+    assert view._target_lang_code == "en"
+    assert _card_text(view._src_lang_card) == "name-ko"
+    assert _card_text(view._tgt1_lang_card) == "name-en"
+    assert view.trans_button._state is False
+    assert view.trans_button._warning is True
+    assert _row_dot(view.trans_button) == dashboard_module._TOGGLE_WARNING
+    assert view.stt_button._state is False
+    assert view.stt_button._warning is True
+    assert _row_dot(view.stt_button) == dashboard_module._TOGGLE_WARNING
     assert view._recent_source_langs == ["a", "b", "c", "d", "e", "f"]
 
 
@@ -436,79 +388,49 @@ def test_dashboard_apply_locale_reapplies_managed_auth_pending_notice(
     view.set_managed_auth_pending(True)
     view.apply_locale()
 
-    assert view.display_card.notice_calls == [
-        (dashboard_module.t("dashboard.managed_auth_pending"), "info"),
-        (dashboard_module.t("dashboard.managed_auth_pending"), "info"),
-    ]
+    # apply_locale re-syncs the notice through both the STT-row and the
+    # overlay/peer-row paths, so the pending notice is re-emitted at least
+    # once — and nothing else ever wins while auth is pending.
+    pending_notice = (dashboard_module.t("dashboard.managed_auth_pending"), "info")
+    assert view.display_card.notice_calls[0] == pending_notice
+    assert len(view.display_card.notice_calls) > 1
+    assert set(view.display_card.notice_calls) == {pending_notice}
 
 
-def test_dashboard_builds_4x3_friendly_shell_without_managed_trial_row(
+def test_dashboard_builds_vrct_shell_without_managed_trial_row(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     view = _make_dashboard(monkeypatch)
 
-    assert view.controls[0] is view.shell_content
-    assert view.shell_content.controls == [view.main_surface]
-    assert view.shell_content.spacing == dashboard_module.DASHBOARD_LAYOUT_GAP
-    assert view.main_surface.controls == [view.control_region, view.info_region]
-    assert view.main_surface.spacing == dashboard_module.DASHBOARD_LAYOUT_GAP
-    assert dashboard_module.DASHBOARD_CONTROL_REGION_EXPAND == 45
-    assert dashboard_module.DASHBOARD_INFO_REGION_EXPAND == 55
-    assert view.control_region.expand == 45
-    assert view.info_region.expand == 55
-    assert view.control_grid.spacing == dashboard_module.DASHBOARD_LAYOUT_GAP
-    assert view.top_controls.spacing == dashboard_module.DASHBOARD_LAYOUT_GAP
-    assert view.bottom_controls.spacing == dashboard_module.DASHBOARD_LAYOUT_GAP
-    assert _button_labels(view.top_controls) == ["STT", "PEER"]
-    assert _button_labels(view.bottom_controls) == ["TRANS", "Subtitles"]
-    assert view.stt_button.kwargs["icon_size"] == dashboard_module.DASHBOARD_POWER_BUTTON_ICON_SIZE
-    assert view.peer_button.kwargs["icon_size"] == dashboard_module.DASHBOARD_POWER_BUTTON_ICON_SIZE
-    assert (
-        view.trans_button.kwargs["icon_size"] == dashboard_module.DASHBOARD_POWER_BUTTON_ICON_SIZE
-    )
-    assert (
-        view.overlay_button.kwargs["icon_size"] == dashboard_module.DASHBOARD_POWER_BUTTON_ICON_SIZE
-    )
-    assert (
-        view.stt_button.kwargs["label_size"] == dashboard_module.DASHBOARD_POWER_BUTTON_LABEL_SIZE
-    )
-    assert (
-        view.peer_button.kwargs["label_size"] == dashboard_module.DASHBOARD_POWER_BUTTON_LABEL_SIZE
-    )
-    assert (
-        view.trans_button.kwargs["label_size"] == dashboard_module.DASHBOARD_POWER_BUTTON_LABEL_SIZE
-    )
-    assert (
-        view.overlay_button.kwargs["label_size"]
-        == dashboard_module.DASHBOARD_POWER_BUTTON_LABEL_SIZE
-    )
-    assert view.overlay_button.icon == ft.Icons.SUBTITLES
-    assert "color_on" not in view.peer_button.kwargs
-    assert "color_on" not in view.trans_button.kwargs
-    assert "color_on" not in view.overlay_button.kwargs
-    assert view.info_stack.spacing == dashboard_module.DASHBOARD_LAYOUT_GAP
-    assert view.info_stack.controls == [view.display_card_slot, view.language_card_slot]
-    assert view.display_card_slot.content is view.display_card
-    assert dashboard_module.DASHBOARD_DISPLAY_CARD_EXPAND == 1
-    assert view.display_card_slot.expand == 1
-    assert view.language_card_slot.content is view.language_card
-    assert dashboard_module.DASHBOARD_LANGUAGE_CARD_EXPAND == 1
-    assert view.language_card_slot.expand == 1
+    assert len(view.controls) == 2
+    assert view.controls[0] is view._sidebar_container
+    assert view.stt_button is view._row_stt
+    assert view.peer_button is view._row_peer
+    assert view.trans_button is view._row_trans
+    assert view.overlay_button is view._row_overlay
+    assert _row_label(view.stt_button) == dashboard_module.t("dashboard.stt_label")
+    assert _row_label(view.peer_button) == dashboard_module.t("dashboard.peer_label")
+    assert _row_label(view.trans_button) == dashboard_module.t("dashboard.trans_label")
+    assert _row_label(view.overlay_button) == dashboard_module.t("dashboard.overlay_label")
+    assert _row_icon(view.overlay_button) == ft.Icons.SUBTITLES
+    # The display card survives only as a hidden controller-API shim.
+    assert view.display_card.visible is False
     assert not hasattr(view, "_managed_trial_card")
 
 
-def test_dashboard_bottom_row_uses_trans_and_subtitles_labels(
+def test_dashboard_sidebar_rows_use_trans_and_subtitles_labels(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     view = _make_dashboard(monkeypatch)
 
-    assert _button_labels(view.bottom_controls) == ["TRANS", "Subtitles"]
+    assert _row_label(view.trans_button) == "TRANS"
+    assert _row_label(view.overlay_button) == "Subtitles"
 
 
 def test_dashboard_overlay_button_uses_subtitles_icon(monkeypatch: pytest.MonkeyPatch) -> None:
     view = _make_dashboard(monkeypatch)
 
-    assert view.overlay_button.icon == ft.Icons.SUBTITLES
+    assert _row_icon(view.overlay_button) == ft.Icons.SUBTITLES
 
 
 def test_dashboard_peer_trans_overlay_buttons_use_default_on_color(
@@ -516,9 +438,21 @@ def test_dashboard_peer_trans_overlay_buttons_use_default_on_color(
 ) -> None:
     view = _make_dashboard(monkeypatch)
 
-    assert "color_on" not in view.peer_button.kwargs
-    assert "color_on" not in view.trans_button.kwargs
-    assert "color_on" not in view.overlay_button.kwargs
+    view.set_translation_enabled(True)
+    view.set_overlay_peer_contract(
+        _make_overlay_peer_contract(
+            overlay_intent_enabled=True,
+            overlay_state="connected",
+            overlay_status_text="Overlay on",
+            peer_intent_enabled=True,
+            peer_effective_enabled=True,
+            peer_status_text="Peer on",
+        )
+    )
+
+    assert _row_dot(view.trans_button) == dashboard_module._TOGGLE_ON
+    assert _row_dot(view.peer_button) == dashboard_module._TOGGLE_ON
+    assert _row_dot(view.overlay_button) == dashboard_module._TOGGLE_ON
 
 
 def test_dashboard_apply_locale_and_dialog_open_paths(monkeypatch: pytest.MonkeyPatch) -> None:
@@ -534,10 +468,10 @@ def test_dashboard_apply_locale_and_dialog_open_paths(monkeypatch: pytest.Monkey
 
     assert FakeLanguageModal.opened[0][0] == "ko"
     assert FakeLanguageModal.opened[1][0] == "en"
-    assert view.stt_button.label == "STT"
-    assert view.peer_button.label == "PEER"
-    assert view.trans_button.label == "TRANS"
-    assert view.overlay_button.label == "Subtitles"
+    assert _row_label(view.stt_button) == dashboard_module.t("dashboard.stt_label")
+    assert _row_label(view.peer_button) == dashboard_module.t("dashboard.peer_label")
+    assert _row_label(view.trans_button) == dashboard_module.t("dashboard.trans_label")
+    assert _row_label(view.overlay_button) == dashboard_module.t("dashboard.overlay_label")
     warning_texts = [text for text, _is_error, _font in view.display_card.display_calls]
     assert dashboard_module.t("dashboard.warn_stt_key") in warning_texts
     assert dashboard_module.t("dashboard.warn_llm_key") in warning_texts
@@ -560,18 +494,12 @@ def test_dashboard_overlay_peer_buttons_render_consumer_contract_state_only(
 
     view.set_overlay_peer_contract(contract)
 
-    assert view.overlay_button.states[-1] == {
-        "is_on": False,
-        "needs_key": True,
-        "status_text": None,
-        "helper_text": None,
-    }
-    assert view.peer_button.states[-1] == {
-        "is_on": False,
-        "needs_key": True,
-        "status_text": None,
-        "helper_text": None,
-    }
+    assert view.overlay_button._state is False
+    assert view.overlay_button._warning is True
+    assert _row_dot(view.overlay_button) == dashboard_module._TOGGLE_WARNING
+    assert view.peer_button._state is False
+    assert view.peer_button._warning is True
+    assert _row_dot(view.peer_button) == dashboard_module._TOGGLE_WARNING
 
 
 def test_dashboard_overlay_failure_notice_is_lowest_priority_notice_source(
@@ -716,8 +644,8 @@ def test_dashboard_overlay_and_peer_buttons_toggle_live_from_contract_intent(
             peer_status_text="Peer off",
         )
     )
-    view.peer_button.on_click()
-    view.overlay_button.on_click()
+    view.peer_button.on_click(None)
+    view.overlay_button.on_click(None)
 
     view.set_overlay_peer_contract(
         _make_overlay_peer_contract(
@@ -729,59 +657,61 @@ def test_dashboard_overlay_and_peer_buttons_toggle_live_from_contract_intent(
             peer_status_text="Peer on",
         )
     )
-    view.peer_button.on_click()
-    view.overlay_button.on_click()
+    # The overlay toggle debounces double-fires within 0.4s of wall clock;
+    # reset the stamp so the second scripted click is not swallowed.
+    view._last_overlay_toggle_ts = 0.0
+    view.peer_button.on_click(None)
+    view.overlay_button.on_click(None)
 
     assert peer_toggles == [True, False]
     assert overlay_toggles == [True, False]
 
 
-def test_dashboard_peer_source_selection_restores_follow_self_blank(
+def test_dashboard_peer_source_selection_pins_language_and_mirrors_typed_target(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     view = _make_dashboard(monkeypatch)
-    changes: list[tuple[str, str, str, str]] = []
-    view.on_language_change = lambda src, tgt, peer_src, peer_tgt: changes.append(
-        (src, tgt, peer_src, peer_tgt)
-    )
+    changes: list[tuple] = []
+    view.on_language_change = lambda *args: changes.append(args)
     view.set_languages_from_codes("ko", "en", "ja", "fr")
 
-    view._on_peer_source_select("ko")
+    view._on_peer_source_select("de")
 
-    assert view._peer_source_lang_code == ""
+    assert view._peer_source_lang_code == "de"
     assert view._peer_target_lang_code == "fr"
-    assert view._recent_source_langs == ["ko"]
-    assert changes[-1] == ("ko", "en", "", "fr")
-    assert view.language_card.languages[-1] == ("name-ko", "name-en", "name-ko", "name-fr")
+    # Unified view: the typed-output target mirrors the peer's language.
+    assert view._target_lang_code == "de"
+    assert view._recent_source_langs == ["de"]
+    assert changes[-1] == ("ko", "de", "de", "fr", 0, [], [])
+    assert _card_text(view._peer_src_card) == "name-de"
 
 
 def test_dashboard_peer_target_selection_restores_follow_self_blank(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     view = _make_dashboard(monkeypatch)
-    changes: list[tuple[str, str, str, str]] = []
-    view.on_language_change = lambda src, tgt, peer_src, peer_tgt: changes.append(
-        (src, tgt, peer_src, peer_tgt)
-    )
+    changes: list[tuple] = []
+    view.on_language_change = lambda *args: changes.append(args)
     view.set_languages_from_codes("ko", "en", "ja", "fr")
 
-    view._on_peer_target_select("en")
+    # Picking your own spoken language as the peer's target collapses the
+    # explicit override back to "follow my language" (blank).
+    view._on_peer_target_select("ko")
 
     assert view._peer_source_lang_code == "ja"
     assert view._peer_target_lang_code == ""
-    assert view._recent_target_langs == ["en"]
-    assert changes[-1] == ("ko", "en", "ja", "")
-    assert view.language_card.languages[-1] == ("name-ko", "name-en", "name-ja", "name-en")
+    assert view._effective_peer_target_lang_code() == "ko"
+    assert view._recent_target_langs == ["ko"]
+    assert changes[-1] == ("ko", "ja", "ja", "", 0, [], [])
+    assert _card_text(view._peer_tgt_card) == "name-ko"
 
 
 def test_dashboard_self_source_change_preserves_explicit_peer_override(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     view = _make_dashboard(monkeypatch)
-    changes: list[tuple[str, str, str, str]] = []
-    view.on_language_change = lambda src, tgt, peer_src, peer_tgt: changes.append(
-        (src, tgt, peer_src, peer_tgt)
-    )
+    changes: list[tuple] = []
+    view.on_language_change = lambda *args: changes.append(args)
     view.set_languages_from_codes("ko", "en", "ja", "fr")
 
     view._on_source_select("ja")
@@ -789,42 +719,42 @@ def test_dashboard_self_source_change_preserves_explicit_peer_override(
 
     assert view._peer_source_lang_code == "ja"
     assert view._peer_target_lang_code == "fr"
-    assert changes[-2] == ("ja", "en", "ja", "fr")
-    assert changes[-1] == ("de", "en", "ja", "fr")
-    assert view.language_card.languages[-1] == ("name-de", "name-en", "name-ja", "name-fr")
+    assert changes[-2] == ("ja", "ja", "ja", "fr", 0, [], [])
+    assert changes[-1] == ("de", "ja", "ja", "fr", 0, [], [])
+    assert _card_text(view._src_lang_card) == "name-de"
 
 
 def test_dashboard_peer_language_edits_share_controller_update_path(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     view = _make_dashboard(monkeypatch)
-    changes: list[tuple[str, str, str, str]] = []
-    view.on_language_change = lambda src, tgt, peer_src, peer_tgt: changes.append(
-        (src, tgt, peer_src, peer_tgt)
-    )
+    changes: list[tuple] = []
+    view.on_language_change = lambda *args: changes.append(args)
 
     view._on_peer_source_select("ja")
     view._on_peer_target_select("fr")
 
-    assert changes == [("ko", "en", "ja", "ko"), ("ko", "en", "ja", "fr")]
+    assert changes == [
+        ("ko", "ja", "ja", "", 0, [], []),
+        ("ko", "ja", "ja", "fr", 0, [], []),
+    ]
 
 
 def test_dashboard_peer_swap_exchanges_source_and_target(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     view = _make_dashboard(monkeypatch)
-    changes: list[tuple[str, str, str, str]] = []
-    view.on_language_change = lambda src, tgt, peer_src, peer_tgt: changes.append(
-        (src, tgt, peer_src, peer_tgt)
-    )
+    changes: list[tuple] = []
+    view.on_language_change = lambda *args: changes.append(args)
     view.set_languages_from_codes("ko", "en", "ja", "fr")
 
     view._swap_peer_languages()
 
     assert view._peer_source_lang_code == "fr"
     assert view._peer_target_lang_code == "ja"
-    assert changes[-1] == ("ko", "en", "fr", "ja")
-    assert view.language_card.languages[-1] == ("name-ko", "name-en", "name-fr", "name-ja")
+    assert changes[-1] == ("ko", "ja", "fr", "ja", 0, [], [])
+    assert _card_text(view._peer_src_card) == "name-fr"
+    assert _card_text(view._peer_tgt_card) == "name-ja"
 
 
 def test_dashboard_self_and_peer_language_row_labels_render_from_i18n(
@@ -833,17 +763,13 @@ def test_dashboard_self_and_peer_language_row_labels_render_from_i18n(
     monkeypatch.setattr(dashboard_module, "t", lambda key, **_kwargs: f"i18n:{key}")
     view = _make_dashboard(monkeypatch)
 
-    assert view.language_card.row_labels[0] == (
-        "i18n:dashboard.language.self",
-        "i18n:dashboard.language.peer",
-    )
+    assert view._lbl_you_speak.value == "i18n:dashboard.you_speak"
+    assert view._lbl_peer_voice.value == "i18n:dashboard.language.peer"
 
     view.apply_locale()
 
-    assert view.language_card.row_labels[-1] == (
-        "i18n:dashboard.language.self",
-        "i18n:dashboard.language.peer",
-    )
+    assert view._lbl_you_speak.value == "i18n:dashboard.you_speak"
+    assert view._lbl_peer_voice.value == "i18n:dashboard.language.peer"
 
 
 def test_dashboard_peer_and_overlay_button_labels_render_from_i18n(
@@ -852,13 +778,13 @@ def test_dashboard_peer_and_overlay_button_labels_render_from_i18n(
     monkeypatch.setattr(dashboard_module, "t", lambda key, **_kwargs: f"i18n:{key}")
     view = _make_dashboard(monkeypatch)
 
-    assert view.peer_button.label == "i18n:dashboard.peer_label"
-    assert view.overlay_button.label == "i18n:dashboard.overlay_label"
+    assert _row_label(view.peer_button) == "i18n:dashboard.peer_label"
+    assert _row_label(view.overlay_button) == "i18n:dashboard.overlay_label"
 
     view.apply_locale()
 
-    assert view.peer_button.label == "i18n:dashboard.peer_label"
-    assert view.overlay_button.label == "i18n:dashboard.overlay_label"
+    assert _row_label(view.peer_button) == "i18n:dashboard.peer_label"
+    assert _row_label(view.overlay_button) == "i18n:dashboard.overlay_label"
 
 
 def test_dashboard_local_stt_notice_can_change_and_clear_without_touching_display(

@@ -2,6 +2,14 @@
 
 User-facing changes per build. The latest build's highlights also appear in-app when an update is ready.
 
+## r334 — 2026-07-30
+
+- Settings is now split into six tabs — General, Audio, VRChat, API, Prompt, Overlay — instead of piling everything into General
+- Audio groups your devices, voice detection and voice processing under labelled headings, so mic setup is one tab instead of a scroll hunt
+- VRChat collects the game integration switches (mic gate, push-to-talk sync, live preview, chatbox sending, SteamVR auto-launch)
+- "Show my messages in the overlay" was two separate switches in two tabs that could disagree with each other; it is one switch now, in Overlay
+- The version menu lists "Changelog" first, then "Check for updates"
+
 ## r333 — 2026-07-30
 
 - The what's-new card now shows the build's release date, so it's clear when the version actually came out even if you update days later

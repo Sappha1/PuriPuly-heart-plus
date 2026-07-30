@@ -1,9 +1,8 @@
 {
-  "build": 324,
-  "tag": "r324",
+  "build": 325,
+  "tag": "r325",
   "date": "2026-07-30",
   "notes": [
-    "The changelog is now multilingual — What's New and the after-update dialog show changes in your UI language (Chinese/Japanese/Korean from r298 onward, older history in English)",
-    "The after-update announcement is a proper dialog with the full change list and a Close button"
+    "Fixed the after-update dialog not appearing the first time you arrive from an older build — anyone updating from r321 or older now sees the what's-new dialog on their first launch of a new build"
   ]
 }

@@ -4663,7 +4663,12 @@ class GuiController:
 
     def _load_or_init_settings(self, path: Path) -> AppSettings:
         if path.exists():
+            self.settings_created_fresh = False
             return load_settings(path)
+        # r325: the post-update announcement needs to distinguish "fresh
+        # install" (no dialog) from "updated from a build before the
+        # last_run_build stamp existed" (dialog!) — only this site knows.
+        self.settings_created_fresh = True
         settings = new_settings_for_first_run()
         path.parent.mkdir(parents=True, exist_ok=True)
         save_settings(path, settings)

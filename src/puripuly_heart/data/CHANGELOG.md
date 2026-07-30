@@ -2,6 +2,10 @@
 
 User-facing changes per build. The latest build's highlights also appear in-app when an update is ready.
 
+## r325 — 2026-07-30
+
+- Fixed the after-update dialog not appearing the very first time you arrive from an older build: the "previous version" marker didn't exist yet, so the app couldn't tell it had just updated and stayed silent. Anyone updating from r321 or older now sees the what's-new dialog on their first launch of a new build (fresh installs still start quietly)
+
 ## r324 — 2026-07-30
 
 - The changelog is now multilingual: switch the UI language and the What's New panel and the after-update dialog immediately show the changes in your language — Chinese, Japanese, and Korean cover everything from r298 onward; older history falls back to English

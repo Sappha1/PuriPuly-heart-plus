@@ -3262,8 +3262,16 @@ async def main_gui(page: ft.Page, *, config_path, debug_ui_preview: bool = False
             if settings_obj is not None:
                 running_build = current_build_number()
                 previous_build = int(getattr(settings_obj.ui, "last_run_build", 0) or 0)
+                # r325: a missing stamp on an EXISTING config means "updated
+                # from a pre-stamp build", not "fresh install" — the r324
+                # rollout proved it: the user updated in and saw nothing
+                # because the stamp only began existing that launch. Only a
+                # genuinely fresh install skips the announcement.
+                fresh_install = bool(
+                    getattr(app.controller, "settings_created_fresh", False)
+                )
                 if running_build > 0 and previous_build != running_build:
-                    if previous_build > 0:
+                    if previous_build > 0 or not fresh_install:
                         # r323 (user request): a proper DIALOG — "the program
                         # updated, here's what changed" + Close — not a toast.
                         from puripuly_heart.core.changelog import (

@@ -909,6 +909,9 @@ class UiSettings:
     # r322: build number of the previous run — a change means "we just
     # updated"; the app announces the new build + top change once.
     last_run_build: int = 0
+    # r331: show the what's-new dialog after an update (opt-out lives both in
+    # the dialog itself and in Settings).
+    show_update_notes_on_launch: bool = True
     self_in_overlay: bool = False
     typed_in_overlay: bool = False
     filter_peer_by_target_languages: bool = False
@@ -1696,6 +1699,7 @@ def to_dict(settings: AppSettings) -> dict[str, Any]:
             "autolaunch_with_steamvr": settings.ui.autolaunch_with_steamvr,
             "auto_download_updates": settings.ui.auto_download_updates,
             "last_run_build": settings.ui.last_run_build,
+            "show_update_notes_on_launch": settings.ui.show_update_notes_on_launch,
             "self_in_overlay": settings.ui.self_in_overlay,
             "typed_in_overlay": settings.ui.typed_in_overlay,
             # Persisted so the overlay/peer toggles are restored on next launch.
@@ -4047,6 +4051,9 @@ def from_dict(data: dict[str, Any]) -> AppSettings:
             autolaunch_with_steamvr=bool(ui_data.get("autolaunch_with_steamvr", False)),
             auto_download_updates=bool(ui_data.get("auto_download_updates", True)),
             last_run_build=int(ui_data.get("last_run_build", 0) or 0),
+            show_update_notes_on_launch=bool(
+                ui_data.get("show_update_notes_on_launch", True)
+            ),
             self_in_overlay=bool(ui_data.get("self_in_overlay", True)),
             typed_in_overlay=bool(ui_data.get("typed_in_overlay", True)),
             filter_peer_by_target_languages=bool(ui_data.get("filter_peer_by_target_languages", False)),

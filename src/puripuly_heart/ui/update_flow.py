@@ -73,6 +73,8 @@ class UpdateFlow:
         self.comparable: bool = True  # False when the release has no version.json
         self.staged_root: Path | None = None
         self.last_error: str = ""  # last failed download reason (retry hint)
+        # r331: bounded auto-retries for a payload that is mid-upload.
+        self._missing_asset_retries: int = 0
         # True when the running download was started automatically at launch
         # (auto-download setting) rather than by a user click — an auto download
         # must NOT auto-restart the app when it finishes staging.
@@ -176,6 +178,7 @@ class UpdateFlow:
                           status="Couldn't reach GitHub — check your connection and try again.")
             return
         self.remote = remote
+        self._missing_asset_retries = 0
         self.comparable = remote.build > 0
         if not self.comparable:
             # Release predates version.json — can't tell if it's newer. Offer a
@@ -226,6 +229,26 @@ class UpdateFlow:
             reason = _friendly_network_reason(exc)
             logger.warning("[UpdateFlow] download failed: %s (%s)", reason, exc)
             self.last_error = reason
+            # r331: a MISSING asset is almost always transient — the release's
+            # payload is being replaced right then (uploads take minutes, and
+            # the new version.json can go live first). Auto-retry a few times
+            # with backoff instead of leaving the user with a red error and a
+            # button to press (observed live during the r330 upload).
+            if "missing" in reason.lower() and self._missing_asset_retries < 3:
+                self._missing_asset_retries += 1
+                delay_s = 60 * self._missing_asset_retries
+                self._set(
+                    "available",
+                    progress=0.0,
+                    status=(
+                        "The update file is still uploading — retrying "
+                        f"in {delay_s // 60} min…"
+                    ),
+                )
+                await asyncio.sleep(delay_s)
+                if self.state == "available":
+                    await self.download()
+                return
             # Back to "available", NOT "error": the sidebar button must stay
             # visible for a retry (previously it silently vanished on failure),
             # and the tooltip/About card explain what went wrong.

@@ -194,7 +194,84 @@ def test_compact_update_dialog_shape() -> None:
     assert body_container.height <= MAX_BODY_HEIGHT
     assert len(body_container.content.controls) == 2
     # exactly one action, right-aligned, and it closes
-    assert len(action_row.controls) == 1
-    assert action_row.alignment == ft.MainAxisAlignment.END
-    action_row.controls[0].on_click(None)
+    assert dialog.modal is False                 # r331: click-outside closes
+    action_row.controls[-1].on_click(None)       # Close is the last control
     assert page.opened is None
+
+
+def test_long_bullet_gets_enough_height_to_read() -> None:
+    # r331: r329 assumed one line per bullet and clipped a long entry
+    # mid-sentence ("...failed to match in the other place" was cut off).
+    from puripuly_heart.ui.components.update_notes_dialog import (
+        MAX_BODY_HEIGHT,
+        _estimated_body_height,
+    )
+
+    long_bullet = (
+        "A named voice can now be recognized across different apps: the same "
+        "person sounds measurably different through a voice call versus "
+        "VRChat in-game audio (different codec, plus distance and room "
+        "effects), so one saved voiceprint often failed to match in the other "
+        "place and you had to name them again every session."
+    )
+    short = _estimated_body_height(["short"])
+    long_height = _estimated_body_height([long_bullet])
+    assert long_height > short * 4               # scales with wrapped lines
+    assert long_height <= MAX_BODY_HEIGHT
+
+    # CJK counted double-width so a Chinese entry is not underestimated
+    chinese = "已命名的声音现在可以跨应用被识别：同一个人通过语音通话听起来有明显差异"
+    assert _estimated_body_height([chinese]) > _estimated_body_height(
+        ["x" * len(chinese)]
+    )
+
+
+def test_dialog_optout_checkbox_reports_choice() -> None:
+    # r331: the opt-out lives IN the dialog, not only in Settings.
+    from puripuly_heart.ui.components.update_notes_dialog import (
+        open_update_notes_dialog,
+    )
+
+    class _Page:
+        def __init__(self):
+            self.opened = None
+
+        def open(self, dialog):
+            self.opened = dialog
+
+        def close(self, dialog):
+            self.opened = None
+
+    captured = []
+    page = _Page()
+    dialog = open_update_notes_dialog(
+        page,
+        header="What is new in r331",
+        bullets=["a change"],
+        close_label="Close",
+        hide_future_label="Do not show this after updates",
+        on_hide_future_changed=captured.append,
+    )
+    action_row = dialog.content.content.controls[3]
+    checkbox = action_row.controls[0]
+    assert checkbox.label == "Do not show this after updates"
+
+    class _Event:
+        control = checkbox
+
+    checkbox.value = True
+    checkbox.on_change(_Event())
+    assert captured == [True]
+
+
+def test_show_update_notes_setting_roundtrip() -> None:
+    from puripuly_heart.config.settings import (
+        from_dict,
+        new_settings_for_first_run,
+        to_dict,
+    )
+
+    settings = new_settings_for_first_run("en-US")
+    assert settings.ui.show_update_notes_on_launch is True
+    settings.ui.show_update_notes_on_launch = False
+    assert from_dict(to_dict(settings)).ui.show_update_notes_on_launch is False

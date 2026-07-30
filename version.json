@@ -1,8 +1,9 @@
 {
-  "build": 330,
-  "tag": "r330",
+  "build": 331,
+  "tag": "r331",
   "date": "2026-07-30",
   "notes": [
-    "A named voice is now recognized across different apps — each person can hold several voiceprints, so naming someone again in VRChat (vs a voice call) teaches the app instead of blurring the one it had"
+    "The what's-new dialog no longer cuts off longer entries, can be dismissed by clicking outside, and has a \"Don't show this after updates\" checkbox (also in Settings)",
+    "If an update file is still uploading, the app waits and retries by itself instead of showing a red failure"
   ]
 }

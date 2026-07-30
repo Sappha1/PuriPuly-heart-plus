@@ -2,6 +2,12 @@
 
 User-facing changes per build. The latest build's highlights also appear in-app when an update is ready.
 
+## r331 — 2026-07-30
+
+- The what's-new dialog no longer cuts off longer entries — its height now follows the actual wrapped text (Chinese and Japanese included)
+- You can click outside the dialog to dismiss it, and there's a "Don't show this after updates" checkbox in the dialog itself. The same switch lives in Settings ("Show what's new after updates") if you want it back
+- If an update's file is still uploading when your app tries to fetch it, the app now waits and retries by itself (up to three times) instead of showing a red failure
+
 ## r330 — 2026-07-30
 
 - A named voice can now be recognized across different apps: the same person sounds measurably different through a voice call versus VRChat's in-game audio (different codec, plus distance and room effects), so one saved voiceprint often failed to match in the other place and you had to name them again every session. Each person can now hold several voiceprints — naming someone you already named simply teaches the app how they sound there, instead of averaging the two into something that matched neither. Existing saved voices are kept as-is

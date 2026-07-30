@@ -1274,6 +1274,22 @@ class SettingsView(ft.Column):
             value=self._low_latency_text,
         )
 
+        self._update_notes_text = self._build_clickable_text(
+            t("common.on"),
+            self._on_update_notes_click,
+        )
+        self._update_notes_title = ft.Text(
+            t("settings.update_notes"),
+            size=13,
+            weight=ft.FontWeight.BOLD,
+            color=COLOR_NEUTRAL,
+        )
+        self._update_notes_card = self._wrap_unit_card(
+            title=self._info_title(self._update_notes_title,
+                t("settings.update_notes.tooltip")),
+            value=self._update_notes_text,
+        )
+
         self._speaker_id_text = self._build_clickable_text(
             t("common.on"),
             self._on_speaker_id_click,
@@ -1407,7 +1423,7 @@ class SettingsView(ft.Column):
                 [microphone_test_card, self._self_vad_card,
                  self._mic_auto_gain_card, self._mic_denoise_card,
                  self._peer_vad_card, self._auto_gain_card,
-                 self._speaker_id_card],
+                 self._speaker_id_card, self._update_notes_card],
                 spacing=0,
             )
         self._show_pinyin_text = self._build_clickable_text(
@@ -3193,6 +3209,11 @@ class SettingsView(ft.Column):
         )
         self._speaker_id_text.content.value = t(
             "common.on" if getattr(settings.stt, "speaker_id", True) else "common.off"
+        )
+        self._update_notes_text.content.value = t(
+            "common.on"
+            if getattr(settings.ui, "show_update_notes_on_launch", True)
+            else "common.off"
         )
         self._auto_gain_text.content.value = t(
             "common.on" if getattr(settings.desktop_audio, "auto_gain", True) else "common.off"
@@ -5335,6 +5356,35 @@ class SettingsView(ft.Column):
         self._auto_gain_text.content.value = t("common.on" if new_value else "common.off")
         if self.page:
             self._auto_gain_text.update()
+        self._emit_settings_changed()
+
+    def _on_update_notes_click(self, e) -> None:
+        if not self.page:
+            return
+        options = [
+            OptionItem(value="on", label=t("common.on"), description=""),
+            OptionItem(value="off", label=t("common.off"), description=""),
+        ]
+        current = (
+            "on"
+            if getattr(self._settings.ui, "show_update_notes_on_launch", True)
+            else "off"
+        )
+        modal = SettingsModal(
+            self.page, t("settings.update_notes"), options,
+            self._on_update_notes_selected, show_description=False,
+        )
+        modal.open(current)
+
+    def _on_update_notes_selected(self, value: str) -> None:
+        if not self._settings:
+            return
+        self._settings.ui.show_update_notes_on_launch = value == "on"
+        self._update_notes_text.content.value = t(
+            "common.on" if self._settings.ui.show_update_notes_on_launch else "common.off"
+        )
+        if self.page:
+            self._update_notes_text.update()
         self._emit_settings_changed()
 
     def _on_speaker_id_click(self, e) -> None:

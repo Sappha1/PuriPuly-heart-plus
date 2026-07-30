@@ -3279,7 +3279,10 @@ async def main_gui(page: ft.Page, *, config_path, debug_ui_preview: bool = False
                 settings_obj.ui.last_run_build = running_build
                 if config_path is not None:
                     save_settings(config_path, settings_obj)
-                if previous_build > 0 or not fresh_install:
+                show_notes = bool(
+                    getattr(settings_obj.ui, "show_update_notes_on_launch", True)
+                )
+                if show_notes and (previous_build > 0 or not fresh_install):
                     # r329: compact purpose-built dialog. The warm document
                     # dialog (600px, large body, X + text button) filled the
                     # window for a few changelog lines — "way too huge".
@@ -3293,6 +3296,14 @@ async def main_gui(page: ft.Page, *, config_path, debug_ui_preview: bool = False
                     bullets = list(current_build_notes_localized(get_locale()))
                     if not bullets:
                         bullets = [t("app.updated_notice_fallback")]
+                    def _set_hide_future(hidden: bool) -> None:
+                        # r331: ticking the box in the dialog persists the
+                        # opt-out immediately — same flag as the Settings card.
+                        settings_obj.ui.show_update_notes_on_launch = not hidden
+                        with contextlib.suppress(Exception):
+                            if config_path is not None:
+                                save_settings(config_path, settings_obj)
+
                     open_update_notes_dialog(
                         page,
                         header=t("app.updated_dialog.title").format(
@@ -3300,6 +3311,8 @@ async def main_gui(page: ft.Page, *, config_path, debug_ui_preview: bool = False
                         ),
                         bullets=bullets,
                         close_label=t("common.close"),
+                        hide_future_label=t("app.updated_dialog.hide_future"),
+                        on_hide_future_changed=_set_hide_future,
                     )
     except Exception:
         logger.exception("post-update notice failed")

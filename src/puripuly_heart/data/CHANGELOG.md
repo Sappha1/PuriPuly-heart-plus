@@ -2,6 +2,10 @@
 
 User-facing changes per build. The latest build's highlights also appear in-app when an update is ready.
 
+## r319 — 2026-07-30
+
+- HOTFIX: r318's speaker tags never actually appeared on a normal launch — the voice-matching registry was only hooked up when a language or provider setting changed, not at session start. Voiceprints were being computed the whole time; they just had nothing to match against. Tags now work from the first utterance
+
 ## r318 — 2026-07-30
 
 - New: speaker identification. Incoming voices are tagged in the chat as "Speaker 1", "Speaker 2", ... so you can tell people apart in a group call — and clicking a tag lets you NAME a voice you know; named voices are recognized again in future sessions. Voiceprints are stored only on this PC (a small voices.json next to your settings) and are never uploaded anywhere. Settings toggle: "Identify speakers" (on by default). Very short utterances stay untagged (too little audio for a reliable voiceprint), and two similar voices over a compressed call can occasionally be confused

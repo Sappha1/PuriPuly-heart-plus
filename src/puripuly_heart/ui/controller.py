@@ -5367,6 +5367,15 @@ class GuiController:
         self.sender = sender
         self.osc = osc
         self.hub = hub
+        # r319: attach the speaker registry AT HUB CREATION. r318 only attached
+        # it in the language/provider settings-apply paths, which never run on
+        # a plain launch — embeddings were computed but never matched, so no
+        # speaker tags appeared until a settings change happened to fire.
+        hub.speaker_registry = (
+            self._speaker_registry()
+            if getattr(self.settings.stt, "speaker_id", True)
+            else None
+        )
 
         self._peer_runtime = PeerChannelRuntime(
             hub=hub,

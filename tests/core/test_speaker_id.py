@@ -205,3 +205,85 @@ def test_name_for_cluster_lookup_and_reset(registry) -> None:
     # but the enrollment survives: a close voice is greeted by name
     again = registry.match(_near(_voice(80), 81))
     assert again.kind == "named" and again.label == "Momo"
+
+
+# ── r330: multiple voiceprint variants per person ─────────────────────────
+
+def _channel_shifted(base: np.ndarray, seed: int, similarity: float) -> np.ndarray:
+    """Same person heard through a different channel: a vector at a chosen
+    cosine similarity to `base` (VRChat vs a voice call measures like this)."""
+    rng = np.random.default_rng(seed)
+    ortho = rng.normal(0, 1, base.shape[0]).astype(np.float32)
+    ortho -= float(np.dot(ortho, base)) * base
+    ortho /= np.linalg.norm(ortho)
+    vector = similarity * base + float(np.sqrt(1 - similarity**2)) * ortho
+    return (vector / np.linalg.norm(vector)).astype(np.float32)
+
+
+def test_second_channel_becomes_a_new_variant_not_an_average(registry) -> None:
+    call_voice = _voice(200)
+    vr_voice = _channel_shifted(call_voice, 201, 0.45)   # clearly another channel
+
+    registry.enroll_cluster(registry.match(call_voice).cluster_id, "Baby")
+    assert registry.variant_count("Baby") == 1
+    registry.reset_session()
+
+    # She shows up in VRChat: not recognized, user names her again.
+    vr_match = registry.match(vr_voice)
+    assert vr_match.kind == "cluster"
+    registry.enroll_cluster(vr_match.cluster_id, "Baby")
+    assert registry.variant_count("Baby") == 2          # kept, not blended
+
+    # BOTH channels are now recognized in a fresh session.
+    registry.reset_session()
+    assert registry.match(_near(call_voice, 202)).label == "Baby"
+    registry.reset_session()
+    assert registry.match(_near(vr_voice, 203)).label == "Baby"
+
+
+def test_same_channel_refines_instead_of_multiplying(registry) -> None:
+    voice = _voice(210)
+    registry.enroll_cluster(registry.match(voice).cluster_id, "Momo")
+    registry.reset_session()
+    registry.enroll_cluster(registry.match(_near(voice, 211)).cluster_id, "Momo")
+    assert registry.variant_count("Momo") == 1          # refined, not duplicated
+
+
+def test_variants_are_capped(registry) -> None:
+    base = _voice(220)
+    for index in range(8):
+        registry.reset_session()
+        far = _channel_shifted(base, 230 + index, 0.30)
+        registry.enroll_cluster(registry.match(far).cluster_id, "Kai")
+    assert registry.variant_count("Kai") <= 4
+
+
+def test_legacy_single_centroid_store_still_loads(tmp_path) -> None:
+    """r318-r329 wrote {"centroid": [...]}; those users must not lose names."""
+    import json
+
+    voice = _voice(240)
+    path = tmp_path / "voices.json"
+    path.write_text(
+        json.dumps(
+            {"voices": [{"name": "Rio", "centroid": [float(x) for x in voice], "count": 3}]}
+        ),
+        encoding="utf-8",
+    )
+    registry = SpeakerRegistry(path)
+    assert registry.enrolled_names() == ["Rio"]
+    assert registry.variant_count("Rio") == 1
+    assert registry.match(_near(voice, 241)).label == "Rio"
+
+
+def test_variants_round_trip_through_the_store(registry, tmp_path) -> None:
+    call_voice = _voice(250)
+    vr_voice = _channel_shifted(call_voice, 251, 0.40)
+    registry.enroll_cluster(registry.match(call_voice).cluster_id, "Baby")
+    registry.reset_session()
+    registry.enroll_cluster(registry.match(vr_voice).cluster_id, "Baby")
+
+    reloaded = SpeakerRegistry(tmp_path / "voices.json")
+    assert reloaded.variant_count("Baby") == 2
+    assert reloaded.match(_near(vr_voice, 252)).label == "Baby"
+    assert reloaded.match(_near(call_voice, 253)).label == "Baby"

@@ -36,6 +36,18 @@ CLUSTER_MATCH_THRESHOLD = 0.52
 # Centroid update weight for a new sample joining a cluster/enrollment.
 CENTROID_EMA_ALPHA = 0.15
 MAX_SESSION_CLUSTERS = 12
+# r330: one enrolled person can hold several voiceprint VARIANTS — the same
+# voice through a Discord/OOPZ call and through VRChat's spatialized in-game
+# audio lands in measurably different places (different codec, plus distance
+# attenuation / direction / reverb). The old single centroid was averaged
+# 50/50 on re-enrollment, drifting to a midpoint that matched NEITHER context
+# and forcing the user to re-name the same person every session. Variants are
+# matched independently (best wins); a re-name close to an existing variant
+# refines it, a distant one becomes a new variant.
+MAX_VARIANTS_PER_NAME = 4
+# A re-enrollment at/above this similarity refines the nearest variant;
+# below it, the new print is kept as a separate channel of the same voice.
+VARIANT_MERGE_THRESHOLD = 0.70
 
 
 def _normalize(vector: np.ndarray) -> np.ndarray:
@@ -68,7 +80,8 @@ class SpeakerRegistry:
     def __init__(self, store_path: Path) -> None:
         self._store_path = store_path
         self._lock = threading.Lock()
-        self._named: dict[str, np.ndarray] = {}
+        # name -> list of unit-norm variant centroids (r330)
+        self._named: dict[str, list[np.ndarray]] = {}
         self._named_counts: dict[str, int] = {}
         self._clusters: list[_Cluster] = []
         self._next_cluster_number = 1
@@ -91,13 +104,23 @@ class SpeakerRegistry:
             return
         for entry in data.get("voices", []):
             name = str(entry.get("name") or "").strip()
-            vector = entry.get("centroid")
-            if not name or not isinstance(vector, list):
+            if not name:
                 continue
-            arr = np.asarray(vector, dtype=np.float32)
-            if arr.shape != (EMBEDDING_DIM,):
+            raw_variants = entry.get("variants")
+            if not isinstance(raw_variants, list):
+                # Legacy single-centroid store (r318-r329) — one variant.
+                legacy = entry.get("centroid")
+                raw_variants = [legacy] if isinstance(legacy, list) else []
+            variants: list[np.ndarray] = []
+            for raw in raw_variants:
+                if not isinstance(raw, list):
+                    continue
+                arr = np.asarray(raw, dtype=np.float32)
+                if arr.shape == (EMBEDDING_DIM,):
+                    variants.append(_normalize(arr))
+            if not variants:
                 continue
-            self._named[name] = _normalize(arr)
+            self._named[name] = variants[:MAX_VARIANTS_PER_NAME]
             self._named_counts[name] = int(entry.get("count", 1))
 
     def _save(self) -> None:
@@ -105,10 +128,12 @@ class SpeakerRegistry:
             "voices": [
                 {
                     "name": name,
-                    "centroid": [round(float(x), 6) for x in centroid],
+                    "variants": [
+                        [round(float(x), 6) for x in variant] for variant in variants
+                    ],
                     "count": self._named_counts.get(name, 1),
                 }
-                for name, centroid in self._named.items()
+                for name, variants in self._named.items()
             ]
         }
         try:
@@ -124,11 +149,12 @@ class SpeakerRegistry:
     def match(self, embedding: np.ndarray) -> SpeakerMatch:
         vector = _normalize(np.asarray(embedding, dtype=np.float32))
         with self._lock:
-            best_name, best_name_sim = "", -1.0
-            for name, centroid in self._named.items():
-                sim = float(np.dot(vector, centroid))
-                if sim > best_name_sim:
-                    best_name, best_name_sim = name, sim
+            best_name, best_name_sim, best_variant_index = "", -1.0, -1
+            for name, variants in self._named.items():
+                for index, variant in enumerate(variants):
+                    sim = float(np.dot(vector, variant))
+                    if sim > best_name_sim:
+                        best_name, best_name_sim, best_variant_index = name, sim, index
 
             best_cluster, best_cluster_sim = None, -1.0
             for cluster in self._clusters:
@@ -137,11 +163,16 @@ class SpeakerRegistry:
                     best_cluster, best_cluster_sim = cluster, sim
 
             if best_name and best_name_sim >= NAMED_MATCH_THRESHOLD:
-                # Nudge the enrolled centroid toward the fresh sample so a
-                # voice tracked across sessions keeps up with mic changes.
-                self._named[best_name] = _normalize(
-                    (1 - CENTROID_EMA_ALPHA) * self._named[best_name]
+                # Nudge ONLY the variant that matched, so a call-channel print
+                # never drags the VRChat one (or vice versa) toward it.
+                variants = self._named[best_name]
+                variants[best_variant_index] = _normalize(
+                    (1 - CENTROID_EMA_ALPHA) * variants[best_variant_index]
                     + CENTROID_EMA_ALPHA * vector
+                )
+                logger.debug(
+                    "[SpeakerID] matched %r variant=%d similarity=%.3f",
+                    best_name, best_variant_index, best_name_sim,
                 )
                 self._named_counts[best_name] = self._named_counts.get(best_name, 1) + 1
                 cluster_id = -1
@@ -205,12 +236,34 @@ class SpeakerRegistry:
             if cluster is None:
                 return False
             if name in self._named:
-                self._named[name] = _normalize(
-                    0.5 * self._named[name] + 0.5 * cluster.centroid
-                )
+                variants = self._named[name]
+                sims = [float(np.dot(cluster.centroid, v)) for v in variants]
+                nearest = int(np.argmax(sims)) if sims else -1
+                if nearest >= 0 and sims[nearest] >= VARIANT_MERGE_THRESHOLD:
+                    # Same channel as an existing print — refine it.
+                    variants[nearest] = _normalize(
+                        0.5 * variants[nearest] + 0.5 * cluster.centroid
+                    )
+                    logger.info(
+                        "[SpeakerID] refined %r variant=%d (similarity=%.3f)",
+                        name, nearest, sims[nearest],
+                    )
+                else:
+                    # Distinct channel (e.g. VRChat vs a voice call) — keep it
+                    # as its own variant instead of averaging them together.
+                    variants.append(cluster.centroid.copy())
+                    if len(variants) > MAX_VARIANTS_PER_NAME:
+                        variants.pop(0)  # oldest out
+                    logger.info(
+                        "[SpeakerID] added a new voice variant for %r "
+                        "(closest existing similarity=%.3f, variants=%d)",
+                        name,
+                        max(sims) if sims else float("nan"),
+                        len(variants),
+                    )
                 self._named_counts[name] = self._named_counts.get(name, 1) + cluster.count
             else:
-                self._named[name] = cluster.centroid.copy()
+                self._named[name] = [cluster.centroid.copy()]
                 self._named_counts[name] = cluster.count
             self._cluster_names[cluster_id] = name
             self._save()
@@ -228,6 +281,11 @@ class SpeakerRegistry:
     def enrolled_names(self) -> list[str]:
         with self._lock:
             return sorted(self._named)
+
+    def variant_count(self, name: str) -> int:
+        """How many distinct voiceprints are stored for this person (r330)."""
+        with self._lock:
+            return len(self._named.get(name, ()))
 
     def name_for_cluster(self, cluster_id: int) -> str:
         """The name this session's cluster was enrolled under, if any."""

@@ -2,6 +2,10 @@
 
 User-facing changes per build. The latest build's highlights also appear in-app when an update is ready.
 
+## r330 — 2026-07-30
+
+- A named voice can now be recognized across different apps: the same person sounds measurably different through a voice call versus VRChat's in-game audio (different codec, plus distance and room effects), so one saved voiceprint often failed to match in the other place and you had to name them again every session. Each person can now hold several voiceprints — naming someone you already named simply teaches the app how they sound there, instead of averaging the two into something that matched neither. Existing saved voices are kept as-is
+
 ## r329 — 2026-07-30
 
 - The what's-new dialog is now a small, clean card instead of a huge panel: about a third of the width, plain "What's new in rNNN" heading, tighter text, and a single Close button in the corner

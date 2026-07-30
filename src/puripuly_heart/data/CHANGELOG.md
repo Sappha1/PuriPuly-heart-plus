@@ -2,6 +2,10 @@
 
 User-facing changes per build. The latest build's highlights also appear in-app when an update is ready.
 
+## r320 — 2026-07-30
+
+- The overlay's pinyin and Chinese lines now get the same no-orphan treatment the translation line got in r317: a line that barely overflows shrinks slightly onto one line, and a genuinely long line splits into balanced halves instead of leaving one or two characters alone at the bottom ("...变回 / 来了。"). Covers both pinyin-over-character and block layouts
+
 ## r319 — 2026-07-30
 
 - HOTFIX: r318's speaker tags never actually appeared on a normal launch — the voice-matching registry was only hooked up when a language or provider setting changed, not at session start. Voiceprints were being computed the whole time; they just had nothing to match against. Tags now work from the first utterance

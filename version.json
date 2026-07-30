@@ -1,8 +1,9 @@
 {
-  "build": 319,
-  "tag": "r319",
+  "build": 320,
+  "tag": "r320",
   "date": "2026-07-30",
   "notes": [
-    "HOTFIX: r318's speaker tags did not appear on a normal launch (the voice matcher was only wired up after a settings change). If you have r318, update — speaker identification now works from the first utterance"
+    "Overlay pinyin and Chinese caption lines no longer leave one or two characters alone on a line (same no-orphan fitting the translation line already had)",
+    "HOTFIX from r319: speaker tags now actually appear on a normal launch — if you have r318, update"
   ]
 }

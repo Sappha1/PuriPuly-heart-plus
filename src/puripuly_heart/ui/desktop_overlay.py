@@ -1794,15 +1794,60 @@ def _build_ruby_content(ft: Any, line: DesktopCaptionLine, text_width: float) ->
     alpha_syllables = [s for s in syllables if any(c.isalpha() for c in s)]
 
     if len(alpha_syllables) == len(cjk_only):
-        # Per-character stacking (Chinese and similar scripts)
-        char_cols: list[Any] = []
+        # Per-character stacking (Chinese and similar scripts).
+        # r319 orphan control at the PAIR level: estimate each column's width
+        # (wider of the char and its syllable), shrink both fonts up to 20%
+        # when the whole line barely overflows, and otherwise chunk the pairs
+        # into balanced rows ourselves — Row(wrap=True) greedy-wraps and left
+        # "来了。" alone on a line (observed live).
+        pairs: list[tuple[str, str]] = []
         syl_idx = 0
         for char in cjk_chars:
             if _desktop_caption_char_is_cjk(char):
                 syl = alpha_syllables[syl_idx]
                 syl_idx += 1
             else:
-                syl = " "  # non-breaking space placeholder keeps column height uniform
+                syl = " "  # keeps column height uniform
+            pairs.append((char, syl))
+
+        char_size = line.font_size
+        _pair_spacing = 2.0
+
+        def _pair_width(pair_char: str, pair_syl: str) -> float:
+            return max(
+                _estimated_caption_char_width(pair_char, char_size),
+                _estimated_caption_line_width(pair_syl, ruby_size),
+            ) + _pair_spacing
+
+        total_width = sum(_pair_width(c, sy) for c, sy in pairs)
+        row_count = 1
+        if total_width > text_width > 0:
+            ratio = total_width / text_width
+            if ratio <= _CAPTION_SHRINK_MAX_RATIO:
+                scale = max(_CAPTION_MIN_FONT_SCALE, text_width / total_width)
+                char_size = max(10, int(char_size * scale))
+                ruby_size = max(8, int(ruby_size * scale))
+            else:
+                row_count = min(max(2, math.ceil(ratio)), max(2, line.max_lines))
+
+        row_boundaries: list[int] = []
+        if row_count > 1:
+            ideal = total_width / row_count
+            accumulated = 0.0
+            boundary = ideal
+            for pair_index, (c, sy) in enumerate(pairs):
+                accumulated += _pair_width(c, sy)
+                if (
+                    accumulated >= boundary
+                    and len(row_boundaries) < row_count - 1
+                    and pair_index + 1 < len(pairs)
+                    and pairs[pair_index + 1][0] not in _CAPTION_NO_LINE_START
+                ):
+                    row_boundaries.append(pair_index + 1)
+                    boundary += ideal
+
+        char_cols: list[Any] = []
+        for char, syl in pairs:
             char_cols.append(
                 ft.Column(
                     controls=[
@@ -1820,7 +1865,7 @@ def _build_ruby_content(ft: Any, line: DesktopCaptionLine, text_width: float) ->
                         ),
                         ft.Text(
                             char,
-                            size=line.font_size,
+                            size=char_size,
                             color=line.color,
                             font_family=(
                                 _DESKTOP_CAPTION_CJK_FONT_FAMILY
@@ -1829,7 +1874,7 @@ def _build_ruby_content(ft: Any, line: DesktopCaptionLine, text_width: float) ->
                             ),
                             text_align=ft.TextAlign.CENTER,
                             style=ft.TextStyle(
-                                size=line.font_size,
+                                size=char_size,
                                 height=line.line_height,
                                 weight=_flet_font_weight(ft, line.weight),
                                 shadow=_caption_text_shadow(ft),
@@ -1841,14 +1886,35 @@ def _build_ruby_content(ft: Any, line: DesktopCaptionLine, text_width: float) ->
                     tight=True,
                 )
             )
-        return ft.Container(
-            content=ft.Row(
+        if row_boundaries:
+            ruby_rows: list[Any] = []
+            row_start = 0
+            for boundary_index in [*row_boundaries, len(pairs)]:
+                ruby_rows.append(
+                    ft.Row(
+                        char_cols[row_start:boundary_index],
+                        wrap=False,
+                        alignment=ft.MainAxisAlignment.CENTER,
+                        spacing=2,
+                    )
+                )
+                row_start = boundary_index
+            ruby_content: Any = ft.Column(
+                ruby_rows,
+                horizontal_alignment=ft.CrossAxisAlignment.CENTER,
+                spacing=2,
+                tight=True,
+            )
+        else:
+            ruby_content = ft.Row(
                 char_cols,
                 wrap=True,
                 alignment=ft.MainAxisAlignment.CENTER,
                 spacing=2,
                 run_spacing=2,
-            ),
+            )
+        return ft.Container(
+            content=ruby_content,
             width=text_width,
             alignment=ft.alignment.center,
         )
@@ -1856,6 +1922,14 @@ def _build_ruby_content(ft: Any, line: DesktopCaptionLine, text_width: float) ->
         # Per-word fallback (Japanese romaji etc.): use a readable size — the romaji
         # is shown as a full block above the text, not squeezed over individual chars.
         block_roman_size = max(int(line.font_size * 0.75), 14)
+        # r319: both blocks get the same orphan treatment as plain lines —
+        # near-fits shrink onto one line, real two-liners break balanced.
+        # r317 only covered _build_flet_text; ruby-block pinyin/hanzi still
+        # greedy-wrapped ("...变回 / 来了。" observed live).
+        cjk, cjk_size = _fit_caption_text(cjk, line.font_size, text_width, line.max_lines)
+        roman, block_roman_size = _fit_caption_text(
+            roman, block_roman_size, text_width, line.max_lines
+        )
         return ft.Column(
             controls=[
                 ft.Text(
@@ -1873,7 +1947,7 @@ def _build_ruby_content(ft: Any, line: DesktopCaptionLine, text_width: float) ->
                 ),
                 ft.Text(
                     cjk,
-                    size=line.font_size,
+                    size=cjk_size,
                     color=line.color,
                     font_family=line.font_family,
                     text_align=ft.TextAlign.CENTER,
@@ -1881,7 +1955,7 @@ def _build_ruby_content(ft: Any, line: DesktopCaptionLine, text_width: float) ->
                     max_lines=line.max_lines,
                     overflow=ft.TextOverflow.ELLIPSIS,
                     style=ft.TextStyle(
-                        size=line.font_size,
+                        size=cjk_size,
                         height=line.line_height,
                         weight=_flet_font_weight(ft, line.weight),
                         font_family=line.font_family,

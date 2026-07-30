@@ -1,8 +1,10 @@
 {
-  "build": 321,
-  "tag": "r321",
+  "build": 322,
+  "tag": "r322",
   "date": "2026-07-30",
   "notes": [
-    "Naming a voice now updates all existing chat lines immediately, the dialog remembers the saved name, and a named voice can't slip back to \"Speaker N\" mid-session"
+    "After a self-update the app now shows a one-time notice with the new build and top changes — no more silent updates",
+    "The launch update check retries over the first 10 minutes instead of giving up after one attempt",
+    "Chat lines with an identified speaker use the name as the header (\"Baby 02:14\" instead of \"Received · Baby 02:14\")"
   ]
 }

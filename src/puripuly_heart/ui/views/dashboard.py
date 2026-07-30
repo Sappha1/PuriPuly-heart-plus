@@ -18,7 +18,7 @@ from puripuly_heart.ui.fonts import font_for_language
 from puripuly_heart.ui.i18n import get_locale, language_name, t
 from puripuly_heart.ui.overlay_peer_contract import OverlayPeerConsumerContract
 
-_BUILD_TAG = "r321"  #increment each build so user can confirm version
+_BUILD_TAG = "r322"  #increment each build so user can confirm version
 
 # ── VRCT-style dark palette ──────────────────────────────────────────────────
 _BG_MAIN = "#2e2f32"
@@ -3611,7 +3611,7 @@ class DashboardView(ft.Row):
             return
         for tag in registry.get(cluster_id, []):
             with contextlib.suppress(Exception):
-                tag.value = f" · {name}"
+                tag.value = name
                 tag.update()
 
     def _open_speaker_name_dialog(self, cluster_id: int, current_label: str) -> None:
@@ -3767,9 +3767,18 @@ class DashboardView(ft.Row):
         # what the recognizer heard isn't obvious in that mode. Uses the
         # translator-detected hint when available, script sniff otherwise
         # (src_lang already resolved that way above).
-        header_cells = [
-            ft.Text(direction, size=11, color=label_color, weight=ft.FontWeight.W_700),
-        ]
+        _speaker_tagged = is_peer and not is_ocr and (
+            speaker_name or speaker_cluster_id >= 0
+        )
+        # r322 (user suggestion): when a line has a speaker identity, the name
+        # IS the header — "Baby 02:14" instead of "Received · Baby 02:14".
+        # Color still carries the direction, and only peer lines get names.
+        if _speaker_tagged:
+            header_cells = []
+        else:
+            header_cells = [
+                ft.Text(direction, size=11, color=label_color, weight=ft.FontWeight.W_700),
+            ]
         if (
             is_peer
             and not is_ocr
@@ -3783,21 +3792,20 @@ class DashboardView(ft.Row):
                 size=10, color=label_color, weight=ft.FontWeight.W_600,
                 opacity=0.65,
             ))
-        if is_peer and not is_ocr and (speaker_name or speaker_cluster_id >= 0):
-            # r318 speaker tag. Named voices show their name; anonymous ones
-            # show a localized "Speaker N". Tapping the tag names the voice
-            # (chat entries have no other click affordance by design — the
-            # whole log sits in a SelectionArea and right-click belongs to
-            # Flutter's native copy menu).
+        if _speaker_tagged:
+            # r318 speaker tag (r322: now the header itself). Named voices
+            # show their name; anonymous ones a localized "Speaker N".
+            # Tapping names the voice (chat entries have no other click
+            # affordance by design — the whole log sits in a SelectionArea
+            # and right-click belongs to Flutter's native copy menu).
             tag_text = speaker_name or t("dashboard.speaker_n").format(
                 n=speaker_cluster_id
             )
             tag_control = ft.Text(
-                f" · {tag_text}",
-                size=10,
+                tag_text,
+                size=11,
                 color=label_color,
-                weight=ft.FontWeight.W_600,
-                opacity=0.8,
+                weight=ft.FontWeight.W_700,
             )
             if speaker_cluster_id >= 0:
                 # r321: remember rendered tags so naming a voice retro-labels

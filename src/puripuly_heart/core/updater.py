@@ -191,6 +191,35 @@ def current_build_number() -> int:
         return 0
 
 
+def current_build_top_notes(max_bullets: int = 2, max_chars: int = 220) -> str:
+    """First bullets of the RUNNING build's changelog section (r322) — shown
+    once after a self-update so users see what changed without hunting."""
+    try:
+        from importlib import resources
+
+        text = (
+            resources.files("puripuly_heart") / "data/CHANGELOG.md"
+        ).read_text(encoding="utf-8")
+        bullets: list[str] = []
+        in_first_section = False
+        for line in text.splitlines():
+            if line.startswith("## "):
+                if in_first_section:
+                    break
+                in_first_section = True
+                continue
+            if in_first_section and line.startswith("- "):
+                bullets.append(line[2:].strip())
+                if len(bullets) >= max_bullets:
+                    break
+        summary = " • ".join(bullets)
+        if len(summary) > max_chars:
+            summary = summary[: max_chars - 1].rstrip() + "…"
+        return summary
+    except Exception:
+        return ""
+
+
 def is_self_update_supported() -> bool:
     """Self-update only works for the packaged app (a source run has no install dir)."""
     return bool(getattr(sys, "frozen", False))

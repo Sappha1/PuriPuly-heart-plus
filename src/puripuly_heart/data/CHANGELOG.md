@@ -2,6 +2,12 @@
 
 User-facing changes per build. The latest build's highlights also appear in-app when an update is ready.
 
+## r322 — 2026-07-30
+
+- After a self-update, the app now tells you: a one-time notice on the next launch shows the new build number and the top changes — no more silent updates
+- The launch update check now retries several times over the first 10 minutes if it fails or finds nothing (previously ONE attempt, then nothing for 2 hours — a badly-timed check meant the app quietly stayed outdated all session)
+- Chat lines with an identified speaker now use the name as the header: "Baby 02:14" instead of "Received · Baby 02:14" (the color still shows the direction)
+
 ## r321 — 2026-07-30
 
 - Naming a voice now behaves the way you'd expect: every line already in the chat updates from "Speaker N" to the name immediately, reopening the dialog shows the saved name instead of an empty box, and a just-named voice can no longer slip back to "Speaker N" on borderline matches for the rest of the session. (The name itself was always being saved — only the feedback was missing)

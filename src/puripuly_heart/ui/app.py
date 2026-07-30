@@ -3250,6 +3250,35 @@ async def main_gui(page: ft.Page, *, config_path, debug_ui_preview: bool = False
             )
         await _check_and_notify_update(page, **update_kwargs)
 
+        # r322: announce a completed self-update ONCE — users updated at
+        # launch otherwise never learn what changed ("i expected it to inform
+        # me of the changes but i never see anything").
+        try:
+            from puripuly_heart.config.settings import save_settings
+            from puripuly_heart.core.updater import (
+                current_build_number,
+                current_build_top_notes,
+            )
+
+            settings_obj = getattr(app.controller, "settings", None)
+            config_path = getattr(app.controller, "config_path", None)
+            if settings_obj is not None:
+                running_build = current_build_number()
+                previous_build = int(getattr(settings_obj.ui, "last_run_build", 0) or 0)
+                if running_build > 0 and previous_build != running_build:
+                    if previous_build > 0:
+                        summary = current_build_top_notes()
+                        message = t("app.updated_notice").format(
+                            tag=f"r{running_build}",
+                            summary=summary or t("app.updated_notice_fallback"),
+                        )
+                        app._show_snackbar(message, ft.Colors.TEAL_700, duration=12000)
+                    settings_obj.ui.last_run_build = running_build
+                    if config_path is not None:
+                        save_settings(config_path, settings_obj)
+        except Exception:
+            logger.exception("post-update notice failed")
+
         # Silent build-number check → sidebar update button (shared flow with
         # the About card; no-op in source runs, quiet on network failure).
         # Re-checks every 2h: the launch-only check meant an update shipped
@@ -3261,10 +3290,33 @@ async def main_gui(page: ft.Page, *, config_path, debug_ui_preview: bool = False
             async def _periodic_update_check() -> None:
                 import asyncio as _aio
 
-                while True:
+                # r322: the launch check used to be ONE attempt, then silence
+                # for 2 hours. A transient failure (or a release whose assets
+                # were mid-replacement at that exact second) meant the app sat
+                # outdated all session with no visible reason — observed live:
+                # a launch made no version.json request at all while a manual
+                # "Check for updates" minutes later found r321. Retry on a
+                # short ladder until one check SUCCEEDS, then settle into 2h.
+                flow = get_update_flow()
+                for delay_s in (0, 45, 120, 300, 600):
+                    if delay_s:
+                        await _aio.sleep(delay_s)
                     with contextlib.suppress(Exception):
-                        await get_update_flow().check_silently()
+                        await flow.check_silently()
+                    if flow.state in ("available", "downloading", "ready", "restarting"):
+                        break
+                    if flow.remote is not None and not flow.last_error:
+                        break  # check succeeded: genuinely up to date
+                    logger.info(
+                        "[UpdateFlow] launch check inconclusive (state=%s "
+                        "error=%r) — retrying",
+                        flow.state,
+                        flow.last_error,
+                    )
+                while True:
                     await _aio.sleep(2 * 60 * 60)
+                    with contextlib.suppress(Exception):
+                        await flow.check_silently()
 
             page.run_task(_periodic_update_check)
         except Exception:

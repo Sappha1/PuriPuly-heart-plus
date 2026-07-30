@@ -39,3 +39,26 @@ def test_auto_apply_window() -> None:
     assert should_auto_apply_on_launch(LAUNCH_AUTO_APPLY_WINDOW_S - 1)
     assert not should_auto_apply_on_launch(LAUNCH_AUTO_APPLY_WINDOW_S + 1)
     assert not should_auto_apply_on_launch(-5.0)
+
+
+def test_current_build_top_notes_reads_latest_section() -> None:
+    from puripuly_heart.core.updater import current_build_top_notes
+
+    summary = current_build_top_notes()
+    assert summary                                  # non-empty
+    assert not summary.startswith("#")              # no headers leaked
+    assert len(summary) <= 220
+
+
+def test_last_run_build_roundtrip() -> None:
+    from puripuly_heart.config.settings import (
+        from_dict,
+        new_settings_for_first_run,
+        to_dict,
+    )
+
+    settings = new_settings_for_first_run("en-US")
+    assert settings.ui.last_run_build == 0
+    settings.ui.last_run_build = 322
+    loaded = from_dict(to_dict(settings))
+    assert loaded.ui.last_run_build == 322

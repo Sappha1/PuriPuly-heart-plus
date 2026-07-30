@@ -548,6 +548,8 @@
   "dashboard.ocr.state.off": "OCR 꺼짐",
   "dashboard.ocr.font.custom": "직접 입력",
   "common.cancel": "취소",
+  "app.updated_notice": "✨ {tag}(으)로 업데이트됨 — {summary}",
+  "app.updated_notice_fallback": "자세한 내용은 '새로운 기능'을 확인하세요",
   "common.save": "저장",
   "dashboard.speaker_n": "화자 {n}",
   "dashboard.tooltip.speaker_tag": "클릭하여 이 목소리에 이름 지정(이 PC에만 저장)",

@@ -594,6 +594,8 @@
   "dashboard.ocr.state.off": "OCR off",
   "dashboard.ocr.font.custom": "Custom",
   "common.cancel": "Cancel",
+  "app.updated_notice": "✨ Updated to {tag} — {summary}",
+  "app.updated_notice_fallback": "see What's new for details",
   "common.save": "Save",
   "dashboard.speaker_n": "Speaker {n}",
   "dashboard.tooltip.speaker_tag": "Click to name this voice (stored only on this PC)",

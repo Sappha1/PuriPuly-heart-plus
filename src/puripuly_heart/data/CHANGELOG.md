@@ -2,6 +2,10 @@
 
 User-facing changes per build. The latest build's highlights also appear in-app when an update is ready.
 
+## r327 — 2026-07-30
+
+- Fixed automatic updates never actually running: the launch update check, the retry logic, and the after-update dialog were all accidentally placed inside a disabled leftover code branch from this build's testing days — every update so far only happened when you clicked "Check for updates" yourself. The whole update system now genuinely runs at launch: check, auto-download, auto-apply, and the what's-new dialog. A safeguard test now prevents update code from ever landing in that dead branch again
+
 ## r326 — 2026-07-30
 
 - HOTFIX: r325 crashed at every launch ("'GuiController' object has no attribute 'settings_created_fresh'") — the r325 fix set a flag on a class that requires fields to be declared. If you downloaded r325, update to r326 (the app cannot update itself while it cannot start — re-run the installer or grab the zip)

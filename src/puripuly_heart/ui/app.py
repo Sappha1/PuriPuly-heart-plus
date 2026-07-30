@@ -3250,99 +3250,100 @@ async def main_gui(page: ft.Page, *, config_path, debug_ui_preview: bool = False
             )
         await _check_and_notify_update(page, **update_kwargs)
 
-        # r322: announce a completed self-update ONCE — users updated at
-        # launch otherwise never learn what changed ("i expected it to inform
-        # me of the changes but i never see anything").
-        try:
-            from puripuly_heart.config.settings import save_settings
-            from puripuly_heart.core.updater import current_build_number
 
-            settings_obj = getattr(app.controller, "settings", None)
-            config_path = getattr(app.controller, "config_path", None)
-            if settings_obj is not None:
-                running_build = current_build_number()
-                previous_build = int(getattr(settings_obj.ui, "last_run_build", 0) or 0)
-                # r325: a missing stamp on an EXISTING config means "updated
-                # from a pre-stamp build", not "fresh install" — the r324
-                # rollout proved it: the user updated in and saw nothing
-                # because the stamp only began existing that launch. Only a
-                # genuinely fresh install skips the announcement.
-                fresh_install = bool(
-                    getattr(app.controller, "settings_created_fresh", False)
-                )
-                if running_build > 0 and previous_build != running_build:
-                    if previous_build > 0 or not fresh_install:
-                        # r323 (user request): a proper DIALOG — "the program
-                        # updated, here's what changed" + Close — not a toast.
-                        from puripuly_heart.core.changelog import (
-                            current_build_notes_localized,
-                        )
-                        from puripuly_heart.ui.components.glow import create_glow_stack
-                        from puripuly_heart.ui.components.warm_document_dialog import (
-                            open_warm_document_dialog,
-                        )
+    # r322: announce a completed self-update ONCE — users updated at
+    # launch otherwise never learn what changed ("i expected it to inform
+    # me of the changes but i never see anything").
+    try:
+        from puripuly_heart.config.settings import save_settings
+        from puripuly_heart.core.updater import current_build_number
 
-                        bullets = current_build_notes_localized(get_locale())
-                        paragraphs = [
-                            t("app.updated_dialog.title").format(tag=f"r{running_build}"),
-                        ] + [f"•  {bullet}" for bullet in bullets]
-                        if not bullets:
-                            paragraphs.append(t("app.updated_notice_fallback"))
-                        open_warm_document_dialog(
-                            page,
-                            body_paragraphs=paragraphs,
-                            primary_label=t("common.close"),
-                            primary_action=lambda: None,
-                            glow_factory=create_glow_stack,
-                        )
-                    settings_obj.ui.last_run_build = running_build
-                    if config_path is not None:
-                        save_settings(config_path, settings_obj)
-        except Exception:
-            logger.exception("post-update notice failed")
-
-        # Silent build-number check → sidebar update button (shared flow with
-        # the About card; no-op in source runs, quiet on network failure).
-        # Re-checks every 2h: the launch-only check meant an update shipped
-        # mid-session never surfaced the button — the user had to find
-        # "Check for updates" in settings by hand.
-        try:
-            from puripuly_heart.ui.update_flow import get_update_flow
-
-            async def _periodic_update_check() -> None:
-                import asyncio as _aio
-
-                # r322: the launch check used to be ONE attempt, then silence
-                # for 2 hours. A transient failure (or a release whose assets
-                # were mid-replacement at that exact second) meant the app sat
-                # outdated all session with no visible reason — observed live:
-                # a launch made no version.json request at all while a manual
-                # "Check for updates" minutes later found r321. Retry on a
-                # short ladder until one check SUCCEEDS, then settle into 2h.
-                flow = get_update_flow()
-                for delay_s in (0, 45, 120, 300, 600):
-                    if delay_s:
-                        await _aio.sleep(delay_s)
-                    with contextlib.suppress(Exception):
-                        await flow.check_silently()
-                    if flow.state in ("available", "downloading", "ready", "restarting"):
-                        break
-                    if flow.remote is not None and not flow.last_error:
-                        break  # check succeeded: genuinely up to date
-                    logger.info(
-                        "[UpdateFlow] launch check inconclusive (state=%s "
-                        "error=%r) — retrying",
-                        flow.state,
-                        flow.last_error,
+        settings_obj = getattr(app.controller, "settings", None)
+        config_path = getattr(app.controller, "config_path", None)
+        if settings_obj is not None:
+            running_build = current_build_number()
+            previous_build = int(getattr(settings_obj.ui, "last_run_build", 0) or 0)
+            # r325: a missing stamp on an EXISTING config means "updated
+            # from a pre-stamp build", not "fresh install" — the r324
+            # rollout proved it: the user updated in and saw nothing
+            # because the stamp only began existing that launch. Only a
+            # genuinely fresh install skips the announcement.
+            fresh_install = bool(
+                getattr(app.controller, "settings_created_fresh", False)
+            )
+            if running_build > 0 and previous_build != running_build:
+                if previous_build > 0 or not fresh_install:
+                    # r323 (user request): a proper DIALOG — "the program
+                    # updated, here's what changed" + Close — not a toast.
+                    from puripuly_heart.core.changelog import (
+                        current_build_notes_localized,
                     )
-                while True:
-                    await _aio.sleep(2 * 60 * 60)
-                    with contextlib.suppress(Exception):
-                        await flow.check_silently()
+                    from puripuly_heart.ui.components.glow import create_glow_stack
+                    from puripuly_heart.ui.components.warm_document_dialog import (
+                        open_warm_document_dialog,
+                    )
 
-            page.run_task(_periodic_update_check)
-        except Exception:
-            pass
+                    bullets = current_build_notes_localized(get_locale())
+                    paragraphs = [
+                        t("app.updated_dialog.title").format(tag=f"r{running_build}"),
+                    ] + [f"•  {bullet}" for bullet in bullets]
+                    if not bullets:
+                        paragraphs.append(t("app.updated_notice_fallback"))
+                    open_warm_document_dialog(
+                        page,
+                        body_paragraphs=paragraphs,
+                        primary_label=t("common.close"),
+                        primary_action=lambda: None,
+                        glow_factory=create_glow_stack,
+                    )
+                settings_obj.ui.last_run_build = running_build
+                if config_path is not None:
+                    save_settings(config_path, settings_obj)
+    except Exception:
+        logger.exception("post-update notice failed")
+
+    # Silent build-number check → sidebar update button (shared flow with
+    # the About card; no-op in source runs, quiet on network failure).
+    # Re-checks every 2h: the launch-only check meant an update shipped
+    # mid-session never surfaced the button — the user had to find
+    # "Check for updates" in settings by hand.
+    try:
+        from puripuly_heart.ui.update_flow import get_update_flow
+
+        async def _periodic_update_check() -> None:
+            import asyncio as _aio
+
+            # r322: the launch check used to be ONE attempt, then silence
+            # for 2 hours. A transient failure (or a release whose assets
+            # were mid-replacement at that exact second) meant the app sat
+            # outdated all session with no visible reason — observed live:
+            # a launch made no version.json request at all while a manual
+            # "Check for updates" minutes later found r321. Retry on a
+            # short ladder until one check SUCCEEDS, then settle into 2h.
+            flow = get_update_flow()
+            for delay_s in (0, 45, 120, 300, 600):
+                if delay_s:
+                    await _aio.sleep(delay_s)
+                with contextlib.suppress(Exception):
+                    await flow.check_silently()
+                if flow.state in ("available", "downloading", "ready", "restarting"):
+                    break
+                if flow.remote is not None and not flow.last_error:
+                    break  # check succeeded: genuinely up to date
+                logger.info(
+                    "[UpdateFlow] launch check inconclusive (state=%s "
+                    "error=%r) — retrying",
+                    flow.state,
+                    flow.last_error,
+                )
+            while True:
+                await _aio.sleep(2 * 60 * 60)
+                with contextlib.suppress(Exception):
+                    await flow.check_silently()
+
+        page.run_task(_periodic_update_check)
+    except Exception:
+        pass
 
     # Re-verify saved API keys whose persisted flag went stale-false, so the
     # dashboard pickers don't grey out working providers until the user visits

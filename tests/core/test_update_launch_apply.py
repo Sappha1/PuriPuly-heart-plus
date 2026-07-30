@@ -89,3 +89,36 @@ def test_load_or_init_settings_sets_fresh_flag(tmp_path) -> None:
     again = controller._load_or_init_settings(fresh_path)  # file exists now
     assert again is not None
     assert controller.settings_created_fresh is False
+
+
+def test_update_machinery_not_nested_under_dead_guard() -> None:
+    """r327 tripwire: r317-r325 anchored the launch check, retry ladder, and
+    the post-update dialog INSIDE `if not _OCR_PROTO_NO_UPDATES:` (hardcoded
+    True) — every one of those features shipped as dead code, and 'auto
+    update' only ever worked via the manual Settings button. Fail loudly if
+    anything update-related ever moves back under that guard."""
+    import ast
+    from pathlib import Path
+
+    source = Path("src/puripuly_heart/ui/app.py").read_text(encoding="utf-8")
+    tree = ast.parse(source)
+
+    guarded_code = []
+    for node in ast.walk(tree):
+        if isinstance(node, ast.If):
+            test_src = ast.dump(node.test)
+            if "_OCR_PROTO_NO_UPDATES" in test_src:
+                for child in node.body:
+                    guarded_code.append(ast.unparse(child))
+    assert guarded_code, "guard vanished — update this test's premise"
+    guarded_text = "\n".join(guarded_code)
+    for forbidden in (
+        "last_run_build",
+        "_periodic_update_check",
+        "check_silently",
+        "updated_dialog",
+    ):
+        assert forbidden not in guarded_text, (
+            f"'{forbidden}' is nested under _OCR_PROTO_NO_UPDATES again — "
+            "that branch is dead code (guard is hardcoded True)"
+        )

@@ -1,8 +1,8 @@
 {
-  "build": 326,
-  "tag": "r326",
+  "build": 327,
+  "tag": "r327",
   "date": "2026-07-30",
   "notes": [
-    "HOTFIX: r325 crashed at every launch. If you downloaded r325, update to r326 — since a crashed app cannot update itself, re-run the installer or download the zip"
+    "Fixed automatic updates never actually running (all update-at-launch code sat in a disabled leftover branch — updates only ever happened via the manual Check button). Launch check, auto-download, auto-apply, and the what's-new dialog now genuinely work"
   ]
 }

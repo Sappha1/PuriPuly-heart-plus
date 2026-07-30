@@ -71,3 +71,21 @@ def test_current_build_notes_returns_full_bullets() -> None:
     assert bullets                                   # latest section has bullets
     assert all(not b.startswith("#") for b in bullets)
     assert all(len(b) > 10 for b in bullets)         # real sentences, untruncated
+
+
+def test_load_or_init_settings_sets_fresh_flag(tmp_path) -> None:
+    """r326: r325 crashed EVERY launch because settings_created_fresh was
+    assigned on a slotted GuiController without a declaration. Exercise the
+    real code path against the real class."""
+    from puripuly_heart.ui.controller import GuiController
+
+    controller = GuiController.__new__(GuiController)
+
+    fresh_path = tmp_path / "settings.json"
+    settings = controller._load_or_init_settings(fresh_path)
+    assert settings is not None
+    assert controller.settings_created_fresh is True
+
+    again = controller._load_or_init_settings(fresh_path)  # file exists now
+    assert again is not None
+    assert controller.settings_created_fresh is False

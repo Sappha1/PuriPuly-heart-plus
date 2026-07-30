@@ -2,6 +2,10 @@
 
 User-facing changes per build. The latest build's highlights also appear in-app when an update is ready.
 
+## r326 — 2026-07-30
+
+- HOTFIX: r325 crashed at every launch ("'GuiController' object has no attribute 'settings_created_fresh'") — the r325 fix set a flag on a class that requires fields to be declared. If you downloaded r325, update to r326 (the app cannot update itself while it cannot start — re-run the installer or grab the zip)
+
 ## r325 — 2026-07-30
 
 - Fixed the after-update dialog not appearing the very first time you arrive from an older build: the "previous version" marker didn't exist yet, so the app couldn't tell it had just updated and stayed silent. Anyone updating from r321 or older now sees the what's-new dialog on their first launch of a new build (fresh installs still start quietly)

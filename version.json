@@ -1,8 +1,8 @@
 {
-  "build": 325,
-  "tag": "r325",
+  "build": 326,
+  "tag": "r326",
   "date": "2026-07-30",
   "notes": [
-    "Fixed the after-update dialog not appearing the first time you arrive from an older build — anyone updating from r321 or older now sees the what's-new dialog on their first launch of a new build"
+    "HOTFIX: r325 crashed at every launch. If you downloaded r325, update to r326 — since a crashed app cannot update itself, re-run the installer or download the zip"
   ]
 }

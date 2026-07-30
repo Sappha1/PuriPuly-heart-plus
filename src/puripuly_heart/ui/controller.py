@@ -401,6 +401,11 @@ class GuiController:
     _bridge_task: asyncio.Task[None] | None = None
     _mic_task: asyncio.Task[None] | None = None
     _audio_source: AudioSource | None = None
+    # r326: whether THIS launch created settings.json fresh (set by
+    # _load_or_init_settings; drives the post-update announcement). MUST be
+    # declared here — GuiController is slotted, and r325's undeclared
+    # assignment crashed every launch.
+    settings_created_fresh: bool = False
     _last_mic_loop_close_exception: BaseException | None = field(
         init=False,
         default=None,

@@ -236,8 +236,10 @@ class TranslatorApp:
             lambda: self.controller.enrolled_speakers()
         )
         self.view_settings.on_rename_saved_voice = self._on_rename_saved_voice
-        self.view_settings.on_forget_saved_voice = (
-            lambda name: self.controller.forget_speaker(name)
+        self.view_settings.on_forget_saved_voice = self._on_forget_saved_voice
+        # r345: the naming dialog links straight into the manager.
+        self.view_dashboard.on_open_voice_manager = (
+            lambda: self.view_settings._on_saved_voices_click(page=self.page)
         )
         # r341: destructive voice edits are snapshotted; the manager can put
         # the previous state back, and warns before a merge.
@@ -936,6 +938,18 @@ class TranslatorApp:
                 self._show_snackbar(message, color)
 
         self.page.run_task(_run)
+
+    def _on_forget_saved_voice(self, name: str) -> bool:
+        """Delete an enrolled voice AND clear its name from the visible log
+        (r345) — rendered lines revert to their anonymous label. The cluster
+        list must be captured BEFORE forget(), which clears the session map.
+        """
+        clusters = self.controller.speaker_clusters_for_name(name)
+        ok = bool(self.controller.forget_speaker(name))
+        if ok:
+            with contextlib.suppress(Exception):
+                self.view_dashboard.clear_speaker_name_tags(name, clusters)
+        return ok
 
     def _on_rename_saved_voice(self, old_name: str, new_name: str) -> bool:
         """Rename an enrolled voice from Settings and relabel the chat log.

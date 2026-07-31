@@ -5526,9 +5526,15 @@ class SettingsView(ft.Column):
             self._update_notes_text.update()
         self._emit_settings_changed()
 
-    def _on_saved_voices_click(self, e) -> None:
-        """List enrolled voices with rename / remove (r338)."""
-        if not self.page:
+    def _on_saved_voices_click(self, e=None, *, page=None) -> None:
+        """List enrolled voices with rename / remove (r338).
+
+        r345: `page` override lets the dashboard's naming dialog open this
+        manager even while the Settings view is not mounted (an unmounted
+        Flet control has no .page).
+        """
+        page = page or self.page
+        if not page:
             return
         list_column = ft.Column([], spacing=0, tight=True, scroll=ft.ScrollMode.AUTO)
 
@@ -5650,7 +5656,7 @@ class SettingsView(ft.Column):
         def _close(_e=None) -> None:
             dialog.open = False
             with contextlib.suppress(Exception):
-                self.page.update()
+                page.update()
 
         # r341: one level of undo for the last rename/merge/delete.
         can_undo = False
@@ -5683,7 +5689,7 @@ class SettingsView(ft.Column):
             ],
         )
         with contextlib.suppress(Exception):
-            self.page.open(dialog)
+            page.open(dialog)
 
     def _on_speaker_id_click(self, e) -> None:
         if not self.page:

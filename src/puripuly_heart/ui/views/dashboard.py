@@ -19,7 +19,7 @@ from puripuly_heart.ui.fonts import font_for_language
 from puripuly_heart.ui.i18n import get_locale, language_name, t
 from puripuly_heart.ui.overlay_peer_contract import OverlayPeerConsumerContract
 
-_BUILD_TAG = "r344"  #increment each build so user can confirm version
+_BUILD_TAG = "r345"  #increment each build so user can confirm version
 
 # ── VRCT-style dark palette ──────────────────────────────────────────────────
 _BG_MAIN = "#2e2f32"
@@ -3690,6 +3690,32 @@ class DashboardView(ft.Row):
             _collect(refs)
         return len(seen)
 
+    def clear_speaker_name_tags(self, name: str, cluster_ids) -> None:
+        """r345: a deleted voice's rendered lines drop back to anonymous —
+        "deleting the name should clear it too". Cluster-bound tags return to
+        their "Speaker N"; voiceprint-only lines have no number to return to
+        and show the generic anonymous label."""
+        name = (name or "").strip()
+        if not name:
+            return
+        registry = getattr(self, "_speaker_tag_controls", None) or {}
+        for cluster_id in cluster_ids or ():
+            anon = t("dashboard.speaker_n").format(n=int(cluster_id))
+            for ref in registry.get(int(cluster_id), []):
+                tag = ref()
+                if tag is not None and tag.value == name:
+                    with contextlib.suppress(Exception):
+                        tag.value = anon
+                        tag.update()
+        by_name = getattr(self, "_speaker_tag_controls_by_name", None) or {}
+        unknown = t("dashboard.speaker_unknown")
+        for ref in by_name.pop(name, []):
+            tag = ref()
+            if tag is not None and tag.value == name:
+                with contextlib.suppress(Exception):
+                    tag.value = unknown
+                    tag.update()
+
     def _retro_label_speaker_tags(
         self, cluster_id: int, name: str, *, also_named: str = ""
     ) -> None:
@@ -3845,6 +3871,20 @@ class DashboardView(ft.Row):
                     ),
                 )
             )
+        if known_name and cluster_id >= 0:
+            # r345: un-name THIS speaker. The line goes back to "Speaker N";
+            # the person's saved voice is untouched (delete lives in the
+            # manager, one link away).
+            scope_options.append(
+                _scope_option(
+                    "clear",
+                    t("dashboard.speaker_name_dialog.scope_clear"),
+                    t(
+                        "dashboard.speaker_name_dialog.scope_clear_desc",
+                        name=known_name,
+                    ),
+                )
+            )
         if tag_control is not None:
             # r342: cosmetic relabel of exactly this line — nothing is saved,
             # so a later real rename may repaint it. Meant for screenshots.
@@ -3872,7 +3912,7 @@ class DashboardView(ft.Row):
             )
             merging = target_variants > 0 and not (
                 scope.visible and scope.value == "message"
-            )
+            ) and not (scope.visible and scope.value == "clear")
             if merging:
                 only_this = bool(scope.visible and scope.value == "one")
                 if not known_name or only_this:
@@ -3914,6 +3954,24 @@ class DashboardView(ft.Row):
                 self.page.update()
 
         def _save(_e=None) -> None:
+            if scope.visible and scope.value == "clear":
+                # r345: unbind the cluster and drop its rendered lines back
+                # to the anonymous label. Runs before the typed-name checks —
+                # clearing does not care what is in the field.
+                detach = getattr(self, "on_detach_speaker_cluster", None)
+                if callable(detach):
+                    with contextlib.suppress(Exception):
+                        detach(cluster_id)
+                anon = t("dashboard.speaker_n").format(n=cluster_id)
+                registry = getattr(self, "_speaker_tag_controls", None) or {}
+                for ref in registry.get(cluster_id, []):
+                    tag = ref()
+                    if tag is not None:
+                        with contextlib.suppress(Exception):
+                            tag.value = anon
+                            tag.update()
+                _close()
+                return
             name = (name_field.value or "").strip()
             if not name or name == known_name:
                 _close()
@@ -3953,6 +4011,23 @@ class DashboardView(ft.Row):
             self._retro_label_speaker_tags(cluster_id, name, also_named="")
             _close()
 
+        def _open_manager(_e=None) -> None:
+            _close()
+            callback = getattr(self, "on_open_voice_manager", None)
+            if callable(callback):
+                with contextlib.suppress(Exception):
+                    callback()
+
+        manage_link = ft.GestureDetector(
+            content=ft.Text(
+                t("dashboard.speaker_name_dialog.manage_link"),
+                size=11,
+                color="#48a495",
+            ),
+            on_tap=_open_manager,
+            mouse_cursor=ft.MouseCursor.CLICK,
+        )
+
         name_field.on_submit = _save
         save_button.on_click = _save
         _refresh_merge_state()
@@ -3961,7 +4036,9 @@ class DashboardView(ft.Row):
             title=ft.Text(t("dashboard.speaker_name_dialog.title"), size=14),
             content=ft.Container(
                 content=ft.Column(
-                    [name_field, scope, merge_warning], spacing=8, tight=True
+                    [name_field, scope, merge_warning, manage_link],
+                    spacing=8,
+                    tight=True,
                 ),
                 width=400,
             ),

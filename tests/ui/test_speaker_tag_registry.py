@@ -97,3 +97,23 @@ def test_relabel_is_safe_with_no_registry_at_all() -> None:
     view = dashboard_module.DashboardView.__new__(dashboard_module.DashboardView)
 
     view._retro_label_speaker_tags(3, "New")  # must not raise
+
+
+def test_clear_speaker_name_tags_reverts_lines_to_anonymous() -> None:
+    """r345: deleting a saved voice clears its name from the rendered log."""
+    from puripuly_heart.ui.i18n import t
+
+    view = _view()
+    clustered = ft.Text("Alex")
+    clusterless = ft.Text("Alex")
+    other = ft.Text("Robin")
+    view._speaker_tag_controls = {7: [weakref.ref(clustered), weakref.ref(other)]}
+    view._speaker_tag_controls_by_name = {"Alex": [weakref.ref(clusterless)]}
+
+    view.clear_speaker_name_tags("Alex", [7])
+
+    assert clustered.value == t("dashboard.speaker_n").format(n=7)
+    assert clusterless.value == t("dashboard.speaker_unknown")
+    # another person's tag in the same cluster is untouched
+    assert other.value == "Robin"
+    assert "Alex" not in view._speaker_tag_controls_by_name

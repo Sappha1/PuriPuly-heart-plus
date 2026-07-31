@@ -225,3 +225,40 @@ def test_scope_strings_are_translated_everywhere() -> None:
             assert data.get(key), f"{locale}: {key}"
         assert "{name}" in data["dashboard.speaker_name_dialog.scope_one"]
         assert "{count}" in data["dashboard.speaker_name_dialog.scope_all_desc"]
+
+
+def test_dialog_links_to_the_voice_manager() -> None:
+    """r345: "like a link to manage the names in the prompt"."""
+    body = _body(DASHBOARD, "def _open_speaker_name_dialog", 13000)
+    assert "manage_link" in body
+    assert "on_open_voice_manager" in body
+    assert "view_dashboard.on_open_voice_manager" in APP
+    # the manager can open on a page the settings view is not mounted on
+    assert "_on_saved_voices_click(page=self.page)" in APP
+    assert "def _on_saved_voices_click(self, e=None, *, page=None)" in SETTINGS
+
+
+def test_dialog_offers_clearing_the_name() -> None:
+    body = _body(DASHBOARD, "def _open_speaker_name_dialog", 13000)
+    assert "scope_clear" in body
+    clear_branch = body[body.index('if scope.visible and scope.value == "clear"'):]
+    clear_branch = clear_branch[: clear_branch.index("return") + 6]
+    assert "on_detach_speaker_cluster" in clear_branch
+    assert "dashboard.speaker_n" in clear_branch
+    assert "on_enroll_speaker" not in clear_branch
+    assert "on_rename_speaker" not in clear_branch
+    # clearing must run BEFORE the typed-name early-outs
+    assert body.index('scope.value == "clear"') < body.index(
+        "if not name or name == known_name"
+    )
+
+
+def test_deleting_a_voice_clears_the_rendered_log() -> None:
+    """r345: "deleting the name should clear it too"."""
+    handler = _body(APP, "def _on_forget_saved_voice", 900)
+    # cluster list captured BEFORE forget() clears the session map
+    assert handler.index("speaker_clusters_for_name") < handler.index(
+        "forget_speaker"
+    )
+    assert "clear_speaker_name_tags" in handler
+    assert "def clear_speaker_name_tags" in DASHBOARD

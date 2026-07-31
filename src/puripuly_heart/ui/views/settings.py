@@ -1264,12 +1264,21 @@ class SettingsView(ft.Column):
             "settings.capability.prompt_unsupported"
         )
 
+        self._live_preview_text = self._build_clickable_text(
+            t("settings.option.on"),
+            self._on_live_preview_click,
+        )
+        live_preview_card = self._wrap_unit_card(
+            title=self._info_title_keyed("settings.live_preview", "settings.live_preview.tooltip"),
+            value=self._live_preview_text,
+        )
+
         general_primary_row = ft.Column(
                 [
                     ui_card,
-                    chatbox_source_card,
-                    integrated_context_card,
-                    self._context_capability_notice,
+                    # r337: live preview is an IN-APP chat behaviour
+                    # (ui.show_pending_echo) with nothing to do with VRChat.
+                    live_preview_card,
                 ],
                 spacing=0,
             )
@@ -1595,15 +1604,6 @@ class SettingsView(ft.Column):
             value=self._filter_peer_lang_text,
         )
 
-        self._live_preview_text = self._build_clickable_text(
-            t("settings.option.on"),
-            self._on_live_preview_click,
-        )
-        live_preview_card = self._wrap_unit_card(
-            title=self._info_title_keyed("settings.live_preview", "settings.live_preview.tooltip"),
-            value=self._live_preview_text,
-        )
-
         self._chatbox_send_peer_text = self._build_clickable_text(
             t("settings.option.off"),
             self._on_chatbox_send_peer_click,
@@ -1667,8 +1667,10 @@ class SettingsView(ft.Column):
                 self._section_header("settings.section.vrchat"),
                 vrc_mic_card,
                 ptt_mute_sync_card,
-                live_preview_card,
                 chatbox_send_peer_card,
+                # r337: settings.osc.* — it decides what text enters the
+                # VRChat chatbox, so it belongs here rather than in General.
+                chatbox_source_card,
                 steamvr_autolaunch_card,
                 separate_text_card,
             ],
@@ -2497,6 +2499,11 @@ class SettingsView(ft.Column):
         )
         api_prompt_row = ft.Column(
             [
+                # r337: context is part of the SAME request payload as the
+                # system prompt and is dropped by the same providers, so the
+                # two belong together under the model that decides their fate.
+                integrated_context_card,
+                self._context_capability_notice,
                 self._section_header("settings.section.persona"),
                 ft.Container(
                     content=ft.Text(

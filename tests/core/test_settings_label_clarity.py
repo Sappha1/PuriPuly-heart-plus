@@ -18,8 +18,9 @@ LOCALES = ["en", "ja", "ko", "zh-CN"]
 RENAMED = {
     "settings.vrc_mic_intercept": "Sync mute with VRChat",
     "settings.ptt_mute_sync": "Push-to-talk support",
-    "settings.live_preview": "Live preview",
-    "settings.chatbox_send_peer": "Send their speech to the VRChat chatbox",
+    "settings.live_preview": "Show my message while it translates",
+    "settings.chatbox_send_peer":
+        "Loopback — send their speech to the VRChat chatbox",
     "settings.separate_text_translation": "Separate 'Text Translation' box on the dashboard",
     "settings.audio_host_api": "Audio host",
     "settings.section.self_vad_sensitivity": "Mic sensitivity",
@@ -39,7 +40,10 @@ RENAMED = {
 # r336: "sensitivity", "auto-gain", "noise suppression" and "audio host" are
 # what Discord/OBS/Audacity call these — plain-English rewrites of them read
 # as amateur. Only terms with no consumer-facing equivalent stay banned.
-JARGON = ("VAD", "Loopback", "Intercept", "Single Turn", "Offset X", "Offset Y")
+# r337: "Loopback" left the list. The dashboard pill for this exact setting
+# is labelled LOOPBACK, so banning the word in Settings recreates the
+# two-names-one-setting confusion this work set out to remove.
+JARGON = ("VAD", "Intercept", "Single Turn", "Offset X", "Offset Y")
 
 
 def _i18n(locale: str) -> dict:

@@ -4992,8 +4992,14 @@ def test_general_tab_excludes_prompt_and_overlay_controls(
     assert t("settings.section.custom_vocabulary") not in general_labels
     assert t("settings.section.overlay") not in general_labels
     assert t("settings.overlay.enabled") not in general_labels
-    assert t("settings.integrated_context") in general_labels
     assert t("settings.overlay.calibration") not in general_labels
+    # r337: context ships in the same request payload as the system prompt and
+    # is dropped by the same providers, so it moved next to it on the API tab.
+    assert t("settings.integrated_context") not in general_labels
+    api_labels: list[str] = []
+    for row in _subtab_controls(view, "api"):
+        api_labels.extend(_control_labels(row))
+    assert t("settings.integrated_context") in api_labels
 
 
 def test_integrated_context_general_tab_uses_dedicated_unit_card(

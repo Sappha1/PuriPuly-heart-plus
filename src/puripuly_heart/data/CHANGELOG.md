@@ -2,6 +2,13 @@
 
 User-facing changes per build. The latest build's highlights also appear in-app when an update is ready.
 
+## r337 — 2026-07-30
+
+- Three settings moved to the tab that actually owns them: context usage now sits beside the system prompt on API (it travels in the same request and dies with the same translators), the chatbox output format moved to VRChat, and live preview moved to General — it only affects the app's own chat log, never VRChat
+- "Live preview" is now "Show my message while it translates", which is what it does
+- The VRChat chatbox setting is now called "Loopback — send their speech to the VRChat chatbox", matching the LOOPBACK button on the dashboard. They were always the same switch under two different names
+- "Caption location" is "Overlay mode" again — it picks VR or Desktop, which is a mode, not a place
+
 ## r336 — 2026-07-30
 
 - **Removed clipboard auto-translate.** With it on, anything you copied was translated and posted to the VRChat chatbox — a password or card number copied from a browser went out to everyone nearby. It was off by default; the setting is now gone entirely

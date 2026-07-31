@@ -58,12 +58,58 @@ def test_audio_cards_left_the_general_catch_all() -> None:
 
 
 def test_vrchat_cards_are_grouped() -> None:
-    block = SOURCE[SOURCE.index("vrchat_row = ft.Column") : SOURCE.index("vrchat_row = ft.Column") + 900]
+    block = SOURCE[SOURCE.index("vrchat_row = ft.Column") : SOURCE.index("vrchat_row = ft.Column") + 1100]
     for card in (
-        "vrc_mic_card", "ptt_mute_sync_card", "live_preview_card",
-        "chatbox_send_peer_card", "steamvr_autolaunch_card",
+        "vrc_mic_card", "ptt_mute_sync_card", "chatbox_send_peer_card",
+        # r337: settings.osc.* — it decides what text enters the VRChat chatbox.
+        "chatbox_source_card",
+        "steamvr_autolaunch_card",
     ):
         assert card in block, f"{card} missing from the VRChat tab"
+    # r337: live preview is ui.show_pending_echo — an in-app chat behaviour
+    # that never reaches VRChat, so it must NOT be here.
+    assert "live_preview_card" not in block
+
+
+def test_cards_sit_with_the_setting_that_decides_whether_they_work() -> None:
+    """r337: three cards were on tabs that had nothing to do with them."""
+    general = SOURCE[SOURCE.index("general_primary_row = ft.Column") :][:600]
+    assert "live_preview_card" in general
+    assert "integrated_context_card" not in general
+    assert "chatbox_source_card" not in general
+
+    # Context travels in the same request payload as the system prompt and is
+    # dropped by the same providers, so it lives beside it on the API tab.
+    api_prompt = SOURCE[SOURCE.index("api_prompt_row = ft.Column") :][:900]
+    assert "integrated_context_card" in api_prompt
+    assert "_context_capability_notice" in api_prompt
+
+
+def test_loopback_card_names_the_dashboard_button() -> None:
+    """r337: the dashboard's LOOPBACK pill and this card toggle the SAME
+    ui.chatbox_send_peer setting; they must not carry unrelated names."""
+    import json
+    from pathlib import Path
+
+    for locale in ("en", "ja", "ko", "zh-CN"):
+        data = json.loads(
+            Path(f"src/puripuly_heart/data/i18n/{locale}.json").read_text(encoding="utf-8")
+        )
+        label = data["settings.chatbox_send_peer"]
+        assert "Loopback" in label or "LOOPBACK" in label, f"{locale}: {label}"
+        assert "LOOPBACK" in data["settings.chatbox_send_peer.tooltip"], locale
+
+
+def test_overlay_mode_is_not_called_a_location() -> None:
+    """r337: it chooses SteamVR overlay vs desktop window — a mode, not a
+    place, and getting it wrong stops captions appearing at all."""
+    import json
+    from pathlib import Path
+
+    data = json.loads(
+        Path("src/puripuly_heart/data/i18n/en.json").read_text(encoding="utf-8")
+    )
+    assert data["settings.overlay.caption_location"] == "Overlay mode"
 
 
 def test_self_in_overlay_duplicate_card_is_gone() -> None:

@@ -56,6 +56,18 @@ VARIANT_MERGE_THRESHOLD = 0.70
 # voiceprints this much — below it the line falls back to "Speaker N", which
 # is the documented trade (a wrong name is worse than an anonymous one).
 STICKY_NAME_THRESHOLD = 0.55
+# r344: two people in a clear voice chat reached "Speaker 8" — same-speaker
+# similarity wobbles around the 0.52 join bar, and every miss spawned a new
+# cluster. A miss still joins the nearest cluster when it is CLEARLY nearest:
+# at least CLUSTER_SOFT_THRESHOLD, with the runner-up at least CLUSTER_MARGIN
+# further away. Ambiguous samples keep spawning their own cluster, so two
+# genuinely similar speakers are never glued together by this path.
+CLUSTER_SOFT_THRESHOLD = 0.40
+CLUSTER_MARGIN = 0.12
+# And clusters whose centroids drift together heal into one: fragments of the
+# same voice converge as the EMA accumulates evidence. Two clusters carrying
+# different names are never consolidated.
+CLUSTER_CONSOLIDATE_THRESHOLD = 0.62
 
 
 def _normalize(vector: np.ndarray) -> np.ndarray:
@@ -165,10 +177,33 @@ class SpeakerRegistry:
                         best_name, best_name_sim, best_variant_index = name, sim, index
 
             best_cluster, best_cluster_sim = None, -1.0
+            second_cluster_sim = -1.0
             for cluster in self._clusters:
                 sim = float(np.dot(vector, cluster.centroid))
                 if sim > best_cluster_sim:
+                    second_cluster_sim = best_cluster_sim
                     best_cluster, best_cluster_sim = cluster, sim
+                elif sim > second_cluster_sim:
+                    second_cluster_sim = sim
+
+            joins_best = best_cluster is not None and (
+                best_cluster_sim >= CLUSTER_MATCH_THRESHOLD
+                or (
+                    # r344 margin join: clearly nearest, just under the bar.
+                    best_cluster_sim >= CLUSTER_SOFT_THRESHOLD
+                    and best_cluster_sim - second_cluster_sim >= CLUSTER_MARGIN
+                )
+            )
+
+            def _join_cluster() -> "_Cluster":
+                """EMA the joined cluster and heal fragments; returns the
+                surviving cluster (the joined one may be absorbed)."""
+                best_cluster.centroid = _normalize(
+                    (1 - CENTROID_EMA_ALPHA) * best_cluster.centroid
+                    + CENTROID_EMA_ALPHA * vector
+                )
+                best_cluster.count += 1
+                return self._consolidate_locked(best_cluster) or best_cluster
 
             if best_name and best_name_sim >= NAMED_MATCH_THRESHOLD:
                 # Nudge ONLY the variant that matched, so a call-channel print
@@ -184,18 +219,18 @@ class SpeakerRegistry:
                 )
                 self._named_counts[best_name] = self._named_counts.get(best_name, 1) + 1
                 cluster_id = -1
-                if best_cluster is not None and best_cluster_sim >= CLUSTER_MATCH_THRESHOLD:
-                    cluster_id = best_cluster.cluster_id
+                if joins_best:
+                    # r344: a named hit still feeds its cluster. Freezing the
+                    # centroid on naming let it drift from the living voice —
+                    # the root of one person fragmenting into "Speaker N"s.
+                    survivor = _join_cluster()
+                    cluster_id = survivor.cluster_id
                     self._cluster_names.setdefault(cluster_id, best_name)
                 return SpeakerMatch("named", best_name, cluster_id, best_name_sim)
 
-            if best_cluster is not None and best_cluster_sim >= CLUSTER_MATCH_THRESHOLD:
-                best_cluster.centroid = _normalize(
-                    (1 - CENTROID_EMA_ALPHA) * best_cluster.centroid
-                    + CENTROID_EMA_ALPHA * vector
-                )
-                best_cluster.count += 1
-                session_name = self._cluster_names.get(best_cluster.cluster_id, "")
+            if joins_best:
+                survivor = _join_cluster()
+                session_name = self._cluster_names.get(survivor.cluster_id, "")
                 # r338: only inherit the cluster's name when the voice really
                 # does resemble that person — not merely the cluster they were
                 # last seen in.
@@ -203,19 +238,19 @@ class SpeakerRegistry:
                     best_name_sim >= STICKY_NAME_THRESHOLD
                 ):
                     return SpeakerMatch(
-                        "named", session_name, best_cluster.cluster_id, best_cluster_sim
+                        "named", session_name, survivor.cluster_id, best_cluster_sim
                     )
                 if session_name:
                     logger.debug(
                         "[SpeakerID] withheld %r from cluster %d "
                         "(cluster sim=%.3f but name sim=%.3f < %.2f)",
-                        session_name, best_cluster.cluster_id,
+                        session_name, survivor.cluster_id,
                         best_cluster_sim, best_name_sim, STICKY_NAME_THRESHOLD,
                     )
                 return SpeakerMatch(
                     "cluster",
-                    self._cluster_label(best_cluster.cluster_id),
-                    best_cluster.cluster_id,
+                    self._cluster_label(survivor.cluster_id),
+                    survivor.cluster_id,
                     best_cluster_sim,
                 )
 
@@ -236,6 +271,49 @@ class SpeakerRegistry:
             return SpeakerMatch(
                 "cluster", self._cluster_label(cluster.cluster_id), cluster.cluster_id, 1.0
             )
+
+    def _consolidate_locked(self, moved: "_Cluster") -> "_Cluster | None":
+        """Merge `moved` into another cluster it has drifted onto (r344).
+
+        Fragments of one voice converge as EMA evidence accumulates; without
+        this they linger for the whole session as separate "Speaker N"s.
+        Caller holds the lock. Clusters carrying two DIFFERENT names never
+        merge — that decision belongs to the user.
+        """
+        moved_name = self._cluster_names.get(moved.cluster_id, "")
+        for other in self._clusters:
+            if other.cluster_id == moved.cluster_id:
+                continue
+            other_name = self._cluster_names.get(other.cluster_id, "")
+            if moved_name and other_name and moved_name != other_name:
+                continue
+            sim = float(np.dot(moved.centroid, other.centroid))
+            if sim < CLUSTER_CONSOLIDATE_THRESHOLD:
+                continue
+            # Keep the older (smaller id) cluster — its label is the one the
+            # user has been looking at longest.
+            keep, drop = (
+                (other, moved) if other.cluster_id < moved.cluster_id else (moved, other)
+            )
+            total = max(keep.count + drop.count, 1)
+            keep.centroid = _normalize(
+                (keep.count / total) * keep.centroid
+                + (drop.count / total) * drop.centroid
+            )
+            keep.count = total
+            self._clusters.remove(drop)
+            drop_name = self._cluster_names.pop(drop.cluster_id, "")
+            surviving_name = self._cluster_names.get(keep.cluster_id, "") or (
+                drop_name or moved_name or other_name
+            )
+            if surviving_name:
+                self._cluster_names[keep.cluster_id] = surviving_name
+            logger.info(
+                "[SpeakerID] consolidated cluster %d into %d (sim=%.3f)",
+                drop.cluster_id, keep.cluster_id, sim,
+            )
+            return keep
+        return None
 
     @staticmethod
     def _cluster_label(cluster_id: int) -> str:

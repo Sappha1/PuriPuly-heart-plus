@@ -545,6 +545,8 @@
   "dashboard.ocr.state.off": "OCR オフ",
   "dashboard.ocr.font.custom": "カスタム",
   "common.cancel": "キャンセル",
+  "dashboard.speaker_name_dialog.add_warning": "「{name}」は既に保存された声です（声紋 {existing} 件）。今この名前のメッセージが見えなくても保存されています。保存すると、この話者の声がその人に追加されます。実際には別の人なら、別の名前を付けてください。",
+  "dashboard.speaker_name_dialog.add_button": "声を追加",
   "settings.overlay.calibration.distance.tooltip": "オーバーレイがアンカーからどれだけ（メートル）離れて表示されるか。",
   "settings.overlay.calibration.offset_x.tooltip": "アンカーに対するオーバーレイの水平位置の調整。",
   "settings.overlay.calibration.offset_y.tooltip": "アンカーに対するオーバーレイの垂直位置の調整。",

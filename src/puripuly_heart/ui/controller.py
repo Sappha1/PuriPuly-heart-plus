@@ -4985,6 +4985,9 @@ class GuiController:
     def enroll_speaker(self, cluster_id: int, name: str) -> bool:
         """Name a session voice cluster (from the chat tag dialog)."""
         try:
+            # r344: enrolling into an EXISTING name refines/extends that
+            # person's voiceprints, so it is undoable like rename/forget.
+            self._capture_speaker_snapshot()
             ok = bool(self._speaker_registry().enroll_cluster(int(cluster_id), name))
         except Exception:
             logger.warning("[SpeakerID] enroll failed", exc_info=True)

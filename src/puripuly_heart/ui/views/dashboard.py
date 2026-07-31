@@ -19,7 +19,7 @@ from puripuly_heart.ui.fonts import font_for_language
 from puripuly_heart.ui.i18n import get_locale, language_name, t
 from puripuly_heart.ui.overlay_peer_contract import OverlayPeerConsumerContract
 
-_BUILD_TAG = "r343"  #increment each build so user can confirm version
+_BUILD_TAG = "r344"  #increment each build so user can confirm version
 
 # ── VRCT-style dark palette ──────────────────────────────────────────────────
 _BG_MAIN = "#2e2f32"
@@ -3875,18 +3875,29 @@ class DashboardView(ft.Row):
             )
             if merging:
                 only_this = bool(scope.visible and scope.value == "one")
-                moving = (
-                    1
-                    if only_this or not known_name
-                    else max(_variant_count(known_name), 1)
-                )
-                merge_warning.value = t(
-                    "dashboard.speaker_name_dialog.merge_warning",
-                    name=typed,
-                    existing=target_variants,
-                    moving=moving,
-                )
-                save_button.text = t("dashboard.speaker_name_dialog.merge_button")
+                if not known_name or only_this:
+                    # r344: an anonymous speaker (or an explicit split) being
+                    # given a saved person's name is ADDITIVE — one voiceprint
+                    # joins them. The full merge warning read as a refusal,
+                    # especially when no visible line carried the name.
+                    merge_warning.value = t(
+                        "dashboard.speaker_name_dialog.add_warning",
+                        name=typed,
+                        existing=target_variants,
+                    )
+                    save_button.text = t(
+                        "dashboard.speaker_name_dialog.add_button"
+                    )
+                else:
+                    merge_warning.value = t(
+                        "dashboard.speaker_name_dialog.merge_warning",
+                        name=typed,
+                        existing=target_variants,
+                        moving=max(_variant_count(known_name), 1),
+                    )
+                    save_button.text = t(
+                        "dashboard.speaker_name_dialog.merge_button"
+                    )
             else:
                 save_button.text = t("common.save")
             merge_warning.visible = merging

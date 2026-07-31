@@ -2,6 +2,20 @@
 
 User-facing changes per build. The latest build's highlights also appear in-app when an update is ready.
 
+## r341 — 2026-07-31
+
+- The naming window now tells you how many messages a rename will update, and lets you choose: rename this person everywhere, or "only this speaker — a different person", which separates that voice without touching anyone else
+- Typing a name that already exists turns Save into an explicit **Merge** button, with a warning showing both voiceprint counts (up to 4 are kept). The Saved voices list asks you to save a second time instead
+- New **Undo last change** in Saved voices — renaming, merging and deleting keep one step of undo
+
+## r340 — 2026-07-30
+
+- Internal cleanup: name labels belonging to cleared or trimmed chat entries no longer linger in memory for the rest of the session
+
+## r339 — 2026-07-30
+
+- Every chat line showing a name can now be clicked to rename — lines recognised purely by voiceprint previously had no click target, and renaming skipped them
+
 ## r338 — 2026-07-30
 
 - **Renaming a voice now renames that person everywhere.** If someone was named from several different messages, every one of their entries in the chat log updates at once instead of just the one you clicked

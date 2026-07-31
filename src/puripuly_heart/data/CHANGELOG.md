@@ -2,6 +2,26 @@
 
 User-facing changes per build. The latest build's highlights also appear in-app when an update is ready.
 
+## r345 — 2026-07-31
+
+- The naming window now has a **Manage saved voices…** link, and a new **Clear this speaker's name** option that sends the line back to "Speaker N" while keeping the saved voice
+- **Deleting a saved voice clears its name from the chat log immediately**
+
+## r344 — 2026-07-31
+
+- **Two people no longer fragment into "Speaker 8".** Three fixes to voice matching: near-miss samples join the clearly-nearest speaker, stray fragments merge back automatically (never across two named people), and naming someone no longer freezes their voice profile — the root cause of repeated re-naming
+- Giving an anonymous "Speaker N" the name of someone already saved is now a friendly **Add voice** action instead of a merge warning — and it's undoable
+
+## r343 — 2026-07-31
+
+- **60 interface strings that ignored the language setting are now translated** — the entire About page, dashboard menus and tooltips, the OCR color menu, and several settings tooltips
+- Fixed: the sidebar collapse tooltip lost its translation after one click, "Pinyin" appeared in English inside Chinese labels, and seven Chinese/Japanese/Korean entries were still English
+
+## r342 — 2026-07-31
+
+- Naming window options no longer get cut off — each choice has a short label with a wrapping description
+- New **Only relabel this message** option: changes just that line and saves nothing (handy for screenshots)
+
 ## r341 — 2026-07-31
 
 - The naming window now tells you how many messages a rename will update, and lets you choose: rename this person everywhere, or "only this speaker — a different person", which separates that voice without touching anyone else

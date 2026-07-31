@@ -1,5 +1,6 @@
 import asyncio
 import contextlib
+import weakref
 import datetime
 import logging
 import time
@@ -18,7 +19,7 @@ from puripuly_heart.ui.fonts import font_for_language
 from puripuly_heart.ui.i18n import get_locale, language_name, t
 from puripuly_heart.ui.overlay_peer_contract import OverlayPeerConsumerContract
 
-_BUILD_TAG = "r339"  #increment each build so user can confirm version
+_BUILD_TAG = "r340"  #increment each build so user can confirm version
 
 # ── VRCT-style dark palette ──────────────────────────────────────────────────
 _BG_MAIN = "#2e2f32"
@@ -3609,6 +3610,10 @@ class DashboardView(ft.Row):
         if self._chat_list_view is None:
             return
         self._chat_list_view.controls.clear()
+        # r340: the speaker-tag registries point at those entries; without
+        # this they keep dead controls for the rest of the session.
+        self._speaker_tag_controls = {}
+        self._speaker_tag_controls_by_name = {}
         try:
             self._chat_list_view.update()
         except Exception:
@@ -3677,10 +3682,17 @@ class DashboardView(ft.Row):
                 with contextlib.suppress(Exception):
                     targets.update(int(c) for c in (lookup(candidate) or ()))
         for target in targets:
-            for tag in registry.get(target, []):
+            live = []
+            for ref in registry.get(target, []):
+                tag = ref()
+                if tag is None:
+                    continue  # r340: entry was cleared or trimmed away
+                live.append(ref)
                 with contextlib.suppress(Exception):
                     tag.value = name
                     tag.update()
+            if target in registry:
+                registry[target] = live
         # r339: lines that arrived with no cluster are keyed on the identity.
         by_name = getattr(self, "_speaker_tag_controls_by_name", None)
         if by_name:
@@ -3688,12 +3700,17 @@ class DashboardView(ft.Row):
             for candidate in (name, also_named):
                 if candidate and candidate in by_name:
                     moved.extend(by_name.pop(candidate))
-            for tag in moved:
+            live = []
+            for ref in moved:
+                tag = ref()
+                if tag is None:
+                    continue
+                live.append(ref)
                 with contextlib.suppress(Exception):
                     tag.value = name
                     tag.update()
-            if moved:
-                by_name.setdefault(name, []).extend(moved)
+            if live:
+                by_name.setdefault(name, []).extend(live)
 
     def _open_speaker_name_dialog(
         self, cluster_id: int, current_label: str, *, known_name: str = ""
@@ -3914,7 +3931,11 @@ class DashboardView(ft.Row):
                 if registry is None:
                     registry = {}
                     self._speaker_tag_controls = registry
-                registry.setdefault(speaker_cluster_id, []).append(tag_control)
+                # r340: weak, so a trimmed or cleared entry takes its tag with
+                # it instead of leaking for the session.
+                registry.setdefault(speaker_cluster_id, []).append(
+                    weakref.ref(tag_control)
+                )
             if speaker_name:
                 # r339: a recognised voice can arrive with NO session cluster
                 # (match() returns -1 for a pure voiceprint hit). Those tags
@@ -3924,7 +3945,9 @@ class DashboardView(ft.Row):
                 if by_name is None:
                     by_name = {}
                     self._speaker_tag_controls_by_name = by_name
-                by_name.setdefault(speaker_name, []).append(tag_control)
+                by_name.setdefault(speaker_name, []).append(
+                    weakref.ref(tag_control)
+                )
             header_cells.append(
                 ft.GestureDetector(
                     content=ft.Container(

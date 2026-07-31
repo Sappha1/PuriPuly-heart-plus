@@ -1,12 +1,11 @@
 {
-  "build": 336,
-  "tag": "r336",
+  "build": 337,
+  "tag": "r337",
   "date": "2026-07-30",
   "notes": [
-    "Removed clipboard auto-translate — it posted anything you copied to the VRChat chatbox",
-    "Settings your translator or speech engine ignores are now greyed out and say which one",
-    "Fixed the custom vocabulary tip: it left out the local Qwen model, which is the default",
-    "The Prompt tab is gone — the system prompt moved to API, custom vocabulary to Audio",
-    "Settings names use the standard terms again (Mic sensitivity, Mic auto-gain, Audio host)"
+    "Context usage moved next to the system prompt on API; chatbox output format to VRChat; live preview to General",
+    "\"Live preview\" is now \"Show my message while it translates\"",
+    "The chatbox setting is now \"Loopback\" too — it was always the same switch as the dashboard button",
+    "\"Caption location\" is \"Overlay mode\" again — it picks VR or Desktop"
   ]
 }

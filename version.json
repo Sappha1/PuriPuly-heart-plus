@@ -1,11 +1,11 @@
 {
-  "build": 338,
-  "tag": "r338",
-  "date": "2026-07-30",
+  "build": 341,
+  "tag": "r341",
+  "date": "2026-07-31",
   "notes": [
-    "Renaming a voice now renames that person everywhere in the chat log, not just the message you clicked",
-    "A different speaker can no longer be given someone else's name — unsure lines show \"Speaker N\" instead",
-    "New: Settings › Audio › Saved voices — rename or remove the people you've named",
-    "Removing a saved voice now takes effect immediately"
+    "Renaming shows how many messages it updates, with a choice: this person everywhere, or only this speaker",
+    "Combining two saved voices now needs an explicit Merge with both voiceprint counts shown",
+    "New \"Undo last change\" in Saved voices — renames, merges and deletions keep one step back",
+    "Every chat line showing a name can be clicked to rename; previously some were skipped"
   ]
 }

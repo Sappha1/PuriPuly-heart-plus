@@ -1,11 +1,11 @@
 {
-  "build": 341,
-  "tag": "r341",
+  "build": 345,
+  "tag": "r345",
   "date": "2026-07-31",
   "notes": [
-    "Renaming shows how many messages it updates, with a choice: this person everywhere, or only this speaker",
-    "Combining two saved voices now needs an explicit Merge with both voiceprint counts shown",
-    "New \"Undo last change\" in Saved voices — renames, merges and deletions keep one step back",
-    "Every chat line showing a name can be clicked to rename; previously some were skipped"
+    "Speaker identification overhaul: two people stay two speakers, and naming works from every chat line",
+    "Naming window: rename everywhere / different person / clear name / this message only, plus a link to manage saved voices",
+    "Saved voices: rename, remove (clears the chat log too), and undo the last change",
+    "60 interface strings that ignored the language setting are now translated"
   ]
 }

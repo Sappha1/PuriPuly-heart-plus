@@ -18,7 +18,7 @@ from puripuly_heart.ui.fonts import font_for_language
 from puripuly_heart.ui.i18n import get_locale, language_name, t
 from puripuly_heart.ui.overlay_peer_contract import OverlayPeerConsumerContract
 
-_BUILD_TAG = "r338"  #increment each build so user can confirm version
+_BUILD_TAG = "r339"  #increment each build so user can confirm version
 
 # ── VRCT-style dark palette ──────────────────────────────────────────────────
 _BG_MAIN = "#2e2f32"
@@ -3681,14 +3681,34 @@ class DashboardView(ft.Row):
                 with contextlib.suppress(Exception):
                     tag.value = name
                     tag.update()
+        # r339: lines that arrived with no cluster are keyed on the identity.
+        by_name = getattr(self, "_speaker_tag_controls_by_name", None)
+        if by_name:
+            moved = []
+            for candidate in (name, also_named):
+                if candidate and candidate in by_name:
+                    moved.extend(by_name.pop(candidate))
+            for tag in moved:
+                with contextlib.suppress(Exception):
+                    tag.value = name
+                    tag.update()
+            if moved:
+                by_name.setdefault(name, []).extend(moved)
 
-    def _open_speaker_name_dialog(self, cluster_id: int, current_label: str) -> None:
-        """Name (enroll) the voice behind a chat entry's speaker tag (r318)."""
+    def _open_speaker_name_dialog(
+        self, cluster_id: int, current_label: str, *, known_name: str = ""
+    ) -> None:
+        """Name (enroll) or rename the voice behind a chat entry's tag (r318).
+
+        r339: `known_name` comes straight from the rendered line, so a
+        recognised voice with no session cluster (cluster_id -1) can still be
+        renamed — the cluster lookup below has nothing to answer for those.
+        """
         if self.page is None:
             return
+        known_name = (known_name or "").strip()
         lookup = getattr(self, "on_speaker_name_lookup", None)
-        known_name = ""
-        if callable(lookup):
+        if not known_name and callable(lookup):
             with contextlib.suppress(Exception):
                 known_name = str(lookup(cluster_id) or "")
         name_field = ft.TextField(
@@ -3717,7 +3737,7 @@ class DashboardView(ft.Row):
                     with contextlib.suppress(Exception):
                         rename(known_name, name)
             enroll = getattr(self, "on_enroll_speaker", None)
-            if not known_name and callable(enroll):
+            if not known_name and callable(enroll) and cluster_id >= 0:
                 with contextlib.suppress(Exception):
                     enroll(cluster_id, name)
             self._retro_label_speaker_tags(cluster_id, name, also_named=known_name)
@@ -3895,21 +3915,34 @@ class DashboardView(ft.Row):
                     registry = {}
                     self._speaker_tag_controls = registry
                 registry.setdefault(speaker_cluster_id, []).append(tag_control)
+            if speaker_name:
+                # r339: a recognised voice can arrive with NO session cluster
+                # (match() returns -1 for a pure voiceprint hit). Those tags
+                # were registered nowhere, so a later rename left them showing
+                # the old name. Key them on the identity instead.
+                by_name = getattr(self, "_speaker_tag_controls_by_name", None)
+                if by_name is None:
+                    by_name = {}
+                    self._speaker_tag_controls_by_name = by_name
+                by_name.setdefault(speaker_name, []).append(tag_control)
             header_cells.append(
                 ft.GestureDetector(
                     content=ft.Container(
                         content=tag_control,
                         tooltip=t("dashboard.tooltip.speaker_tag"),
                     ),
+                    # r339: clickable whenever there is something to name —
+                    # a cluster to enroll, OR an identity to rename.
                     on_tap=(
-                        (lambda e, cid=speaker_cluster_id, current=tag_text:
-                            self._open_speaker_name_dialog(cid, current))
-                        if speaker_cluster_id >= 0
+                        (lambda e, cid=speaker_cluster_id, current=tag_text,
+                                known=speaker_name:
+                            self._open_speaker_name_dialog(cid, current, known_name=known))
+                        if (speaker_cluster_id >= 0 or speaker_name)
                         else None
                     ),
                     mouse_cursor=(
                         ft.MouseCursor.CLICK
-                        if speaker_cluster_id >= 0
+                        if (speaker_cluster_id >= 0 or speaker_name)
                         else ft.MouseCursor.BASIC
                     ),
                 )

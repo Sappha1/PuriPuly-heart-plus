@@ -94,3 +94,31 @@ def test_saved_voices_strings_are_translated(locale: str) -> None:
         assert data.get(key), f"{locale}: {key}"
     assert "{variants}" in data["settings.saved_voices.detail"]
     assert "{heard}" in data["settings.saved_voices.detail"]
+
+
+def test_a_recognised_line_is_clickable_without_a_session_cluster() -> None:
+    """r339: match() returns cluster_id -1 for a pure voiceprint hit, so those
+    lines had on_tap=None — the name was shown with no way to rename it."""
+    body = _body(DASHBOARD, "on_tap=(", 700)
+    assert "speaker_cluster_id >= 0 or speaker_name" in body
+    assert "known_name=known" in body
+
+
+def test_clusterless_named_tags_are_registered_for_relabelling() -> None:
+    """They were keyed nowhere, so the r338 rename silently skipped them."""
+    assert "_speaker_tag_controls_by_name" in DASHBOARD
+    relabel = _body(DASHBOARD, "def _retro_label_speaker_tags", 2600)
+    assert "_speaker_tag_controls_by_name" in relabel
+
+
+def test_enrolling_still_requires_a_real_cluster() -> None:
+    """Renaming works from a name alone; enrolling a voiceprint does not —
+    there is no centroid to store for cluster -1."""
+    body = _body(DASHBOARD, "def _open_speaker_name_dialog", 3200)
+    assert "callable(enroll) and cluster_id >= 0" in body
+
+
+def test_the_dialog_takes_the_name_from_the_rendered_line() -> None:
+    body = _body(DASHBOARD, "def _open_speaker_name_dialog", 1200)
+    assert "known_name: str = \"\"" in body
+    assert "if not known_name and callable(lookup)" in body

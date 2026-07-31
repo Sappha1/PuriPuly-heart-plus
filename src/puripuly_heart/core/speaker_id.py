@@ -289,6 +289,58 @@ class SpeakerRegistry:
             self._save()
             return True
 
+    def has_name(self, name: str) -> bool:
+        """Does an enrolled voice already use this name? (r341)
+
+        The UI asks before saving, so a merge can be confirmed rather than
+        discovered afterwards.
+        """
+        with self._lock:
+            return name.strip() in self._named
+
+    def snapshot(self) -> dict:
+        """Copy of the enrolled state, for one level of undo (r341)."""
+        with self._lock:
+            return {
+                "named": {
+                    name: [variant.copy() for variant in variants]
+                    for name, variants in self._named.items()
+                },
+                "counts": dict(self._named_counts),
+                "cluster_names": dict(self._cluster_names),
+            }
+
+    def restore(self, snapshot: dict) -> bool:
+        """Put back a snapshot() — undoing a merge, rename or deletion."""
+        if not isinstance(snapshot, dict) or "named" not in snapshot:
+            return False
+        with self._lock:
+            self._named = {
+                name: [variant.copy() for variant in variants]
+                for name, variants in snapshot["named"].items()
+            }
+            self._named_counts = dict(snapshot.get("counts", {}))
+            self._cluster_names = dict(snapshot.get("cluster_names", {}))
+            self._save()
+            logger.info("[SpeakerID] restored a previous voices snapshot")
+            return True
+
+    def detach_cluster(self, cluster_id: int) -> str:
+        """Unbind this session cluster from whatever name it carries (r341).
+
+        For "this speaker is not that person": the cluster goes back to an
+        anonymous label WITHOUT touching the named voice, so correcting a
+        misidentified line cannot rewrite the real person's history. Returns
+        the name it used to carry ("" if none).
+        """
+        with self._lock:
+            previous = self._cluster_names.pop(int(cluster_id), "")
+            if previous:
+                logger.info(
+                    "[SpeakerID] cluster %d detached from %r", cluster_id, previous
+                )
+            return previous
+
     def rename(self, old_name: str, new_name: str) -> bool:
         """Rename an enrolled voice, merging into an existing name if taken.
 

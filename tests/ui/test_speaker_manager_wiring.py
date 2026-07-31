@@ -33,7 +33,7 @@ def test_relabelling_collects_every_cluster_of_the_person() -> None:
 
 
 def test_naming_a_known_voice_renames_instead_of_re_enrolling() -> None:
-    body = _body(DASHBOARD, "def _open_speaker_name_dialog", 3000)
+    body = _body(DASHBOARD, "def _open_speaker_name_dialog", 7000)
     assert "on_rename_speaker" in body
     # the old name is passed through so its other clusters follow
     assert "also_named=known_name" in body
@@ -114,7 +114,7 @@ def test_clusterless_named_tags_are_registered_for_relabelling() -> None:
 def test_enrolling_still_requires_a_real_cluster() -> None:
     """Renaming works from a name alone; enrolling a voiceprint does not —
     there is no centroid to store for cluster -1."""
-    body = _body(DASHBOARD, "def _open_speaker_name_dialog", 3200)
+    body = _body(DASHBOARD, "def _open_speaker_name_dialog", 7000)
     assert "callable(enroll) and cluster_id >= 0" in body
 
 
@@ -122,3 +122,55 @@ def test_the_dialog_takes_the_name_from_the_rendered_line() -> None:
     body = _body(DASHBOARD, "def _open_speaker_name_dialog", 1200)
     assert "known_name: str = \"\"" in body
     assert "if not known_name and callable(lookup)" in body
+
+
+def test_dialog_offers_scope_and_warns_before_merging() -> None:
+    """r341: renaming one misidentified line must not silently sweep the real
+    person, and typing an existing name must not silently merge two people."""
+    body = _body(DASHBOARD, "def _open_speaker_name_dialog", 7000)
+    assert "scope_all" in body and "scope_one" in body
+    assert "merge_warning" in body
+    assert "merge_button" in body
+    # "only this speaker" detaches BEFORE enrolling, so the named person's
+    # voiceprints are never part of the correction
+    assert body.index("on_detach_speaker_cluster") < body.index(
+        "on_enroll_speaker"
+    )
+
+
+def test_dialog_states_the_blast_radius() -> None:
+    body = _body(DASHBOARD, "def _open_speaker_name_dialog", 7000)
+    assert "_messages_showing_name" in body
+
+
+def test_manager_requires_a_second_save_to_merge() -> None:
+    body = _body(SETTINGS, "def _voice_row", 3200)
+    assert "on_voice_name_taken" in body
+    assert "pending_merge" in body
+    assert "merge_confirm" in body
+
+
+def test_manager_offers_undo() -> None:
+    body = _body(SETTINGS, "def _on_saved_voices_click", 6500)
+    assert "on_can_undo_voice_edit" in body
+    assert "on_undo_voice_edit" in body
+
+
+def test_app_wires_the_r341_guards() -> None:
+    for attr in (
+        "view_dashboard.on_speaker_variant_count",
+        "view_dashboard.on_detach_speaker_cluster",
+        "view_settings.on_voice_name_taken",
+        "view_settings.on_can_undo_voice_edit",
+        "view_settings.on_undo_voice_edit",
+    ):
+        assert attr in APP, attr
+
+
+def test_controller_snapshots_before_destructive_edits() -> None:
+    rename = _body(CONTROLLER, "def rename_speaker", 900)
+    forget = _body(CONTROLLER, "def forget_speaker", 700)
+    assert "_capture_speaker_snapshot" in rename
+    assert "_capture_speaker_snapshot" in forget
+    # slots=True: the field must be DECLARED or assignment crashes at runtime
+    assert "_speaker_undo_snapshot: object | None = None" in CONTROLLER

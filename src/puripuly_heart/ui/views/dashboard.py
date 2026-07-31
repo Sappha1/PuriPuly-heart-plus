@@ -19,7 +19,7 @@ from puripuly_heart.ui.fonts import font_for_language
 from puripuly_heart.ui.i18n import get_locale, language_name, t
 from puripuly_heart.ui.overlay_peer_contract import OverlayPeerConsumerContract
 
-_BUILD_TAG = "r340"  #increment each build so user can confirm version
+_BUILD_TAG = "r341"  #increment each build so user can confirm version
 
 # ── VRCT-style dark palette ──────────────────────────────────────────────────
 _BG_MAIN = "#2e2f32"
@@ -3658,6 +3658,28 @@ class DashboardView(ft.Row):
             with contextlib.suppress(Exception):
                 callback()
 
+    def _messages_showing_name(self, name: str) -> int:
+        """How many chat entries currently display this name (r341).
+
+        A named line with a cluster is registered in BOTH registries, so the
+        two are merged on control identity before counting.
+        """
+        name = (name or "").strip()
+        if not name:
+            return 0
+        seen: set[int] = set()
+
+        def _collect(refs) -> None:
+            for ref in refs or ():
+                tag = ref()
+                if tag is not None and tag.value == name:
+                    seen.add(id(tag))
+
+        _collect((getattr(self, "_speaker_tag_controls_by_name", None) or {}).get(name))
+        for refs in (getattr(self, "_speaker_tag_controls", None) or {}).values():
+            _collect(refs)
+        return len(seen)
+
     def _retro_label_speaker_tags(
         self, cluster_id: int, name: str, *, also_named: str = ""
     ) -> None:
@@ -3719,7 +3741,15 @@ class DashboardView(ft.Row):
 
         r339: `known_name` comes straight from the rendered line, so a
         recognised voice with no session cluster (cluster_id -1) can still be
-        renamed — the cluster lookup below has nothing to answer for those.
+        renamed.
+
+        r341: renaming is identity-wide, which is catastrophic when THIS line
+        was misidentified — renaming one wrong line swept the real person's
+        history, and typing an existing name merged two people's voiceprints
+        permanently. The dialog now states how many messages it will touch,
+        offers "only this speaker" (detach + enroll separately) when a session
+        cluster exists, and turns Save into an explicit Merge with a warning
+        when the typed name already belongs to someone.
         """
         if self.page is None:
             return
@@ -3728,12 +3758,80 @@ class DashboardView(ft.Row):
         if not known_name and callable(lookup):
             with contextlib.suppress(Exception):
                 known_name = str(lookup(cluster_id) or "")
+
+        def _variant_count(name: str) -> int:
+            counter = getattr(self, "on_speaker_variant_count", None)
+            if callable(counter):
+                with contextlib.suppress(Exception):
+                    return int(counter(name) or 0)
+            return 0
+
+        affected = self._messages_showing_name(known_name) if known_name else 0
+
         name_field = ft.TextField(
             value=known_name,
             hint_text=t("dashboard.speaker_name_dialog.hint"),
             autofocus=True,
             dense=True,
         )
+        scope = ft.RadioGroup(
+            value="all",
+            content=ft.Column(
+                [
+                    ft.Radio(
+                        value="all",
+                        label=t(
+                            "dashboard.speaker_name_dialog.scope_all",
+                            name=known_name,
+                            count=max(affected, 1),
+                        ),
+                    ),
+                    ft.Radio(
+                        value="one",
+                        label=t("dashboard.speaker_name_dialog.scope_one"),
+                    ),
+                ],
+                spacing=0,
+                tight=True,
+            ),
+            # Splitting needs a session cluster to re-enroll from; a pure
+            # voiceprint line has none, so the choice is hidden there.
+            visible=bool(known_name) and cluster_id >= 0,
+        )
+        merge_warning = ft.Text(
+            "", size=11, color="#c8a44a", no_wrap=False, visible=False
+        )
+        save_button = ft.TextButton(t("common.save"))
+
+        def _refresh_merge_state(_e=None) -> None:
+            typed = (name_field.value or "").strip()
+            target_variants = (
+                _variant_count(typed) if typed and typed != known_name else 0
+            )
+            merging = target_variants > 0
+            if merging:
+                only_this = bool(scope.visible and scope.value == "one")
+                moving = (
+                    1
+                    if only_this or not known_name
+                    else max(_variant_count(known_name), 1)
+                )
+                merge_warning.value = t(
+                    "dashboard.speaker_name_dialog.merge_warning",
+                    name=typed,
+                    existing=target_variants,
+                    moving=moving,
+                )
+                save_button.text = t("dashboard.speaker_name_dialog.merge_button")
+            else:
+                save_button.text = t("common.save")
+            merge_warning.visible = merging
+            with contextlib.suppress(Exception):
+                merge_warning.update()
+                save_button.update()
+
+        name_field.on_change = _refresh_merge_state
+        scope.on_change = _refresh_merge_state
 
         def _close(_e=None) -> None:
             dialog.open = False
@@ -3745,29 +3843,47 @@ class DashboardView(ft.Row):
             if not name or name == known_name:
                 _close()
                 return
-            # r338: if this voice is already enrolled, the user is RENAMING a
-            # person, not teaching a new one. Renaming carries every cluster
-            # of theirs across; enrolling would only bind this one.
-            if known_name:
+            only_this = bool(scope.visible and scope.value == "one")
+            if known_name and not only_this:
                 rename = getattr(self, "on_rename_speaker", None)
                 if callable(rename):
                     with contextlib.suppress(Exception):
                         rename(known_name, name)
+                self._retro_label_speaker_tags(
+                    cluster_id, name, also_named=known_name
+                )
+                _close()
+                return
+            # New enrollment, or an explicit "this is a different person":
+            # detach the cluster from its current name FIRST, so the named
+            # person's voiceprints are never touched by this correction.
+            if only_this:
+                detach = getattr(self, "on_detach_speaker_cluster", None)
+                if callable(detach):
+                    with contextlib.suppress(Exception):
+                        detach(cluster_id)
             enroll = getattr(self, "on_enroll_speaker", None)
-            if not known_name and callable(enroll) and cluster_id >= 0:
+            if callable(enroll) and cluster_id >= 0:
                 with contextlib.suppress(Exception):
                     enroll(cluster_id, name)
-            self._retro_label_speaker_tags(cluster_id, name, also_named=known_name)
+            self._retro_label_speaker_tags(cluster_id, name, also_named="")
             _close()
 
         name_field.on_submit = _save
+        save_button.on_click = _save
+        _refresh_merge_state()
         dialog = ft.AlertDialog(
             modal=True,
             title=ft.Text(t("dashboard.speaker_name_dialog.title"), size=14),
-            content=ft.Container(content=name_field, width=280),
+            content=ft.Container(
+                content=ft.Column(
+                    [name_field, scope, merge_warning], spacing=8, tight=True
+                ),
+                width=320,
+            ),
             actions=[
                 ft.TextButton(t("common.cancel"), on_click=_close),
-                ft.TextButton(t("common.save"), on_click=_save),
+                save_button,
             ],
         )
         self.page.open(dialog)

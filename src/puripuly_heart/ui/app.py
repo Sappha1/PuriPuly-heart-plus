@@ -156,6 +156,14 @@ class TranslatorApp:
         self.view_dashboard.on_speaker_clusters_for_name = (
             lambda name: self.controller.speaker_clusters_for_name(name)
         )
+        # r341: the dialog previews a merge before it happens, and "only this
+        # speaker" corrects a misidentified line without touching the person.
+        self.view_dashboard.on_speaker_variant_count = (
+            lambda name: self.controller.speaker_variant_count(name)
+        )
+        self.view_dashboard.on_detach_speaker_cluster = (
+            lambda cluster_id: self.controller.detach_speaker_cluster(cluster_id)
+        )
         # r332: version-label menu actions.
         self.view_dashboard.on_check_updates = self._title_menu_check_updates
         self.view_dashboard.on_show_changelog = self._title_menu_show_changelog
@@ -230,6 +238,17 @@ class TranslatorApp:
         self.view_settings.on_rename_saved_voice = self._on_rename_saved_voice
         self.view_settings.on_forget_saved_voice = (
             lambda name: self.controller.forget_speaker(name)
+        )
+        # r341: destructive voice edits are snapshotted; the manager can put
+        # the previous state back, and warns before a merge.
+        self.view_settings.on_voice_name_taken = (
+            lambda name: self.controller.speaker_name_taken(name)
+        )
+        self.view_settings.on_can_undo_voice_edit = (
+            lambda: self.controller.can_undo_speaker_edit()
+        )
+        self.view_settings.on_undo_voice_edit = (
+            lambda: self.controller.undo_speaker_edit()
         )
         self.view_settings.on_desktop_overlay_lock_change = self._on_desktop_overlay_lock_change
         self.view_settings.on_desktop_overlay_size_change = self._on_desktop_overlay_size_change

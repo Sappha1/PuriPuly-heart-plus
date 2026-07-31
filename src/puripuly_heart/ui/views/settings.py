@@ -5552,11 +5552,32 @@ class SettingsView(ft.Column):
                 focused_border_color=COLOR_PRIMARY,
                 expand=True,
             )
+            merge_hint = ft.Text(
+                "", size=11, color="#c8a44a", no_wrap=False, visible=False
+            )
+            pending_merge = {"armed_for": ""}
 
             def _apply_rename(_e=None) -> None:
                 new_name = (field.value or "").strip()
                 if not new_name or new_name == name:
                     return
+                # r341: renaming onto an existing name merges two people's
+                # voiceprints permanently. That destroyed data tonight, so it
+                # now takes a second, informed save.
+                taken = getattr(self, "on_voice_name_taken", None)
+                if callable(taken):
+                    is_taken = False
+                    with contextlib.suppress(Exception):
+                        is_taken = bool(taken(new_name))
+                    if is_taken and pending_merge["armed_for"] != new_name:
+                        pending_merge["armed_for"] = new_name
+                        merge_hint.value = t(
+                            "settings.saved_voices.merge_confirm", name=new_name
+                        )
+                        merge_hint.visible = True
+                        with contextlib.suppress(Exception):
+                            merge_hint.update()
+                        return
                 callback = getattr(self, "on_rename_saved_voice", None)
                 if callable(callback):
                     with contextlib.suppress(Exception):
@@ -5573,28 +5594,35 @@ class SettingsView(ft.Column):
             field.on_submit = _apply_rename
             field.on_blur = _apply_rename
             return ft.Container(
-                content=ft.Row(
+                content=ft.Column(
                     [
-                        field,
-                        ft.Text(
-                            t(
-                                "settings.saved_voices.detail",
-                                variants=variants,
-                                heard=heard,
-                            ),
-                            size=11,
-                            color=COLOR_NEUTRAL,
+                        ft.Row(
+                            [
+                                field,
+                                ft.Text(
+                                    t(
+                                        "settings.saved_voices.detail",
+                                        variants=variants,
+                                        heard=heard,
+                                    ),
+                                    size=11,
+                                    color=COLOR_NEUTRAL,
+                                ),
+                                ft.IconButton(
+                                    icon=ft.Icons.DELETE_OUTLINE,
+                                    icon_size=16,
+                                    icon_color=COLOR_NEUTRAL,
+                                    tooltip=t("settings.saved_voices.remove"),
+                                    on_click=_remove,
+                                ),
+                            ],
+                            spacing=8,
+                            vertical_alignment=ft.CrossAxisAlignment.CENTER,
                         ),
-                        ft.IconButton(
-                            icon=ft.Icons.DELETE_OUTLINE,
-                            icon_size=16,
-                            icon_color=COLOR_NEUTRAL,
-                            tooltip=t("settings.saved_voices.remove"),
-                            on_click=_remove,
-                        ),
+                        merge_hint,
                     ],
-                    spacing=8,
-                    vertical_alignment=ft.CrossAxisAlignment.CENTER,
+                    spacing=2,
+                    tight=True,
                 ),
                 padding=ft.padding.symmetric(vertical=4),
             )
@@ -5626,11 +5654,35 @@ class SettingsView(ft.Column):
             with contextlib.suppress(Exception):
                 self.page.update()
 
+        # r341: one level of undo for the last rename/merge/delete.
+        can_undo = False
+        can_undo_cb = getattr(self, "on_can_undo_voice_edit", None)
+        if callable(can_undo_cb):
+            with contextlib.suppress(Exception):
+                can_undo = bool(can_undo_cb())
+        undo_button = ft.TextButton(
+            t("settings.saved_voices.undo"), visible=can_undo
+        )
+
+        def _undo(_e=None) -> None:
+            callback = getattr(self, "on_undo_voice_edit", None)
+            if callable(callback):
+                with contextlib.suppress(Exception):
+                    callback()
+            undo_button.visible = False
+            with contextlib.suppress(Exception):
+                undo_button.update()
+            _rebuild()
+
+        undo_button.on_click = _undo
         dialog = ft.AlertDialog(
             modal=False,
             title=ft.Text(t("settings.saved_voices"), size=15),
             content=ft.Container(content=list_column, width=420, height=300),
-            actions=[ft.TextButton(t("common.close"), on_click=_close)],
+            actions=[
+                undo_button,
+                ft.TextButton(t("common.close"), on_click=_close),
+            ],
         )
         with contextlib.suppress(Exception):
             self.page.open(dialog)

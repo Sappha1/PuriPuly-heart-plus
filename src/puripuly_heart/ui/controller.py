@@ -4961,6 +4961,10 @@ class GuiController:
         self.log_detailed("[AudioDiag][DebugFault] capture_profile=none stt_profile=none")
 
     _speaker_registry_instance: object | None = None
+    # r341: MUST be declared — GuiController is @dataclass(slots=True), so an
+    # undeclared attribute raises AttributeError on assignment (this is what
+    # crashed every launch in r325).
+    _speaker_undo_snapshot: object | None = None
 
     def _speaker_registry(self):
         """Lazy per-process SpeakerRegistry (r318); voices.json lives beside
@@ -5000,6 +5004,9 @@ class GuiController:
     def rename_speaker(self, old_name: str, new_name: str) -> bool:
         """Rename an enrolled voice everywhere, merging if the target exists."""
         try:
+            # r341: merging is irreversible at the voiceprint level (near
+            # duplicates are averaged together), so keep one step back.
+            self._capture_speaker_snapshot()
             ok = bool(self._speaker_registry().rename(str(old_name), str(new_name)))
         except Exception:
             logger.warning("[SpeakerID] rename failed", exc_info=True)
@@ -5011,6 +5018,7 @@ class GuiController:
     def forget_speaker(self, name: str) -> bool:
         """Delete an enrolled voice and its session mapping."""
         try:
+            self._capture_speaker_snapshot()
             ok = bool(self._speaker_registry().forget(str(name)))
         except Exception:
             logger.warning("[SpeakerID] forget failed", exc_info=True)
@@ -5018,6 +5026,56 @@ class GuiController:
         if ok:
             self.log_basic(f"[SpeakerID] Voice removed: {name}")
         return ok
+
+    def _capture_speaker_snapshot(self) -> None:
+        """Remember the enrolled state so the last edit can be undone (r341)."""
+        try:
+            self._speaker_undo_snapshot = self._speaker_registry().snapshot()
+        except Exception:
+            self._speaker_undo_snapshot = None
+
+    def can_undo_speaker_edit(self) -> bool:
+        return getattr(self, "_speaker_undo_snapshot", None) is not None
+
+    def undo_speaker_edit(self) -> bool:
+        """Put the enrolled voices back as they were before the last edit."""
+        snapshot = getattr(self, "_speaker_undo_snapshot", None)
+        if snapshot is None:
+            return False
+        try:
+            ok = bool(self._speaker_registry().restore(snapshot))
+        except Exception:
+            logger.warning("[SpeakerID] undo failed", exc_info=True)
+            return False
+        if ok:
+            self._speaker_undo_snapshot = None
+            self.log_basic("[SpeakerID] Undid the last voice edit")
+        return ok
+
+    def speaker_name_taken(self, name: str) -> bool:
+        """Would saving this name merge into an existing person? (r341)"""
+        try:
+            return bool(self._speaker_registry().has_name(str(name)))
+        except Exception:
+            return False
+
+    def detach_speaker_cluster(self, cluster_id: int) -> str:
+        """"This speaker is not that person" — unbind without touching them."""
+        try:
+            previous = str(self._speaker_registry().detach_cluster(int(cluster_id)))
+        except Exception:
+            logger.warning("[SpeakerID] detach failed", exc_info=True)
+            return ""
+        if previous:
+            self.log_basic(f"[SpeakerID] Voice detached from: {previous}")
+        return previous
+
+    def speaker_variant_count(self, name: str) -> int:
+        """How many voiceprints an enrolled name holds (r341 merge preview)."""
+        try:
+            return int(self._speaker_registry().variant_count(str(name)))
+        except Exception:
+            return 0
 
     def enrolled_speakers(self) -> list[tuple[str, int, int]]:
         """(name, voiceprints, utterances) for the saved-voices manager."""

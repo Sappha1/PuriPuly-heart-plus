@@ -369,7 +369,7 @@ class TranslatorApp:
             on_click=self._on_toolbar_update_click,
             disabled=not upd_supported,
             tooltip=t("update.toolbar.tooltip") if upd_supported
-            else "Available in the packaged app only",
+            else t("update.toolbar.unpackaged"),
         )
         self._hdr_whatsnew_text = ft.Text(
             t("update.whatsnew"), size=12, color=_OFF, weight=ft.FontWeight.W_600
@@ -2363,7 +2363,7 @@ class TranslatorApp:
         entries = _load_changelog_entries()
         body: list = []
         if not entries:
-            body.append(ft.Text("Changelog unavailable.", size=12, color="#8a8d91"))
+            body.append(ft.Text(t("update.changelog.unavailable"), size=12, color="#8a8d91"))
         for title, bullets in entries:
             body.append(ft.Text(title, size=13, weight=ft.FontWeight.W_600, color="#48a495"))
             for bullet in bullets:
@@ -2685,7 +2685,7 @@ class TranslatorApp:
             hub = getattr(self.controller, "hub", None)
             llm = getattr(hub, "llm", None) if hub is not None else None
             if llm is None:
-                view.append_api_response("none", "No translation provider is active.")
+                view.append_api_response("none", t("dashboard.no_provider_active"))
                 return
             from uuid import uuid4
 

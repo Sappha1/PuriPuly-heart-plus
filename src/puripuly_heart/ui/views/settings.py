@@ -1756,7 +1756,7 @@ class SettingsView(ft.Column):
         )
 
         self._overlay_show_self_title = ft.Text(
-            "Show my messages",
+            t("settings.self_in_overlay"),
             size=13,
             weight=ft.FontWeight.BOLD,
             color=COLOR_NEUTRAL,
@@ -1857,7 +1857,7 @@ class SettingsView(ft.Column):
             expand=True,
             height=SettingsUnitCard.DEFAULT_HEIGHT,
         )
-        self._overlay_distance_card.tooltip = "How far (in metres) the overlay floats from its anchor point."
+        self._overlay_distance_card.tooltip = t("settings.overlay.calibration.distance.tooltip")
 
         self._overlay_offset_x_title = ft.Text(
             t("settings.overlay.calibration.offset_x"),
@@ -1890,7 +1890,7 @@ class SettingsView(ft.Column):
             expand=True,
             height=SettingsUnitCard.DEFAULT_HEIGHT,
         )
-        self._overlay_offset_x_card.tooltip = "Horizontal position adjustment of the overlay from its anchor point."
+        self._overlay_offset_x_card.tooltip = t("settings.overlay.calibration.offset_x.tooltip")
 
         self._overlay_offset_y_title = ft.Text(
             t("settings.overlay.calibration.offset_y"),
@@ -1923,7 +1923,7 @@ class SettingsView(ft.Column):
             expand=True,
             height=SettingsUnitCard.DEFAULT_HEIGHT,
         )
-        self._overlay_offset_y_card.tooltip = "Vertical position adjustment of the overlay from its anchor point."
+        self._overlay_offset_y_card.tooltip = t("settings.overlay.calibration.offset_y.tooltip")
 
         self._overlay_text_scale_title = ft.Text(
             t("settings.overlay.calibration.text_scale"),
@@ -4404,8 +4404,6 @@ class SettingsView(ft.Column):
 
     def _desktop_overlay_size_label_for(self, size_preset: object) -> str:
         normalized = self._normalize_desktop_overlay_size_preset(size_preset)
-        if normalized == "micro":
-            return "Micro"
         return t(f"settings.overlay.desktop.size.option.{normalized}")
 
     def _current_desktop_overlay_size_preset(self) -> str:
@@ -5890,7 +5888,7 @@ class SettingsView(ft.Column):
             if provider == "deepl" and result[0]:
                 await self._refresh_deepl_usage()
             return result
-        return False, "Verification not available"
+        return False, t("settings.verify.unavailable")
 
     def _emit_settings_changed(self) -> None:
         if self._settings and self.on_settings_changed:

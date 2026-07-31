@@ -40,7 +40,7 @@ def _load_third_party_notices() -> str:
             .read_text(encoding="utf-8")
         )
     except Exception:
-        return "Could not load license information."
+        return t("about.licenses_unavailable")
 
 
 def _get_profile_image_path() -> str:
@@ -96,7 +96,7 @@ class AboutView(ft.Column):
             for name, url in inspiration_projects
         ]
 
-        thanks_names = [t(k) for k in self._SPECIAL_THANKS_NAME_KEYS] + ["and you!"]
+        thanks_names = [t(k) for k in self._SPECIAL_THANKS_NAME_KEYS] + [t("about.and_you")]
         thanks_text = "  ·  ".join(thanks_names)
 
         def _link_chip(label: str, url: str) -> ft.Container:
@@ -123,7 +123,7 @@ class AboutView(ft.Column):
                                         size=22, weight=ft.FontWeight.BOLD, color=COLOR_PRIMARY,
                                     ),
                                     ft.Text(
-                                        "A fork of PuriPuly Heart with additional features",
+                                        t("about.subtitle"),
                                         size=11, color=COLOR_NEUTRAL,
                                     ),
                                 ],
@@ -134,7 +134,7 @@ class AboutView(ft.Column):
                                 content=ft.Text(f"v{__version__}", size=13, color=COLOR_NEUTRAL),
                                 on_click=lambda _: webbrowser.open(f"https://github.com/{GITHUB_REPO}"),
                                 on_hover=self._on_version_hover,
-                                tooltip="View releases on GitHub",
+                                tooltip=t("about.view_releases"),
                             ),
                         ],
                         vertical_alignment=ft.CrossAxisAlignment.CENTER,
@@ -148,7 +148,7 @@ class AboutView(ft.Column):
                             ft.Container(width=10),
                             ft.Column(
                                 [
-                                    ft.Text("Original project by", size=11, color=COLOR_NEUTRAL),
+                                    ft.Text(t("about.original_by"), size=11, color=COLOR_NEUTRAL),
                                     ft.Container(
                                         content=ft.Text(
                                             "salee (kapitalismho)",
@@ -156,10 +156,10 @@ class AboutView(ft.Column):
                                         ),
                                         on_click=lambda _: webbrowser.open("https://x.com/kapitalismho"),
                                         on_hover=self._on_name_hover,
-                                        tooltip="Open salee's Twitter/X",
+                                        tooltip=t("about.open_twitter"),
                                     ),
                                     _link_chip(
-                                        "PuriPuly Heart — original repository",
+                                        t("about.original_repo_chip"),
                                         "https://github.com/kapitalismho/PuriPuly-heart",
                                     ),
                                 ],
@@ -174,18 +174,15 @@ class AboutView(ft.Column):
                     # ── About this fork ───────────────────────────────────────
                     ft.Column(
                         [
-                            ft.Text("About this fork", size=11, color=COLOR_NEUTRAL),
+                            ft.Text(t("about.fork_section"), size=11, color=COLOR_NEUTRAL),
                             ft.Text(
-                                "PuriPulyHeart+ is a fork of PuriPuly Heart built with gratitude to the "
-                                "original project. It adds optional features like transcription logging and "
-                                "expanded language options for users who want them. The original is wonderful "
-                                "and none of this would exist without it. Released under AGPL-3.0.",
+                                t("about.fork_description"),
                                 size=12, color=COLOR_ON_BACKGROUND, no_wrap=False,
                             ),
                             ft.Row(
                                 [
-                                    _link_chip("Fork source", f"https://github.com/{GITHUB_REPO}"),
-                                    _link_chip("Original project", "https://github.com/kapitalismho/PuriPuly-heart"),
+                                    _link_chip(t("about.fork_source"), f"https://github.com/{GITHUB_REPO}"),
+                                    _link_chip(t("about.original_project"), "https://github.com/kapitalismho/PuriPuly-heart"),
                                 ],
                                 spacing=12,
                             ),
@@ -197,10 +194,9 @@ class AboutView(ft.Column):
                     # ── UI design credit (VRCT) ───────────────────────────────
                     ft.Column(
                         [
-                            ft.Text("UI design", size=11, color=COLOR_NEUTRAL),
+                            ft.Text(t("about.ui_design"), size=11, color=COLOR_NEUTRAL),
                             ft.Text(
-                                "Visual design (dark palette, teal accent, sidebar layout) is heavily inspired "
-                                "by VRCT by misyaguziya. No VRCT source code was used.",
+                                t("about.ui_design_description"),
                                 size=12, color=COLOR_ON_BACKGROUND, no_wrap=False,
                             ),
                             _link_chip("VRCT by misyaguziya", "https://github.com/misyaguziya/VRCT"),
@@ -228,27 +224,46 @@ class AboutView(ft.Column):
     # ── Provider reference (speech recognition + translation back-ends) ──────
     # Rows match the in-app dropdowns exactly. Accuracy is a coarse relative guide
     # (Good < High < Very high).
-    _STT_PROVIDER_ROWS = [
-        ("Qwen ASR 0.6B", "High", "Local — no key"),
-        ("Whisper", "High–Very high", "Local — no key"),
-        ("Google", "High", "Free web — no key"),
-        ("Deepgram", "Very high", "API key"),
-        ("Qwen ASR (cloud)", "Very high", "API key"),
-        ("Soniox", "Very high", "API key"),
-    ]
-    _TRANSLATION_PROVIDER_ROWS = [
-        ("Google Translate", "Good", "Free web — no key"),
-        ("Bing Translator", "Good", "Free web — no key"),
-        ("Papago", "Good (KO/JA)", "Free web — no key"),
-        ("Local LLMs", "High–Very high", "Local — no key"),
-        ("DeepL", "Very high", "API key"),
-        ("Gemini 3 Flash", "Very high", "API key"),
-        ("Gemini 3.1 Flash-Lite", "High", "API key"),
-        ("Qwen 3.5 Plus", "Very high", "API key"),
-        ("DeepSeek V4 Flash", "High", "API key"),
-        ("DeepSeek V4 Pro", "Very high", "API key"),
-        ("Gemma 4 26B A4B", "High", "API key"),
-    ]
+    @staticmethod
+    def _provider_table_headers() -> list:
+        return [t("about.col.provider"), t("about.col.accuracy"), t("about.col.api")]
+
+    @staticmethod
+    def _stt_provider_rows() -> list:
+        high = t("about.acc.high")
+        very_high = t("about.acc.very_high")
+        local = t("about.api.local")
+        free_web = t("about.api.free_web")
+        api_key = t("about.api.key")
+        return [
+            ("Qwen ASR 0.6B", high, local),
+            ("Whisper", t("about.acc.high_very_high"), local),
+            ("Google", high, free_web),
+            ("Deepgram", very_high, api_key),
+            (t("about.provider.qwen_cloud"), very_high, api_key),
+            ("Soniox", very_high, api_key),
+        ]
+
+    @staticmethod
+    def _translation_provider_rows() -> list:
+        good = t("about.acc.good")
+        high = t("about.acc.high")
+        very_high = t("about.acc.very_high")
+        free_web = t("about.api.free_web")
+        api_key = t("about.api.key")
+        return [
+            ("Google Translate", good, free_web),
+            ("Bing Translator", good, free_web),
+            ("Papago", t("about.acc.good_ko_ja"), free_web),
+            (t("provider.local_llms"), t("about.acc.high_very_high"), t("about.api.local")),
+            ("DeepL", very_high, api_key),
+            ("Gemini 3 Flash", very_high, api_key),
+            ("Gemini 3.1 Flash-Lite", high, api_key),
+            ("Qwen 3.5 Plus", very_high, api_key),
+            ("DeepSeek V4 Flash", high, api_key),
+            ("DeepSeek V4 Pro", very_high, api_key),
+            ("Gemma 4 26B A4B", high, api_key),
+        ]
     def _styled_table(self, headers: list[str], rows: list[tuple]) -> ft.DataTable:
         """A compact themed table. First cell of each row is emphasized, last is muted."""
         def _col(label: str) -> ft.DataColumn:
@@ -294,31 +309,28 @@ class AboutView(ft.Column):
                 ft.Row(
                     [
                         ft.Icon(ft.Icons.TUNE, size=18, color=COLOR_PRIMARY),
-                        ft.Text("Speech & translation providers", size=16,
+                        ft.Text(t("about.providers_title"), size=16,
                                 weight=ft.FontWeight.BOLD, color=COLOR_PRIMARY),
                     ],
                     spacing=8, vertical_alignment=ft.CrossAxisAlignment.CENTER,
                 ),
                 ft.Text(
-                    "Every speech and translation back-end available in the app. Local options run on "
-                    "your machine with no key or cost; free-web options need no key; cloud options need "
-                    "an API key. Accuracy is a rough relative guide.",
+                    t("about.providers_intro"),
                     size=12, color=COLOR_ON_BACKGROUND, no_wrap=False,
                 ),
                 ft.Container(height=4),
-                _subhead(ft.Icons.MIC, "Speech recognition"),
+                _subhead(ft.Icons.MIC, t("about.providers_stt")),
                 ft.Row([self._styled_table(
-                    ["Provider", "Accuracy", "API"], self._STT_PROVIDER_ROWS)],
+                    self._provider_table_headers(), self._stt_provider_rows())],
                     scroll=ft.ScrollMode.AUTO),
                 ft.Container(height=8),
-                _subhead(ft.Icons.TRANSLATE, "Translation"),
+                _subhead(ft.Icons.TRANSLATE, t("about.providers_translation")),
                 ft.Row([self._styled_table(
-                    ["Provider", "Accuracy", "API"], self._TRANSLATION_PROVIDER_ROWS)],
+                    self._provider_table_headers(), self._translation_provider_rows())],
                     scroll=ft.ScrollMode.AUTO),
                 ft.Container(height=4),
                 ft.Text(
-                    "“Local LLMs” connects to a model you run yourself with Ollama or any "
-                    "OpenAI-compatible server — no key, no cost.",
+                    t("about.providers_footnote"),
                     size=11, color=COLOR_NEUTRAL, no_wrap=False,
                 ),
             ],

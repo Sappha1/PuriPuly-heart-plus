@@ -237,7 +237,7 @@ class ApiRequestsView(ft.Column):
             if e.get("prompt_sent", True):
                 ctx = e.get("context") or ""
                 if ctx:
-                    rows.append(ft.Text("context: " + ctx, size=12, color=_MUTED,
+                    rows.append(ft.Text(t("logs.api.context_prefix") + ctx, size=12, color=_MUTED,
                                         selectable=True))
                 prompt = e.get("system_prompt") or ""
                 if prompt:

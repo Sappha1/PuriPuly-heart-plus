@@ -19,7 +19,7 @@ from puripuly_heart.ui.fonts import font_for_language
 from puripuly_heart.ui.i18n import get_locale, language_name, t
 from puripuly_heart.ui.overlay_peer_contract import OverlayPeerConsumerContract
 
-_BUILD_TAG = "r342"  #increment each build so user can confirm version
+_BUILD_TAG = "r343"  #increment each build so user can confirm version
 
 # ── VRCT-style dark palette ──────────────────────────────────────────────────
 _BG_MAIN = "#2e2f32"
@@ -613,9 +613,9 @@ class DashboardView(ft.Row):
     def _build_ui(self):
         # ── Toggle rows ──────────────────────────────────────────────────────
         self._row_stt = _ToggleRow(ft.Icons.MIC, t("dashboard.stt_label"), on_click=self._on_stt_click)
-        self._row_stt.tooltip = "Click to toggle • Right-click to change STT provider"
+        self._row_stt.tooltip = t("dashboard.tooltip.stt_row")
         self._row_peer = _ToggleRow(ft.Icons.RECORD_VOICE_OVER, t("dashboard.peer_label"), on_click=self._on_peer_click)
-        self._row_peer.tooltip = "Click to toggle peer translation • Right-click to change provider"
+        self._row_peer.tooltip = t("dashboard.tooltip.peer_row")
         self._row_trans = _ToggleRow(ft.Icons.TRANSLATE, t("dashboard.trans_label"), on_click=self._on_trans_click)
         self._row_overlay = _ToggleRow(ft.Icons.SUBTITLES, t("dashboard.overlay_label"), on_click=self._on_overlay_click)
         self._overlay_header_btn: ft.Container | None = None  # built later in chat header
@@ -1001,7 +1001,7 @@ class DashboardView(ft.Row):
         self._mini_update_btn = _UpdateNavBtn(on_click=self._on_update_btn_click)
         # ── Translator selector button ────────────────────────────────────────
         self._translator_label_text = ft.Text(
-            "Translator", size=10, color=_TEXT_FAINT, weight=ft.FontWeight.W_600,
+            t("dashboard.modal.translator"), size=10, color=_TEXT_FAINT, weight=ft.FontWeight.W_600,
             text_align=ft.TextAlign.CENTER,
         )
         self._translator_value_text = ft.Text(
@@ -1092,7 +1092,7 @@ class DashboardView(ft.Row):
         self._mini_stt_btn = _MiniIconBtn(ft.Icons.MIC, t("dashboard.stt_label"), on_click=self._on_stt_click)
         self._mini_peer_btn = _MiniIconBtn(ft.Icons.RECORD_VOICE_OVER, t("dashboard.peer_label"), on_click=self._on_peer_click)
         self._mini_trans_btn = _MiniIconBtn(ft.Icons.TRANSLATE, t("dashboard.trans_label"), on_click=self._on_trans_click)
-        self._mini_gear_btn = _MiniIconBtn(ft.Icons.SETTINGS, "Settings", on_click=lambda _: self._on_sidebar_nav_click(1))
+        self._mini_gear_btn = _MiniIconBtn(ft.Icons.SETTINGS, t("dashboard.tooltip.settings"), on_click=lambda _: self._on_sidebar_nav_click(1))
         self._mini_lang_text = ft.Text(
             "—", size=9, color=_TEXT_FAINT, text_align=ft.TextAlign.CENTER,
             no_wrap=True, overflow=ft.TextOverflow.ELLIPSIS,
@@ -1465,8 +1465,7 @@ class DashboardView(ft.Row):
         self._ocr_btn = ft.Container(
             content=ft.Text("OCR", size=9, color=_TEXT_FAINT, weight=ft.FontWeight.W_600),
             on_click=self._on_ocr_btn_click,
-            tooltip="Detect on-screen text and outline it (prototype).\n"
-                    "Alt+T: swap in recognized text. Right-click: options.",
+            tooltip=t("dashboard.ocr.tooltip"),
             padding=ft.padding.symmetric(horizontal=7, vertical=3),
             border_radius=10,
             bgcolor=ft.Colors.TRANSPARENT,
@@ -1661,7 +1660,11 @@ class DashboardView(ft.Row):
 
         # Arrow direction
         self._collapse_icon.name = ft.Icons.CHEVRON_RIGHT if collapsed else ft.Icons.CHEVRON_LEFT
-        self._collapse_btn_ctrl.tooltip = "Expand sidebar" if collapsed else "Collapse sidebar"
+        self._collapse_btn_ctrl.tooltip = (
+            t("dashboard.tooltip.expand_sidebar")
+            if collapsed
+            else t("dashboard.tooltip.collapse_sidebar")
+        )
 
         # Header: hide title text when collapsed, center the arrow
         self._sidebar_puri_text.visible = not collapsed
@@ -2004,7 +2007,7 @@ class DashboardView(ft.Row):
                          and not _has_key.get(k, False))
                 desc = ""
                 if k in _free:
-                    desc = "(free)"
+                    desc = t("settings_modal.free")
                 elif needs:
                     desc = t("settings_modal.requires_api_key")
                 options.append(OptionItem(value=k, label=v,
@@ -2078,11 +2081,11 @@ class DashboardView(ft.Row):
         _fmt_labels = {
             "orig_trans": t("dashboard.translit.fmt.orig_trans"),
             "orig_pinyin_trans": t("dashboard.translit.fmt.orig_read_trans",
-                                   system="Pinyin"),
+                                   system=t("dashboard.translit.pinyin")),
             "pinyin_trans": t("dashboard.translit.fmt.read_trans",
-                              system="Pinyin"),
+                              system=t("dashboard.translit.pinyin")),
             "pinyin_only": t("dashboard.translit.fmt.read_only",
-                             system="Pinyin"),
+                             system=t("dashboard.translit.pinyin")),
             "trans_only": t("dashboard.translit.fmt.trans_only"),
         }
         fmt_btn = _modal_row_btn(
@@ -2094,11 +2097,18 @@ class DashboardView(ft.Row):
             "ocr_format", lambda v: _fmt_labels.get(v, v))
 
         # ── style sub-menu ──
-        _color_opts = [("#ff2020", "Red"), ("#2dd4bf", "Teal"),
-                       ("#ffffff", "White"), ("#ffd21e", "Yellow"),
-                       ("#3b82f6", "Blue"), ("#22c55e", "Green"),
-                       ("#ff5df1", "Magenta"), ("#ff8c00", "Orange"),
-                       ("#14161a", "Dark"), ("#000000", "Black")]
+        _color_opts = [
+            ("#ff2020", t("dashboard.color.red")),
+            ("#2dd4bf", t("dashboard.color.teal")),
+            ("#ffffff", t("dashboard.color.white")),
+            ("#ffd21e", t("dashboard.color.yellow")),
+            ("#3b82f6", t("dashboard.color.blue")),
+            ("#22c55e", t("dashboard.color.green")),
+            ("#ff5df1", t("dashboard.color.magenta")),
+            ("#ff8c00", t("dashboard.color.orange")),
+            ("#14161a", t("dashboard.color.dark")),
+            ("#000000", t("dashboard.color.black")),
+        ]
         _alpha_labels = {"100": "100%", "75": "75%", "50": "50%",
                          "25": "25%",
                          "0": t("dashboard.ocr.opacity.none")}
@@ -4642,7 +4652,7 @@ class DashboardView(ft.Row):
             current_val = getattr(self, "_current_translator_model_value", "") or ""
         SettingsModal(
             self.page,
-            "Translator",
+            t("dashboard.modal.translator"),
             options,
             self._on_translator_selected,
             show_description=True,
@@ -4712,7 +4722,7 @@ class DashboardView(ft.Row):
             return
         from puripuly_heart.config.settings import STTProviderName
         current = getattr(self, "_current_stt_provider_value", STTProviderName.LOCAL_QWEN.value)
-        SettingsModal(self.page, "Mic (STT)", self._build_stt_options(for_language=self._source_lang_code), self._on_stt_provider_selected, show_description=True).open(current)
+        SettingsModal(self.page, t("dashboard.modal.mic_stt"), self._build_stt_options(for_language=self._source_lang_code), self._on_stt_provider_selected, show_description=True).open(current)
 
     def _on_stt_provider_selected(self, value: str) -> None:
         if callable(self.on_stt_provider_change):
@@ -4723,7 +4733,7 @@ class DashboardView(ft.Row):
             return
         from puripuly_heart.config.settings import STTProviderName
         current = getattr(self, "_current_peer_stt_provider_value", STTProviderName.LOCAL_QWEN.value)
-        SettingsModal(self.page, "Peer Voice (STT)", self._build_stt_options(for_language=self._peer_source_lang_code), self._on_peer_stt_provider_selected, show_description=True).open(current)
+        SettingsModal(self.page, t("dashboard.modal.peer_stt"), self._build_stt_options(for_language=self._peer_source_lang_code), self._on_peer_stt_provider_selected, show_description=True).open(current)
 
     def _on_peer_stt_provider_selected(self, value: str) -> None:
         if callable(self.on_peer_stt_provider_change):

@@ -19,7 +19,7 @@ from puripuly_heart.ui.fonts import font_for_language
 from puripuly_heart.ui.i18n import get_locale, language_name, t
 from puripuly_heart.ui.overlay_peer_contract import OverlayPeerConsumerContract
 
-_BUILD_TAG = "r341"  #increment each build so user can confirm version
+_BUILD_TAG = "r342"  #increment each build so user can confirm version
 
 # ── VRCT-style dark palette ──────────────────────────────────────────────────
 _BG_MAIN = "#2e2f32"
@@ -3735,7 +3735,12 @@ class DashboardView(ft.Row):
                 by_name.setdefault(name, []).extend(live)
 
     def _open_speaker_name_dialog(
-        self, cluster_id: int, current_label: str, *, known_name: str = ""
+        self,
+        cluster_id: int,
+        current_label: str,
+        *,
+        known_name: str = "",
+        tag_control: object = None,
     ) -> None:
         """Name (enroll) or rename the voice behind a chat entry's tag (r318).
 
@@ -3774,29 +3779,76 @@ class DashboardView(ft.Row):
             autofocus=True,
             dense=True,
         )
-        scope = ft.RadioGroup(
-            value="all",
-            content=ft.Column(
+        # r342: each option is a short label + a wrapping grey description —
+        # single-line radio labels were getting cut off at the dialog edge,
+        # and "Only this speaker" said nothing about what it does.
+        def _scope_option(value: str, label: str, description: str) -> ft.Control:
+            texts = ft.Column(
                 [
-                    ft.Radio(
-                        value="all",
-                        label=t(
-                            "dashboard.speaker_name_dialog.scope_all",
-                            name=known_name,
-                            count=max(affected, 1),
-                        ),
-                    ),
-                    ft.Radio(
-                        value="one",
-                        label=t("dashboard.speaker_name_dialog.scope_one"),
-                    ),
+                    ft.Text(label, size=13, no_wrap=False),
+                    ft.Text(description, size=11, color="#8a8d91", no_wrap=False),
                 ],
                 spacing=0,
                 tight=True,
+            )
+
+            def _pick(_e=None) -> None:
+                scope.value = value
+                with contextlib.suppress(Exception):
+                    scope.update()
+                _refresh_merge_state()
+
+            return ft.Row(
+                [
+                    ft.Radio(value=value),
+                    ft.GestureDetector(
+                        content=texts,
+                        on_tap=_pick,
+                        mouse_cursor=ft.MouseCursor.CLICK,
+                        expand=True,
+                    ),
+                ],
+                vertical_alignment=ft.CrossAxisAlignment.START,
+                spacing=4,
+            )
+
+        scope_options = [
+            _scope_option(
+                "all",
+                t("dashboard.speaker_name_dialog.scope_all", name=known_name),
+                t(
+                    "dashboard.speaker_name_dialog.scope_all_desc",
+                    count=max(affected, 1),
+                ),
             ),
+        ]
+        if cluster_id >= 0:
             # Splitting needs a session cluster to re-enroll from; a pure
             # voiceprint line has none, so the choice is hidden there.
-            visible=bool(known_name) and cluster_id >= 0,
+            scope_options.append(
+                _scope_option(
+                    "one",
+                    t("dashboard.speaker_name_dialog.scope_one", name=known_name),
+                    t(
+                        "dashboard.speaker_name_dialog.scope_one_desc",
+                        name=known_name,
+                    ),
+                )
+            )
+        if tag_control is not None:
+            # r342: cosmetic relabel of exactly this line — nothing is saved,
+            # so a later real rename may repaint it. Meant for screenshots.
+            scope_options.append(
+                _scope_option(
+                    "message",
+                    t("dashboard.speaker_name_dialog.scope_message"),
+                    t("dashboard.speaker_name_dialog.scope_message_desc"),
+                )
+            )
+        scope = ft.RadioGroup(
+            value="all",
+            content=ft.Column(scope_options, spacing=6, tight=True),
+            visible=bool(known_name),
         )
         merge_warning = ft.Text(
             "", size=11, color="#c8a44a", no_wrap=False, visible=False
@@ -3808,7 +3860,9 @@ class DashboardView(ft.Row):
             target_variants = (
                 _variant_count(typed) if typed and typed != known_name else 0
             )
-            merging = target_variants > 0
+            merging = target_variants > 0 and not (
+                scope.visible and scope.value == "message"
+            )
             if merging:
                 only_this = bool(scope.visible and scope.value == "one")
                 moving = (
@@ -3841,6 +3895,15 @@ class DashboardView(ft.Row):
         def _save(_e=None) -> None:
             name = (name_field.value or "").strip()
             if not name or name == known_name:
+                _close()
+                return
+            if scope.visible and scope.value == "message":
+                # Repaint exactly the clicked line; registries and the voice
+                # store are untouched.
+                if tag_control is not None:
+                    with contextlib.suppress(Exception):
+                        tag_control.value = name
+                        tag_control.update()
                 _close()
                 return
             only_this = bool(scope.visible and scope.value == "one")
@@ -3879,7 +3942,7 @@ class DashboardView(ft.Row):
                 content=ft.Column(
                     [name_field, scope, merge_warning], spacing=8, tight=True
                 ),
-                width=320,
+                width=400,
             ),
             actions=[
                 ft.TextButton(t("common.cancel"), on_click=_close),
@@ -4074,8 +4137,9 @@ class DashboardView(ft.Row):
                     # a cluster to enroll, OR an identity to rename.
                     on_tap=(
                         (lambda e, cid=speaker_cluster_id, current=tag_text,
-                                known=speaker_name:
-                            self._open_speaker_name_dialog(cid, current, known_name=known))
+                                known=speaker_name, tag=tag_control:
+                            self._open_speaker_name_dialog(
+                                cid, current, known_name=known, tag_control=tag))
                         if (speaker_cluster_id >= 0 or speaker_name)
                         else None
                     ),

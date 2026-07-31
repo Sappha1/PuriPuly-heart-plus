@@ -33,7 +33,7 @@ def test_relabelling_collects_every_cluster_of_the_person() -> None:
 
 
 def test_naming_a_known_voice_renames_instead_of_re_enrolling() -> None:
-    body = _body(DASHBOARD, "def _open_speaker_name_dialog", 7000)
+    body = _body(DASHBOARD, "def _open_speaker_name_dialog", 11000)
     assert "on_rename_speaker" in body
     # the old name is passed through so its other clusters follow
     assert "also_named=known_name" in body
@@ -114,7 +114,7 @@ def test_clusterless_named_tags_are_registered_for_relabelling() -> None:
 def test_enrolling_still_requires_a_real_cluster() -> None:
     """Renaming works from a name alone; enrolling a voiceprint does not —
     there is no centroid to store for cluster -1."""
-    body = _body(DASHBOARD, "def _open_speaker_name_dialog", 7000)
+    body = _body(DASHBOARD, "def _open_speaker_name_dialog", 11000)
     assert "callable(enroll) and cluster_id >= 0" in body
 
 
@@ -127,7 +127,7 @@ def test_the_dialog_takes_the_name_from_the_rendered_line() -> None:
 def test_dialog_offers_scope_and_warns_before_merging() -> None:
     """r341: renaming one misidentified line must not silently sweep the real
     person, and typing an existing name must not silently merge two people."""
-    body = _body(DASHBOARD, "def _open_speaker_name_dialog", 7000)
+    body = _body(DASHBOARD, "def _open_speaker_name_dialog", 11000)
     assert "scope_all" in body and "scope_one" in body
     assert "merge_warning" in body
     assert "merge_button" in body
@@ -139,7 +139,7 @@ def test_dialog_offers_scope_and_warns_before_merging() -> None:
 
 
 def test_dialog_states_the_blast_radius() -> None:
-    body = _body(DASHBOARD, "def _open_speaker_name_dialog", 7000)
+    body = _body(DASHBOARD, "def _open_speaker_name_dialog", 11000)
     assert "_messages_showing_name" in body
 
 
@@ -174,3 +174,54 @@ def test_controller_snapshots_before_destructive_edits() -> None:
     assert "_capture_speaker_snapshot" in forget
     # slots=True: the field must be DECLARED or assignment crashes at runtime
     assert "_speaker_undo_snapshot: object | None = None" in CONTROLLER
+
+
+def test_dialog_options_wrap_instead_of_clipping() -> None:
+    """r342: single-line radio labels were cut off at the dialog edge; each
+    option is now a short label plus a wrapping grey description."""
+    body = _body(DASHBOARD, "def _open_speaker_name_dialog", 11000)
+    assert "_scope_option" in body
+    assert "scope_all_desc" in body and "scope_one_desc" in body
+    assert body.count("no_wrap=False") >= 2
+
+
+def test_dialog_offers_a_screenshot_only_relabel() -> None:
+    """r342: "only this message" repaints exactly the clicked line and saves
+    nothing — no enroll, no rename, no registry writes."""
+    body = _body(DASHBOARD, "def _open_speaker_name_dialog", 11000)
+    assert "scope_message" in body
+    message_branch = body[body.index('if scope.visible and scope.value == "message"'):]
+    message_branch = message_branch[: message_branch.index("return") + 6]
+    assert "tag_control.value = name" in message_branch
+    assert "on_enroll_speaker" not in message_branch
+    assert "on_rename_speaker" not in message_branch
+    # and it can never present as a merge
+    assert 'scope.value == "message"' in _body(
+        DASHBOARD, "def _refresh_merge_state", 900
+    )
+
+
+def test_clicked_tag_is_passed_into_the_dialog() -> None:
+    assert "tag_control=tag" in DASHBOARD
+
+
+def test_scope_strings_are_translated_everywhere() -> None:
+    from pathlib import Path
+
+    for locale in LOCALES:
+        data = json.loads(
+            Path(f"src/puripuly_heart/data/i18n/{locale}.json").read_text(
+                encoding="utf-8"
+            )
+        )
+        for key in (
+            "dashboard.speaker_name_dialog.scope_all",
+            "dashboard.speaker_name_dialog.scope_all_desc",
+            "dashboard.speaker_name_dialog.scope_one",
+            "dashboard.speaker_name_dialog.scope_one_desc",
+            "dashboard.speaker_name_dialog.scope_message",
+            "dashboard.speaker_name_dialog.scope_message_desc",
+        ):
+            assert data.get(key), f"{locale}: {key}"
+        assert "{name}" in data["dashboard.speaker_name_dialog.scope_one"]
+        assert "{count}" in data["dashboard.speaker_name_dialog.scope_all_desc"]

@@ -2,6 +2,13 @@
 
 User-facing changes per build. The latest build's highlights also appear in-app when an update is ready.
 
+## r335 — 2026-07-30
+
+- Settings labels now say what each setting does, so you don't have to hover the ⓘ to find out — "Mute Sync" is "Stop listening when you mute in VRChat", "Offset X" is "Move left / right", and so on across every tab
+- Jargon is gone from the settings: no more VAD, Host API, Loopback, Single Turn or Intercept
+- "Changelog" in the version menu now opens the changelog itself instead of just the info page
+- The info page's "What's new" button and window are called "Changelog" too
+
 ## r334 — 2026-07-30
 
 - Settings is now split into six tabs — General, Audio, VRChat, API, Prompt, Overlay — instead of piling everything into General

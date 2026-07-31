@@ -902,11 +902,16 @@ class TranslatorApp:
         self.page.run_task(_run)
 
     def _title_menu_show_changelog(self) -> None:
-        """r333: open the FULL changelog (the About page's list of every
-        build), not just the newest build's bullets — asked for explicitly:
-        "show the full change log like the one in settings"."""
+        """r333: open the FULL changelog (every build, newest first), not just
+        the newest build's bullets — asked for explicitly: "show the full
+        change log like the one in settings".
+
+        r335: open the changelog WINDOW directly. Navigating to the info page
+        only got you to the page the button lives on — you still had to find
+        and press the button ("pressing change log just opens the info page").
+        """
         with contextlib.suppress(Exception):
-            self._on_nav_change(3)  # About / What's new view
+            self._open_changelog_dialog()
 
     def show_local_qwen_hallucination_dialog(self) -> None:
         dialog = LocalQwenHallucinationDialog(self.page)

@@ -52,7 +52,10 @@ def test_changelog_menu_opens_the_full_view_not_a_dialog() -> None:
     app_source = Path("src/puripuly_heart/ui/app.py").read_text(encoding="utf-8")
     start = app_source.index("def _title_menu_show_changelog")
     body = app_source[start:start + 700]
-    assert "_on_nav_change(3)" in body            # About / changelog view
+    # r335: opens the changelog WINDOW itself. Navigating to the info page only
+    # got the user to the page the button lives on, not to the changelog.
+    assert "_open_changelog_dialog()" in body
+    assert "_on_nav_change(3)" not in body
     assert "open_update_notes_dialog" not in body
 
 

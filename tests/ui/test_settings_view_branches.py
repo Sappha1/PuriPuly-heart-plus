@@ -5248,9 +5248,10 @@ def test_general_tab_labels_and_section_headings_render_from_i18n(
 @pytest.mark.parametrize(
     ("locale", "expected_title"),
     [
-        ("ko", "Chatbox 출력 형식"),
-        ("en", "Chatbox Output Format"),
-        ("zh-CN", "Chatbox 输出格式"),
+        # r335: labels state what the setting does instead of naming a concept.
+        ("ko", "VRChat 채팅창에 보낼 내용"),
+        ("en", "What to send to the VRChat chatbox"),
+        ("zh-CN", "发送到 VRChat 聊天框的内容"),
     ],
 )
 def test_chatbox_source_card_title_uses_chatbox_output_format_wording(
@@ -6186,7 +6187,8 @@ def test_low_latency_card_title_uses_response_mode_copy_in_korean(
         view.load_from_settings(settings, config_path=Path("settings.json"))
         view.apply_locale()
 
-        assert view._low_latency_title.value == "응답 방식"
+        # r335: the label names the trade-off instead of the concept.
+        assert view._low_latency_title.value == "속도와 정확도"
     finally:
         i18n_module.set_locale(old_locale)
 
@@ -6234,17 +6236,18 @@ def test_apply_locale_refreshes_deepseek_api_key_field(
     [
         (
             "en",
-            "Peer Speech Recognition",
+            # r335: says whose voice it recognizes.
+            "Speech recognition for their voice",
             "Change self and peer language pairs from the Dashboard language card.",
         ),
         (
             "ko",
-            "상대 음성 인식",
+            "상대 목소리 음성 인식",
             "셀프와 상대 언어 조합은 대시보드 언어 카드에서 바꿔주세요.",
         ),
         (
             "zh-CN",
-            "对方语音识别",
+            "对方语音的识别引擎",
             "请在仪表板的语言卡片中修改自己与对方的语言组合。",
         ),
     ],
@@ -6591,9 +6594,10 @@ def test_custom_vocabulary_tooltip_copy_matches_new_provider_scope(
 @pytest.mark.parametrize(
     ("locale", "expected_title"),
     [
-        ("ko", "음성 인식 힌트"),
-        ("en", "Speech Recognition Hints"),
-        ("zh-CN", "语音识别提示"),
+        # r335: labels state what the setting does instead of naming a concept.
+        ("ko", "인식할 단어"),
+        ("en", "Words to listen for"),
+        ("zh-CN", "需要留意的词"),
     ],
 )
 def test_custom_vocabulary_card_title_uses_generic_hint_wording(

@@ -48,6 +48,14 @@ MAX_VARIANTS_PER_NAME = 4
 # A re-enrollment at/above this similarity refines the nearest variant;
 # below it, the new print is kept as a separate channel of the same voice.
 VARIANT_MERGE_THRESHOLD = 0.70
+# r338: the session cluster->name map makes a freshly named voice stick even
+# when a later sample lands between the cluster and named thresholds. That
+# convenience was handing enrolled names to STRANGERS: anyone within 0.52 of
+# a named cluster inherited its name without ever passing the 0.60 named test.
+# Inheriting now needs the sample to actually resemble THAT PERSON's stored
+# voiceprints this much — below it the line falls back to "Speaker N", which
+# is the documented trade (a wrong name is worse than an anonymous one).
+STICKY_NAME_THRESHOLD = 0.55
 
 
 def _normalize(vector: np.ndarray) -> np.ndarray:
@@ -188,9 +196,21 @@ class SpeakerRegistry:
                 )
                 best_cluster.count += 1
                 session_name = self._cluster_names.get(best_cluster.cluster_id, "")
-                if session_name:
+                # r338: only inherit the cluster's name when the voice really
+                # does resemble that person — not merely the cluster they were
+                # last seen in.
+                if session_name and best_name == session_name and (
+                    best_name_sim >= STICKY_NAME_THRESHOLD
+                ):
                     return SpeakerMatch(
                         "named", session_name, best_cluster.cluster_id, best_cluster_sim
+                    )
+                if session_name:
+                    logger.debug(
+                        "[SpeakerID] withheld %r from cluster %d "
+                        "(cluster sim=%.3f but name sim=%.3f < %.2f)",
+                        session_name, best_cluster.cluster_id,
+                        best_cluster_sim, best_name_sim, STICKY_NAME_THRESHOLD,
                     )
                 return SpeakerMatch(
                     "cluster",
@@ -269,12 +289,84 @@ class SpeakerRegistry:
             self._save()
             return True
 
+    def rename(self, old_name: str, new_name: str) -> bool:
+        """Rename an enrolled voice, merging into an existing name if taken.
+
+        r338: renaming is a NAME operation. Every session cluster mapped to
+        the old name follows it, so the chat log can relabel all of them at
+        once instead of only the entry that was clicked.
+        """
+        old_name = old_name.strip()
+        new_name = new_name.strip()
+        if not old_name or not new_name or old_name == new_name:
+            return False
+        with self._lock:
+            if old_name not in self._named:
+                return False
+            moving = self._named.pop(old_name)
+            moving_count = self._named_counts.pop(old_name, 1)
+            if new_name in self._named:
+                # Merging two names for one person: keep every distinct
+                # voiceprint, drop near-duplicates so the variant budget is
+                # not spent twice on the same channel.
+                target = self._named[new_name]
+                for variant in moving:
+                    sims = [float(np.dot(variant, existing)) for existing in target]
+                    if sims and max(sims) >= VARIANT_MERGE_THRESHOLD:
+                        nearest = int(np.argmax(sims))
+                        target[nearest] = _normalize(
+                            0.5 * target[nearest] + 0.5 * variant
+                        )
+                    else:
+                        target.append(variant)
+                if len(target) > MAX_VARIANTS_PER_NAME:
+                    # oldest out, same rule as enroll_cluster
+                    del target[: len(target) - MAX_VARIANTS_PER_NAME]
+                self._named_counts[new_name] = (
+                    self._named_counts.get(new_name, 1) + moving_count
+                )
+            else:
+                self._named[new_name] = moving
+                self._named_counts[new_name] = moving_count
+            for cluster_id, mapped in list(self._cluster_names.items()):
+                if mapped == old_name:
+                    self._cluster_names[cluster_id] = new_name
+            self._save()
+            logger.info("[SpeakerID] renamed %r -> %r", old_name, new_name)
+            return True
+
+    def clusters_for_name(self, name: str) -> list[int]:
+        """Every session cluster currently carrying this name (r338)."""
+        name = name.strip()
+        if not name:
+            return []
+        with self._lock:
+            return [
+                cluster_id
+                for cluster_id, mapped in self._cluster_names.items()
+                if mapped == name
+            ]
+
+    def enrolled_summary(self) -> list[tuple[str, int, int]]:
+        """(name, voiceprint variants, utterances heard) for the manager UI."""
+        with self._lock:
+            return [
+                (name, len(variants), int(self._named_counts.get(name, 1)))
+                for name, variants in sorted(self._named.items())
+            ]
+
     def forget(self, name: str) -> bool:
         with self._lock:
             if name not in self._named:
                 return False
             del self._named[name]
             self._named_counts.pop(name, None)
+            # r338: drop the session mapping too. Without this the cluster
+            # keeps the deleted name for the rest of the session and the very
+            # next utterance re-labels with a voice the user just removed.
+            for cluster_id, mapped in list(self._cluster_names.items()):
+                if mapped == name:
+                    del self._cluster_names[cluster_id]
             self._save()
             return True
 

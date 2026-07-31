@@ -148,6 +148,14 @@ class TranslatorApp:
         self.view_dashboard.on_speaker_name_lookup = (
             lambda cluster_id: self.controller.speaker_name_for_cluster(cluster_id)
         )
+        # r338: renaming a known voice is a rename of the PERSON — every
+        # session cluster of theirs follows, so the whole log relabels.
+        self.view_dashboard.on_rename_speaker = (
+            lambda old, new: self.controller.rename_speaker(old, new)
+        )
+        self.view_dashboard.on_speaker_clusters_for_name = (
+            lambda name: self.controller.speaker_clusters_for_name(name)
+        )
         # r332: version-label menu actions.
         self.view_dashboard.on_check_updates = self._title_menu_check_updates
         self.view_dashboard.on_show_changelog = self._title_menu_show_changelog
@@ -214,6 +222,15 @@ class TranslatorApp:
         self.view_settings.on_secret_cleared = self._on_secret_cleared
         self.view_settings.on_local_llm_secret_changed = self._on_local_llm_secret_changed
         self.view_settings.on_start_microphone_test = self._on_start_microphone_test
+        # r338: Saved voices manager — rename/remove enrolled people without
+        # waiting for them to speak again.
+        self.view_settings.on_list_saved_voices = (
+            lambda: self.controller.enrolled_speakers()
+        )
+        self.view_settings.on_rename_saved_voice = self._on_rename_saved_voice
+        self.view_settings.on_forget_saved_voice = (
+            lambda name: self.controller.forget_speaker(name)
+        )
         self.view_settings.on_desktop_overlay_lock_change = self._on_desktop_overlay_lock_change
         self.view_settings.on_desktop_overlay_size_change = self._on_desktop_overlay_size_change
         self.view_settings.on_desktop_overlay_recovery_action = (
@@ -900,6 +917,22 @@ class TranslatorApp:
                 self._show_snackbar(message, color)
 
         self.page.run_task(_run)
+
+    def _on_rename_saved_voice(self, old_name: str, new_name: str) -> bool:
+        """Rename an enrolled voice from Settings and relabel the chat log.
+
+        r338: the rename has to reach the already-rendered entries too, or the
+        log keeps showing the old name until those messages scroll away — the
+        exact complaint that started this ("it didnt rename all of the other
+        ones ... immediately in the logs").
+        """
+        ok = bool(self.controller.rename_speaker(old_name, new_name))
+        if ok:
+            with contextlib.suppress(Exception):
+                self.view_dashboard._retro_label_speaker_tags(
+                    -1, new_name, also_named=old_name
+                )
+        return ok
 
     def _title_menu_show_changelog(self) -> None:
         """r333: open the FULL changelog (every build, newest first), not just

@@ -2,6 +2,13 @@
 
 User-facing changes per build. The latest build's highlights also appear in-app when an update is ready.
 
+## r338 — 2026-07-30
+
+- **Renaming a voice now renames that person everywhere.** If someone was named from several different messages, every one of their entries in the chat log updates at once instead of just the one you clicked
+- **A different speaker can no longer be given someone else's name.** A voice that wasn't close enough to be recognised could still inherit a name just by sounding vaguely like a voice from the same conversation — that's fixed, and unsure lines now show "Speaker N" instead of guessing a name
+- **New: Settings › Audio › Saved voices.** See everyone you've named, how many voiceprints are stored for each, rename them, or remove them — without waiting for that person to speak again
+- Removing a saved voice now takes effect immediately instead of lingering until the app restarts
+
 ## r337 — 2026-07-30
 
 - Three settings moved to the tab that actually owns them: context usage now sits beside the system prompt on API (it travels in the same request and dies with the same translators), the chatbox output format moved to VRChat, and live preview moved to General — it only affects the app's own chat log, never VRChat
@@ -87,7 +94,7 @@ User-facing changes per build. The latest build's highlights also appear in-app 
 
 - After a self-update, the app now tells you: a one-time notice on the next launch shows the new build number and the top changes — no more silent updates
 - The launch update check now retries several times over the first 10 minutes if it fails or finds nothing (previously ONE attempt, then nothing for 2 hours — a badly-timed check meant the app quietly stayed outdated all session)
-- Chat lines with an identified speaker now use the name as the header: "Baby 02:14" instead of "Received · Baby 02:14" (the color still shows the direction)
+- Chat lines with an identified speaker now use the name as the header: "Alex 02:14" instead of "Received · Alex 02:14" (the color still shows the direction)
 
 ## r321 — 2026-07-30
 

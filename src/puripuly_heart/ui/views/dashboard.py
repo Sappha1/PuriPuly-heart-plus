@@ -18,7 +18,7 @@ from puripuly_heart.ui.fonts import font_for_language
 from puripuly_heart.ui.i18n import get_locale, language_name, t
 from puripuly_heart.ui.overlay_peer_contract import OverlayPeerConsumerContract
 
-_BUILD_TAG = "r337"  #increment each build so user can confirm version
+_BUILD_TAG = "r338"  #increment each build so user can confirm version
 
 # ── VRCT-style dark palette ──────────────────────────────────────────────────
 _BG_MAIN = "#2e2f32"
@@ -3653,15 +3653,34 @@ class DashboardView(ft.Row):
             with contextlib.suppress(Exception):
                 callback()
 
-    def _retro_label_speaker_tags(self, cluster_id: int, name: str) -> None:
-        """Rewrite every rendered tag of this cluster to the new name (r321)."""
+    def _retro_label_speaker_tags(
+        self, cluster_id: int, name: str, *, also_named: str = ""
+    ) -> None:
+        """Rewrite every rendered tag of this PERSON to the new name.
+
+        r338: one person can hold several session clusters — the same voice
+        over a Discord call and in-game lands in different clusters, and both
+        get enrolled under one name. Relabelling only the clicked cluster left
+        the other entries showing the old name — the user had one person
+        named from four separate messages and only one of them updated.
+        `also_named` is the name being replaced, so its other clusters follow.
+        """
         registry = getattr(self, "_speaker_tag_controls", None)
         if not registry:
             return
-        for tag in registry.get(cluster_id, []):
-            with contextlib.suppress(Exception):
-                tag.value = name
-                tag.update()
+        targets = {int(cluster_id)}
+        lookup = getattr(self, "on_speaker_clusters_for_name", None)
+        if callable(lookup):
+            for candidate in (name, also_named):
+                if not candidate:
+                    continue
+                with contextlib.suppress(Exception):
+                    targets.update(int(c) for c in (lookup(candidate) or ()))
+        for target in targets:
+            for tag in registry.get(target, []):
+                with contextlib.suppress(Exception):
+                    tag.value = name
+                    tag.update()
 
     def _open_speaker_name_dialog(self, cluster_id: int, current_label: str) -> None:
         """Name (enroll) the voice behind a chat entry's speaker tag (r318)."""
@@ -3686,11 +3705,22 @@ class DashboardView(ft.Row):
 
         def _save(_e=None) -> None:
             name = (name_field.value or "").strip()
+            if not name or name == known_name:
+                _close()
+                return
+            # r338: if this voice is already enrolled, the user is RENAMING a
+            # person, not teaching a new one. Renaming carries every cluster
+            # of theirs across; enrolling would only bind this one.
+            if known_name:
+                rename = getattr(self, "on_rename_speaker", None)
+                if callable(rename):
+                    with contextlib.suppress(Exception):
+                        rename(known_name, name)
             enroll = getattr(self, "on_enroll_speaker", None)
-            if name and callable(enroll):
+            if not known_name and callable(enroll):
                 with contextlib.suppress(Exception):
                     enroll(cluster_id, name)
-                self._retro_label_speaker_tags(cluster_id, name)
+            self._retro_label_speaker_tags(cluster_id, name, also_named=known_name)
             _close()
 
         name_field.on_submit = _save
@@ -3820,7 +3850,7 @@ class DashboardView(ft.Row):
             speaker_name or speaker_cluster_id >= 0
         )
         # r322 (user suggestion): when a line has a speaker identity, the name
-        # IS the header — "Baby 02:14" instead of "Received · Baby 02:14".
+        # IS the header — "Alex 02:14" instead of "Received · Alex 02:14".
         # Color still carries the direction, and only peer lines get names.
         if _speaker_tagged:
             header_cells = []

@@ -178,7 +178,7 @@ def test_named_cluster_stays_named_in_threshold_gap(registry) -> None:
 
     base = _voice(70)
     match = registry.match(base)
-    registry.enroll_cluster(match.cluster_id, "Baby")
+    registry.enroll_cluster(match.cluster_id, "Robin")
 
     # craft a vector with cosine ~0.56 to the centroid: in the gap
     rng = np.random.default_rng(71)
@@ -192,7 +192,7 @@ def test_named_cluster_stays_named_in_threshold_gap(registry) -> None:
 
     result = registry.match(gap_vector)
     assert result.kind == "named"
-    assert result.label == "Baby"
+    assert result.label == "Robin"
 
 
 def test_name_for_cluster_lookup_and_reset(registry) -> None:
@@ -224,21 +224,21 @@ def test_second_channel_becomes_a_new_variant_not_an_average(registry) -> None:
     call_voice = _voice(200)
     vr_voice = _channel_shifted(call_voice, 201, 0.45)   # clearly another channel
 
-    registry.enroll_cluster(registry.match(call_voice).cluster_id, "Baby")
-    assert registry.variant_count("Baby") == 1
+    registry.enroll_cluster(registry.match(call_voice).cluster_id, "Robin")
+    assert registry.variant_count("Robin") == 1
     registry.reset_session()
 
     # She shows up in VRChat: not recognized, user names her again.
     vr_match = registry.match(vr_voice)
     assert vr_match.kind == "cluster"
-    registry.enroll_cluster(vr_match.cluster_id, "Baby")
-    assert registry.variant_count("Baby") == 2          # kept, not blended
+    registry.enroll_cluster(vr_match.cluster_id, "Robin")
+    assert registry.variant_count("Robin") == 2          # kept, not blended
 
     # BOTH channels are now recognized in a fresh session.
     registry.reset_session()
-    assert registry.match(_near(call_voice, 202)).label == "Baby"
+    assert registry.match(_near(call_voice, 202)).label == "Robin"
     registry.reset_session()
-    assert registry.match(_near(vr_voice, 203)).label == "Baby"
+    assert registry.match(_near(vr_voice, 203)).label == "Robin"
 
 
 def test_same_channel_refines_instead_of_multiplying(registry) -> None:
@@ -279,11 +279,11 @@ def test_legacy_single_centroid_store_still_loads(tmp_path) -> None:
 def test_variants_round_trip_through_the_store(registry, tmp_path) -> None:
     call_voice = _voice(250)
     vr_voice = _channel_shifted(call_voice, 251, 0.40)
-    registry.enroll_cluster(registry.match(call_voice).cluster_id, "Baby")
+    registry.enroll_cluster(registry.match(call_voice).cluster_id, "Robin")
     registry.reset_session()
-    registry.enroll_cluster(registry.match(vr_voice).cluster_id, "Baby")
+    registry.enroll_cluster(registry.match(vr_voice).cluster_id, "Robin")
 
     reloaded = SpeakerRegistry(tmp_path / "voices.json")
-    assert reloaded.variant_count("Baby") == 2
-    assert reloaded.match(_near(vr_voice, 252)).label == "Baby"
-    assert reloaded.match(_near(call_voice, 253)).label == "Baby"
+    assert reloaded.variant_count("Robin") == 2
+    assert reloaded.match(_near(vr_voice, 252)).label == "Robin"
+    assert reloaded.match(_near(call_voice, 253)).label == "Robin"

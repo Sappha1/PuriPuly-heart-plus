@@ -4989,6 +4989,43 @@ class GuiController:
             self.log_basic(f"[SpeakerID] Voice named: cluster={cluster_id}")
         return ok
 
+    def speaker_clusters_for_name(self, name: str) -> list[int]:
+        """Every session cluster carrying this name — the chat log relabels
+        all of them at once (r338)."""
+        try:
+            return [int(c) for c in self._speaker_registry().clusters_for_name(str(name))]
+        except Exception:
+            return []
+
+    def rename_speaker(self, old_name: str, new_name: str) -> bool:
+        """Rename an enrolled voice everywhere, merging if the target exists."""
+        try:
+            ok = bool(self._speaker_registry().rename(str(old_name), str(new_name)))
+        except Exception:
+            logger.warning("[SpeakerID] rename failed", exc_info=True)
+            return False
+        if ok:
+            self.log_basic(f"[SpeakerID] Voice renamed: {old_name} -> {new_name}")
+        return ok
+
+    def forget_speaker(self, name: str) -> bool:
+        """Delete an enrolled voice and its session mapping."""
+        try:
+            ok = bool(self._speaker_registry().forget(str(name)))
+        except Exception:
+            logger.warning("[SpeakerID] forget failed", exc_info=True)
+            return False
+        if ok:
+            self.log_basic(f"[SpeakerID] Voice removed: {name}")
+        return ok
+
+    def enrolled_speakers(self) -> list[tuple[str, int, int]]:
+        """(name, voiceprints, utterances) for the saved-voices manager."""
+        try:
+            return list(self._speaker_registry().enrolled_summary())
+        except Exception:
+            return []
+
     def _wrap_diagnostic_audio_source(
         self,
         source: AudioSource,

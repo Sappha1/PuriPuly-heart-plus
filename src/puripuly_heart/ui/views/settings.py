@@ -1382,6 +1382,18 @@ class SettingsView(ft.Column):
             value=self._speaker_id_text,
         )
 
+        # r338: enrolled voices were only reachable by clicking a chat tag.
+        self._saved_voices_text = self._build_clickable_text(
+            t("settings.saved_voices.manage"),
+            self._on_saved_voices_click,
+        )
+        self._saved_voices_card = self._wrap_unit_card(
+            title=self._info_title_keyed(
+                "settings.saved_voices", "settings.saved_voices.tooltip"
+            ),
+            value=self._saved_voices_text,
+        )
+
         self._mic_auto_gain_text = self._build_clickable_text(
             t("common.on"),
             self._on_mic_auto_gain_click,
@@ -1659,6 +1671,7 @@ class SettingsView(ft.Column):
                 self._mic_denoise_card,
                 self._auto_gain_card,
                 self._speaker_id_card,
+                self._saved_voices_card,
             ],
             spacing=0,
         )
@@ -5514,6 +5527,113 @@ class SettingsView(ft.Column):
         if self.page:
             self._update_notes_text.update()
         self._emit_settings_changed()
+
+    def _on_saved_voices_click(self, e) -> None:
+        """List enrolled voices with rename / remove (r338)."""
+        if not self.page:
+            return
+        list_column = ft.Column([], spacing=0, tight=True, scroll=ft.ScrollMode.AUTO)
+
+        def _voices() -> list:
+            provider = getattr(self, "on_list_saved_voices", None)
+            if not callable(provider):
+                return []
+            try:
+                return list(provider() or [])
+            except Exception:
+                return []
+
+        def _voice_row(name: str, variants: int, heard: int) -> ft.Control:
+            field = ft.TextField(
+                value=name,
+                dense=True,
+                text_size=13,
+                border_color=COLOR_DIVIDER,
+                focused_border_color=COLOR_PRIMARY,
+                expand=True,
+            )
+
+            def _apply_rename(_e=None) -> None:
+                new_name = (field.value or "").strip()
+                if not new_name or new_name == name:
+                    return
+                callback = getattr(self, "on_rename_saved_voice", None)
+                if callable(callback):
+                    with contextlib.suppress(Exception):
+                        callback(name, new_name)
+                _rebuild()
+
+            def _remove(_e=None) -> None:
+                callback = getattr(self, "on_forget_saved_voice", None)
+                if callable(callback):
+                    with contextlib.suppress(Exception):
+                        callback(name)
+                _rebuild()
+
+            field.on_submit = _apply_rename
+            field.on_blur = _apply_rename
+            return ft.Container(
+                content=ft.Row(
+                    [
+                        field,
+                        ft.Text(
+                            t(
+                                "settings.saved_voices.detail",
+                                variants=variants,
+                                heard=heard,
+                            ),
+                            size=11,
+                            color=COLOR_NEUTRAL,
+                        ),
+                        ft.IconButton(
+                            icon=ft.Icons.DELETE_OUTLINE,
+                            icon_size=16,
+                            icon_color=COLOR_NEUTRAL,
+                            tooltip=t("settings.saved_voices.remove"),
+                            on_click=_remove,
+                        ),
+                    ],
+                    spacing=8,
+                    vertical_alignment=ft.CrossAxisAlignment.CENTER,
+                ),
+                padding=ft.padding.symmetric(vertical=4),
+            )
+
+        def _rebuild() -> None:
+            list_column.controls.clear()
+            entries = _voices()
+            if not entries:
+                list_column.controls.append(
+                    ft.Container(
+                        content=ft.Text(
+                            t("settings.saved_voices.empty"),
+                            size=12,
+                            color=COLOR_NEUTRAL,
+                            no_wrap=False,
+                        ),
+                        padding=ft.padding.symmetric(vertical=12),
+                    )
+                )
+            for name, variants, heard in entries:
+                list_column.controls.append(_voice_row(name, variants, heard))
+            with contextlib.suppress(Exception):
+                list_column.update()
+
+        _rebuild()
+
+        def _close(_e=None) -> None:
+            dialog.open = False
+            with contextlib.suppress(Exception):
+                self.page.update()
+
+        dialog = ft.AlertDialog(
+            modal=False,
+            title=ft.Text(t("settings.saved_voices"), size=15),
+            content=ft.Container(content=list_column, width=420, height=300),
+            actions=[ft.TextButton(t("common.close"), on_click=_close)],
+        )
+        with contextlib.suppress(Exception):
+            self.page.open(dialog)
 
     def _on_speaker_id_click(self, e) -> None:
         if not self.page:

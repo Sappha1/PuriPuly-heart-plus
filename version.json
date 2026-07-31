@@ -1,11 +1,11 @@
 {
-  "build": 337,
-  "tag": "r337",
+  "build": 338,
+  "tag": "r338",
   "date": "2026-07-30",
   "notes": [
-    "Context usage moved next to the system prompt on API; chatbox output format to VRChat; live preview to General",
-    "\"Live preview\" is now \"Show my message while it translates\"",
-    "The chatbox setting is now \"Loopback\" too — it was always the same switch as the dashboard button",
-    "\"Caption location\" is \"Overlay mode\" again — it picks VR or Desktop"
+    "Renaming a voice now renames that person everywhere in the chat log, not just the message you clicked",
+    "A different speaker can no longer be given someone else's name — unsure lines show \"Speaker N\" instead",
+    "New: Settings › Audio › Saved voices — rename or remove the people you've named",
+    "Removing a saved voice now takes effect immediately"
   ]
 }

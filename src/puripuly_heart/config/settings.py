@@ -884,7 +884,6 @@ class UiSettings:
     peer_translation_eula_accepted: bool = False
     integrated_context_enabled: bool = True
     integrated_context_bootstrapped: bool = False
-    clipboard_auto_translate_enabled: bool = False
     show_pinyin: bool = True
     show_romaji: bool = True
     send_pinyin: bool = False
@@ -952,8 +951,6 @@ class UiSettings:
     def validate(self) -> None:
         if not self.locale:
             raise ValueError("locale must be non-empty")
-        if not isinstance(self.clipboard_auto_translate_enabled, bool):
-            raise ValueError("clipboard_auto_translate_enabled must be a bool")
         if not isinstance(self.github_star_prompt_clicked, bool):
             raise ValueError("github_star_prompt_clicked must be a bool")
         self.github_star_prompt_last_shown_at = _parse_utc_iso8601_timestamp(
@@ -1687,7 +1684,6 @@ def to_dict(settings: AppSettings) -> dict[str, Any]:
             "peer_translation_eula_accepted": settings.ui.peer_translation_eula_accepted,
             "integrated_context_enabled": settings.ui.integrated_context_enabled,
             "integrated_context_bootstrapped": settings.ui.integrated_context_bootstrapped,
-            "clipboard_auto_translate_enabled": settings.ui.clipboard_auto_translate_enabled,
             "show_pinyin": settings.ui.show_pinyin,
             "show_romaji": settings.ui.show_romaji,
             "send_pinyin": settings.ui.send_pinyin,
@@ -4036,9 +4032,6 @@ def from_dict(data: dict[str, Any]) -> AppSettings:
             integrated_context_enabled=bool(ui_data.get("integrated_context_enabled", True)),
             integrated_context_bootstrapped=bool(
                 ui_data.get("integrated_context_bootstrapped", False)
-            ),
-            clipboard_auto_translate_enabled=bool(
-                ui_data.get("clipboard_auto_translate_enabled", False)
             ),
             show_pinyin=bool(ui_data.get("show_pinyin", False)),
             show_romaji=bool(ui_data.get("show_romaji", False)),

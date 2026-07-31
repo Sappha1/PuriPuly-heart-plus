@@ -20,8 +20,11 @@ def _i18n(locale: str) -> dict:
 def test_tab_order_includes_the_new_tabs() -> None:
     from puripuly_heart.ui.views.settings import _SETTINGS_SUBTAB_ORDER
 
+    # r336: Prompt dissolved — the system prompt moved under the API tab's
+    # model pickers and custom vocabulary under Audio's speech engine, so each
+    # sits with the choice that decides whether it does anything.
     assert _SETTINGS_SUBTAB_ORDER == (
-        "general", "audio", "vrchat", "api", "prompt", "overlay",
+        "general", "audio", "vrchat", "api", "overlay",
     )
 
 

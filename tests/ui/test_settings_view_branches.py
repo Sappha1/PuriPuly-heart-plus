@@ -186,6 +186,18 @@ def _row_cards(container: ft.Container) -> list[ft.Control]:
     return list(container.content.controls)
 
 
+_PROMPT_CARD_KEYS = (
+    "settings.section.persona",
+    "settings.section.custom_vocabulary",
+    "settings.request_format",
+)
+
+
+def _prompt_card_titles() -> frozenset[str]:
+    """Resolved per call — these tests switch locale mid-test."""
+    return frozenset(t(key) for key in _PROMPT_CARD_KEYS)
+
+
 def _subtab_controls(view: settings_view.SettingsView, key: str) -> list[ft.Control]:
     return list(view._settings_subtab_shell.body_by_key[key].controls)
 
@@ -200,7 +212,25 @@ def _layout_cards(control: ft.Control) -> list[ft.Control]:
 
 
 def _prompt_tab_cards(view: settings_view.SettingsView) -> list[ft.Control]:
-    return list(_subtab_controls(view, "prompt"))
+    """r336: the Prompt tab was dissolved. The system prompt + request format
+    moved to API and custom vocabulary to Audio, so these tests now gather the
+    same cards from the rows that host them."""
+    from puripuly_heart.ui.components.shared_card_wrapper import SharedCardWrapper
+
+    cards: list[ft.Control] = []
+    for key in ("audio", "api"):
+        for control in _subtab_controls(view, key):
+            for card in getattr(control, "controls", []):
+                if (
+                    isinstance(card, SharedCardWrapper)
+                    and _card_title(card) in _prompt_card_titles()
+                ):
+                    cards.append(card)
+    return cards
+
+
+def _prompt_related_controls(view: settings_view.SettingsView) -> list[ft.Control]:
+    return _prompt_tab_cards(view)
 
 
 def _overlay_tab_cards(view: settings_view.SettingsView) -> list[ft.Control]:
@@ -459,64 +489,6 @@ def test_load_from_settings_peer_stt_card_has_no_peer_subsetting_controls(
     assert not hasattr(view, "_peer_qwen_region_text")
     assert not hasattr(view, "_peer_qwen_model_text")
     assert not hasattr(view, "_peer_soniox_model_text")
-
-
-def test_load_from_settings_shows_clipboard_auto_translate_state(
-    monkeypatch: pytest.MonkeyPatch,
-) -> None:
-    view, _store = _make_settings_view(monkeypatch)
-    settings = AppSettings()
-    settings.ui.clipboard_auto_translate_enabled = True
-
-    view.load_from_settings(settings, config_path=Path("settings.json"))
-
-    assert view._clipboard_auto_translate_text.content.value == t(
-        "settings.clipboard_auto_translate.on"
-    )
-
-
-def test_clipboard_auto_translate_selection_updates_settings_and_emits_change(
-    monkeypatch: pytest.MonkeyPatch,
-) -> None:
-    view, _store = _make_settings_view(monkeypatch)
-    settings = AppSettings()
-    emitted: list[AppSettings] = []
-    view.on_settings_changed = emitted.append
-
-    view.load_from_settings(settings, config_path=Path("settings.json"))
-    view._on_clipboard_auto_translate_selected("on")
-
-    assert settings.ui.clipboard_auto_translate_enabled is True
-    assert view._clipboard_auto_translate_text.content.value == t(
-        "settings.clipboard_auto_translate.on"
-    )
-    assert emitted[-1].ui.clipboard_auto_translate_enabled is True
-
-
-def test_clipboard_auto_translate_click_toggles_immediately_without_modal(
-    monkeypatch: pytest.MonkeyPatch,
-) -> None:
-    view, _store = _make_settings_view(monkeypatch)
-    settings = AppSettings()
-    emitted: list[AppSettings] = []
-    view.on_settings_changed = emitted.append
-
-    view.load_from_settings(settings, config_path=Path("settings.json"))
-    view._on_clipboard_auto_translate_click(None)
-
-    assert settings.ui.clipboard_auto_translate_enabled is True
-    assert view._clipboard_auto_translate_text.content.value == t(
-        "settings.clipboard_auto_translate.on"
-    )
-    assert emitted[-1].ui.clipboard_auto_translate_enabled is True
-
-    view._on_clipboard_auto_translate_click(None)
-
-    assert settings.ui.clipboard_auto_translate_enabled is False
-    assert view._clipboard_auto_translate_text.content.value == t(
-        "settings.clipboard_auto_translate.off"
-    )
-    assert emitted[-1].ui.clipboard_auto_translate_enabled is False
 
 
 def test_load_from_settings_uses_system_prompt_when_provider_prompt_missing(
@@ -5031,7 +5003,7 @@ def test_integrated_context_general_tab_uses_dedicated_unit_card(
 
     prompt_titles = _prompt_tab_card_titles(view)
     prompt_labels: list[str] = []
-    for control in _subtab_controls(view, "prompt"):
+    for control in _prompt_related_controls(view):
         prompt_labels.extend(_control_labels(control))
     general_card = _general_tab_card(view, t("settings.integrated_context"))
 
@@ -5240,7 +5212,6 @@ def test_general_tab_labels_and_section_headings_render_from_i18n(
         assert view._peer_pre_roll_field.label == t("settings.vad.peer_pre_roll_ms")
         assert view._vrc_mic_title.value == t("settings.vrc_mic_intercept")
         assert view._chatbox_source_title.value == t("settings.chatbox_include_source")
-        assert view._clipboard_auto_translate_title.value == t("settings.clipboard_auto_translate")
     finally:
         i18n_module.set_locale(old_locale)
 
@@ -5249,9 +5220,9 @@ def test_general_tab_labels_and_section_headings_render_from_i18n(
     ("locale", "expected_title"),
     [
         # r335: labels state what the setting does instead of naming a concept.
-        ("ko", "VRChat 채팅창에 보낼 내용"),
-        ("en", "What to send to the VRChat chatbox"),
-        ("zh-CN", "发送到 VRChat 聊天框的内容"),
+        ("ko", "Chatbox 출력 형식"),
+        ("en", "Chatbox output format"),
+        ("zh-CN", "Chatbox 输出格式"),
     ],
 )
 def test_chatbox_source_card_title_uses_chatbox_output_format_wording(
@@ -5490,7 +5461,7 @@ def test_legacy_vr_overlay_shell_removed_from_settings_subtabs(
     overlay_titles = _overlay_tab_card_titles(view)
     prompt_labels: list[str] = []
     overlay_labels: list[str] = []
-    for control in _subtab_controls(view, "prompt"):
+    for control in _prompt_related_controls(view):
         prompt_labels.extend(_control_labels(control))
     for control in _subtab_controls(view, "overlay"):
         overlay_labels.extend(_control_labels(control))
@@ -6237,17 +6208,17 @@ def test_apply_locale_refreshes_deepseek_api_key_field(
         (
             "en",
             # r335: says whose voice it recognizes.
-            "Speech recognition for their voice",
+            "Their speech recognition",
             "Change self and peer language pairs from the Dashboard language card.",
         ),
         (
             "ko",
-            "상대 목소리 음성 인식",
+            "상대의 음성 인식",
             "셀프와 상대 언어 조합은 대시보드 언어 카드에서 바꿔주세요.",
         ),
         (
             "zh-CN",
-            "对方语音的识别引擎",
+            "对方的语音识别",
             "请在仪表板的语言卡片中修改自己与对方的语言组合。",
         ),
     ],
@@ -6520,9 +6491,10 @@ def test_prompt_tab_uses_shared_full_width_cards(monkeypatch: pytest.MonkeyPatch
 
     view, _ = _make_settings_view(monkeypatch)
 
-    prompt_cards = _subtab_controls(view, "prompt")
+    prompt_cards = _prompt_tab_cards(view)
 
-    assert len(prompt_cards) == 2
+    # r336: system prompt + request format on API, custom vocabulary on Audio.
+    assert len(prompt_cards) == 3
     assert all(isinstance(card, SharedCardWrapper) for card in prompt_cards)
     assert all(card.height is None for card in prompt_cards)
     assert all(card.expand is False for card in prompt_cards)
@@ -6562,12 +6534,21 @@ def test_prompt_tab_hides_prompt_provider_copy_and_language_helper_text(
 @pytest.mark.parametrize(
     ("locale", "expected_tooltip"),
     [
+        # r336: the old copy omitted Qwen ASR 0.6B (Local) — the DEFAULT
+        # engine — and never mentioned the per-language storage or the
+        # term caps, so working hotwords looked broken.
         (
             "ko",
-            "자신의 말하는 음성에만 적용이 되어요\n또한 Deepgram과 Soniox 사용 시에만 설정이 쓰여요",
+            "음성 인식이 자주 틀리는 이름과 단어. 내 음성에만 적용됩니다. 언어별로 저장되며 한 언어에 추가한 단어는 다른 언어에 쓰이지 않습니다. Deepgram과 Soniox는 최대 50개, Qwen ASR 0.6B(로컬)는 앞의 12개까지.",
         ),
-        ("en", "Only applies to your speech.\nOnly applies to Deepgram and Soniox."),
-        ("zh-CN", "仅适用于你的语音。\n仅适用于 Deepgram 和 Soniox。"),
+        (
+            "en",
+            "Names and words your speech recognition keeps getting wrong. Applies to your own speech only. Stored per language — terms added for one language are not used for another. Deepgram and Soniox take up to 50 terms; Qwen ASR 0.6B (Local) takes the first 12.",
+        ),
+        (
+            "zh-CN",
+            "语音识别经常听错的名字和词。仅适用于你自己的语音。按语言分别保存——为某一语言添加的词不会用于其他语言。Deepgram 和 Soniox 最多 50 个词；Qwen ASR 0.6B（本地）只取前 12 个。",
+        ),
     ],
 )
 def test_custom_vocabulary_tooltip_copy_matches_new_provider_scope(
@@ -6595,9 +6576,9 @@ def test_custom_vocabulary_tooltip_copy_matches_new_provider_scope(
     ("locale", "expected_title"),
     [
         # r335: labels state what the setting does instead of naming a concept.
-        ("ko", "인식할 단어"),
-        ("en", "Words to listen for"),
-        ("zh-CN", "需要留意的词"),
+        ("ko", "사용자 단어"),
+        ("en", "Custom vocabulary"),
+        ("zh-CN", "自定义词汇"),
     ],
 )
 def test_custom_vocabulary_card_title_uses_generic_hint_wording(
@@ -7176,7 +7157,7 @@ def test_settings_subtab_labels_render_from_i18n(monkeypatch: pytest.MonkeyPatch
             t("settings.subtab.audio"),
             t("settings.subtab.vrchat"),
             t("settings.subtab.api"),
-            t("settings.subtab.prompt"),
+            # r336: Prompt dissolved into API + Audio.
             t("settings.subtab.overlay"),
         ]
     finally:
@@ -7226,3 +7207,14 @@ def test_text_subtab_shell_can_render_without_title_and_pin_subtab_bar_to_bottom
     assert isinstance(shell.body_region, ft.Container)
     assert shell.body_region.content is shell.body_host
     assert shell.controls == [shell.body_region, shell.subtab_bar]
+
+
+def test_clipboard_card_is_gone_from_the_settings_view(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """r336: auto-translating every copy broadcast whatever you had on the
+    clipboard — a password, a card number — to the VRChat chatbox."""
+    view, _store = _make_settings_view(monkeypatch)
+
+    assert not hasattr(view, "_clipboard_auto_translate_text")
+    assert not hasattr(view, "_on_clipboard_auto_translate_selected")

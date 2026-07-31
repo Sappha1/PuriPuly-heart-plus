@@ -355,7 +355,6 @@ async def test_apply_settings_preserves_current_github_star_prompt_state(
     async def noop(*_args: object, **_kwargs: object) -> None:
         return None
 
-    monkeypatch.setattr(GuiController, "_sync_clipboard_watcher", noop)
     monkeypatch.setattr(
         controller_module,
         "save_settings",
@@ -402,7 +401,6 @@ async def test_prompt_open_persistence_does_not_stale_overwrite_replaced_setting
             await release_first_to_thread.wait()
         return func(*args, **kwargs)
 
-    monkeypatch.setattr(GuiController, "_sync_clipboard_watcher", _async_noop)
     monkeypatch.setattr(controller_module.asyncio, "to_thread", delayed_first_to_thread)
     monkeypatch.setattr(
         controller_module,
@@ -454,7 +452,6 @@ async def test_prompt_click_persistence_does_not_stale_overwrite_replaced_settin
             await release_first_to_thread.wait()
         return func(*args, **kwargs)
 
-    monkeypatch.setattr(GuiController, "_sync_clipboard_watcher", _async_noop)
     monkeypatch.setattr(controller_module.asyncio, "to_thread", delayed_first_to_thread)
     monkeypatch.setattr(
         controller_module,

@@ -16,19 +16,18 @@ LOCALES = ["en", "ja", "ko", "zh-CN"]
 
 # Labels that were jargon or a bare noun before r335, with what they became.
 RENAMED = {
-    "settings.vrc_mic_intercept": "Stop listening when you mute in VRChat",
-    "settings.ptt_mute_sync": "Works with push-to-talk too",
-    "settings.live_preview": "Show my text before it's translated",
+    "settings.vrc_mic_intercept": "Sync mute with VRChat",
+    "settings.ptt_mute_sync": "Push-to-talk support",
+    "settings.live_preview": "Live preview",
     "settings.chatbox_send_peer": "Send their speech to the VRChat chatbox",
-    "settings.clipboard_auto_translate": "Translate anything I copy",
     "settings.separate_text_translation": "Separate 'Text Translation' box on the dashboard",
-    "settings.audio_host_api": "Audio driver system",
-    "settings.section.self_vad_sensitivity": "When to start listening to you",
-    "settings.section.peer_vad_sensitivity": "When to start listening to them",
-    "settings.mic_auto_gain": "Boost a quiet microphone",
-    "settings.mic_denoise": "Remove background noise from my mic",
-    "settings.peer_auto_gain": "Boost their quiet audio",
-    "settings.overlay.show_peer_original": "Show their original words",
+    "settings.audio_host_api": "Audio host",
+    "settings.section.self_vad_sensitivity": "Mic sensitivity",
+    "settings.section.peer_vad_sensitivity": "Their voice sensitivity",
+    "settings.mic_auto_gain": "Mic auto-gain",
+    "settings.mic_denoise": "Mic noise suppression",
+    "settings.peer_auto_gain": "Their volume auto-gain",
+    "settings.overlay.show_peer_original": "Show their original text",
     "settings.overlay.single_turn_mode": "Show one message at a time",
     "settings.overlay.calibration.offset_x": "Horizontal position",
     "settings.overlay.calibration.offset_y": "Vertical position",
@@ -37,7 +36,10 @@ RENAMED = {
 
 # Terms no user of a VRChat translator is expected to know. "API"/"OpenRouter"
 # survive on the API tab, where the audience is deliberately technical.
-JARGON = ("VAD", "Host API", "Loopback", "Intercept", "Single Turn", "Offset X", "Offset Y")
+# r336: "sensitivity", "auto-gain", "noise suppression" and "audio host" are
+# what Discord/OBS/Audacity call these — plain-English rewrites of them read
+# as amateur. Only terms with no consumer-facing equivalent stay banned.
+JARGON = ("VAD", "Loopback", "Intercept", "Single Turn", "Offset X", "Offset Y")
 
 
 def _i18n(locale: str) -> dict:

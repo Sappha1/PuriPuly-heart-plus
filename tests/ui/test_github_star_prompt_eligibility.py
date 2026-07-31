@@ -63,7 +63,6 @@ async def _async_noop(*_args: object, **_kwargs: object) -> None:
 
 
 def _patch_stop_side_effects(monkeypatch: pytest.MonkeyPatch) -> None:
-    monkeypatch.setattr(GuiController, "_stop_clipboard_watcher", _async_noop)
     monkeypatch.setattr(GuiController, "_cancel_local_stt_download", _async_noop)
     monkeypatch.setattr(GuiController, "set_stt_enabled", _async_noop)
     monkeypatch.setattr(GuiController, "_configure_vrc_mic_receiver", _async_noop)
@@ -381,7 +380,6 @@ async def test_apply_settings_preserves_durable_observation_when_connection_swit
     replacement_settings = _settings_for_connection(connection)
     saved_payloads: list[dict[str, object]] = []
 
-    monkeypatch.setattr(GuiController, "_sync_clipboard_watcher", _async_noop)
     monkeypatch.setattr(
         controller_module,
         "save_settings",

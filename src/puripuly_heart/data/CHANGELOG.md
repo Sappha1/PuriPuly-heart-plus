@@ -2,6 +2,14 @@
 
 User-facing changes per build. The latest build's highlights also appear in-app when an update is ready.
 
+## r336 — 2026-07-30
+
+- **Removed clipboard auto-translate.** With it on, anything you copied was translated and posted to the VRChat chatbox — a password or card number copied from a browser went out to everyone nearby. It was off by default; the setting is now gone entirely
+- Settings that your current provider ignores are greyed out and say so, naming the provider: with Google Translate, DeepL, Bing or Papago the system prompt and context are never sent, and custom vocabulary only works with Deepgram, Soniox and Qwen ASR 0.6B (Local)
+- The custom vocabulary tip was wrong — it left out the local Qwen model, which is the default. It now also tells you terms are stored per language and how many each engine accepts (50, or 12 for the local model)
+- The Prompt tab is gone: the system prompt moved under the API tab's model pickers and custom vocabulary under Audio's speech engine, so each sits with the choice that decides whether it does anything
+- Settings names use the standard terms again — Mic sensitivity, Mic auto-gain, Mic noise suppression, Audio host, Custom vocabulary — instead of the plain-English rewrites from r335
+
 ## r335 — 2026-07-30
 
 - Settings labels now say what each setting does, so you don't have to hover the ⓘ to find out — "Mute Sync" is "Stop listening when you mute in VRChat", "Offset X" is "Move left / right", and so on across every tab

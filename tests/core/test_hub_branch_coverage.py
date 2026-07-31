@@ -1178,12 +1178,12 @@ async def test_submit_text_validates_input_and_enqueues_without_llm() -> None:
 
 
 @pytest.mark.asyncio
-async def test_submit_text_clipboard_source_uses_manual_fallback_without_llm() -> None:
+async def test_submit_text_custom_source_uses_manual_fallback_without_llm() -> None:
     osc = RecordingOscQueue()
     hub = ClientHub(stt=None, llm=None, osc=osc, clock=FakeClock())
     hub.translation_enabled = False
 
-    utterance_id = await hub.submit_text("clipboard fallback", source="Clipboard")
+    utterance_id = await hub.submit_text("manual fallback", source="Manual")
     events = [await hub.ui_events.get(), await hub.ui_events.get(), await hub.ui_events.get()]
 
     assert [event.type for event in events] == [
@@ -1191,9 +1191,9 @@ async def test_submit_text_clipboard_source_uses_manual_fallback_without_llm() -
         UIEventType.TRANSLATION_SKIPPED,
         UIEventType.OSC_SENT,
     ]
-    assert events[0].source == "Clipboard"
+    assert events[0].source == "Manual"
     assert osc.messages[-1].utterance_id == utterance_id
-    assert osc.messages[-1].text == "clipboard fallback"
+    assert osc.messages[-1].text == "manual fallback"
 
 
 def test_merge_helpers_cover_overlap_and_spacing_paths() -> None:

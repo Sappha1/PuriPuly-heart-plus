@@ -65,15 +65,6 @@ _TOOLTIP_TABLE: tuple[tuple[str, dict[str, str]], ...] = (
         },
     ),
     (
-        "When ON, any text you copy",
-        {
-            "en": "When ON, any text you copy to your clipboard is automatically translated and sent to the VRChat chatbox.",
-            "zh-CN": "开启后，您复制到剪贴板的任何文本都会被自动翻译并发送到 VRChat 聊天框。",
-            "ja": "オンにすると、クリップボードにコピーしたテキストが自動的に翻訳され、VRChatのチャットボックスに送信されます。",
-            "ko": "켜면 클립보드에 복사한 텍스트가 자동으로 번역되어 VRChat 채팅창에 전송됩니다.",
-        },
-    ),
-    (
         "Sync mic mute state with VRChat",
         {
             "en": "Sync mic mute state with VRChat — suppresses your microphone input to the app while you are muted in VRChat.",

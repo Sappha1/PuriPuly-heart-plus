@@ -19,7 +19,6 @@ from collections.abc import Callable
 from dataclasses import dataclass, field
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
-from typing import Protocol
 
 import flet as ft
 import numpy as np
@@ -70,7 +69,6 @@ from puripuly_heart.core.audio.source import (
     observe_microphone_test_route,
     resolve_sounddevice_input_device,
 )
-from puripuly_heart.core.clipboard.watcher import create_clipboard_watcher
 from puripuly_heart.core.clock import SystemClock
 from puripuly_heart.core.hardware_fingerprint import get_raw_hardware_fingerprint
 from puripuly_heart.core.llm.provider import SemaphoreLLMProvider
@@ -355,14 +353,6 @@ def _github_star_prompt_latest_timestamp(*values: str | None) -> str | None:
     return latest[1] if latest is not None else None
 
 
-class ClipboardWatcherRuntime(Protocol):
-    def start(self) -> None:
-        pass
-
-    def stop(self) -> None:
-        pass
-
-
 @dataclass(slots=True)
 class _HubVadSink:
     hub: ClientHub
@@ -441,9 +431,6 @@ class GuiController:
     _last_vrc_mic_sync_enabled: bool | None = None
     _vrc_receiver_lock: asyncio.Lock | None = None
     _ui_event_bridge: UIEventBridge | None = None
-    _clipboard_watcher: ClipboardWatcherRuntime | None = field(init=False, default=None)
-    _clipboard_loop: asyncio.AbstractEventLoop | None = field(init=False, default=None)
-    _clipboard_watcher_lock: asyncio.Lock | None = field(init=False, default=None)
     _local_stt_install_state: LocalSTTInstallState = field(
         init=False,
         default_factory=lambda: LocalSTTInstallState(status="ready"),
@@ -752,7 +739,6 @@ class GuiController:
         )
         self._ui_event_bridge = bridge
         self._bridge_task = asyncio.create_task(bridge.run())
-        await self._sync_clipboard_watcher()
 
         await self._restore_saved_runtime_toggles(
             overlay_enabled=restore_overlay_enabled,
@@ -2843,7 +2829,6 @@ class GuiController:
 
     async def stop(self) -> None:
         await self._drain_github_star_prompt_translation_success_task()
-        await self._stop_clipboard_watcher()
         await self._cancel_local_stt_download()
         await self.stop_microphone_test()
         await self.set_stt_enabled(False)
@@ -4067,69 +4052,6 @@ class GuiController:
                 if desired == self._stt_desired and not self._stt_restart_requested:
                     break
 
-    def _get_clipboard_watcher_lock(self) -> asyncio.Lock:
-        if self._clipboard_watcher_lock is None:
-            self._clipboard_watcher_lock = asyncio.Lock()
-        return self._clipboard_watcher_lock
-
-    async def _sync_clipboard_watcher(self) -> None:
-        enabled = bool(
-            self.settings is not None and self.settings.ui.clipboard_auto_translate_enabled
-        )
-        if not enabled or sys.platform != "win32":
-            await self._stop_clipboard_watcher()
-            return
-        async with self._get_clipboard_watcher_lock():
-            if self._clipboard_watcher is not None:
-                return
-
-            self._clipboard_loop = asyncio.get_running_loop()
-            watcher = create_clipboard_watcher(self._on_clipboard_text_from_thread)
-            try:
-                await asyncio.to_thread(watcher.start)
-            except Exception as exc:
-                self._clipboard_loop = None
-                with contextlib.suppress(Exception):
-                    await asyncio.to_thread(watcher.stop)
-                self._log_error(f"Clipboard watcher failed to start: {exc}")
-                return
-            self._clipboard_watcher = watcher
-
-    async def _stop_clipboard_watcher(self) -> None:
-        async with self._get_clipboard_watcher_lock():
-            watcher = self._clipboard_watcher
-            self._clipboard_watcher = None
-            self._clipboard_loop = None
-            if watcher is None:
-                return
-            try:
-                await asyncio.to_thread(watcher.stop)
-            except Exception as exc:
-                self._log_error(f"Clipboard watcher failed to stop: {exc}")
-
-    def _on_clipboard_text_from_thread(self, text: str) -> None:
-        trimmed = text.strip()
-        if not trimmed or len(trimmed) > 300:
-            return
-        loop = self._clipboard_loop
-        if loop is None or loop.is_closed():
-            return
-        loop.call_soon_threadsafe(self._schedule_clipboard_submit, trimmed)
-
-    def _schedule_clipboard_submit(self, text: str) -> None:
-        try:
-            asyncio.create_task(self._submit_clipboard_text(text))
-        except RuntimeError as exc:
-            self._log_error(f"Clipboard submit scheduling failed: {exc}")
-
-    async def _submit_clipboard_text(self, text: str) -> None:
-        if self.hub is None:
-            return
-        try:
-            await self.hub.submit_text(text, source="Clipboard")
-        except Exception as exc:
-            self._log_error(f"Clipboard submit failed: {exc}")
-
     async def submit_text(self, text: str) -> None:
         if self.hub is None:
             return
@@ -4330,7 +4252,6 @@ class GuiController:
         self._sync_desktop_overlay_interaction_mode_from_settings(settings)
         self._save_settings()
         await self._broadcast_desktop_runtime_control_payloads(desktop_runtime_controls)
-        await self._sync_clipboard_watcher()
         self._refresh_local_stt_runtime_state()
         self._clear_local_stt_pending_enable_if_provider_switched_away()
 

@@ -89,7 +89,7 @@ _CENTER_RIGHT_ALIGNMENT = ft.alignment.Alignment(1, 0)
 # r334: Audio and VRChat split out of the catch-all "General" tab. Order runs
 # most-used first: General, Audio (device/recognition troubleshooting), VRChat
 # integration, then the provider/prompt/overlay tabs.
-_SETTINGS_SUBTAB_ORDER = ("general", "audio", "vrchat", "api", "prompt", "overlay")
+_SETTINGS_SUBTAB_ORDER = ("general", "audio", "vrchat", "api", "overlay")
 _OVERLAY_DISTANCE_MIN = 0.5
 _OVERLAY_DISTANCE_MAX = 2.0
 _OVERLAY_DISTANCE_DIVISIONS = 30
@@ -292,6 +292,69 @@ class SettingsView(ft.Column):
             height=height,
         )
 
+    def _capability_notice(self, key: str) -> ft.Container:
+        """A line under a card saying the active provider ignores it (r336).
+
+        Hidden until _refresh_capability_gates() finds a provider that drops
+        the setting; the text names the provider so the fix is obvious.
+        """
+        label = ft.Text("", size=12, color="#c8a44a", no_wrap=False)
+        notice = ft.Container(
+            content=label,
+            padding=ft.padding.only(left=2, right=2, bottom=10),
+            visible=False,
+        )
+        registry = getattr(self, "_capability_notices", None)
+        if registry is None:
+            registry = []
+            self._capability_notices = registry
+        registry.append((key, label, notice))
+        return notice
+
+    def _refresh_capability_gates(self) -> None:
+        """Grey out settings the active providers ignore (r336).
+
+        With the default translator (Google Translate) the system prompt and
+        the context toggle never reach a server, and custom vocabulary is
+        ignored by every engine but three. Silently accepting input that does
+        nothing is what made people ask what these were for.
+        """
+        from puripuly_heart.core.provider_capabilities import (
+            provider_display_key,
+            stt_uses_custom_vocabulary,
+            translator_uses_system_prompt,
+        )
+
+        settings = self._settings
+        if settings is None:
+            return
+        llm = settings.provider.llm
+        stt = settings.provider.stt
+        prompt_ok = translator_uses_system_prompt(llm)
+        vocab_ok = stt_uses_custom_vocabulary(stt)
+        state = {
+            "settings.capability.prompt_unsupported": (prompt_ok, llm),
+            "settings.capability.vocabulary_unsupported": (vocab_ok, stt),
+        }
+        for key, label, notice in getattr(self, "_capability_notices", []):
+            supported, provider = state.get(key, (True, None))
+            notice.visible = not supported
+            if not supported:
+                label.value = t(key, provider=t(provider_display_key(provider)))
+        for control in (
+            getattr(self, "_prompt_editor", None),
+            getattr(self, "_reset_prompt_btn", None),
+            getattr(self, "_integrated_context_button", None),
+        ):
+            if control is not None:
+                control.disabled = not prompt_ok
+        for control in (getattr(self, "_custom_vocab_terms", None),):
+            if control is not None:
+                control.disabled = not vocab_ok
+        if self.page:
+            with contextlib.suppress(Exception):
+                self.update()
+
     def _section_header(self, key: str) -> ft.Control:
         """Small muted heading inside a settings tab (r334) — a long tab still
         scans when its cards are grouped under what they affect."""
@@ -401,7 +464,6 @@ class SettingsView(ft.Column):
             self._llm_text,
             self._ui_text,
             self._chatbox_source_text,
-            self._clipboard_auto_translate_text,
             self._microphone_test_text,
             self._vrc_mic_text,
             self._mic_audio_text,
@@ -1151,23 +1213,6 @@ class SettingsView(ft.Column):
             value=self._chatbox_source_text,
         )
 
-        self._clipboard_auto_translate_text = self._build_clickable_text(
-            t("settings.clipboard_auto_translate.off"),
-            self._on_clipboard_auto_translate_click,
-        )
-        self._clipboard_auto_translate_title = ft.Text(
-            t("settings.clipboard_auto_translate"),
-            size=13,
-            weight=ft.FontWeight.BOLD,
-            color=COLOR_NEUTRAL,
-        )
-        clipboard_auto_translate_card = self._wrap_unit_card(
-            title=self._info_title(self._clipboard_auto_translate_title,
-                "When ON, any text you copy to your clipboard is automatically "
-                "translated and sent to the VRChat chatbox."),
-            value=self._clipboard_auto_translate_text,
-        )
-
         self._vrc_mic_text = self._build_clickable_text(
             t("settings.vrc_mic.on"),
             self._on_vrc_mic_click,
@@ -1213,12 +1258,18 @@ class SettingsView(ft.Column):
         )
 
         integrated_context_card = self._build_integrated_context_unit_card()
+        # Context is part of the same payload as the system prompt, so it is
+        # dropped by exactly the same translators (r336).
+        self._context_capability_notice = self._capability_notice(
+            "settings.capability.prompt_unsupported"
+        )
 
         general_primary_row = ft.Column(
                 [
                     ui_card,
                     chatbox_source_card,
                     integrated_context_card,
+                    self._context_capability_notice,
                 ],
                 spacing=0,
             )
@@ -1619,7 +1670,6 @@ class SettingsView(ft.Column):
                 live_preview_card,
                 chatbox_send_peer_card,
                 steamvr_autolaunch_card,
-                clipboard_auto_translate_card,
                 separate_text_card,
             ],
             spacing=0,
@@ -2439,8 +2489,45 @@ class SettingsView(ft.Column):
             expand=False,
         )
 
+        self._prompt_capability_notice = self._capability_notice(
+            "settings.capability.prompt_unsupported"
+        )
+        self._vocabulary_capability_notice = self._capability_notice(
+            "settings.capability.vocabulary_unsupported"
+        )
+        api_prompt_row = ft.Column(
+            [
+                self._section_header("settings.section.persona"),
+                ft.Container(
+                    content=ft.Text(
+                        t("settings.section.prompt_intro"),
+                        size=12,
+                        color=COLOR_NEUTRAL,
+                        no_wrap=False,
+                    ),
+                    padding=ft.padding.only(left=2, bottom=8),
+                ),
+                persona_card,
+                self._prompt_capability_notice,
+                request_format_card,
+            ],
+            spacing=0,
+        )
+        audio_vocabulary_row = ft.Column(
+            [
+                self._section_header("settings.section.stt"),
+                row7,
+                self._vocabulary_capability_notice,
+            ],
+            spacing=0,
+        )
+
         self._settings_subtab_shell = self._build_settings_subtab_shell(
             {
+                # r336: the Prompt tab is gone. The system prompt only acts on
+                # the AI model picked here, and custom vocabulary only on the
+                # speech engine picked in Audio — each setting now sits under
+                # the choice that decides whether it does anything at all.
                 "api": [
                     row1,
                     self._translation_connection_row,
@@ -2450,6 +2537,7 @@ class SettingsView(ft.Column):
                     # goes to API servers, not about the keys themselves.
                     log_api_requests_card,
                     api_keys_row,
+                    api_prompt_row,
                 ],
                 "general": [
                     general_primary_row,
@@ -2459,9 +2547,9 @@ class SettingsView(ft.Column):
                     audio_devices_row,
                     audio_detection_row,
                     audio_processing_row,
+                    audio_vocabulary_row,
                 ],
                 "vrchat": [vrchat_row],
-                "prompt": [row7, persona_card, request_format_card],
                 "overlay": [
                     overlay_row1,
                     overlay_row1b,
@@ -2668,6 +2756,9 @@ class SettingsView(ft.Column):
             ):
                 with contextlib.suppress(Exception):
                     control.update()
+        # Every caller of this (load, provider change, locale change) is also
+        # exactly when a capability gate can flip (r336).
+        self._refresh_capability_gates()
 
     def _set_custom_vocabulary_draft_from_settings(self, *, preserve_existing: bool) -> None:
         if not self._settings:
@@ -3279,11 +3370,6 @@ class SettingsView(ft.Column):
             if settings.osc.chatbox_include_source
             else "settings.chatbox_source.off"
         )
-        self._clipboard_auto_translate_text.content.value = t(
-            "settings.clipboard_auto_translate.on"
-            if settings.ui.clipboard_auto_translate_enabled
-            else "settings.clipboard_auto_translate.off"
-        )
         self._show_pinyin_text.content.value = t(
             "settings.show_pinyin.on" if settings.ui.show_pinyin else "settings.show_pinyin.off"
         )
@@ -3674,6 +3760,8 @@ class SettingsView(ft.Column):
             self._qwen_region_btn.update()
             self._api_keys_column.update()
             self._stt_text.update()
+
+        self._refresh_capability_gates()  # r336: vocabulary support is per-engine
 
     def sync_stt_provider_label(self, provider_value: str) -> None:
         """Update the settings view STT label when changed externally (e.g. dashboard right-click)."""
@@ -5132,29 +5220,6 @@ class SettingsView(ft.Column):
             self._chatbox_source_text.update()
         self._emit_settings_changed()
 
-    def _on_clipboard_auto_translate_click(self, e) -> None:
-        """Toggle clipboard auto-translate immediately from the unit card."""
-        if not self._settings:
-            return
-        next_value = "off" if self._settings.ui.clipboard_auto_translate_enabled else "on"
-        self._on_clipboard_auto_translate_selected(next_value)
-
-    def _on_clipboard_auto_translate_selected(self, value: str) -> None:
-        """Handle clipboard auto-translate selection result."""
-        if not self._settings:
-            return
-        new_value = value == "on"
-        self._emit_runtime_basic(f"[Settings] Clipboard auto translate toggled: {new_value}")
-        self._settings.ui.clipboard_auto_translate_enabled = new_value
-        self._clipboard_auto_translate_text.content.value = t(
-            "settings.clipboard_auto_translate.on"
-            if new_value
-            else "settings.clipboard_auto_translate.off"
-        )
-        if self.page:
-            self._clipboard_auto_translate_text.update()
-        self._emit_settings_changed()
-
     def _on_show_pinyin_click(self, e) -> None:
         if not self._settings:
             return
@@ -5700,7 +5765,6 @@ class SettingsView(ft.Column):
                 (getattr(self, "_low_latency_text", None), "toggle.on" if _stt.low_latency_mode else "toggle.off"),
                 (getattr(self, "_vrc_mic_text", None), "settings.vrc_mic.on" if _osc.vrc_mic_intercept else "settings.vrc_mic.off"),
                 (getattr(self, "_chatbox_source_text", None), "settings.chatbox_source.on" if _osc.chatbox_include_source else "settings.chatbox_source.off"),
-                (getattr(self, "_clipboard_auto_translate_text", None), "settings.clipboard_auto_translate.on" if _ui.clipboard_auto_translate_enabled else "settings.clipboard_auto_translate.off"),
                 (getattr(self, "_show_pinyin_text", None), "settings.show_pinyin.on" if _ui.show_pinyin else "settings.show_pinyin.off"),
                 (getattr(self, "_show_romaji_text", None), "settings.show_romaji.on" if _ui.show_romaji else "settings.show_romaji.off"),
                 (getattr(self, "_send_pinyin_text", None), "settings.send_pinyin.on" if _ui.send_pinyin else "settings.send_pinyin.off"),
@@ -5775,7 +5839,6 @@ class SettingsView(ft.Column):
         self._custom_vocab_info_icon.tooltip = t("settings.custom_vocabulary_tooltip")
         self._vrc_mic_title.value = t("settings.vrc_mic_intercept")
         self._chatbox_source_title.value = t("settings.chatbox_include_source")
-        self._clipboard_auto_translate_title.value = t("settings.clipboard_auto_translate")
         self._peer_provider_title.value = t("settings.section.peer_stt")
         self._dashboard_language_redirect_text.value = t("settings.dashboard_language_redirect")
         self._peer_stt_label.value = t("settings.peer_stt_provider")
@@ -5870,11 +5933,6 @@ class SettingsView(ft.Column):
                 "settings.chatbox_source.on"
                 if display_settings.osc.chatbox_include_source
                 else "settings.chatbox_source.off"
-            )
-            self._clipboard_auto_translate_text.content.value = t(
-                "settings.clipboard_auto_translate.on"
-                if display_settings.ui.clipboard_auto_translate_enabled
-                else "settings.clipboard_auto_translate.off"
             )
             self._set_unit_card_value_text(
                 self._microphone_test_text,

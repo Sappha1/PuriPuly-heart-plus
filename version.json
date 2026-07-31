@@ -1,11 +1,12 @@
 {
-  "build": 335,
-  "tag": "r335",
+  "build": 336,
+  "tag": "r336",
   "date": "2026-07-30",
   "notes": [
-    "Settings labels now say what each setting does, so you don't have to hover the ⓘ to find out",
-    "No more VAD, Host API, Loopback or Single Turn jargon in the settings",
-    "\"Changelog\" in the version menu opens the changelog itself, not just the info page",
-    "The info page's \"What's new\" button and window are called \"Changelog\" too"
+    "Removed clipboard auto-translate — it posted anything you copied to the VRChat chatbox",
+    "Settings your translator or speech engine ignores are now greyed out and say which one",
+    "Fixed the custom vocabulary tip: it left out the local Qwen model, which is the default",
+    "The Prompt tab is gone — the system prompt moved to API, custom vocabulary to Audio",
+    "Settings names use the standard terms again (Mic sensitivity, Mic auto-gain, Audio host)"
   ]
 }

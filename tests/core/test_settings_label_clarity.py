@@ -21,7 +21,7 @@ RENAMED = {
     "settings.live_preview": "Show my text before it's translated",
     "settings.chatbox_send_peer": "Send their speech to the VRChat chatbox",
     "settings.clipboard_auto_translate": "Translate anything I copy",
-    "settings.separate_text_translation": "Different language for typed messages",
+    "settings.separate_text_translation": "Separate 'Text Translation' box on the dashboard",
     "settings.audio_host_api": "Audio driver system",
     "settings.section.self_vad_sensitivity": "When to start listening to you",
     "settings.section.peer_vad_sensitivity": "When to start listening to them",
@@ -30,8 +30,8 @@ RENAMED = {
     "settings.peer_auto_gain": "Boost their quiet audio",
     "settings.overlay.show_peer_original": "Show their original words",
     "settings.overlay.single_turn_mode": "Show one message at a time",
-    "settings.overlay.calibration.offset_x": "Move left / right",
-    "settings.overlay.calibration.offset_y": "Move up / down",
+    "settings.overlay.calibration.offset_x": "Horizontal position",
+    "settings.overlay.calibration.offset_y": "Vertical position",
     "settings.filter_peer_by_target_languages": "Only translate my target languages",
 }
 

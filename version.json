@@ -1,11 +1,11 @@
 {
-  "build": 345,
-  "tag": "r345",
+  "build": 347,
+  "tag": "r347",
   "date": "2026-07-31",
   "notes": [
-    "Speaker identification overhaul: two people stay two speakers, and naming works from every chat line",
-    "Naming window: rename everywhere / different person / clear name / this message only, plus a link to manage saved voices",
-    "Saved voices: rename, remove (clears the chat log too), and undo the last change",
-    "60 interface strings that ignored the language setting are now translated"
+    "Long subtitles now shrink to fit the overlay instead of running off the bottom",
+    "Subtitles can use up to 10 wrapped lines, so long translations are no longer cut short",
+    "\"Only translate my target languages\" now checks what language the audio actually was",
+    "That filter also works now for languages that don't use a distinct script"
   ]
 }

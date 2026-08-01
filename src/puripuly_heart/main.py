@@ -289,6 +289,18 @@ def main(argv: list[str] | None = None) -> int:
     argv = raw_argv
 
     logging_sinks = configure_main_logging()
+    # r354: before anything can import huggingface_hub, which reads its
+    # endpoint once at import time. A user behind the Great Firewall had every
+    # model download time out, which left them on the one recogniser their CPU
+    # cannot run accurately.
+    try:
+        from puripuly_heart.core.model_mirror import configure_model_downloads
+
+        configure_model_downloads(
+            os.environ.get("PURIPULY_MODEL_SOURCE", "auto").strip().lower() or "auto"
+        )
+    except Exception:
+        logging.getLogger(__name__).debug("mirror setup skipped", exc_info=True)
     try:
         from puripuly_heart.core.system_info import log_system_info_async
 

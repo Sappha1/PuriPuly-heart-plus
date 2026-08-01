@@ -1,6 +1,8 @@
 """Voiceprint extraction for local speaker identification (r318).
 
-Runs the bundled ERes2Net speaker-embedding ONNX (38MB, 3D-Speaker) on the
+Runs the bundled ERes2NetV2 speaker-embedding ONNX (71MB, 3D-Speaker; r349
+upgraded it from the 38MB ERes2Net base for better same-language separation)
+on the
 MAIN process's onnxruntime — deliberately NOT through sherpa-onnx, whose
 private runtime DLLs are pinned to an older ORT that cannot load this model
 class (same wall that blocked the GTCRN denoiser in r298). Features come
@@ -23,7 +25,7 @@ from puripuly_heart.core.speaker_id import EMBEDDING_DIM, MIN_UTTERANCE_SECONDS
 
 logger = logging.getLogger(__name__)
 
-_MODEL_RESOURCE = "data/models/speaker/eres2net_base_zh_16k.onnx"
+_MODEL_RESOURCE = "data/models/speaker/eres2netv2_zh_16k.onnx"
 SAMPLE_RATE_HZ = 16000
 
 

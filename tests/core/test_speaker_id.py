@@ -259,14 +259,27 @@ def test_variants_are_capped(registry) -> None:
 
 
 def test_legacy_single_centroid_store_still_loads(tmp_path) -> None:
-    """r318-r329 wrote {"centroid": [...]}; those users must not lose names."""
+    """r318-r329 wrote {"centroid": [...]}; those users must not lose names.
+
+    Stamped with the current model on purpose: this is about reading the old
+    single-centroid SHAPE, not about carrying voiceprints across a model
+    change. An unstamped store is cleared by design since r349 — see
+    tests/test_speaker_model_upgrade.py.
+    """
     import json
+
+    from puripuly_heart.core.speaker_id import SPEAKER_MODEL_ID
 
     voice = _voice(240)
     path = tmp_path / "voices.json"
     path.write_text(
         json.dumps(
-            {"voices": [{"name": "Rio", "centroid": [float(x) for x in voice], "count": 3}]}
+            {
+                "model": SPEAKER_MODEL_ID,
+                "voices": [
+                    {"name": "Rio", "centroid": [float(x) for x in voice], "count": 3}
+                ],
+            }
         ),
         encoding="utf-8",
     )

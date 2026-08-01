@@ -5080,6 +5080,13 @@ class GuiController:
         except Exception:
             return 0
 
+    def saved_voices_reset_reason(self) -> str:
+        """Why the saved voices are empty, when it wasn't the user (r349)."""
+        try:
+            return str(getattr(self._speaker_registry(), "reset_reason", "") or "")
+        except Exception:
+            return ""
+
     def enrolled_speakers(self) -> list[tuple[str, int, int]]:
         """(name, voiceprints, utterances) for the saved-voices manager."""
         try:

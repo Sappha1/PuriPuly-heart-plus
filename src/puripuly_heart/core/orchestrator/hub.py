@@ -649,7 +649,10 @@ class ClientHub:
         registry = self.speaker_registry
         if registry is not None and transcript.speaker_embedding is not None:
             try:
-                match = registry.match(transcript.speaker_embedding)
+                match = registry.match(
+                    transcript.speaker_embedding,
+                    float(getattr(transcript, "speaker_seconds", 0.0) or 0.0),
+                )
                 if match.kind == "named":
                     speaker_name = match.label
                     speaker_cluster_id = match.cluster_id

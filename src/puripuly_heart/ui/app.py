@@ -235,6 +235,10 @@ class TranslatorApp:
         self.view_settings.on_list_saved_voices = (
             lambda: self.controller.enrolled_speakers()
         )
+        # r349: an empty list after the voice-model upgrade needs explaining.
+        self.view_settings.on_saved_voices_reset_reason = (
+            lambda: self.controller.saved_voices_reset_reason()
+        )
         self.view_settings.on_rename_saved_voice = self._on_rename_saved_voice
         self.view_settings.on_forget_saved_voice = self._on_forget_saved_voice
         # r345: the naming dialog links straight into the manager.

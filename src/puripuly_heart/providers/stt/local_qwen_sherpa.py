@@ -533,12 +533,15 @@ class _LocalQwenSherpaSession(STTBackendSession):
                 rtf,
             )
             speaker_embedding: tuple[float, ...] | None = None
+            speaker_seconds = 0.0
             embedder = getattr(self.backend, "speaker_embedder", None)
             if embedder is not None:
                 try:
                     vector = await asyncio.to_thread(embedder.embed, samples_f32)
                     if vector is not None:
                         speaker_embedding = tuple(float(x) for x in vector)
+                        # r349: the recognizer feeds 16k mono here.
+                        speaker_seconds = len(samples_f32) / 16000.0
                 except Exception:
                     logger.debug("speaker embedding failed", exc_info=True)
             await self._events.put(
@@ -546,6 +549,7 @@ class _LocalQwenSherpaSession(STTBackendSession):
                     text=text,
                     is_final=True,
                     speaker_embedding=speaker_embedding,
+                    speaker_seconds=speaker_seconds,
                     detected_language=detected_language,
                 )
             )

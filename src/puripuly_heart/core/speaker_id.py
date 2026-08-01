@@ -28,9 +28,19 @@ import numpy as np
 
 logger = logging.getLogger(__name__)
 
-EMBEDDING_DIM = 512
+# r349: ERes2NetV2 emits 192-dim embeddings (the previous ERes2Net base
+# emitted 512). Voiceprints are only comparable within one model, so the store
+# is stamped with the model that wrote it and cleared when that changes.
+EMBEDDING_DIM = 192
+SPEAKER_MODEL_ID = "eres2netv2_zh_16k"
 # Segments shorter than this produce unstable voiceprints — skip labeling.
 MIN_UTTERANCE_SECONDS = 1.2
+# r349: and segments shorter than THIS are still too unstable to be believed
+# about somebody NEW. Measured on the current model, one speaker's own samples
+# score 0.87 at 3s and 0.77 at 2s but scatter down to 0.44 at 1.2s, where they
+# overlap with different-speaker scores entirely. A segment under this length
+# may still be labeled by matching, but may not create a cluster or move one.
+MIN_TRUSTED_SECONDS = 2.0
 NAMED_MATCH_THRESHOLD = 0.60
 CLUSTER_MATCH_THRESHOLD = 0.52
 # Centroid update weight for a new sample joining a cluster/enrollment.
@@ -110,6 +120,9 @@ class SpeakerRegistry:
         # cluster (>=0.52) but misses the stricter named threshold (>=0.60) —
         # without this, a just-named voice could keep showing "Speaker N".
         self._cluster_names: dict[int, str] = {}
+        # Set by _load when a model change forced the store to be cleared, so
+        # the UI can explain an unexpectedly empty list.
+        self.reset_reason = ""
         self._load()
 
     # ── persistence ──────────────────────────────────────────────────────
@@ -121,6 +134,18 @@ class SpeakerRegistry:
             return
         except Exception:
             logger.warning("[SpeakerID] voices store unreadable — starting empty")
+            return
+        stored_model = str(data.get("model") or "")
+        if data.get("voices") and stored_model != SPEAKER_MODEL_ID:
+            # r349: a different model wrote these. Their numbers mean nothing
+            # to the current one, so keep nobody rather than everybody wrong.
+            self.reset_reason = "model_changed"
+            logger.warning(
+                "[SpeakerID] saved voices were recorded by %r but this build "
+                "uses %r — clearing them; people need naming again",
+                stored_model or "an older build",
+                SPEAKER_MODEL_ID,
+            )
             return
         for entry in data.get("voices", []):
             name = str(entry.get("name") or "").strip()
@@ -145,6 +170,9 @@ class SpeakerRegistry:
 
     def _save(self) -> None:
         payload = {
+            # r349: stamped so a future model change can detect and clear
+            # rather than silently comparing incompatible numbers.
+            "model": SPEAKER_MODEL_ID,
             "voices": [
                 {
                     "name": name,
@@ -166,8 +194,12 @@ class SpeakerRegistry:
 
     # ── matching ─────────────────────────────────────────────────────────
 
-    def match(self, embedding: np.ndarray) -> SpeakerMatch:
+    def match(self, embedding: np.ndarray, seconds: float = 0.0) -> SpeakerMatch:
+        """Label a voiceprint. `seconds` is how much audio produced it; 0.0
+        means the caller does not know, which is treated as trustworthy so
+        existing callers keep their behaviour."""
         vector = _normalize(np.asarray(embedding, dtype=np.float32))
+        trusted = seconds <= 0.0 or seconds >= MIN_TRUSTED_SECONDS
         with self._lock:
             best_name, best_name_sim, best_variant_index = "", -1.0, -1
             for name, variants in self._named.items():
@@ -198,6 +230,11 @@ class SpeakerRegistry:
             def _join_cluster() -> "_Cluster":
                 """EMA the joined cluster and heal fragments; returns the
                 surviving cluster (the joined one may be absorbed)."""
+                if not trusted:
+                    # r349: ride along, but don't steer. A scrap this short can
+                    # sit far enough off the speaker to drag the centroid onto
+                    # a neighbouring voice.
+                    return best_cluster
                 best_cluster.centroid = _normalize(
                     (1 - CENTROID_EMA_ALPHA) * best_cluster.centroid
                     + CENTROID_EMA_ALPHA * vector
@@ -209,10 +246,11 @@ class SpeakerRegistry:
                 # Nudge ONLY the variant that matched, so a call-channel print
                 # never drags the VRChat one (or vice versa) toward it.
                 variants = self._named[best_name]
-                variants[best_variant_index] = _normalize(
-                    (1 - CENTROID_EMA_ALPHA) * variants[best_variant_index]
-                    + CENTROID_EMA_ALPHA * vector
-                )
+                if trusted:
+                    variants[best_variant_index] = _normalize(
+                        (1 - CENTROID_EMA_ALPHA) * variants[best_variant_index]
+                        + CENTROID_EMA_ALPHA * vector
+                    )
                 logger.debug(
                     "[SpeakerID] matched %r variant=%d similarity=%.3f",
                     best_name, best_variant_index, best_name_sim,
@@ -263,6 +301,15 @@ class SpeakerRegistry:
                         best_cluster.cluster_id,
                         best_cluster_sim,
                     )
+                return SpeakerMatch("none", "", -1, 0.0)
+
+            if not trusted:
+                # Not enough audio to claim this is somebody new. An unlabeled
+                # line reads far better than a "Speaker 9" that never returns.
+                logger.debug(
+                    "[SpeakerID] %.2fs segment matched nobody — too short to "
+                    "open a new speaker", seconds,
+                )
                 return SpeakerMatch("none", "", -1, 0.0)
 
             cluster = _Cluster(self._next_cluster_number, vector)
@@ -525,6 +572,8 @@ __all__ = [
     "CLUSTER_MATCH_THRESHOLD",
     "EMBEDDING_DIM",
     "MIN_UTTERANCE_SECONDS",
+    "MIN_TRUSTED_SECONDS",
+    "SPEAKER_MODEL_ID",
     "NAMED_MATCH_THRESHOLD",
     "SpeakerMatch",
     "SpeakerRegistry",

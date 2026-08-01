@@ -892,5 +892,6 @@
   "ocr_module.remove.title": "移除 OCR 模块",
   "ocr_module.remove.body": "将从磁盘删除实时 OCR 引擎（释放约 340 MB）。您的 OCR 设置会保留。随时打开 OCR 即可重新下载。确定移除吗？",
   "ocr_module.remove.confirm": "移除",
-  "ocr_module.remove.done": "OCR 模块已移除 — 释放了约 {mb} MB。打开 OCR 即可重新下载。"
+  "ocr_module.remove.done": "OCR 模块已移除 — 释放了约 {mb} MB。打开 OCR 即可重新下载。",
+  "settings.saved_voices.model_reset": "语音识别已升级为更精确的模型，此前保存的声纹不再适用，已被清除。请在聊天消息的说话人标签上重新命名。"
 }

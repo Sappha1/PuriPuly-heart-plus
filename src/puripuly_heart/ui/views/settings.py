@@ -5635,10 +5635,20 @@ class SettingsView(ft.Column):
             list_column.controls.clear()
             entries = _voices()
             if not entries:
+                reason = ""
+                try:
+                    provider = getattr(self, "on_saved_voices_reset_reason", None)
+                    reason = str(provider() or "") if callable(provider) else ""
+                except Exception:
+                    reason = ""
                 list_column.controls.append(
                     ft.Container(
                         content=ft.Text(
-                            t("settings.saved_voices.empty"),
+                            t(
+                                "settings.saved_voices.model_reset"
+                                if reason == "model_changed"
+                                else "settings.saved_voices.empty"
+                            ),
                             size=12,
                             color=COLOR_NEUTRAL,
                             no_wrap=False,

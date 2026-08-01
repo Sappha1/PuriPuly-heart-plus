@@ -35,7 +35,7 @@ if not _stt_manifest.exists():
 # r318: the bundled speaker-embedding model must ship too — captions silently
 # lose speaker tags without it (embedder degrades to None, no crash, but a
 # build without the file is a broken release).
-_speaker_model = Path("src/puripuly_heart/data/models/speaker/eres2net_base_zh_16k.onnx").resolve()
+_speaker_model = Path("src/puripuly_heart/data/models/speaker/eres2netv2_zh_16k.onnx").resolve()
 if not _speaker_model.exists():
     raise SystemExit(f"Speaker embedding model missing from source tree: {_speaker_model}")
 

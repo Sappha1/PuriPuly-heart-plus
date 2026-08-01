@@ -38,6 +38,8 @@ class Transcript:
     # r318 speaker identification (peer channel): raw voiceprint on the way
     # INTO the hub; resolved name/cluster on the way OUT to the UI.
     speaker_embedding: tuple[float, ...] | None = None
+    # r349: seconds of audio behind the voiceprint (see MIN_TRUSTED_SECONDS).
+    speaker_seconds: float = 0.0
     speaker_name: str = ""
     speaker_cluster_id: int = -1
     # r346: audio-level language from the recognizer (None when the backend

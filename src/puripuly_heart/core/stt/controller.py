@@ -622,6 +622,7 @@ class ManagedSTTProvider:
         is_final: bool,
         created_at: float,
         speaker_embedding: tuple[float, ...] | None = None,
+        speaker_seconds: float = 0.0,
         detected_language: str | None = None,
     ) -> Transcript:
         return Transcript(
@@ -631,6 +632,7 @@ class ManagedSTTProvider:
             created_at=created_at,
             channel=self.channel,
             speaker_embedding=speaker_embedding,
+            speaker_seconds=speaker_seconds,
             detected_language=detected_language,
         )
 
@@ -748,6 +750,7 @@ class ManagedSTTProvider:
                     is_final=ev.is_final,
                     created_at=created_at,
                     speaker_embedding=getattr(ev, "speaker_embedding", None),
+                    speaker_seconds=float(getattr(ev, "speaker_seconds", 0.0) or 0.0),
                     detected_language=getattr(ev, "detected_language", None),
                 )
                 if ev.is_final:

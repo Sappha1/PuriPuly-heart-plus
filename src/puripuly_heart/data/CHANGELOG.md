@@ -2,6 +2,16 @@
 
 User-facing changes per build. The latest build's highlights also appear in-app when an update is ready.
 
+## r347 — 2026-07-31
+
+- **Long subtitles no longer run off the overlay.** A long message now shrinks its text just enough to fit the overlay size you chose, instead of having the translation cut off. Short messages are unchanged, and the same fix applies to the VR overlay and to small overlay sizes on laptops
+- Subtitles can also use up to 10 wrapped lines (was 6), which by itself was cutting the end off longer translations
+
+## r346 — 2026-07-31
+
+- **"Only translate my target languages" now works even when the speech recognizer rewrites what it hears.** When a recognizer is set to one language and someone speaks another, it can silently translate their speech into the expected language instead of transcribing it — so the filter saw the right characters and let the message through. The app now checks what language the audio actually was
+- Because it checks the audio rather than the characters, the filter also works for languages that don't use a distinct script (previously it could not tell, for example, French speech from English)
+
 ## r345 — 2026-07-31
 
 - The naming window now has a **Manage saved voices…** link, and a new **Clear this speaker's name** option that sends the line back to "Speaker N" while keeping the saved voice

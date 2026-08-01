@@ -3846,3 +3846,71 @@ async def test_desktop_overlay_startup_failure_closes_parent_monitor_once() -> N
     await renderer.shutdown()
 
     assert parent_monitor.close_calls == 1
+
+
+def test_long_captions_auto_fit_by_shrinking_fonts() -> None:
+    """r347: the reported clipping — a long zh line + reading + translation
+    overflowed the window and the translation's tail was cut off. The plan
+    now scales fonts down just enough that the estimated content fits."""
+    from puripuly_heart.ui.desktop_overlay import (
+        _desktop_caption_size_preset_for_dimensions,
+    )
+
+    long_secondary = "彼此的故事，想问是什么样的作者能写出如此梦幻剧情？当那天我划开了手机，却收到你。" * 2
+    long_primary = (
+        "Our story - I wonder what kind of author could write such a dreamlike "
+        "plot? That day, when I swiped through my phone, I found you. " * 2
+    )
+    snapshot = OverlayPresentationSnapshot(
+        revision=1,
+        blocks=[
+            _block(
+                "peer-long",
+                channel="peer",
+                block_variant="active",
+                appearance_seq=1,
+                primary_text=long_primary,
+                secondary_text=long_secondary,
+                secondary_enabled=True,
+            )
+        ],
+    )
+    plan = desktop_overlay.build_desktop_caption_plan(snapshot)
+    preset = _desktop_caption_size_preset_for_dimensions(
+        plan.window_width, plan.window_height
+    )
+
+    assert plan.primary_font_size < preset.primary_font_size
+    assert plan.secondary_font_size < preset.secondary_font_size
+    # floor: never unreadably small
+    assert plan.primary_font_size >= 9
+    # the content still renders — nothing was dropped to make it fit
+    assert any(line.text for line in plan.lines)
+
+
+def test_short_captions_keep_the_full_preset_font() -> None:
+    from puripuly_heart.ui.desktop_overlay import (
+        _desktop_caption_size_preset_for_dimensions,
+    )
+
+    snapshot = OverlayPresentationSnapshot(
+        revision=1,
+        blocks=[
+            _block(
+                "peer-short",
+                channel="peer",
+                block_variant="active",
+                appearance_seq=1,
+                primary_text="Hello.",
+                secondary_text="你好。",
+                secondary_enabled=True,
+            )
+        ],
+    )
+    plan = desktop_overlay.build_desktop_caption_plan(snapshot)
+    preset = _desktop_caption_size_preset_for_dimensions(
+        plan.window_width, plan.window_height
+    )
+
+    assert plan.primary_font_size == preset.primary_font_size
+    assert plan.secondary_font_size == preset.secondary_font_size

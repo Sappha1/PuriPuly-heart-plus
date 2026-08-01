@@ -100,8 +100,15 @@ _DESKTOP_CAPTION_BACKGROUND_RGB = "000000"
 _DESKTOP_CAPTION_TRANSPARENT = "transparent"
 _DESKTOP_CAPTION_MAX_VISIBLE_SLOTS = 2
 _DESKTOP_CAPTION_MAX_VISIBLE_LINES = 16
-_DESKTOP_CAPTION_PRIMARY_MAX_LINES = 6
-_DESKTOP_CAPTION_SECONDARY_MAX_LINES = 6
+# r347: with auto-fit shrinking fonts to make content fit, these are only a
+# guard against pathological input — 6 was amputating real translations.
+_DESKTOP_CAPTION_PRIMARY_MAX_LINES = 10
+_DESKTOP_CAPTION_SECONDARY_MAX_LINES = 10
+# Auto-fit floor: never shrink below this fraction of the preset font (or
+# this absolute size) — beyond that the text is unreadable and clipping the
+# tail is honestly better.
+_DESKTOP_CAPTION_MIN_FIT_SCALE = 0.55
+_DESKTOP_CAPTION_MIN_FIT_FONT = 9
 _DESKTOP_CAPTION_LINE_HEIGHT = 1.24
 _DESKTOP_CAPTION_PRIMARY_REGION_ALIGNMENT_Y = -0.5
 _DESKTOP_CAPTION_TEXT_STACK_ALIGNMENT_Y = -0.08
@@ -511,21 +518,75 @@ def build_desktop_caption_plan(
     outline_width = 0.0
     _ = locale
 
-    candidate_slots = _caption_slots_for_snapshot(
-        snapshot,
-        primary_font_size=primary_font_size,
-        secondary_font_size=secondary_font_size,
-    )
     # Two-turn disabled — always one caption slot (single-turn).
     max_slots = 1  # was: 1 if visual.single_turn_mode else _DESKTOP_CAPTION_MAX_VISIBLE_SLOTS
-    slots = tuple(
-        _caption_slot_with_dynamic_width(
-            slot,
-            padding_horizontal=preset.padding_horizontal,
-            max_card_width=width,
+
+    def _slots_at(primary: int, secondary: int):
+        candidates = _caption_slots_for_snapshot(
+            snapshot,
+            primary_font_size=primary,
+            secondary_font_size=secondary,
         )
-        for slot in candidate_slots[:max_slots]
-    )
+        return tuple(
+            _caption_slot_with_dynamic_width(
+                slot,
+                padding_horizontal=preset.padding_horizontal,
+                max_card_width=width,
+            )
+            for slot in candidates[:max_slots]
+        )
+
+    slots = _slots_at(primary_font_size, secondary_font_size)
+
+    # r347 auto-fit: estimate the wrapped height of the content; when it
+    # exceeds the window, scale the fonts down just enough to fit. Fonts and
+    # wrapped rows both shrink with the scale, so a single rebuild suffices.
+    wrap_width = max(1.0, float(width) - preset.padding_horizontal * 2)
+
+    available_height = max(1.0, float(height) - preset.padding_vertical * 2)
+
+    def _height_for_scale(scale: float) -> float:
+        """Estimated wrapped height if every line were re-rendered at `scale`.
+
+        Cheap: reuses the already-wrapped line TEXTS and re-measures them, so
+        the ladder below costs string maths, not slot rebuilds.
+        """
+        total = 0.0
+        for slot in slots:
+            for line in slot.lines:
+                font = max(
+                    _DESKTOP_CAPTION_MIN_FIT_FONT, round(line.font_size * scale)
+                )
+                # Explicit newlines (a reading line above its source) each
+                # start a fresh row — measuring the whole string as one run
+                # undercounts badly and lets overflow through.
+                rows = 0
+                for paragraph in line.text.split(chr(10)):
+                    est_width = _estimated_caption_line_width(paragraph, font)
+                    rows += max(1, int(math.ceil(est_width / wrap_width)))
+                rows = min(line.max_lines, max(1, rows))
+                total += rows * font * _DESKTOP_CAPTION_LINE_HEIGHT
+        return total
+
+    if _height_for_scale(1.0) > available_height:
+        # Largest step that fits wins; the floor keeps text readable and lets
+        # the window clip rather than rendering something microscopic.
+        fit_scale = _DESKTOP_CAPTION_MIN_FIT_SCALE
+        for step in range(1, 20):
+            candidate = 1.0 - (step * 0.05)
+            if candidate < _DESKTOP_CAPTION_MIN_FIT_SCALE:
+                break
+            if _height_for_scale(candidate) <= available_height:
+                fit_scale = candidate
+                break
+        primary_font_size = max(
+            _DESKTOP_CAPTION_MIN_FIT_FONT, round(primary_font_size * fit_scale)
+        )
+        secondary_font_size = max(
+            _DESKTOP_CAPTION_MIN_FIT_FONT, round(secondary_font_size * fit_scale)
+        )
+        slots = _slots_at(primary_font_size, secondary_font_size)
+
     lines = tuple(line for slot in slots for line in slot.lines)
 
     full_window_background_visible = interaction_mode == _DESKTOP_INTERACTION_MODE_EDIT

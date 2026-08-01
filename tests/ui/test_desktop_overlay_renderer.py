@@ -3914,3 +3914,66 @@ def test_short_captions_keep_the_full_preset_font() -> None:
 
     assert plan.primary_font_size == preset.primary_font_size
     assert plan.secondary_font_size == preset.secondary_font_size
+
+
+def test_a_near_fitting_line_never_strands_a_few_characters() -> None:
+    """r348: a line estimated at ~95% of the box was believed to fit, but the
+    real font is a shade wider and wrapped the last two characters onto their
+    own row. Nothing may be left sitting within a hair of the edge."""
+    from puripuly_heart.ui.desktop_overlay import (
+        _CAPTION_FIT_SAFETY,
+        _estimated_caption_line_width,
+        _fit_caption_text,
+    )
+
+    text = "没有两组啊，啊，干什么？我们在用你没看见，也就不用给他捐了。我说什么啊？我说什么啊？"
+    width = 1548
+    for font in (35, 41, 50):
+        fitted, size = _fit_caption_text(text, font, width, 10)
+        for row in fitted.split(chr(10)):
+            assert _estimated_caption_line_width(row, size) <= width * _CAPTION_FIT_SAFETY
+
+
+def test_the_near_fit_branch_only_ever_shrinks() -> None:
+    """It computed max(MIN_SCALE, avail/estimated), which is > 1 for text that
+    already fits — scaling a 95% line UP to 98%, deeper into the wrap band."""
+    from puripuly_heart.ui.desktop_overlay import _fit_caption_text
+
+    text = "没有两组啊，啊，干什么？我们在用你没看见，也就不用给他捐了。我说什么啊？我说什么啊？"
+    for font in (30, 35, 41, 50):
+        _fitted, size = _fit_caption_text(text, font, 1548, 10)
+        assert size <= font, f"font grew from {font} to {size}"
+
+
+def test_both_paragraphs_of_a_reading_line_are_balanced() -> None:
+    """r348: a reading line above its source arrives as one string with a
+    newline; the balancer used to return it untouched, handing BOTH
+    paragraphs to the renderer's greedy wrap."""
+    from puripuly_heart.ui.desktop_overlay import (
+        _CAPTION_FIT_SAFETY,
+        _estimated_caption_line_width,
+        _fit_caption_text,
+    )
+
+    reading = (
+        "méiyǒu liǎngzǔ a, a, gànshénme？wǒmen zài yòng nǐ méi kànjiàn, "
+        "yě jiù bùyòng gěi tā juān le。wǒ shuō shénme a？wǒ shuō shénme a？"
+    )
+    source = "没有两组啊，啊，干什么？我们在用你没看见，也就不用给他捐了。我说什么啊？我说什么啊？"
+    width = 1548
+
+    fitted, size = _fit_caption_text(reading + chr(10) + source, 35, width, 10)
+
+    rows = fitted.split(chr(10))
+    assert len(rows) > 2, "the paragraphs were not broken at all"
+    for row in rows:
+        assert _estimated_caption_line_width(row, size) <= width * _CAPTION_FIT_SAFETY
+
+
+def test_short_lines_are_left_alone() -> None:
+    from puripuly_heart.ui.desktop_overlay import _fit_caption_text
+
+    fitted, size = _fit_caption_text("你好，今天怎么样？", 41, 1548, 10)
+
+    assert fitted == "你好，今天怎么样？"
+    assert size == 41

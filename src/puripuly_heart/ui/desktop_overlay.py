@@ -1506,6 +1506,11 @@ def _estimated_caption_char_width(char: str, font_size: int) -> float:
 # can't happen. CJK lines never start with closing punctuation.
 _CAPTION_SHRINK_MAX_RATIO = 1.25
 _CAPTION_MIN_FONT_SCALE = 0.8
+# r348: the width estimate is close but not exact, so a line measured at
+# "just fits" can still wrap in the real font — leaving one or two characters
+# stranded on their own row. Require this much headroom before believing a
+# line fits; anything tighter gets balanced into even rows instead.
+_CAPTION_FIT_SAFETY = 0.94
 _CAPTION_NO_LINE_START = set("。，、！？：；）」』”…!?,.;:)]’")
 _CAPTION_NO_LINE_END = set("（「『“([‘")
 
@@ -1529,21 +1534,40 @@ def _fit_caption_text(
     text: str, font_size: int, avail_width: float, max_lines: int
 ) -> tuple[str, int]:
     """Return (possibly re-broken text, possibly reduced font size)."""
-    if avail_width <= 0 or chr(10) in text:
+    if avail_width <= 0:
         return text, font_size
+    if chr(10) in text:
+        # r348: a reading line above its source arrives as one string with a
+        # newline. Returning early handed BOTH paragraphs to the renderer's
+        # greedy wrap, which is what stranded a two-character tail on its own
+        # row. Balance each paragraph on its own and keep the split.
+        smallest = font_size
+        balanced: list[str] = []
+        for paragraph in text.split(chr(10)):
+            fitted, fitted_size = _fit_caption_text(
+                paragraph, font_size, avail_width, max_lines
+            )
+            balanced.append(fitted)
+            smallest = min(smallest, fitted_size)
+        return chr(10).join(balanced), smallest
     estimated = _estimated_caption_line_width(text, font_size)
-    if estimated <= avail_width:
+    # Margin, not a knife edge — see _CAPTION_FIT_SAFETY.
+    safe_width = avail_width * _CAPTION_FIT_SAFETY
+    if estimated <= safe_width:
         return text, font_size
-    ratio = estimated / avail_width
+    ratio = estimated / safe_width
     if ratio <= _CAPTION_SHRINK_MAX_RATIO:
-        scale = max(_CAPTION_MIN_FONT_SCALE, avail_width / estimated)
-        shrunk = int(font_size * scale)
-        if _estimated_caption_line_width(text, shrunk) <= avail_width:
+        # Clamp at 1.0: this branch may only SHRINK. Without the clamp a line
+        # that already fits scaled UP, pushing it into the band where the real
+        # font wraps and strands a character or two on their own row.
+        scale = min(1.0, max(_CAPTION_MIN_FONT_SCALE, safe_width / estimated))
+        shrunk = max(1, int(font_size * scale))
+        if shrunk < font_size and _estimated_caption_line_width(text, shrunk) <= safe_width:
             return text, shrunk
     candidates = _caption_break_candidates(text)
     if not candidates:
         return text, font_size
-    line_count = min(max(2, math.ceil(ratio)), max(2, max_lines))
+    line_count = min(max(2, math.ceil(estimated / safe_width)), max(2, max_lines))
     ideal = estimated / line_count
     breaks: list[int] = []
     accumulated = 0.0

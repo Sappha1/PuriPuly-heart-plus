@@ -4982,6 +4982,23 @@ class GuiController:
         except Exception:
             return ""
 
+    def enroll_speaker_voiceprint(self, embedding, name: str) -> bool:
+        """Name the voice behind a single message (r352).
+
+        Used when the line has no session cluster — the app declined to guess
+        who spoke, and the user is telling it.
+        """
+        try:
+            import numpy as np
+
+            vector = np.asarray(embedding, dtype=np.float32)
+            return bool(
+                self._speaker_registry().enroll_embedding(vector, str(name))
+            )
+        except Exception:
+            logger.exception("[SpeakerID] naming a voiceprint failed")
+            return False
+
     def enroll_speaker(self, cluster_id: int, name: str) -> bool:
         """Name a session voice cluster (from the chat tag dialog)."""
         try:

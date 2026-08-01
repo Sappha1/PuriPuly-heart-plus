@@ -142,6 +142,12 @@ class TranslatorApp:
 
         # Link Dashboard callbacks
         self.view_dashboard.on_send_message = self._on_manual_submit
+        # r352: naming a line the recogniser could not place.
+        self.view_dashboard.on_enroll_speaker_voiceprint = (
+            lambda embedding, name: self.controller.enroll_speaker_voiceprint(
+                embedding, name
+            )
+        )
         self.view_dashboard.on_enroll_speaker = (
             lambda cluster_id, name: self.controller.enroll_speaker(cluster_id, name)
         )

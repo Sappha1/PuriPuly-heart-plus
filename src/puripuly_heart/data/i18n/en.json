@@ -593,7 +593,7 @@
   "dashboard.speaker_name_dialog.manage_link": "Manage saved voices…",
   "dashboard.speaker_name_dialog.scope_clear": "Clear this speaker's name",
   "dashboard.speaker_name_dialog.scope_clear_desc": "This speaker goes back to “Speaker N” — {name}'s saved voice is kept",
-  "dashboard.speaker_unknown": "Speaker ?",
+  "dashboard.speaker_unknown": "Unidentified",
   "dashboard.speaker_name_dialog.add_warning": "“{name}” is already a saved voice ({existing} voiceprints) — even if no message shows the name right now. Saving adds this speaker's voice to them. If this is actually a different person, pick another name.",
   "dashboard.speaker_name_dialog.add_button": "Add voice",
   "settings.overlay.calibration.distance.tooltip": "How far (in metres) the overlay floats from its anchor point.",

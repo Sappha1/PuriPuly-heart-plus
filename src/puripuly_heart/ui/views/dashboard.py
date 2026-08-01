@@ -3777,6 +3777,7 @@ class DashboardView(ft.Row):
         *,
         known_name: str = "",
         tag_control: object = None,
+        embedding: object = None,
     ) -> None:
         """Name (enroll) or rename the voice behind a chat entry's tag (r318).
 
@@ -4008,6 +4009,14 @@ class DashboardView(ft.Row):
             if callable(enroll) and cluster_id >= 0:
                 with contextlib.suppress(Exception):
                     enroll(cluster_id, name)
+            elif embedding is not None:
+                # r352: the app declined to place this voice, so there is no
+                # cluster to enroll — name the message's own voiceprint. This
+                # is the whole point of the chip on an unidentified line.
+                by_print = getattr(self, "on_enroll_speaker_voiceprint", None)
+                if callable(by_print):
+                    with contextlib.suppress(Exception):
+                        by_print(embedding, name)
             self._retro_label_speaker_tags(cluster_id, name, also_named="")
             _close()
 
@@ -4059,6 +4068,7 @@ class DashboardView(ft.Row):
         src_lang_hint: str = "",
         speaker_name: str = "",
         speaker_cluster_id: int = -1,
+        speaker_embedding: object = None,
     ) -> None:
         if self._chat_list_view is None:
             return
@@ -4160,8 +4170,12 @@ class DashboardView(ft.Row):
         # what the recognizer heard isn't obvious in that mode. Uses the
         # translator-detected hint when available, script sniff otherwise
         # (src_lang already resolved that way above).
+        # r352: a voiceprint alone is enough to earn a chip. The app not
+        # knowing who spoke is exactly when the user needs to be able to tell
+        # it — leaving those lines inert made r349's "decline to guess" a
+        # dead end instead of a correctable one.
         _speaker_tagged = is_peer and not is_ocr and (
-            speaker_name or speaker_cluster_id >= 0
+            speaker_name or speaker_cluster_id >= 0 or speaker_embedding is not None
         )
         # r322 (user suggestion): when a line has a speaker identity, the name
         # IS the header — "Alex 02:14" instead of "Received · Alex 02:14".
@@ -4191,9 +4205,13 @@ class DashboardView(ft.Row):
             # Tapping names the voice (chat entries have no other click
             # affordance by design — the whole log sits in a SelectionArea
             # and right-click belongs to Flutter's native copy menu).
-            tag_text = speaker_name or t("dashboard.speaker_n").format(
-                n=speaker_cluster_id
-            )
+            if speaker_name:
+                tag_text = speaker_name
+            elif speaker_cluster_id >= 0:
+                tag_text = t("dashboard.speaker_n").format(n=speaker_cluster_id)
+            else:
+                # Identified as somebody, just not as anybody known.
+                tag_text = t("dashboard.speaker_unknown")
             tag_control = ft.Text(
                 tag_text,
                 size=11,
@@ -4235,15 +4253,20 @@ class DashboardView(ft.Row):
                     # a cluster to enroll, OR an identity to rename.
                     on_tap=(
                         (lambda e, cid=speaker_cluster_id, current=tag_text,
-                                known=speaker_name, tag=tag_control:
+                                known=speaker_name, tag=tag_control,
+                                print_=speaker_embedding:
                             self._open_speaker_name_dialog(
-                                cid, current, known_name=known, tag_control=tag))
-                        if (speaker_cluster_id >= 0 or speaker_name)
+                                cid, current, known_name=known, tag_control=tag,
+                                embedding=print_))
+                        # r352: a voiceprint is nameable on its own now.
+                        if (speaker_cluster_id >= 0 or speaker_name
+                            or speaker_embedding is not None)
                         else None
                     ),
                     mouse_cursor=(
                         ft.MouseCursor.CLICK
-                        if (speaker_cluster_id >= 0 or speaker_name)
+                        if (speaker_cluster_id >= 0 or speaker_name
+                            or speaker_embedding is not None)
                         else ft.MouseCursor.BASIC
                     ),
                 )

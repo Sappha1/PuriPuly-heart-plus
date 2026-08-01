@@ -169,6 +169,10 @@ class SpeakerRegistry:
             self._named_counts[name] = int(entry.get("count", 1))
 
     def _save(self) -> None:
+        # r349: this store now belongs to the current model, so an empty
+        # list from here on is the user's own doing, not the upgrade's. Left
+        # latched, it blamed the upgrade for every voice they later deleted.
+        self.reset_reason = ""
         payload = {
             # r349: stamped so a future model change can detect and clear
             # rather than silently comparing incompatible numbers.

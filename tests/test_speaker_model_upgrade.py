@@ -96,6 +96,34 @@ def test_an_empty_store_is_not_reported_as_a_model_reset(tmp_path) -> None:
     assert SpeakerRegistry(tmp_path / "voices.json").reset_reason == ""
 
 
+def test_the_upgrade_is_not_blamed_for_the_users_own_deletions(tmp_path) -> None:
+    """The registry lives for the whole process, so a latched reason kept
+    accusing the upgrade: name somebody, delete them, and the manager
+    announced that the model change had wiped a voice the user removed by
+    hand. Once anything is saved, the store belongs to the current model."""
+    store = tmp_path / "voices.json"
+    store.write_text(
+        json.dumps(
+            {
+                "model": "eres2net_base_zh_16k",
+                "voices": [{"name": "Robin", "variants": [[0.1] * 512]}],
+            }
+        ),
+        encoding="utf-8",
+    )
+    registry = SpeakerRegistry(store)
+    assert registry.reset_reason == "model_changed"
+
+    opened = registry.match(_voice(1), LONG)
+    assert registry.enroll_cluster(opened.cluster_id, "Alex")
+    assert registry.reset_reason == ""
+
+    registry.forget("Alex")
+
+    assert registry.enrolled_summary() == []
+    assert registry.reset_reason == ""
+
+
 # ── the length gate ──────────────────────────────────────────────────────
 
 

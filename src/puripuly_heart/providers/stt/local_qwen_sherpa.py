@@ -540,8 +540,11 @@ class _LocalQwenSherpaSession(STTBackendSession):
                     vector = await asyncio.to_thread(embedder.embed, samples_f32)
                     if vector is not None:
                         speaker_embedding = tuple(float(x) for x in vector)
-                        # r349: the recognizer feeds 16k mono here.
-                        speaker_seconds = len(samples_f32) / 16000.0
+                        # r349: same rate the decode diagnostics use, rather
+                        # than a second hardcoded copy of it.
+                        speaker_seconds = _sample_count_duration_ms(
+                            samples_f32.size, self.backend.sample_rate_hz
+                        ) / 1000.0
                 except Exception:
                     logger.debug("speaker embedding failed", exc_info=True)
             await self._events.put(

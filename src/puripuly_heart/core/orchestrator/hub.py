@@ -668,6 +668,13 @@ class ClientHub:
             channel="peer",
             speaker_name=speaker_name,
             speaker_cluster_id=speaker_cluster_id,
+            # r350: carry the voiceprint out to the UI. Dropping it here left
+            # a correction with nothing finer than the cluster to attach to,
+            # and left an unidentified line with no way to be named at all.
+            speaker_embedding=transcript.speaker_embedding,
+            speaker_seconds=float(
+                getattr(transcript, "speaker_seconds", 0.0) or 0.0
+            ),
         )
 
     def _emit_exception_summary(

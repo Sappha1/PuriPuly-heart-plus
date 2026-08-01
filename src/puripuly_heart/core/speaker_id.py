@@ -58,6 +58,13 @@ MAX_VARIANTS_PER_NAME = 4
 # A re-enrollment at/above this similarity refines the nearest variant;
 # below it, the new print is kept as a separate channel of the same voice.
 VARIANT_MERGE_THRESHOLD = 0.70
+# r350: how close a voice must be to a recorded rejection to count as the same
+# rejection. Deliberately looser than the join bar — the user said "not this
+# person" about a VOICE, and it has to keep meaning that as the voice drifts.
+DENY_SIMILARITY = 0.55
+# Rejections are cheap to keep and only accumulate when the user corrects
+# something, but the store should not grow without bound.
+MAX_DENIALS = 64
 # r338: the session cluster->name map makes a freshly named voice stick even
 # when a later sample lands between the cluster and named thresholds. That
 # convenience was handing enrolled names to STRANGERS: anyone within 0.52 of
@@ -123,6 +130,10 @@ class SpeakerRegistry:
         # Set by _load when a model change forced the store to be cleared, so
         # the UI can explain an unexpectedly empty list.
         self.reset_reason = ""
+        # r350: (voiceprint, name) pairs the user has explicitly rejected —
+        # "this speaker is NOT that person". Anchored to the print, not the
+        # cluster id, because reset_session renumbers clusters every session.
+        self._denied: list[tuple[np.ndarray, str]] = []
         self._load()
 
     # ── persistence ──────────────────────────────────────────────────────
@@ -147,6 +158,7 @@ class SpeakerRegistry:
                 SPEAKER_MODEL_ID,
             )
             return
+        self._load_denials(data)
         for entry in data.get("voices", []):
             name = str(entry.get("name") or "").strip()
             if not name:
@@ -168,6 +180,18 @@ class SpeakerRegistry:
             self._named[name] = variants[:MAX_VARIANTS_PER_NAME]
             self._named_counts[name] = int(entry.get("count", 1))
 
+    def _load_denials(self, data: dict) -> None:
+        """r350: restore the user's 'not that person' corrections."""
+        for entry in data.get("rejected", []) or []:
+            try:
+                name = str(entry.get("name") or "")
+                raw = np.asarray(entry.get("voiceprint") or [], dtype=np.float32)
+            except Exception:
+                continue
+            if not name or raw.shape != (EMBEDDING_DIM,):
+                continue
+            self._denied.append((_normalize(raw), name))
+
     def _save(self) -> None:
         # r349: this store now belongs to the current model, so an empty
         # list from here on is the user's own doing, not the upgrade's. Left
@@ -177,6 +201,11 @@ class SpeakerRegistry:
             # r349: stamped so a future model change can detect and clear
             # rather than silently comparing incompatible numbers.
             "model": SPEAKER_MODEL_ID,
+            # r350: corrections the user made, so they survive a restart.
+            "rejected": [
+                {"name": denied_name, "voiceprint": [float(x) for x in print_]}
+                for print_, denied_name in self._denied
+            ],
             "voices": [
                 {
                     "name": name,
@@ -245,6 +274,15 @@ class SpeakerRegistry:
                 )
                 best_cluster.count += 1
                 return self._consolidate_locked(best_cluster) or best_cluster
+
+            if best_name and self._denied_locked(vector, best_name, best_name_sim):
+                # r350: the user has said this voice is not that person. Fall
+                # through to clustering rather than re-applying the name.
+                logger.debug(
+                    "[SpeakerID] %r suppressed (similarity=%.3f): rejected "
+                    "for this voice", best_name, best_name_sim,
+                )
+                best_name, best_name_sim, best_variant_index = "", -1.0, -1
 
             if best_name and best_name_sim >= NAMED_MATCH_THRESHOLD:
                 # Nudge ONLY the variant that matched, so a call-channel print
@@ -341,6 +379,21 @@ class SpeakerRegistry:
             sim = float(np.dot(moved.centroid, other.centroid))
             if sim < CLUSTER_CONSOLIDATE_THRESHOLD:
                 continue
+            # r350: merging hands the survivor one of these names. If the user
+            # has rejected that name for either voice, this merge is exactly
+            # the correction they made being undone — the whole reason a
+            # detached cluster used to drift straight back onto its old name.
+            merged_name = other_name or moved_name
+            if merged_name and (
+                self._denied_locked(moved.centroid, merged_name)
+                or self._denied_locked(other.centroid, merged_name)
+            ):
+                logger.info(
+                    "[SpeakerID] not merging clusters %d and %d (sim=%.3f): "
+                    "the user rejected that name for this voice",
+                    moved.cluster_id, other.cluster_id, sim,
+                )
+                continue
             # Keep the older (smaller id) cluster — its label is the one the
             # user has been looking at longest.
             keep, drop = (
@@ -366,6 +419,58 @@ class SpeakerRegistry:
             return keep
         return None
 
+    # ── "not the same person" memory (r350) ──────────────────────────────
+
+    def _denied_locked(
+        self, vector: np.ndarray, name: str, name_sim: float | None = None
+    ) -> bool:
+        """Has the user rejected this name for a voice like this one?
+
+        The comparison is RELATIVE. An absolute bar also blocked the genuine
+        person, because a correction is only ever needed when two voices are
+        close — so rejecting the impostor cost the real person their name. The
+        name is withheld only when the voice resembles the rejected print at
+        least as much as it resembles that person's own enrolled prints.
+        """
+        if not name or not self._denied:
+            return False
+        rejected_sim = max(
+            (
+                float(np.dot(vector, print_))
+                for print_, denied_name in self._denied
+                if denied_name == name
+            ),
+            default=-1.0,
+        )
+        if rejected_sim < DENY_SIMILARITY:
+            return False
+        if name_sim is None:
+            name_sim = max(
+                (float(np.dot(vector, v)) for v in self._named.get(name, [])),
+                default=-1.0,
+            )
+        return rejected_sim >= name_sim
+
+    def _deny_locked(self, vector: np.ndarray, name: str) -> None:
+        if not name:
+            return
+        self._denied.append((_normalize(vector.copy()), name))
+        if len(self._denied) > MAX_DENIALS:
+            del self._denied[: len(self._denied) - MAX_DENIALS]
+
+    def _allow_locked(self, vector: np.ndarray, name: str) -> None:
+        """The user just named this voice — that outranks any old rejection."""
+        if not name:
+            return
+        self._denied = [
+            (print_, denied_name)
+            for print_, denied_name in self._denied
+            if not (
+                denied_name == name
+                and float(np.dot(vector, print_)) >= DENY_SIMILARITY
+            )
+        ]
+
     @staticmethod
     def _cluster_label(cluster_id: int) -> str:
         return f"Speaker {cluster_id}"
@@ -384,6 +489,9 @@ class SpeakerRegistry:
             )
             if cluster is None:
                 return False
+            # r350: the user naming this voice outranks any earlier rejection
+            # of that name for it.
+            self._allow_locked(cluster.centroid, name)
             if name in self._named:
                 variants = self._named[name]
                 sims = [float(np.dot(cluster.centroid, v)) for v in variants]
@@ -465,10 +573,81 @@ class SpeakerRegistry:
         with self._lock:
             previous = self._cluster_names.pop(int(cluster_id), "")
             if previous:
+                # r350: deliberately does NOT record a rejection. A cluster
+                # holds both voices by the time a correction is needed (joining
+                # costs 0.52, being named costs 0.60), so its centroid is ~0.99
+                # similar to the real person — rejecting it would strip the
+                # name from the very person the user is protecting. Rejections
+                # are recorded per message, via reject_utterance.
                 logger.info(
                     "[SpeakerID] cluster %d detached from %r", cluster_id, previous
                 )
             return previous
+
+    def reject_utterance(self, embedding: np.ndarray, name: str) -> bool:
+        """Record "the voice in THIS message is not that person" (r350).
+
+        Anchored to the message's own voiceprint, which is the only thing fine
+        enough to tell two people apart once they share a cluster. The name is
+        then withheld from voices that look more like this print than like the
+        person's enrolled ones, by every route: a named match, cluster
+        consolidation, and session-name inheritance.
+        """
+        name = name.strip()
+        if not name:
+            return False
+        try:
+            vector = _normalize(np.asarray(embedding, dtype=np.float32))
+        except Exception:
+            return False
+        if vector.shape != (EMBEDDING_DIM,):
+            return False
+        with self._lock:
+            self._deny_locked(vector, name)
+            # Unbind any session cluster this message's voice is sitting in, so
+            # the label disappears from the log straight away instead of after
+            # the next utterance.
+            for cluster in self._clusters:
+                if self._cluster_names.get(cluster.cluster_id) != name:
+                    continue
+                if float(np.dot(vector, cluster.centroid)) >= CLUSTER_MATCH_THRESHOLD:
+                    self._cluster_names.pop(cluster.cluster_id, None)
+            logger.info("[SpeakerID] recorded that a voice is NOT %r", name)
+            self._save()
+            return True
+
+    def enroll_embedding(self, embedding: np.ndarray, name: str) -> bool:
+        """Name a single message's voice directly (r350).
+
+        An unidentified line has no cluster to enroll, so without this the user
+        can see a message they know the speaker of and have no way to say so.
+        The user is the authority, so this also clears any earlier rejection.
+        """
+        name = name.strip()
+        if not name:
+            return False
+        try:
+            vector = _normalize(np.asarray(embedding, dtype=np.float32))
+        except Exception:
+            return False
+        if vector.shape != (EMBEDDING_DIM,):
+            return False
+        with self._lock:
+            self._allow_locked(vector, name)
+            variants = self._named.setdefault(name, [])
+            sims = [float(np.dot(vector, v)) for v in variants]
+            nearest = int(np.argmax(sims)) if sims else -1
+            if nearest >= 0 and sims[nearest] >= VARIANT_MERGE_THRESHOLD:
+                variants[nearest] = _normalize(
+                    0.5 * variants[nearest] + 0.5 * vector
+                )
+            else:
+                variants.append(vector.copy())
+                if len(variants) > MAX_VARIANTS_PER_NAME:
+                    variants.pop(0)
+            self._named_counts[name] = self._named_counts.get(name, 1) + 1
+            self._save()
+            return True
 
     def rename(self, old_name: str, new_name: str) -> bool:
         """Rename an enrolled voice, merging into an existing name if taken.

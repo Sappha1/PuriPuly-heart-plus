@@ -185,7 +185,10 @@ def test_named_cluster_stays_named_in_threshold_gap(registry) -> None:
     ortho = rng.normal(0, 1, base.shape[0]).astype(np.float32)
     ortho -= float(np.dot(ortho, base)) * base
     ortho /= np.linalg.norm(ortho)
-    target = 0.56
+    # Derived from the bars rather than hardcoded: r351 moved the join bar up
+    # to 0.58 to stop two people sharing one identity, which left the old
+    # hardcoded 0.56 below the cluster bar and testing nothing.
+    target = (CLUSTER_MATCH_THRESHOLD + NAMED_MATCH_THRESHOLD) / 2.0
     gap_vector = target * base + float(np.sqrt(1 - target**2)) * ortho
     sim = float(np.dot(gap_vector, base))
     assert CLUSTER_MATCH_THRESHOLD < sim < NAMED_MATCH_THRESHOLD

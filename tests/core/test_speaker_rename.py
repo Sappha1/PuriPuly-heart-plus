@@ -155,13 +155,20 @@ def test_a_stranger_near_a_named_cluster_is_not_given_that_name(tmp_path) -> Non
     cluster_id = registry.match(robin).cluster_id
     assert registry.enroll_cluster(cluster_id, "Robin") is True
 
-    # Someone else who lands in the risky band: close enough to join Robin's
-    # cluster (>= 0.52), nowhere near close enough to BE Robin (< 0.60), and
-    # below the bar for inheriting the name (< 0.55).
-    stranger = _voice_at(robin, 0.535, seed=202)
+    # r351 closed this at the entrance instead. The old "risky band" (join at
+    # 0.52, inherit at 0.55, be Robin at 0.60) cannot be constructed any more:
+    # the join bar is now 0.58, ABOVE the inheritance bar, so anything able to
+    # reach Robin's cluster already clears stickiness. The guarantee moved to
+    # who can get into the cluster at all.
+    assert CLUSTER_MATCH_THRESHOLD > STICKY_NAME_THRESHOLD, (
+        "the inheritance band is meant to be closed by the join bar"
+    )
+
+    # Where a different speaker actually lands: measured on the shipped model,
+    # two different people score around 0.33-0.38 against each other.
+    stranger = _voice_at(robin, 0.38, seed=202)
     similarity = float(np.dot(stranger, robin))
-    assert CLUSTER_MATCH_THRESHOLD <= similarity < NAMED_MATCH_THRESHOLD, similarity
-    assert similarity < STICKY_NAME_THRESHOLD, similarity
+    assert similarity < CLUSTER_MATCH_THRESHOLD, similarity
 
     match = registry.match(stranger)
 

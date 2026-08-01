@@ -42,10 +42,24 @@ MIN_UTTERANCE_SECONDS = 1.2
 # may still be labeled by matching, but may not create a cluster or move one.
 MIN_TRUSTED_SECONDS = 2.0
 NAMED_MATCH_THRESHOLD = 0.60
-CLUSTER_MATCH_THRESHOLD = 0.52
+# r351: was 0.52, BELOW the naming bar -- two people were merged into one
+# identity at a score explicitly deemed too weak to share a name, and then the
+# cluster handed its name to both. Measured on the current model, different
+# speakers top out around 0.38 and the same speaker bottoms out around 0.78,
+# so this sits in empty space and no longer undercuts naming.
+CLUSTER_MATCH_THRESHOLD = 0.58
+# r351: how far the winning name must beat the SECOND-BEST NAME. Without this
+# the best of N wrong answers wins on an absolute bar alone, which is why
+# accuracy fell apart as names were added rather than staying flat.
+NAMED_MARGIN = 0.08
 # Centroid update weight for a new sample joining a cluster/enrollment.
 CENTROID_EMA_ALPHA = 0.15
-MAX_SESSION_CLUSTERS = 12
+# r351: was 12, which was a hard ceiling on how many people could be told apart
+# in one session -- and going past it silently bound the wrong voiceprint to a
+# name (see the overflow path in match). This counts everyone who has SPOKEN
+# this session, not everyone enrolled, and a public instance holds far more
+# than twelve.
+MAX_SESSION_CLUSTERS = 64
 # r330: one enrolled person can hold several voiceprint VARIANTS — the same
 # voice through a Discord/OOPZ call and through VRChat's spatialized in-game
 # audio lands in measurably different places (different codec, plus distance
@@ -72,6 +86,12 @@ MAX_DENIALS = 64
 # Inheriting now needs the sample to actually resemble THAT PERSON's stored
 # voiceprints this much — below it the line falls back to "Speaker N", which
 # is the documented trade (a wrong name is worse than an anonymous one).
+# Deliberately UNDER the naming bar: a genuine utterance of a couple of seconds
+# in room noise measures around 0.57 against its own speaker, and this is what
+# keeps that person's name on it instead of dropping them to "Speaker N" when
+# the audio is worst. Safe only because the join bar above is now higher than
+# it -- a stranger cannot reach the cluster this applies within. It also still
+# requires the voice's best-matching name to BE this cluster's name.
 STICKY_NAME_THRESHOLD = 0.55
 # r344: two people in a clear voice chat reached "Speaker 8" — same-speaker
 # similarity wobbles around the 0.52 join bar, and every miss spawned a new
@@ -234,12 +254,26 @@ class SpeakerRegistry:
         vector = _normalize(np.asarray(embedding, dtype=np.float32))
         trusted = seconds <= 0.0 or seconds >= MIN_TRUSTED_SECONDS
         with self._lock:
-            best_name, best_name_sim, best_variant_index = "", -1.0, -1
+            # r351: score each PERSON once (their best variant), then rank
+            # people. The old loop tracked only the single best variant
+            # overall, so there was no way to ask the question that matters
+            # once several people are enrolled: how much better is the winner
+            # than the next candidate?
+            ranked: list[tuple[float, str, int]] = []
             for name, variants in self._named.items():
-                for index, variant in enumerate(variants):
-                    sim = float(np.dot(vector, variant))
-                    if sim > best_name_sim:
-                        best_name, best_name_sim, best_variant_index = name, sim, index
+                if not variants:
+                    continue
+                sims = [float(np.dot(vector, variant)) for variant in variants]
+                index = int(np.argmax(sims))
+                ranked.append((sims[index], name, index))
+            ranked.sort(key=lambda row: row[0], reverse=True)
+
+            best_name, best_name_sim, best_variant_index = "", -1.0, -1
+            runner_up_sim = -1.0
+            if ranked:
+                best_name_sim, best_name, best_variant_index = ranked[0]
+            if len(ranked) > 1:
+                runner_up_sim = ranked[1][0]
 
             best_cluster, best_cluster_sim = None, -1.0
             second_cluster_sim = -1.0
@@ -284,11 +318,31 @@ class SpeakerRegistry:
                 )
                 best_name, best_name_sim, best_variant_index = "", -1.0, -1
 
+            # r351: two enrolled people this close to one voice means the
+            # evidence does not pick between them. Leaving the line unnamed is
+            # recoverable; putting one person's name on another person's words
+            # is what destroys a chat log.
+            decisive = (
+                runner_up_sim < 0.0
+                or (best_name_sim - runner_up_sim) >= NAMED_MARGIN
+            )
+            if best_name and best_name_sim >= NAMED_MATCH_THRESHOLD and not decisive:
+                logger.info(
+                    "[SpeakerID] refusing to guess between %r (%.3f) and the "
+                    "next closest (%.3f) - margin %.3f < %.2f",
+                    best_name, best_name_sim, runner_up_sim,
+                    best_name_sim - runner_up_sim, NAMED_MARGIN,
+                )
+                best_name, best_name_sim, best_variant_index = "", -1.0, -1
+
             if best_name and best_name_sim >= NAMED_MATCH_THRESHOLD:
                 # Nudge ONLY the variant that matched, so a call-channel print
                 # never drags the VRChat one (or vice versa) toward it.
                 variants = self._named[best_name]
-                if trusted:
+                # r351: only clean wins teach. A borderline match used to nudge
+                # the stored print toward the new sample, so one wrong match
+                # made the next wrong match likelier and the error compounded.
+                if trusted and best_name_sim >= NAMED_MATCH_THRESHOLD + NAMED_MARGIN:
                     variants[best_variant_index] = _normalize(
                         (1 - CENTROID_EMA_ALPHA) * variants[best_variant_index]
                         + CENTROID_EMA_ALPHA * vector
@@ -335,15 +389,38 @@ class SpeakerRegistry:
                 )
 
             if len(self._clusters) >= MAX_SESSION_CLUSTERS:
-                # Room is chaos — reuse the closest cluster rather than grow.
-                if best_cluster is not None:
+                # r351: only reuse the closest cluster if the voice ACTUALLY
+                # belongs to it. This used to hand back the nearest cluster
+                # unconditionally, so the 13th speaker in a room was given
+                # somebody else's identity — and naming that line enrolled the
+                # wrong person's voiceprint under the new name, permanently.
+                if (
+                    best_cluster is not None
+                    and best_cluster_sim >= CLUSTER_MATCH_THRESHOLD
+                ):
                     return SpeakerMatch(
                         "cluster",
                         self._cluster_label(best_cluster.cluster_id),
                         best_cluster.cluster_id,
                         best_cluster_sim,
                     )
-                return SpeakerMatch("none", "", -1, 0.0)
+                # Nobody here sounds like them. Make room by dropping the
+                # cluster with the least evidence behind it (never a named
+                # one — those the user has spoken for).
+                evictable = [
+                    c for c in self._clusters
+                    if not self._cluster_names.get(c.cluster_id)
+                ]
+                if not evictable or not trusted:
+                    return SpeakerMatch("none", "", -1, 0.0)
+                victim = min(evictable, key=lambda c: c.count)
+                self._clusters.remove(victim)
+                self._cluster_names.pop(victim.cluster_id, None)
+                logger.info(
+                    "[SpeakerID] session full (%d): evicted unnamed cluster %d "
+                    "(count=%d) for a new voice",
+                    MAX_SESSION_CLUSTERS, victim.cluster_id, victim.count,
+                )
 
             if not trusted:
                 # Not enough audio to claim this is somebody new. An unlabeled

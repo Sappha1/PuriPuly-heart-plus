@@ -193,6 +193,55 @@ def diagnose_blocked_executable(exe_path: str) -> str:
     return f"{exe_path}: " + "; ".join(notes)
 
 
+# r353: families carrying VNNI in some form. Intel picked it up with Ice Lake
+# (AVX-512 form) and Alder Lake (256-bit AVX-VNNI); AMD with Zen 4. Everything
+# older runs the int8 recogniser on an emulated path that can saturate.
+_VNNI_INTEL_HINTS = (
+    "i3-1", "i5-1", "i7-1", "i9-1",       # 10th gen and later mobile/desktop
+    "ultra",                                # Core Ultra
+    "xeon",                                 # server parts, mostly Ice Lake+
+)
+_NO_VNNI_AMD_HINTS = (
+    "ryzen 3 1", "ryzen 5 1", "ryzen 7 1", "ryzen 9 1",   # Zen 1
+    "ryzen 3 2", "ryzen 5 2", "ryzen 7 2", "ryzen 9 2",   # Zen+
+    "ryzen 3 3", "ryzen 5 3", "ryzen 7 3", "ryzen 9 3",   # Zen 2
+    "ryzen 3 4", "ryzen 5 4", "ryzen 7 4", "ryzen 9 4",   # Zen 2 APU
+    "ryzen 3 5", "ryzen 5 5", "ryzen 7 5", "ryzen 9 5",   # Zen 3
+)
+
+
+def cpu_int8_support() -> str:
+    """Can this CPU run the quantized ASR model exactly? (r353)
+
+    Returns "vnni" (exact), "emulated" (int8 matmuls run on a path that can
+    saturate, and the recogniser may emit fluent nonsense), or "unknown".
+    """
+    try:
+        import numpy as np
+
+        features = getattr(np._core._multiarray_umath, "__cpu_features__", {})
+        if features.get("AVX512VNNI"):
+            return "vnni"
+    except Exception:
+        pass
+    name = ""
+    try:
+        name = _cpu_name().lower()
+    except Exception:
+        return "unknown"
+    if not name:
+        return "unknown"
+    if any(hint in name for hint in _NO_VNNI_AMD_HINTS):
+        return "emulated"
+    if "ryzen" in name:
+        # Zen 4 and later carry AVX-VNNI; numpy cannot see it, so anything not
+        # matched above is left unclaimed rather than guessed.
+        return "unknown"
+    if any(hint in name for hint in _VNNI_INTEL_HINTS):
+        return "vnni"
+    return "unknown"
+
+
 def log_system_info_async() -> None:
     """Log one [SysInfo] block from a daemon thread; never blocks startup."""
 
@@ -200,11 +249,13 @@ def log_system_info_async() -> None:
         try:
             total_gb, avail_gb = _memory_gb()
             logger.info(
-                "[SysInfo] os=%s | cpu=%s cores=%s | ram_total=%.1fGB ram_available=%.1fGB"
-                " | gpu=%s | smart_app_control=%s | timezone=%s | frozen=%s exe=%s",
+                "[SysInfo] os=%s | cpu=%s cores=%s int8=%s | ram_total=%.1fGB"
+                " ram_available=%.1fGB | gpu=%s | smart_app_control=%s"
+                " | timezone=%s | frozen=%s exe=%s",
                 _windows_build(),
                 _cpu_name(),
                 os.cpu_count(),
+                cpu_int8_support(),
                 total_gb,
                 avail_gb,
                 _gpus(),
@@ -213,6 +264,14 @@ def log_system_info_async() -> None:
                 getattr(sys, "frozen", False),
                 sys.executable,
             )
+            if cpu_int8_support() == "emulated":
+                logger.warning(
+                    "[SysInfo] this CPU has no VNNI, so the quantized speech "
+                    "model's int8 matmuls run on an emulated path that can "
+                    "saturate. If transcription returns confident nonsense on "
+                    "every utterance regardless of language, suspect this "
+                    "first -- the model loads and runs normally either way."
+                )
         except Exception as exc:
             logger.warning("[SysInfo] collection failed: %s", exc)
 

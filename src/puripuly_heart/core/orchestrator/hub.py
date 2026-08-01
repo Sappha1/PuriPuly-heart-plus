@@ -1227,7 +1227,10 @@ class ClientHub:
                 finalize_latency=True,
             )
             return
-        if not self._peer_text_passes_language_filter(transcript.text):
+        if not self._peer_text_passes_language_filter(
+            transcript.text,
+            detected_language=getattr(transcript, "detected_language", None),
+        ):
             # Target-language filter active — discard peer transcript silently
             await self._emit_overlay_utterance_closed(
                 utterance_id=transcript.utterance_id,
@@ -1826,8 +1829,17 @@ class ClientHub:
             "ko": self.overlay_show_romaja,
         }.get(root, self.overlay_show_latin)
 
-    def _peer_text_passes_language_filter(self, text: str) -> bool:
-        """Return False if the text should be rejected by the target-language-only filter."""
+    def _peer_text_passes_language_filter(
+        self, text: str, *, detected_language: str | None = None
+    ) -> bool:
+        """Return False if the text should be rejected by the target-language-only filter.
+
+        r346: when the recognizer reports what language the AUDIO was, trust
+        that over the transcript's script — a language-hinted LLM recognizer
+        covertly TRANSLATES out-of-language speech, so English spoken into a
+        Chinese-hinted model arrives as Han characters and sails through any
+        text-level check.
+        """
         if not self.filter_peer_by_target_languages:
             return True
         text = text.strip()
@@ -1836,10 +1848,25 @@ class ClientHub:
         # Build the set of normalized language roots the user wants to receive.
         # Only include the user's own target languages (not peer_target_language, which
         # is the user's reading language and would bypass CJK detection if it's English).
+        _ALIAS = {"cmn": "zh", "jpn": "ja", "kor": "ko", "eng": "en", "zho": "zh"}
         allowed: set[str] = set()
         for lang in ([self.target_language] + self.extra_target_languages):
             if lang:
-                allowed.add(lang.lower().split("-")[0])
+                root = lang.lower().split("-")[0]
+                allowed.add(_ALIAS.get(root, root))
+        if detected_language:
+            audio_root = _ALIAS.get(detected_language, detected_language)
+            if audio_root in allowed:
+                return True
+            logger.info(
+                "[LangFilter] dropped peer utterance: audio language %r not in %s "
+                "(transcript script would have %s) text=%r",
+                audio_root,
+                sorted(allowed),
+                "passed" if any("一" <= c <= "鿿" for c in text) else "failed",
+                text[:40],
+            )
+            return False
         # If the user's own target languages are all non-CJK (e.g. targeting French),
         # we can't filter by character type, so pass everything through.
         non_cjk_langs = allowed - {"zh", "cmn", "ja", "jpn", "ko", "kor"}

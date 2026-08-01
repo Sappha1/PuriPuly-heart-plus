@@ -72,6 +72,6 @@ def test_backend_flag_applies_gate(monkeypatch) -> None:
     object.__setattr__(backend, "diagnostics_enabled", None)
 
     samples = np.zeros(16000, dtype=np.float32)
-    text = backend._decode_f32_sync(_Recognizer(), samples)
+    text, _lang = backend._decode_f32_sync(_Recognizer(), samples)  # r346
     assert text == "hello"
     assert calls == [16000]

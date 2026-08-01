@@ -13,6 +13,10 @@ class STTBackendTranscriptEvent:
     # r318: unit-norm voiceprint of the segment (tuple for hashability under
     # frozen slots), None when speaker ID is off / segment too short.
     speaker_embedding: tuple[float, ...] | None = None
+    # r346: what language the recognizer says the AUDIO was. A language-hinted
+    # LLM recognizer covertly translates out-of-language speech, so the
+    # transcript's script cannot be trusted for language filtering.
+    detected_language: str | None = None
 
 
 class STTBackendSession(Protocol):

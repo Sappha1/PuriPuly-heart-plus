@@ -40,6 +40,9 @@ class Transcript:
     speaker_embedding: tuple[float, ...] | None = None
     speaker_name: str = ""
     speaker_cluster_id: int = -1
+    # r346: audio-level language from the recognizer (None when the backend
+    # does not report one). Used by the peer target-language filter.
+    detected_language: str | None = None
 
     def __post_init__(self) -> None:
         _validate_channel(self.channel)

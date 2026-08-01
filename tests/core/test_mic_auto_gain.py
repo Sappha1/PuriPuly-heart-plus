@@ -90,10 +90,10 @@ def test_quiet_segment_hallucination_is_dropped() -> None:
         object.__setattr__(backend, name, value)
 
     quiet = (np.random.default_rng(3).normal(0, 0.003, 16000)).astype(np.float32)
-    assert backend._decode_f32_sync(_Rec(), quiet) == ""
+    assert backend._decode_f32_sync(_Rec(), quiet)[0] == ""  # r346: (text, lang)
 
     loud = (np.random.default_rng(4).normal(0, 0.08, 16000)).astype(np.float32)
-    assert backend._decode_f32_sync(_Rec(), loud) == "虚构"
+    assert backend._decode_f32_sync(_Rec(), loud)[0] == "虚构"
 
 
 def test_repetition_run_after_prefix_is_caught() -> None:

@@ -357,9 +357,9 @@ class LocalQwenSherpaSTTBackend(STTBackend):
             raise LocalQwenSherpaLoadError(str(exc)) from exc
 
     async def decode_pcm16le(self, pcm16le: bytes) -> str:
-        return await self.decode_f32(pcm16le_bytes_to_float32(pcm16le))
+        return await self.decode_f32(pcm16le_bytes_to_float32(pcm16le))  # -> (text, lang)
 
-    async def decode_f32(self, samples_f32: np.ndarray) -> str:
+    async def decode_f32(self, samples_f32: np.ndarray) -> tuple[str, str | None]:
         recognizer = await self._ensure_recognizer()
         async with self._decode_lock:
             try:
@@ -371,7 +371,18 @@ class LocalQwenSherpaSTTBackend(STTBackend):
             except Exception as exc:
                 raise LocalQwenSherpaInferenceError(str(exc)) from exc
 
-    def _decode_f32_sync(self, recognizer: object, samples_f32: np.ndarray) -> str:
+    @staticmethod
+    def _normalize_detected_language(raw: object) -> str | None:
+        """sherpa reports e.g. 'zh', 'en', sometimes token-wrapped '<|en|>'.
+        Normalized to a bare lowercase root; None when it says nothing."""
+        text = str(raw or "").strip().strip("<|>").strip().lower()
+        if not text or text in ("auto", "unk", "unknown"):
+            return None
+        return text.split("-")[0]
+
+    def _decode_f32_sync(
+        self, recognizer: object, samples_f32: np.ndarray
+    ) -> tuple[str, str | None]:
         samples = np.asarray(samples_f32, dtype=np.float32).reshape(-1).copy()
         stream = recognizer.create_stream()
         set_option = getattr(stream, "set_option", None)
@@ -414,7 +425,7 @@ class LocalQwenSherpaSTTBackend(STTBackend):
                 avg_logprob,
                 text,
             )
-            return ""
+            return "", None
         detected_lang = getattr(result, "lang", None)
         if text and (avg_logprob is not None or detected_lang):
             logger.info(
@@ -439,8 +450,8 @@ class LocalQwenSherpaSTTBackend(STTBackend):
                 threshold,
                 text[:60],
             )
-            return ""
-        return text
+            return "", self._normalize_detected_language(detected_lang)
+        return text, self._normalize_detected_language(detected_lang)
 
 
 @dataclass(slots=True)
@@ -492,7 +503,7 @@ class _LocalQwenSherpaSession(STTBackendSession):
 
         try:
             started_at = time.perf_counter()
-            text = await self.backend.decode_f32(samples_f32)
+            text, detected_language = await self.backend.decode_f32(samples_f32)
             inference_ms = (time.perf_counter() - started_at) * 1000.0
         except Exception as exc:
             await self._events.put(exc)
@@ -535,6 +546,7 @@ class _LocalQwenSherpaSession(STTBackendSession):
                     text=text,
                     is_final=True,
                     speaker_embedding=speaker_embedding,
+                    detected_language=detected_language,
                 )
             )
 

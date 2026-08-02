@@ -210,12 +210,60 @@ _NO_VNNI_AMD_HINTS = (
 )
 
 
-def cpu_int8_support() -> str:
-    """Can this CPU run the quantized ASR model exactly? (r353)
+# r355: a 248-byte graph with one MatMulInteger whose answer is known exactly.
+_PROBE_RESOURCE = "data/models/int8_saturation_probe.onnx"
+_PROBE_K = 64
+_PROBE_EXACT = _PROBE_K * 255 * 127          # 2,072,640 when int8 is honest
+_PROBE_SATURATED = (_PROBE_K // 2) * 32767   # 1,048,544 when it is not
+_probe_result: str | None = None
 
-    Returns "vnni" (exact), "emulated" (int8 matmuls run on a path that can
-    saturate, and the recogniser may emit fluent nonsense), or "unknown".
+
+def _run_int8_probe() -> str:
+    """Multiply numbers whose product is known and see what comes back.
+
+    Returns "vnni", "emulated", or "" when the probe could not run at all.
     """
+    global _probe_result
+    if _probe_result is not None:
+        return _probe_result
+    _probe_result = ""
+    try:
+        from importlib import resources
+
+        import numpy as np
+        import onnxruntime as ort
+
+        path = str(resources.files("puripuly_heart") / _PROBE_RESOURCE)
+        session = ort.InferenceSession(path, providers=["CPUExecutionProvider"])
+        activations = np.full((1, _PROBE_K), 255, dtype=np.uint8)
+        got = int(session.run(None, {"A": activations})[0][0][0])
+        if got == _PROBE_EXACT:
+            _probe_result = "vnni"
+        else:
+            _probe_result = "emulated"
+            logger.warning(
+                "[SysInfo] int8 probe returned %d, expected %d (saturating "
+                "path returns %d). This CPU cannot run the quantized speech "
+                "model's arithmetic correctly.",
+                got, _PROBE_EXACT, _PROBE_SATURATED,
+            )
+    except Exception as exc:
+        logger.debug("[SysInfo] int8 probe unavailable: %s", exc)
+    return _probe_result
+
+
+def cpu_int8_support() -> str:
+    """Can this CPU run the quantized ASR model exactly? (r353, measured r355)
+
+    Returns "vnni" (exact), "emulated" (int8 matmuls saturate, so the
+    recogniser may emit fluent nonsense), or "unknown".
+    """
+    measured = _run_int8_probe()
+    if measured:
+        return measured
+    # Only reached when onnxruntime is unavailable — fall back to inference
+    # from the processor name, which cannot see 256-bit AVX-VNNI and so leaves
+    # whole families unclaimed rather than guessing at them.
     try:
         import numpy as np
 

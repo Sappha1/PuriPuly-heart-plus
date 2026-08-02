@@ -35,6 +35,13 @@ if not _stt_manifest.exists():
 # r318: the bundled speaker-embedding model must ship too — captions silently
 # lose speaker tags without it (embedder degrades to None, no crash, but a
 # build without the file is a broken release).
+# r355: 248-byte probe that tells us whether this machine's int8 arithmetic
+# is trustworthy. Tiny, but without it the check silently degrades to guessing
+# from the CPU name.
+_int8_probe = Path("src/puripuly_heart/data/models/int8_saturation_probe.onnx").resolve()
+if not _int8_probe.exists():
+    raise SystemExit(f"int8 probe missing from source tree: {_int8_probe}")
+
 _speaker_model = Path("src/puripuly_heart/data/models/speaker/eres2netv2_zh_16k.onnx").resolve()
 if not _speaker_model.exists():
     raise SystemExit(f"Speaker embedding model missing from source tree: {_speaker_model}")

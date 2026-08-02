@@ -2,6 +2,41 @@
 
 User-facing changes per build. The latest build's highlights also appear in-app when an update is ready.
 
+## r355 — 2026-08-01
+
+- The check added in r354 now **measures** whether your processor's compressed-model arithmetic is correct, by running a tiny calculation whose answer is known in advance, instead of inferring it from the processor's name
+
+## r354 — 2026-08-01
+
+- **Speech models can now be downloaded on networks that cannot reach the usual host.** On some networks (mainland China in particular) every model download timed out, which left only the built-in recognizer available. Downloads can now be routed through a mirror of the same files; they are still checksum-verified, and nothing changes for everyone else
+
+## r353 — 2026-08-01
+
+- **The app now records whether your processor can run the compressed speech model accurately.** Some older processors lack an instruction that the compressed model's arithmetic depends on. Where it is missing, speech recognition can return fluent, confident nonsense while appearing to work perfectly — the app now says so in the log instead of leaving you to guess
+
+## r352 — 2026-08-01
+
+- **You can now name a speaker the app could not identify.** Those lines used to show a plain "Received" header with nothing to click, so the one person who knew who was talking had no way to say so. They now carry an **Unidentified** tag — click it to name them, and that voice is learned from the message itself
+
+## r351 — 2026-08-01
+
+- **Major accuracy work on voice identification.** Two people could be merged into a single identity at a similarity the app itself considered too weak to share a name; that is fixed, and a name is now only applied when it clearly beats the next closest person rather than merely clearing a fixed bar. When two people are genuinely too close to call, the line is left unnamed instead of guessed
+- **The limit of 12 speakers per session is now 64.** Past the old limit the app handed the next speaker somebody else's identity, and naming that line saved the wrong person's voice permanently
+- A borderline match no longer edits a saved voice, so one mistake can no longer make the next mistake more likely
+
+## r350 — 2026-08-01
+
+- **"This is not that person" is now remembered.** Correcting a wrong name only lasted until that person spoke again — the correction was not recorded anywhere, so the app re-applied the same wrong name. Corrections now survive restarts, and naming someone still overrides an earlier correction
+
+## r349 — 2026-08-01
+
+- **More accurate voice identification, using a larger and better model.** Previously saved voices are cleared once when you update, because the new model describes a voice differently — the Saved voices panel explains this. You will need to name people again, once
+- **Very short clips no longer invent new speakers.** Under about two seconds there is not enough audio to tell people apart reliably, which is what produced long lists of "Speaker N" for a room holding two people. Short clips can still be recognised as someone already named; they just cannot create somebody new
+
+## r348 — 2026-08-01
+
+- Fixed a stray character or two wrapping onto a line of their own beneath a full-width subtitle line
+
 ## r347 — 2026-07-31
 
 - **Long subtitles no longer run off the overlay.** A long message now shrinks its text just enough to fit the overlay size you chose, instead of having the translation cut off. Short messages are unchanged, and the same fix applies to the VR overlay and to small overlay sizes on laptops

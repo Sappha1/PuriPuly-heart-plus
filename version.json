@@ -1,11 +1,12 @@
 {
-  "build": 347,
-  "tag": "r347",
-  "date": "2026-07-31",
+  "build": 359,
+  "tag": "r359",
+  "date": "2026-08-01",
   "notes": [
-    "Long subtitles now shrink to fit the overlay instead of running off the bottom",
-    "Subtitles can use up to 10 wrapped lines, so long translations are no longer cut short",
-    "\"Only translate my target languages\" now checks what language the audio actually was",
-    "That filter also works now for languages that don't use a distinct script"
+    "Much more accurate speaker identification, using a larger voice model",
+    "Two people are no longer merged into one identity, and up to 64 speakers are told apart per session (was 12)",
+    "\"This is not that person\" is now remembered instead of coming back next time they speak",
+    "Voices the app can't place show as \"Unknown speaker\" and can be named with a click",
+    "Saved voices are cleared once on update, because the new model describes a voice differently"
   ]
 }

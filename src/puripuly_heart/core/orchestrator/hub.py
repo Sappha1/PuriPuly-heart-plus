@@ -3308,8 +3308,10 @@ class ClientHub:
                 romanization = first_line
                 translated_text = rest
 
-        speaker_name, speaker_cluster_id = self._speaker_by_utterance.get(
-            translation.utterance_id, ("", -1)
+        speaker_name, speaker_cluster_id, speaker_embedding = (
+            self._speaker_by_utterance.get(
+                translation.utterance_id, ("", -1, None)
+            )
         )
         return Translation(
             utterance_id=translation.utterance_id,
@@ -3317,6 +3319,7 @@ class ClientHub:
             source_text=text,
             speaker_name=speaker_name,
             speaker_cluster_id=speaker_cluster_id,
+            speaker_embedding=speaker_embedding,
             source_language=self._language_or_fallback(
                 translation.source_language,
                 source_language,
@@ -3467,12 +3470,19 @@ class ClientHub:
         # r318: the Translation pipeline only carries text — remember the
         # speaker identity by utterance so _normalize_translation can attach
         # it to the outgoing Translation (the chat's translated path).
+        # r356: a voiceprint with NO identity is the case worth keeping — it
+        # is what lets the user name a line the recogniser declined to place.
+        # Requiring an identity here meant nothing was stored for exactly
+        # those lines, so the chip that was supposed to appear never could.
         if transcript.channel == "peer" and (
-            transcript.speaker_name or transcript.speaker_cluster_id >= 0
+            transcript.speaker_name
+            or transcript.speaker_cluster_id >= 0
+            or transcript.speaker_embedding is not None
         ):
             self._speaker_by_utterance[utterance_id] = (
                 transcript.speaker_name,
                 transcript.speaker_cluster_id,
+                transcript.speaker_embedding,
             )
             if len(self._speaker_by_utterance) > 512:
                 for stale in list(self._speaker_by_utterance)[:256]:

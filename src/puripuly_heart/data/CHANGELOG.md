@@ -2,6 +2,11 @@
 
 User-facing changes per build. The latest build's highlights also appear in-app when an update is ready.
 
+## r356 — 2026-08-01
+
+- **Fixed the Unidentified tag not actually appearing.** r352 added it, but every received line reaches the chat by a different route than the one that was updated, so the voiceprint never arrived and the tag stayed a plain "Received" header with nothing to click
+- **If your processor cannot run the compact speech model accurately, the app now says so on the dashboard**, in your own language, instead of only writing it to a log file
+
 ## r355 — 2026-08-01
 
 - The check added in r354 now **measures** whether your processor's compressed-model arithmetic is correct, by running a tiny calculation whose answer is known in advance, instead of inferring it from the processor's name

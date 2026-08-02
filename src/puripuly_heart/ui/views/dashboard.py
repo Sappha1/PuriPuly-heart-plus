@@ -19,7 +19,7 @@ from puripuly_heart.ui.fonts import font_for_language
 from puripuly_heart.ui.i18n import get_locale, language_name, t
 from puripuly_heart.ui.overlay_peer_contract import OverlayPeerConsumerContract
 
-_BUILD_TAG = "r355"  #increment each build so user can confirm version
+_BUILD_TAG = "r356"  #increment each build so user can confirm version
 
 # ── VRCT-style dark palette ──────────────────────────────────────────────────
 _BG_MAIN = "#2e2f32"
@@ -6546,9 +6546,31 @@ class DashboardView(ft.Row):
                 with contextlib.suppress(Exception):
                     self.page.run_task(self._release_peer_ring_after_hold)
 
+    def _int8_unreliable(self) -> bool:
+        """r356: does this machine's int8 arithmetic actually work?
+
+        Cached: the answer cannot change while the app is running.
+        """
+        cached = getattr(self, "_int8_verdict", None)
+        if cached is None:
+            try:
+                from puripuly_heart.core.system_info import cpu_int8_support
+
+                cached = cpu_int8_support()
+            except Exception:
+                cached = "unknown"
+            self._int8_verdict = cached
+        return cached == "emulated"
+
     def _current_local_stt_notice(self) -> tuple[str | None, str | None]:
         status = self._local_stt_notice_status
         if status is None:
+            # r356: nothing else to report, so surface the standing problem if
+            # there is one. A user whose recogniser returns fluent nonsense
+            # needs to be told in the app, in their own language -- pointing
+            # them at a log file tells them nothing.
+            if self._int8_unreliable():
+                return t("dashboard.local_stt_notice_int8"), "error"
             return None, None
         # "Loading speech model" shows NO banner at all anymore — the PEER
         # row's loading ring already communicates it (user preference).

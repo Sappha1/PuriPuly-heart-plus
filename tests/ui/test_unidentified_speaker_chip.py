@@ -104,3 +104,39 @@ def test_the_unidentified_label_is_translated_everywhere() -> None:
             data["dashboard.speaker_unknown"]
             != english["dashboard.speaker_unknown"]
         ), f"{code} still shows the English string"
+
+
+def test_the_translated_path_carries_the_voiceprint_too() -> None:
+    """r356: the chip did not appear in practice because r352 plumbed only the
+    RAW transcript path. Every peer line the user actually sees is rebuilt as a
+    Translation, which had no field for the voiceprint at all."""
+    from puripuly_heart.domain.models import Translation
+
+    assert "speaker_embedding" in Translation.__dataclass_fields__
+
+
+def test_a_line_with_no_identity_is_still_cached() -> None:
+    """The hub only remembered a voiceprint when an identity ALREADY existed,
+    so nothing was kept for exactly the lines the chip exists to serve."""
+    source = Path("src/puripuly_heart/core/orchestrator/hub.py").read_text(
+        encoding="utf-8"
+    )
+    assert "or transcript.speaker_embedding is not None" in source, (
+        "the hub still drops voiceprints for unidentified lines"
+    )
+    assert "transcript.speaker_embedding,\n            )" in source, (
+        "the per-utterance cache does not store the voiceprint"
+    )
+
+
+def test_the_int8_warning_reaches_the_screen_in_every_language() -> None:
+    """A user whose recogniser returns fluent nonsense cannot be asked to go
+    find a log file."""
+    for code in ("en", "zh-CN", "ja", "ko"):
+        data = json.loads((I18N / f"{code}.json").read_text(encoding="utf-8"))
+        assert data.get("dashboard.local_stt_notice_int8"), f"{code} missing it"
+
+    source = Path("src/puripuly_heart/ui/views/dashboard.py").read_text(
+        encoding="utf-8"
+    )
+    assert "dashboard.local_stt_notice_int8" in source, "the banner is never shown"

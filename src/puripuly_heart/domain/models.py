@@ -69,6 +69,10 @@ class Translation:
     # r318: resolved speaker identity for peer captions (see Transcript).
     speaker_name: str = ""
     speaker_cluster_id: int = -1
+    # r356: and the voiceprint behind it, so a line the recogniser could not
+    # place can still be named by the one person who knows who spoke. Every
+    # peer line the user sees arrives this way, not as a raw transcript.
+    speaker_embedding: tuple[float, ...] | None = None
 
     def __init__(
         self,

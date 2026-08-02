@@ -109,10 +109,23 @@ def test_the_unidentified_label_is_translated_everywhere() -> None:
 def test_the_translated_path_carries_the_voiceprint_too() -> None:
     """r356: the chip did not appear in practice because r352 plumbed only the
     RAW transcript path. Every peer line the user actually sees is rebuilt as a
-    Translation, which had no field for the voiceprint at all."""
+    Translation, which had no field for the voiceprint at all.
+
+    r359: and CONSTRUCT one. Translation is a frozen dataclass with a
+    hand-written __init__, so declaring the field registered it in
+    __dataclass_fields__ while the real constructor still rejected the keyword
+    -- the original version of this test asserted the former and passed while
+    the hub raised TypeError on every peer translation.
+    """
     from puripuly_heart.domain.models import Translation
 
     assert "speaker_embedding" in Translation.__dataclass_fields__
+
+    carried = Translation(
+        utterance_id="u", text="hello", speaker_embedding=(0.1, 0.2)
+    )
+    assert carried.speaker_embedding == (0.1, 0.2)
+    assert Translation(utterance_id="u", text="hello").speaker_embedding is None
 
 
 def test_a_line_with_no_identity_is_still_cached() -> None:

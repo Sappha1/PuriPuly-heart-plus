@@ -2,6 +2,10 @@
 
 User-facing changes per build. The latest build's highlights also appear in-app when an update is ready.
 
+## r359 — 2026-08-01
+
+- **Fixed received messages failing whenever translation was switched on.** r356 added the speaker voiceprint to translated messages but missed that this message type builds itself by hand, so it rejected the new information and the message errored out. Only visible with translation enabled, which is why it slipped through
+
 ## r358 — 2026-08-01
 
 - **Uncertain voices are told apart again instead of all showing "Unknown speaker".** A short clip now gets its own Speaker number like anyone else. It still cannot alter a saved voice — that was the part actually worth protecting, and it stays protected

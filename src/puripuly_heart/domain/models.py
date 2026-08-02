@@ -94,6 +94,7 @@ class Translation:
         romanization: str | None = None,
         speaker_name: str = "",
         speaker_cluster_id: int = -1,
+        speaker_embedding: tuple[float, ...] | None = None,
     ) -> None:
         if text is not None and translated_text is not None and text != translated_text:
             raise ValueError("text and translated_text must match when both are set")
@@ -139,6 +140,7 @@ class Translation:
         )
         object.__setattr__(self, "speaker_name", speaker_name)
         object.__setattr__(self, "speaker_cluster_id", speaker_cluster_id)
+        object.__setattr__(self, "speaker_embedding", speaker_embedding)
         object.__setattr__(self, "romanization", romanization)
 
     @property

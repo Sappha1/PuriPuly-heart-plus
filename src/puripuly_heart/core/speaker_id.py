@@ -48,6 +48,12 @@ NAMED_MATCH_THRESHOLD = 0.60
 # speakers top out around 0.38 and the same speaker bottoms out around 0.78,
 # so this sits in empty space and no longer undercuts naming.
 CLUSTER_MATCH_THRESHOLD = 0.58
+# r361: the bar for a segment too short to be trusted. A brief reply from a
+# known speaker scores 0.44-0.55 against their own cluster -- weaker evidence,
+# not a different person -- while different speakers at that length stay near
+# 0.32. Judging short audio at the full bar made every one-word reply open a
+# new speaker; one person became six in a minute.
+SHORT_CLUSTER_MATCH_THRESHOLD = 0.45
 # r351: how far the winning name must beat the SECOND-BEST NAME. Without this
 # the best of N wrong answers wins on an absolute bar alone, which is why
 # accuracy fell apart as names were added rather than staying flat.
@@ -276,17 +282,20 @@ class SpeakerRegistry:
                 runner_up_sim = ranked[1][0]
 
             best_cluster, best_cluster_sim = None, -1.0
-            second_cluster_sim = -1.0
+            second_cluster, second_cluster_sim = None, -1.0
             for cluster in self._clusters:
                 sim = float(np.dot(vector, cluster.centroid))
                 if sim > best_cluster_sim:
-                    second_cluster_sim = best_cluster_sim
+                    second_cluster, second_cluster_sim = best_cluster, best_cluster_sim
                     best_cluster, best_cluster_sim = cluster, sim
                 elif sim > second_cluster_sim:
-                    second_cluster_sim = sim
+                    second_cluster, second_cluster_sim = cluster, sim
 
+            join_bar = (
+                CLUSTER_MATCH_THRESHOLD if trusted else SHORT_CLUSTER_MATCH_THRESHOLD
+            )
             joins_best = best_cluster is not None and (
-                best_cluster_sim >= CLUSTER_MATCH_THRESHOLD
+                best_cluster_sim >= join_bar
                 or (
                     # r344 margin join: clearly nearest, just under the bar.
                     best_cluster_sim >= CLUSTER_SOFT_THRESHOLD
@@ -403,10 +412,7 @@ class SpeakerRegistry:
                 # unconditionally, so the 13th speaker in a room was given
                 # somebody else's identity — and naming that line enrolled the
                 # wrong person's voiceprint under the new name, permanently.
-                if (
-                    best_cluster is not None
-                    and best_cluster_sim >= CLUSTER_MATCH_THRESHOLD
-                ):
+                if best_cluster is not None and best_cluster_sim >= join_bar:
                     return SpeakerMatch(
                         "cluster",
                         self._cluster_label(best_cluster.cluster_id),
@@ -441,10 +447,13 @@ class SpeakerRegistry:
             cluster = _Cluster(self._next_cluster_number, vector)
             self._next_cluster_number += 1
             logger.info(
-                "[SpeakerID] new session speaker: cluster %d (%.2fs%s)",
+                "[SpeakerID] new session speaker: cluster %d (%.2fs%s) — nearest "
+                "existing was %.3f, needed %.2f",
                 cluster.cluster_id,
                 seconds,
-                "" if trusted else ", provisional — will not update saved voices",
+                "" if trusted else ", provisional",
+                best_cluster_sim,
+                join_bar,
             )
             self._clusters.append(cluster)
             return SpeakerMatch(

@@ -2,6 +2,11 @@
 
 User-facing changes per build. The latest build's highlights also appear in-app when an update is ready.
 
+## r361 — 2026-08-01
+
+- **Short replies are matched against a bar suited to their length.** A brief "yeah" carries less information than a full sentence, so it scores lower against its own speaker — judging both by one number made short replies fail to recognise the person who just spoke
+- The log now records how close the nearest existing speaker was whenever a NEW one is opened, so a voice splitting into several speakers can actually be diagnosed instead of guessed at
+
 ## r360 — 2026-08-01
 
 - **Two people who sound nothing alike are no longer given the same name.** The app was building a voiceprint even from near-silent audio — one reported case was recorded at a level where 42% of the samples were pure silence — and a voiceprint made of silence describes nobody, so it landed inside another person's identity. Speech that is too quiet or too broken up now produces no voiceprint at all

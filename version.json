@@ -1,12 +1,11 @@
 {
-  "build": 359,
-  "tag": "r359",
+  "build": 361,
+  "tag": "r361",
   "date": "2026-08-01",
   "notes": [
-    "Much more accurate speaker identification, using a larger voice model",
-    "Two people are no longer merged into one identity, and up to 64 speakers are told apart per session (was 12)",
-    "\"This is not that person\" is now remembered instead of coming back next time they speak",
-    "Voices the app can't place show as \"Unknown speaker\" and can be named with a click",
-    "Saved voices are cleared once on update, because the new model describes a voice differently"
+    "Speech too quiet or broken up no longer gets a speaker assigned, so two unlike voices stop being merged",
+    "Every received message now shows a speaker tag, either a name or \"Unknown speaker\"",
+    "Short replies are matched against a bar suited to their length, instead of the one used for full sentences",
+    "The log now records why a voice was matched to a speaker, or why a new one was opened"
   ]
 }

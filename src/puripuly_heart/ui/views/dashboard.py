@@ -19,7 +19,7 @@ from puripuly_heart.ui.fonts import font_for_language
 from puripuly_heart.ui.i18n import get_locale, language_name, t
 from puripuly_heart.ui.overlay_peer_contract import OverlayPeerConsumerContract
 
-_BUILD_TAG = "r356"  #increment each build so user can confirm version
+_BUILD_TAG = "r357"  #increment each build so user can confirm version
 
 # ── VRCT-style dark palette ──────────────────────────────────────────────────
 _BG_MAIN = "#2e2f32"
@@ -4218,6 +4218,13 @@ class DashboardView(ft.Row):
                 color=label_color,
                 weight=ft.FontWeight.W_700,
             )
+            # r357: on a line nobody has been matched to, the tooltip should
+            # say what clicking does rather than describe naming in general.
+            _tag_tooltip = (
+                t("dashboard.tooltip.speaker_unknown")
+                if not speaker_name and speaker_cluster_id < 0
+                else t("dashboard.tooltip.speaker_tag")
+            )
             if speaker_cluster_id >= 0:
                 # r321: remember rendered tags so naming a voice retro-labels
                 # every line already on screen (previously old lines kept
@@ -4247,7 +4254,7 @@ class DashboardView(ft.Row):
                 ft.GestureDetector(
                     content=ft.Container(
                         content=tag_control,
-                        tooltip=t("dashboard.tooltip.speaker_tag"),
+                        tooltip=_tag_tooltip,
                     ),
                     # r339: clickable whenever there is something to name —
                     # a cluster to enroll, OR an identity to rename.

@@ -547,7 +547,7 @@
   "dashboard.speaker_name_dialog.manage_link": "管理已保存的声音…",
   "dashboard.speaker_name_dialog.scope_clear": "清除这个说话人的名字",
   "dashboard.speaker_name_dialog.scope_clear_desc": "该说话人恢复为“说话人 N”——{name} 已保存的声音会保留",
-  "dashboard.speaker_unknown": "未识别",
+  "dashboard.speaker_unknown": "未知说话人",
   "dashboard.speaker_name_dialog.add_warning": "「{name}」已是保存的声音（{existing} 个声纹）——即使当前没有消息显示这个名字。保存会把这个说话人的声音添加给此人。如果其实是另一个人，请换一个名字。",
   "dashboard.speaker_name_dialog.add_button": "添加声音",
   "settings.overlay.calibration.distance.tooltip": "悬浮字幕与锚点之间的距离（米）。",
@@ -894,5 +894,6 @@
   "ocr_module.remove.confirm": "移除",
   "ocr_module.remove.done": "OCR 模块已移除 — 释放了约 {mb} MB。打开 OCR 即可重新下载。",
   "settings.saved_voices.model_reset": "语音识别已升级为更精确的模型，此前保存的声纹不再适用，已被清除。请在聊天消息的说话人标签上重新命名。",
-  "dashboard.local_stt_notice_int8": "本机处理器无法准确运行精简版语音模型，语音识别可能返回读起来通顺但完全错误的文字。请在设置中将语音识别切换为 Whisper。"
+  "dashboard.local_stt_notice_int8": "本机处理器无法准确运行精简版语音模型，语音识别可能返回读起来通顺但完全错误的文字。请在设置中将语音识别切换为 Whisper。",
+  "dashboard.tooltip.speaker_unknown": "这里有人说话，但该声音尚未保存——点击以指明是谁"
 }

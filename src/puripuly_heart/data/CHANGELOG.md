@@ -2,6 +2,10 @@
 
 User-facing changes per build. The latest build's highlights also appear in-app when an update is ready.
 
+## r357 — 2026-08-01
+
+- **Renamed the tag on a line whose speaker isn't saved yet, from "Unidentified" to "Unknown speaker".** The app heard a person, transcribed them and translated them — "Unidentified" made it sound as though it had failed to hear anything, or that what it heard might not be a person. It knows someone spoke; it just doesn't know who yet. Hovering the tag now explains what clicking it will do
+
 ## r356 — 2026-08-01
 
 - **Fixed the Unidentified tag not actually appearing.** r352 added it, but every received line reaches the chat by a different route than the one that was updated, so the voiceprint never arrived and the tag stayed a plain "Received" header with nothing to click

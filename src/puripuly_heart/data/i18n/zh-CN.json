@@ -895,5 +895,6 @@
   "ocr_module.remove.done": "OCR 模块已移除 — 释放了约 {mb} MB。打开 OCR 即可重新下载。",
   "settings.saved_voices.model_reset": "语音识别已升级为更精确的模型，此前保存的声纹不再适用，已被清除。请在聊天消息的说话人标签上重新命名。",
   "dashboard.local_stt_notice_int8": "本机处理器无法准确运行精简版语音模型，语音识别可能返回读起来通顺但完全错误的文字。请在设置中将语音识别切换为 Whisper。",
-  "dashboard.tooltip.speaker_unknown": "这里有人说话，但该声音尚未保存——点击以指明是谁"
+  "dashboard.tooltip.speaker_unknown": "这里有人说话，但该声音尚未保存——点击以指明是谁",
+  "dashboard.tooltip.speaker_unidentifiable": "这条消息的声音太轻或断续，无法判断是谁在说话"
 }

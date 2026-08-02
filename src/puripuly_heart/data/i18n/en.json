@@ -895,5 +895,6 @@
   "ocr_module.remove.done": "OCR module removed — about {mb} MB freed. Turn OCR on to download it again.",
   "settings.saved_voices.model_reset": "Voice recognition was upgraded to a more accurate model, so the previously saved voices no longer apply and were cleared. Name people again from the speaker tag on a chat message.",
   "dashboard.local_stt_notice_int8": "This computer's processor cannot run the compact speech model accurately, so speech recognition may return text that reads well but is wrong. Switch speech recognition to Whisper in Settings.",
-  "dashboard.tooltip.speaker_unknown": "Someone spoke here but this voice isn't saved yet — click to say who it was"
+  "dashboard.tooltip.speaker_unknown": "Someone spoke here but this voice isn't saved yet — click to say who it was",
+  "dashboard.tooltip.speaker_unidentifiable": "This line was too quiet or broken up to tell who was speaking"
 }

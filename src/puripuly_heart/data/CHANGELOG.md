@@ -2,6 +2,12 @@
 
 User-facing changes per build. The latest build's highlights also appear in-app when an update is ready.
 
+## r360 — 2026-08-01
+
+- **Two people who sound nothing alike are no longer given the same name.** The app was building a voiceprint even from near-silent audio — one reported case was recorded at a level where 42% of the samples were pure silence — and a voiceprint made of silence describes nobody, so it landed inside another person's identity. Speech that is too quiet or too broken up now produces no voiceprint at all
+- Every received message now shows a speaker tag, either a name or "Unknown speaker". Lines that were too faint to identify say so when you hover them, instead of silently looking like a different kind of message
+- The log now records which speaker a voice was matched to and how close the match was, so a wrong assignment can actually be explained afterwards
+
 ## r359 — 2026-08-01
 
 - **Fixed received messages failing whenever translation was switched on.** r356 added the speaker voiceprint to translated messages but missed that this message type builds itself by hand, so it rejected the new information and the message errored out. Only visible with translation enabled, which is why it slipped through

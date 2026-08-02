@@ -364,6 +364,15 @@ class SpeakerRegistry:
 
             if joins_best:
                 survivor = _join_cluster()
+                # r360: creations were logged, joins were not — so "why is this
+                # person Speaker 1" had no answer anywhere. It is the join
+                # similarity that decides it, so write it down.
+                logger.info(
+                    "[SpeakerID] joined cluster %d (similarity=%.3f, next "
+                    "closest %.3f, %.2fs%s)",
+                    survivor.cluster_id, best_cluster_sim, second_cluster_sim,
+                    seconds, "" if trusted else ", provisional",
+                )
                 session_name = self._cluster_names.get(survivor.cluster_id, "")
                 # r338: only inherit the cluster's name when the voice really
                 # does resemble that person — not merely the cluster they were

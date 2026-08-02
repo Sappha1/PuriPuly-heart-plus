@@ -19,7 +19,7 @@ from puripuly_heart.ui.fonts import font_for_language
 from puripuly_heart.ui.i18n import get_locale, language_name, t
 from puripuly_heart.ui.overlay_peer_contract import OverlayPeerConsumerContract
 
-_BUILD_TAG = "r359"  #increment each build so user can confirm version
+_BUILD_TAG = "r360"  #increment each build so user can confirm version
 
 # ── VRCT-style dark palette ──────────────────────────────────────────────────
 _BG_MAIN = "#2e2f32"
@@ -4190,11 +4190,14 @@ class DashboardView(ft.Row):
         # what the recognizer heard isn't obvious in that mode. Uses the
         # translator-detected hint when available, script sniff otherwise
         # (src_lang already resolved that way above).
-        # r352: a voiceprint alone is enough to earn a chip. The app not
-        # knowing who spoke is exactly when the user needs to be able to tell
-        # it — leaving those lines inert made r349's "decline to guess" a
-        # dead end instead of a correctable one.
-        _speaker_tagged = is_peer and not is_ocr and (
+        # r360: EVERY received line gets a chip. It either names someone or
+        # says it does not know — a line must not look like a different kind of
+        # message just because its audio was too poor to identify anyone.
+        # (r352 required a voiceprint here, which dropped faint lines back to a
+        # bare "Received" header once r360's quality gate started withholding
+        # prints.)
+        _speaker_tagged = is_peer and not is_ocr
+        _speaker_nameable = bool(
             speaker_name or speaker_cluster_id >= 0 or speaker_embedding is not None
         )
         # r322 (user suggestion): when a line has a speaker identity, the name
@@ -4240,13 +4243,15 @@ class DashboardView(ft.Row):
                 color=label_color,
                 weight=ft.FontWeight.W_700,
             )
-            # r357: on a line nobody has been matched to, the tooltip should
-            # say what clicking does rather than describe naming in general.
-            _tag_tooltip = (
-                t("dashboard.tooltip.speaker_unknown")
-                if not speaker_name and speaker_cluster_id < 0
-                else t("dashboard.tooltip.speaker_tag")
-            )
+            # r357/r360: three cases, and the tooltip should tell the truth
+            # about which one this is — nothing to attach a name to at all,
+            # nameable but unnamed, or already named.
+            if not _speaker_nameable:
+                _tag_tooltip = t("dashboard.tooltip.speaker_unidentifiable")
+            elif not speaker_name and speaker_cluster_id < 0:
+                _tag_tooltip = t("dashboard.tooltip.speaker_unknown")
+            else:
+                _tag_tooltip = t("dashboard.tooltip.speaker_tag")
             if speaker_cluster_id >= 0:
                 # r321: remember rendered tags so naming a voice retro-labels
                 # every line already on screen (previously old lines kept
@@ -4287,15 +4292,13 @@ class DashboardView(ft.Row):
                             self._open_speaker_name_dialog(
                                 cid, current, known_name=known, tag_control=tag,
                                 embedding=print_))
-                        # r352: a voiceprint is nameable on its own now.
-                        if (speaker_cluster_id >= 0 or speaker_name
-                            or speaker_embedding is not None)
+                        # r360: only when a name has somewhere to go.
+                        if _speaker_nameable
                         else None
                     ),
                     mouse_cursor=(
                         ft.MouseCursor.CLICK
-                        if (speaker_cluster_id >= 0 or speaker_name
-                            or speaker_embedding is not None)
+                        if _speaker_nameable
                         else ft.MouseCursor.BASIC
                     ),
                 )

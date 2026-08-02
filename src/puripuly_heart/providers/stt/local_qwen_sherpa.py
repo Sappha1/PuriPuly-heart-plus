@@ -535,7 +535,7 @@ class _LocalQwenSherpaSession(STTBackendSession):
             speaker_embedding: tuple[float, ...] | None = None
             speaker_seconds = 0.0
             embedder = getattr(self.backend, "speaker_embedder", None)
-            if embedder is not None:
+            if embedder is not None and not self._too_faint_to_identify(samples_f32):
                 try:
                     vector = await asyncio.to_thread(embedder.embed, samples_f32)
                     if vector is not None:
@@ -585,6 +585,43 @@ class _LocalQwenSherpaSession(STTBackendSession):
             return False
         with contextlib.suppress(Exception):
             return bool(diagnostics_enabled())
+        return False
+
+    # r360: a voiceprint is only as good as the audio under it. These bound
+    # the clearly-unusable, not the merely-quiet: utterances that clustered
+    # correctly measured -26 to -41 dB with 4-32% zeros, while the one that
+    # merged two different people measured -53.2 dB with 42% zeros.
+    _SPEAKER_ID_MIN_RMS_DB = -48.0
+    _SPEAKER_ID_MAX_ZERO_RATIO = 0.40
+
+    def _too_faint_to_identify(self, samples_f32: np.ndarray) -> bool:
+        """Is this segment too quiet or too full of dropouts to be anybody?
+
+        Returns False on any failure to measure — a missing metric must never
+        silently disable speaker identification.
+        """
+        try:
+            metrics = compute_audio_frame_metrics(
+                AudioFrameF32(
+                    samples=samples_f32,
+                    sample_rate_hz=self.backend.sample_rate_hz,
+                    channels=1,
+                )
+            )
+        except Exception:
+            return False
+        faint = metrics.rms_db < self._SPEAKER_ID_MIN_RMS_DB
+        gappy = metrics.zero_ratio > self._SPEAKER_ID_MAX_ZERO_RATIO
+        if faint or gappy:
+            logger.info(
+                "%s no voiceprint: audio too %s to identify anyone "
+                "(rms=%.1fdB zero_ratio=%.3f)",
+                _audio_diag_prefix(self.backend.stream_label),
+                "faint" if faint else "broken up",
+                metrics.rms_db,
+                metrics.zero_ratio,
+            )
+            return True
         return False
 
     def _log_decode_start_diagnostics(self, samples_f32: np.ndarray) -> None:

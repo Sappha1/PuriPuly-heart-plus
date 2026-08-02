@@ -68,10 +68,20 @@ def test_enroll_requires_real_cluster_and_name(registry) -> None:
 
 
 def test_cluster_cap_reuses_nearest_instead_of_growing(registry) -> None:
-    for seed in range(40):                   # far more voices than the cap
+    """r351 raised the cap from 12 to 64, so the old hardcoded 40 voices no
+    longer exceeded it and this stopped testing the cap at all. Drive it past
+    the real limit instead of a number that used to be the limit."""
+    from puripuly_heart.core.speaker_id import MAX_SESSION_CLUSTERS
+
+    crowd = MAX_SESSION_CLUSTERS + 20
+    for seed in range(crowd):
         registry.match(_voice(100 + seed))
-    labels = {registry.match(_voice(100 + s)).cluster_id for s in range(40)}
-    assert len(labels) <= 12
+
+    # The cap bounds how many clusters exist AT ONCE. Counting distinct ids
+    # seen over time measures something else entirely: eviction frees a slot
+    # and its replacement gets a fresh id, so ids-ever-issued exceeds the cap
+    # by design. The live count is the thing that must stay bounded.
+    assert len(registry._clusters) <= MAX_SESSION_CLUSTERS
 
 
 def test_session_reset_clears_clusters_not_names(registry) -> None:

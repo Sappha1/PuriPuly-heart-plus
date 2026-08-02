@@ -19,7 +19,7 @@ from puripuly_heart.ui.fonts import font_for_language
 from puripuly_heart.ui.i18n import get_locale, language_name, t
 from puripuly_heart.ui.overlay_peer_contract import OverlayPeerConsumerContract
 
-_BUILD_TAG = "r357"  #increment each build so user can confirm version
+_BUILD_TAG = "r358"  #increment each build so user can confirm version
 
 # ── VRCT-style dark palette ──────────────────────────────────────────────────
 _BG_MAIN = "#2e2f32"
@@ -3616,6 +3616,23 @@ class DashboardView(ft.Row):
         self._filter_peer_lang_active = bool(enabled)
         self._refresh_filter_peer_btn()
 
+    def _speaker_display_number(self, cluster_id: int) -> int:
+        """The Nth distinct speaker to APPEAR IN THE CHAT (r358).
+
+        Internal cluster ids count every cluster ever opened, including ones
+        the user never saw — audio that was language-filtered, suppressed as a
+        hallucination, or merged away. That is why the first speaker of a fresh
+        session could show up as "Speaker 2". The user is reading a chat log,
+        so the number should count that.
+        """
+        numbers = getattr(self, "_speaker_display_numbers", None)
+        if numbers is None:
+            numbers = {}
+            self._speaker_display_numbers = numbers
+        if cluster_id not in numbers:
+            numbers[cluster_id] = len(numbers) + 1
+        return numbers[cluster_id]
+
     def _on_chat_clear(self, e) -> None:
         if self._chat_list_view is None:
             return
@@ -3624,6 +3641,9 @@ class DashboardView(ft.Row):
         # this they keep dead controls for the rest of the session.
         self._speaker_tag_controls = {}
         self._speaker_tag_controls_by_name = {}
+        # r358: and the numbering restarts, because an empty log showing
+        # "Speaker 4" as its first line makes no sense to the person reading it.
+        self._speaker_display_numbers = {}
         try:
             self._chat_list_view.update()
         except Exception:
@@ -4208,7 +4228,9 @@ class DashboardView(ft.Row):
             if speaker_name:
                 tag_text = speaker_name
             elif speaker_cluster_id >= 0:
-                tag_text = t("dashboard.speaker_n").format(n=speaker_cluster_id)
+                tag_text = t("dashboard.speaker_n").format(
+                    n=self._speaker_display_number(speaker_cluster_id)
+                )
             else:
                 # Identified as somebody, just not as anybody known.
                 tag_text = t("dashboard.speaker_unknown")

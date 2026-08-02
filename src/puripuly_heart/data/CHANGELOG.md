@@ -2,6 +2,11 @@
 
 User-facing changes per build. The latest build's highlights also appear in-app when an update is ready.
 
+## r358 — 2026-08-01
+
+- **Uncertain voices are told apart again instead of all showing "Unknown speaker".** A short clip now gets its own Speaker number like anyone else. It still cannot alter a saved voice — that was the part actually worth protecting, and it stays protected
+- **The first speaker in a chat is now Speaker 1.** The number shown was an internal counter that also counted audio you never saw — filtered messages, discarded noise — so a fresh session could open at "Speaker 2". It now counts speakers as they appear in the chat, and clearing the chat starts the count over
+
 ## r357 — 2026-08-01
 
 - **Renamed the tag on a line whose speaker isn't saved yet, from "Unidentified" to "Unknown speaker".** The app heard a person, transcribed them and translated them — "Unidentified" made it sound as though it had failed to hear anything, or that what it heard might not be a person. It knows someone spoke; it just doesn't know who yet. Hovering the tag now explains what clicking it will do

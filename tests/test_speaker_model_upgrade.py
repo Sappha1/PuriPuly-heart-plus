@@ -127,15 +127,22 @@ def test_the_upgrade_is_not_blamed_for_the_users_own_deletions(tmp_path) -> None
 # ── the length gate ──────────────────────────────────────────────────────
 
 
-def test_a_short_segment_never_opens_a_new_speaker(tmp_path) -> None:
-    """The fragmentation engine: a scrap too short to identify anyone failed
-    to match its own speaker and was minted as "Speaker N" instead."""
+def test_a_short_segment_gets_an_identity_but_cannot_teach(tmp_path) -> None:
+    """r349 refused to label a short segment at all, to stop it inventing
+    people. r358 reversed the LABEL half after the user pointed out the cost:
+    every uncertain voice became one indistinguishable "Unknown speaker", so
+    two different unknown people could not be told apart.
+
+    What must still hold is the half that was actually protecting anything —
+    a short segment cannot move a stored voiceprint. See
+    test_a_short_segment_does_not_move_a_stored_voiceprint below.
+    """
     registry = _registry(tmp_path)
 
     match = registry.match(_voice(1), SHORT)
 
-    assert match.kind == "none"
-    assert match.cluster_id == -1
+    assert match.kind == "cluster"
+    assert match.cluster_id >= 0
 
 
 def test_a_long_segment_still_opens_one(tmp_path) -> None:

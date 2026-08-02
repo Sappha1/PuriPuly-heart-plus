@@ -422,17 +422,21 @@ class SpeakerRegistry:
                     MAX_SESSION_CLUSTERS, victim.cluster_id, victim.count,
                 )
 
-            if not trusted:
-                # Not enough audio to claim this is somebody new. An unlabeled
-                # line reads far better than a "Speaker 9" that never returns.
-                logger.debug(
-                    "[SpeakerID] %.2fs segment matched nobody — too short to "
-                    "open a new speaker", seconds,
-                )
-                return SpeakerMatch("none", "", -1, 0.0)
-
+            # r358: a short segment DOES get its own identity now. r349
+            # returned nothing here, which kept the stored voiceprints safe but
+            # collapsed every uncertain voice into one indistinguishable
+            # "Unknown speaker" — and telling two unknown people apart is the
+            # more useful half. What it still cannot do is teach: `trusted`
+            # gates every centroid and variant update above, so a short segment
+            # can carry a label without ever moving a saved print.
             cluster = _Cluster(self._next_cluster_number, vector)
             self._next_cluster_number += 1
+            logger.info(
+                "[SpeakerID] new session speaker: cluster %d (%.2fs%s)",
+                cluster.cluster_id,
+                seconds,
+                "" if trusted else ", provisional — will not update saved voices",
+            )
             self._clusters.append(cluster)
             return SpeakerMatch(
                 "cluster", self._cluster_label(cluster.cluster_id), cluster.cluster_id, 1.0

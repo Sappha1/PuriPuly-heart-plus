@@ -168,3 +168,65 @@ def test_the_text_background_label_is_translated_everywhere() -> None:
         data = json.loads((I18N / f"{code}.json").read_text(encoding="utf-8"))
         assert data.get("settings.overlay.text_background.title"), f"{code} missing"
         assert data.get("settings.overlay.text_background.tooltip"), f"{code} missing"
+
+
+def test_the_choice_survives_the_trip_to_the_overlay_process() -> None:
+    """r365: the overlay draws in ANOTHER PROCESS, and everything that reaches
+    it is named explicitly in a payload. r362/r363 saved the settings, wired
+    the menu, and never added them to that payload — so every choice was
+    stored correctly and stopped at the process boundary. Nothing changed on
+    screen no matter what was picked.
+
+    This walks the actual chain: payload -> parser -> visual state -> plan.
+    """
+    from puripuly_heart.ui.desktop_overlay import _parse_runtime_visual_state
+
+    payload = {
+        "text_scale": 1.0,
+        "background_alpha": 0.4,
+        "edge_style": "outline",
+        "text_background_alpha": 0.8,
+    }
+    state = _parse_runtime_visual_state(payload)
+
+    assert state is not None
+    assert state.edge_style == "outline"
+    assert state.text_background_alpha == 0.8
+
+
+def test_an_older_payload_without_the_new_keys_still_parses() -> None:
+    """A running overlay from a previous build must not be rejected outright —
+    _parse_runtime_visual_state returns None on anything it dislikes, and None
+    means the overlay ignores the whole update."""
+    from puripuly_heart.ui.desktop_overlay import _parse_runtime_visual_state
+
+    state = _parse_runtime_visual_state({"text_scale": 1.0, "background_alpha": 0.4})
+
+    assert state is not None, "an older payload must not be rejected"
+    assert state.edge_style == overlay.DEFAULT_CAPTION_EDGE_STYLE
+    assert state.text_background_alpha == 0.0
+
+
+def test_the_wire_format_carries_both_settings() -> None:
+    """The VR path goes through OverlayPresentationCalibration, which also
+    enumerates its fields by hand."""
+    from puripuly_heart.core.overlay.protocol import OverlayPresentationCalibration
+
+    sent = OverlayPresentationCalibration(
+        edge_style="raised", text_background_alpha=0.5
+    )
+    restored = OverlayPresentationCalibration.from_dict(sent.to_dict())
+
+    assert restored.edge_style == "raised"
+    assert restored.text_background_alpha == 0.5
+
+
+def test_a_style_change_is_a_reason_to_push_an_update() -> None:
+    """The controller only sends a visual update when it decides something
+    changed. Styling was not on that list, so even a correct payload would
+    have sat unsent."""
+    source = Path("src/puripuly_heart/ui/controller.py").read_text(encoding="utf-8")
+
+    assert 'getattr(previous_visual, "edge_style", None)' in source
+    assert 'getattr(previous_visual, "text_background_alpha", None)' in source
+    assert '"edge_style": getattr(visual, "edge_style", "shadow")' in source

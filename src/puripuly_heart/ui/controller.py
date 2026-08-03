@@ -2098,6 +2098,11 @@ class GuiController:
                 "command": "apply_visual_config",
                 "text_scale": visual.text_scale,
                 "background_alpha": visual.background_alpha,
+                # r365: without these the choice is saved and never applied.
+                "edge_style": getattr(visual, "edge_style", "shadow"),
+                "text_background_alpha": getattr(
+                    visual, "text_background_alpha", 0.0
+                ),
                 "outline_width": visual.outline_width,
                 # Two-turn disabled — always render single-turn.
                 "single_turn_mode": True,  # was: self.settings.overlay.single_turn_mode
@@ -2744,6 +2749,12 @@ class GuiController:
             previous_visual.text_scale != next_visual.text_scale
             or previous_visual.background_alpha != next_visual.background_alpha
             or previous_visual.outline_width != next_visual.outline_width
+            # r365: a style change is a reason to push, and was not one before,
+            # so even a correct payload would have sat unsent.
+            or getattr(previous_visual, "edge_style", None)
+            != getattr(next_visual, "edge_style", None)
+            or getattr(previous_visual, "text_background_alpha", None)
+            != getattr(next_visual, "text_background_alpha", None)
             or previous_single_turn != next_single_turn
             or getattr(previous_settings.overlay, "show_romanization", True)
             != getattr(next_settings.overlay, "show_romanization", True)

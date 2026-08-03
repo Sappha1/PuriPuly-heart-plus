@@ -17,6 +17,10 @@ class OverlayPresentationCalibration:
     distance: float = 1.1
     text_scale: float = 1.0
     background_alpha: float = 0.24
+    # r365: caption appearance. The overlay renders in another process, so
+    # anything the user picks has to be named here to reach it at all.
+    edge_style: str = "shadow"
+    text_background_alpha: float = 0.0
 
     def to_dict(self) -> dict[str, object]:
         return {
@@ -26,6 +30,8 @@ class OverlayPresentationCalibration:
             "distance": self.distance,
             "text_scale": self.text_scale,
             "background_alpha": self.background_alpha,
+            "edge_style": self.edge_style,
+            "text_background_alpha": self.text_background_alpha,
         }
 
     @classmethod
@@ -37,6 +43,8 @@ class OverlayPresentationCalibration:
             distance=float(data.get("distance", 1.1)),
             text_scale=float(data.get("text_scale", 1.0)),
             background_alpha=float(data.get("background_alpha", 0.24)),
+            edge_style=str(data.get("edge_style", "shadow") or "shadow"),
+            text_background_alpha=float(data.get("text_background_alpha", 0.0) or 0.0),
         )
 
 

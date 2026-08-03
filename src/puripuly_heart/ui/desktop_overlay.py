@@ -1740,6 +1740,12 @@ def _validated_visual_state(
     return DesktopCaptionVisualState(
         text_scale=settings.text_scale,
         background_alpha=settings.background_alpha,
+        edge_style=normalize_caption_edge_style(
+            getattr(settings, "edge_style", DEFAULT_CAPTION_EDGE_STYLE)
+        ),
+        text_background_alpha=float(
+            getattr(settings, "text_background_alpha", 0.0) or 0.0
+        ),
         outline_width=settings.outline_width,
         show_romanization=source.show_romanization,
         show_pinyin=source.show_pinyin,
@@ -4421,9 +4427,18 @@ def _parse_runtime_visual_state(payload: dict[str, object]) -> DesktopCaptionVis
     show_latin_raw = payload.get("show_latin", True)
     peer_source_language_raw = payload.get("peer_source_language", "")
     peer_target_language_raw = payload.get("peer_target_language", "")
+    # r365: the parser names every key it keeps, so anything not listed here is
+    # silently dropped at the process boundary — which is exactly what happened
+    # to the caption styling.
+    edge_style_raw = payload.get("edge_style", DEFAULT_CAPTION_EDGE_STYLE)
+    text_bg_raw = _finite_non_bool_number(payload.get("text_background_alpha", 0.0))
+    if text_bg_raw is None or not 0.0 <= text_bg_raw <= 1.0:
+        text_bg_raw = 0.0
     return DesktopCaptionVisualState(
         text_scale=float(text_scale),
         background_alpha=float(background_alpha),
+        edge_style=normalize_caption_edge_style(edge_style_raw),
+        text_background_alpha=float(text_bg_raw),
         outline_width=outline_width,
         show_romanization=bool(show_romanization_raw),
         show_pinyin=bool(show_pinyin_raw),

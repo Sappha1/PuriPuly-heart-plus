@@ -2,6 +2,10 @@
 
 User-facing changes per build. The latest build's highlights also appear in-app when an update is ready.
 
+## r365 — 2026-08-02
+
+- **Fixed the new caption options doing nothing.** Edge style and Text background were saved correctly and never reached the overlay — it draws in a separate process, and the settings that cross to it are listed one by one, so anything not on that list is dropped. Both now apply as soon as you pick them
+
 ## r364 — 2026-08-02
 
 - **Fixed the new overlay options being cut off** at the menu's width — the edge style choices ran off the right edge. Edge style is now a compact picker that expands when clicked, the same control Size and Display use, so it fits however long the option names are in your language

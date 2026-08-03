@@ -1555,4 +1555,7 @@ def _calibration_from_overlay(
         distance=calibration.distance,
         text_scale=calibration.text_scale,
         background_alpha=calibration.background_alpha,
+        # r365: carry the user's caption styling the last step into the renderer.
+        edge_style=getattr(calibration, "edge_style", "shadow"),
+        text_background_alpha=getattr(calibration, "text_background_alpha", 0.0),
     )

@@ -1,11 +1,11 @@
 {
-  "build": 361,
-  "tag": "r361",
-  "date": "2026-08-01",
+  "build": 370,
+  "tag": "r370",
+  "date": "2026-08-02",
   "notes": [
-    "Speech too quiet or broken up no longer gets a speaker assigned, so two unlike voices stop being merged",
-    "Every received message now shows a speaker tag, either a name or \"Unknown speaker\"",
-    "Short replies are matched against a bar suited to their length, instead of the one used for full sentences",
-    "The log now records why a voice was matched to a speaker, or why a new one was opened"
+    "Caption styling for the overlay: character edge style (None, Drop shadow, Raised, Depressed, Outline) and a Text background slider, in the right-click menu",
+    "The Outline style now draws a real black rim — it was one pixel wide against captions many times that size, so it read as slightly bolder text",
+    "The Caption Style menu now opens on your saved settings, instead of always showing 0% and the default style",
+    "A setting that happened to match the saved value is no longer dropped in silence, so options no longer need moving away and back before they take"
   ]
 }

@@ -2,6 +2,11 @@
 
 User-facing changes per build. The latest build's highlights also appear in-app when an update is ready.
 
+## r367 — 2026-08-02
+
+- **Text background now applies to lines that show a reading above the characters** (pinyin or romaji over the original). Those are drawn by different code from plain lines, and only the plain one had been updated — so on most captions the background could never appear
+- The overlay now records the caption styling it receives in the normal log, instead of only when detailed logging is switched on
+
 ## r366 — 2026-08-02
 
 - **Edge style and Text background now actually change the overlay.** Two more places listed their fields by hand and dropped them: the code that sends a settings change to the overlay while it is running, and the code that writes settings to disk — so the options did nothing, and would also have been forgotten on restart

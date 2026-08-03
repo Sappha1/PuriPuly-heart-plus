@@ -267,3 +267,50 @@ def test_every_payload_builder_carries_the_styling() -> None:
     # every one of them has to name both settings
     assert source.count('"edge_style"') >= builders
     assert source.count('"text_background_alpha"') >= builders
+
+
+def test_every_caption_text_style_carries_both_settings() -> None:
+    """r367: a caption line showing a reading above its characters is built by
+    a DIFFERENT function from a plain one. r363 gave the background to the
+    plain builder only, so on any line with pinyin or romaji above it — most
+    of them, for a Chinese or Japanese partner — the background could never
+    appear however well the plumbing worked.
+
+    Counting instead of spot-checking: every text style that draws a caption
+    glyph must carry the edge shadow AND the background, or one of them is
+    invisible on half the lines.
+    """
+    import re
+
+    source = Path("src/puripuly_heart/ui/desktop_overlay.py").read_text(
+        encoding="utf-8"
+    )
+    blocks = re.findall(r"ft\.TextStyle\((.*?)\n\s*\)", source, re.S)
+    # Only styles that draw a real caption LINE. The lock-screen placeholder
+    # also carries a shadow, but it takes the default constant rather than a
+    # line and has no user text to sit behind.
+    styled = [
+        b for b in blocks
+        if "_caption_text_shadow" in b and "getattr(line," in b
+    ]
+
+    assert styled, "no caption line styles found — has the renderer moved?"
+    for block in styled:
+        assert "_caption_text_background_color" in block, (
+            "a caption text style has the edge shadow but no text background; "
+            "one of the two will be invisible on those lines"
+        )
+        assert block.count("bgcolor=") == 1, "duplicated bgcolor in one style"
+
+
+def test_the_applied_config_is_logged_without_a_debug_flag() -> None:
+    """Diagnosing this took three wrong guesses because the only record went
+    through _emit_detailed_log, which is silent unless detailed logging is on —
+    so "no log line" looked like "never sent"."""
+    source = Path("src/puripuly_heart/ui/desktop_overlay.py").read_text(
+        encoding="utf-8"
+    )
+    assert "visual config applied: edge_style=%s" in source
+    marker = source.index("visual config applied: edge_style=%s")
+    preceding = source[max(0, marker - 400):marker]
+    assert "logger.info(" in preceding, "the record is not an unconditional log"

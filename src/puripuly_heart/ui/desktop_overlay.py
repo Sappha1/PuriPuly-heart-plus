@@ -2022,6 +2022,9 @@ def _build_ruby_content(ft: Any, line: DesktopCaptionLine, text_width: float) ->
                                 size=ruby_size,
                                 height=1.1,
                                 shadow=_caption_text_shadow(ft, getattr(line, 'edge_style', DEFAULT_CAPTION_EDGE_STYLE)),
+                            bgcolor=_caption_text_background_color(
+                                getattr(line, 'text_background_alpha', 0.0)
+                            ),
                             ),
                         ),
                         ft.Text(
@@ -2039,6 +2042,9 @@ def _build_ruby_content(ft: Any, line: DesktopCaptionLine, text_width: float) ->
                                 height=line.line_height,
                                 weight=_flet_font_weight(ft, line.weight),
                                 shadow=_caption_text_shadow(ft, getattr(line, 'edge_style', DEFAULT_CAPTION_EDGE_STYLE)),
+                            bgcolor=_caption_text_background_color(
+                                getattr(line, 'text_background_alpha', 0.0)
+                            ),
                             ),
                         ),
                     ],
@@ -2104,6 +2110,9 @@ def _build_ruby_content(ft: Any, line: DesktopCaptionLine, text_width: float) ->
                         size=block_roman_size,
                         height=1.15,
                         shadow=_caption_text_shadow(ft, getattr(line, 'edge_style', DEFAULT_CAPTION_EDGE_STYLE)),
+                            bgcolor=_caption_text_background_color(
+                                getattr(line, 'text_background_alpha', 0.0)
+                            ),
                     ),
                 ),
                 ft.Text(
@@ -2121,6 +2130,9 @@ def _build_ruby_content(ft: Any, line: DesktopCaptionLine, text_width: float) ->
                         weight=_flet_font_weight(ft, line.weight),
                         font_family=line.font_family,
                         shadow=_caption_text_shadow(ft, getattr(line, 'edge_style', DEFAULT_CAPTION_EDGE_STYLE)),
+                            bgcolor=_caption_text_background_color(
+                                getattr(line, 'text_background_alpha', 0.0)
+                            ),
                     ),
                 ),
             ],
@@ -2209,7 +2221,7 @@ def _build_flet_text(
             weight=_flet_font_weight(ft, line.weight),
             font_family=line.font_family,
             shadow=_caption_text_shadow(ft, getattr(line, 'edge_style', DEFAULT_CAPTION_EDGE_STYLE)),
-            bgcolor=_caption_text_background_color(
+                            bgcolor=_caption_text_background_color(
                 getattr(line, "text_background_alpha", 0.0)
             ),
             foreground=None,
@@ -2847,6 +2859,16 @@ class FletDesktopRendererWindow:
                 logger.warning("[DesktopOverlay] Ignoring invalid visual config control")
                 return
             self._visual_state = visual_state
+            # r367: unconditional — one line per change. Diagnosing this cost
+            # three wrong guesses because the only record went through
+            # _emit_detailed_log, which is silent unless detailed logging is on.
+            logger.info(
+                "[DesktopOverlay] visual config applied: edge_style=%s "
+                "text_background_alpha=%s background_alpha=%s",
+                visual_state.edge_style,
+                visual_state.text_background_alpha,
+                visual_state.background_alpha,
+            )
             self._emit_detailed_log(
                 "runtime_control command=apply_visual_config "
                 f"text_scale={visual_state.text_scale} "

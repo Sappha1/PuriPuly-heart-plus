@@ -59,18 +59,74 @@ def test_none_really_draws_nothing() -> None:
     assert overlay._caption_text_shadow(_FakeFt, "none") == []
 
 
+def _directions(shadows) -> set[tuple[int, int]]:
+    """Which way each offset points, independent of how far it reaches."""
+    def sign(v: float) -> int:
+        return (v > 0) - (v < 0)
+
+    return {(sign(s.offset[0]), sign(s.offset[1])) for s in shadows}
+
+
 def test_outline_surrounds_the_glyph_on_every_side() -> None:
     """An outline that only covers some directions leaves the text bleeding
     into the background exactly where it is brightest."""
-    shadows = overlay._caption_text_shadow(_FakeFt, "outline")
-    offsets = {tuple(s.offset) for s in shadows}
+    shadows = overlay._caption_text_shadow(_FakeFt, "outline", font_size=41)
+    covered = _directions(shadows)
 
     for dx in (-1, 0, 1):
         for dy in (-1, 0, 1):
             if (dx, dy) == (0, 0):
                 continue
-            assert (dx, dy) in offsets, f"no outline at {(dx, dy)}"
+            assert (dx, dy) in covered, f"no outline at {(dx, dy)}"
     assert all(s.blur_radius == 0 for s in shadows), "a blurred outline is a shadow"
+    assert all(
+        s.color == overlay._CAPTION_OUTLINE_COLOR for s in shadows
+    ), "the rim is not the outline colour"
+
+
+def test_outline_thickness_scales_with_the_glyph() -> None:
+    """r370: this is the assertion whose absence shipped the bug.
+
+    The old test pinned the offsets at exactly +/-1 and passed happily, because
+    it checked which DIRECTIONS the rim covered and never how far it reached.
+    One pixel around a 56px glyph is not an outline — it reads as slightly
+    bolder text, which is what it was reported as.
+    """
+    radii = {size: overlay._caption_outline_radius(size) for size in (20, 41, 50, 56)}
+
+    assert radii[56] > radii[41] > radii[20], (
+        f"the rim does not grow with the glyph: {radii}"
+    )
+    for size, radius in radii.items():
+        share = radius / size
+        assert 0.04 <= share <= 0.08, (
+            f"at {size}px the rim is {share:.1%} of the glyph; a video player's "
+            f"is around 6%, and outside this band it reads as either a hairline "
+            f"or a blob"
+        )
+    # The concrete regression: the medium preset must not go back to a hairline.
+    assert radii[41] >= 2.0, "a 41px caption is back to a sub-2px rim"
+
+
+def test_outline_has_no_gaps_on_the_diagonals() -> None:
+    """Eight points at a wide radius leave the corners open and the rim looks
+    chewed; the inner ring at half radius is what closes them."""
+    shadows = overlay._caption_text_shadow(_FakeFt, "outline", font_size=56)
+    reaches = {round((s.offset[0] ** 2 + s.offset[1] ** 2) ** 0.5, 4) for s in shadows}
+
+    assert len(reaches) >= 2, (
+        "every offset sits at one distance — there is no inner ring to fill "
+        "the diagonal gaps"
+    )
+    assert len(shadows) == 16, f"expected two rings of eight, got {len(shadows)}"
+
+
+def test_outline_survives_a_missing_or_junk_size() -> None:
+    """The lock-screen placeholder and any older caller pass no size at all."""
+    for bad in (None, 0, -5, "big", float("nan")):
+        radius = overlay._caption_outline_radius(bad)
+        assert radius >= overlay._CAPTION_OUTLINE_MIN_RADIUS, bad
+        assert overlay._caption_text_shadow(_FakeFt, "outline", font_size=bad)
 
 
 def test_raised_and_depressed_are_mirror_images() -> None:
@@ -371,3 +427,222 @@ def test_the_plan_actually_carries_the_chosen_styling() -> None:
         for line in slot.lines:
             assert line.edge_style == "outline"
             assert line.text_background_alpha == 0.8
+
+
+def test_every_dashboard_overlay_seeder_is_actually_called() -> None:
+    """r370: a setter nobody calls is a control that lies about its own state.
+
+    set_overlay_edge_style and set_overlay_text_background_alpha were both
+    written when those controls were added, both correct, and neither was ever
+    called from anywhere in src/ — the only references in the repo were two
+    hasattr checks in tests, which is precisely why the suite stayed green.
+
+    The popover therefore opened at 0% and the default edge style no matter
+    what was saved, while the push to the overlay is gated on the value
+    DIFFERING from what is saved. A gesture landing on the stored value was
+    dropped in silence, so whether a drag did anything looked random.
+    """
+    import re
+
+    dashboard = Path("src/puripuly_heart/ui/views/dashboard.py").read_text(
+        encoding="utf-8"
+    )
+    seeders = sorted(set(re.findall(r"def (set_overlay_\w+)\(", dashboard)))
+    assert seeders, "no overlay seeders found — has the dashboard moved?"
+
+    unwired = []
+    for name in seeders:
+        callers = 0
+        for path in Path("src").rglob("*.py"):
+            text = path.read_text(encoding="utf-8", errors="ignore")
+            callers += len(re.findall(rf"\b{name}\b", text))
+            callers -= len(re.findall(rf"def\s+{name}\b", text))
+        if callers == 0:
+            unwired.append(name)
+
+    assert not unwired, (
+        "these dashboard seeders are never called, so the menu opens showing a "
+        f"value that is not the one in settings: {unwired}"
+    )
+
+
+def test_the_popover_opens_on_the_saved_values() -> None:
+    """The concrete symptom: the slider claimed 0% while 88% was stored."""
+    from puripuly_heart.ui.views import dashboard as dash_module
+
+    dash = dash_module.DashboardView.__new__(dash_module.DashboardView)
+    dash._overlay_text_background_alpha = 0.0
+    dash._overlay_edge_style = "shadow"
+
+    dash.set_overlay_text_background_alpha(0.88)
+    dash.set_overlay_edge_style("outline")
+
+    assert dash._overlay_text_background_alpha == 0.88
+    assert dash._overlay_edge_style == "outline"
+
+    # and the seed is driven from the same settings object the gate compares to
+    controller_src = Path("src/puripuly_heart/ui/controller.py").read_text(
+        encoding="utf-8"
+    )
+    for name, field in (
+        ("set_overlay_text_background_alpha", "text_background_alpha"),
+        ("set_overlay_edge_style", "edge_style"),
+    ):
+        marker = controller_src.index(name)
+        window = controller_src[marker : marker + 500]
+        assert f"visual.{field}" in window, (
+            f"{name} is called but not from settings.overlay.desktop_flet."
+            f"visual.{field}, so the control can still disagree with the gate"
+        )
+
+
+def test_the_rim_is_round_rather_than_square() -> None:
+    """Written as (±1, ±1) the four corners sit √2 = 1.41 units out while the
+    sides sit at 1, so the rim is a square and every glyph corner gets a 41%
+    thicker edge than its sides. At the old fixed 1px that was 0.4px and
+    antialiasing hid it; at 3–4px it shows as lumpy, squared-off corners.
+    """
+    offsets = overlay._caption_outline_offsets(56)
+    radius = overlay._caption_outline_radius(56)
+
+    outer = [o for o in offsets if (o[0] ** 2 + o[1] ** 2) ** 0.5 > radius * 0.75]
+    assert len(outer) == 8, f"expected eight points on the outer ring, got {len(outer)}"
+    for dx, dy in outer:
+        reach = (dx**2 + dy**2) ** 0.5
+        assert abs(reach - radius) < 0.01, (
+            f"({dx:.2f}, {dy:.2f}) reaches {reach:.2f} but the ring radius is "
+            f"{radius:.2f} — the rim is square, not round"
+        )
+
+
+def test_the_outline_colour_is_pinned_to_black() -> None:
+    """The only colour assertion in this file used to be
+    `s.color == _CAPTION_OUTLINE_COLOR`, which asserts the builder used the
+    constant and says nothing about what the constant IS. Change it to white
+    and every test still passed — which is the exact shape of "the outline
+    renders in the text colour" shipping green.
+    """
+    assert overlay._CAPTION_OUTLINE_COLOR == "#E6000000", (
+        "the outline is no longer black"
+    )
+    rim = overlay._CAPTION_OUTLINE_COLOR.upper()
+    for name in ("_DESKTOP_CAPTION_WHITE", "_DESKTOP_CAPTION_GOLD"):
+        text_colour = getattr(overlay, name).upper().lstrip("#")
+        assert text_colour not in rim, (
+            f"the rim is drawn in {name} — it would read as bolder text, not an "
+            f"outline"
+        )
+    # opaque enough to read over bright footage
+    assert int(rim[1:3], 16) >= 0xC0, "the rim is too transparent to register"
+
+
+def test_outline_reaches_every_caption_widget_not_just_the_plan() -> None:
+    """No test ever built a caption WIDGET with edge_style='outline' — the one
+    widget-level shadow test calls build_desktop_caption_plan with no
+    visual_state, so it only ever exercised the default. The whole span between
+    _caption_text_shadow and the control was unasserted, across all five
+    TextStyle construction sites.
+    """
+    import sys
+
+    sys.path.insert(0, "tests/ui")
+    from test_desktop_overlay_renderer import _block
+
+    from puripuly_heart.core.overlay.protocol import OverlayPresentationSnapshot
+
+    snapshot = OverlayPresentationSnapshot(
+        blocks=[
+            _block(
+                "b1",
+                channel="peer",
+                block_variant="finalized",
+                appearance_seq=1,
+                primary_text="今日はゆっくり話してくれてありがとう",
+                secondary_text="Thanks for speaking slowly today.",
+                secondary_enabled=True,
+            )
+        ]
+    )
+    state = overlay.DesktopCaptionVisualState(edge_style="outline")
+    plan = overlay.build_desktop_caption_plan(snapshot, visual_state=state)
+    surface = overlay.build_desktop_caption_surface(plan)
+
+    shadowed = []
+
+    def walk(node, depth=0):
+        if node is None or depth > 40:
+            return
+        style = getattr(node, "style", None)
+        if style is not None and getattr(style, "shadow", None):
+            shadowed.append(style.shadow)
+        for attr in ("content", "controls"):
+            child = getattr(node, attr, None)
+            if isinstance(child, (list, tuple)):
+                for item in child:
+                    walk(item, depth + 1)
+            elif child is not None:
+                walk(child, depth + 1)
+
+    walk(surface)
+
+    assert shadowed, "no shadowed text found in the caption surface"
+    for shadow in shadowed:
+        assert len(shadow) == 16, (
+            f"a caption control got {len(shadow)} shadows, not the outline's 16 "
+            f"— it is still drawing the default edge style"
+        )
+        for entry in shadow:
+            assert entry.color == overlay._CAPTION_OUTLINE_COLOR
+            assert entry.blur_radius == 0
+
+
+def test_the_change_gate_drops_a_value_that_equals_what_is_stored() -> None:
+    """r370: the gate was only ever tested by grepping controller.py for
+    substrings — nothing called it, so its actual behaviour was unasserted,
+    including the case that produced the report.
+
+    This is the second half of "I had to move it somewhere and back": a change
+    is pushed only when it DIFFERS from what is saved, so a gesture landing on
+    the stored value produces no payload, no log line and no repaint. That is
+    correct behaviour — but only once the control is seeded from the same
+    settings, which is what the other half of r370 fixes. Pinning both here so
+    they cannot drift apart again.
+    """
+    import copy
+
+    from puripuly_heart.config.settings import AppSettings
+    from puripuly_heart.ui.controller import OVERLAY_TARGET_DESKTOP, GuiController
+
+    controller = GuiController.__new__(GuiController)
+    controller._active_overlay_target = OVERLAY_TARGET_DESKTOP
+    controller._overlay_bridge = object()
+
+    previous = AppSettings()
+    previous.ui.overlay_enabled = True
+    previous.overlay.desktop_flet.visual.text_background_alpha = 0.4
+    previous.overlay.desktop_flet.validate()
+
+    # (a) landing on the stored value -> nothing is sent
+    same = copy.deepcopy(previous)
+    same.overlay.desktop_flet.visual.text_background_alpha = 0.4
+    assert controller._prepare_desktop_runtime_settings_update(previous, same) == [], (
+        "a no-change gesture produced a payload"
+    )
+
+    # (b) a real change -> exactly one visual config carrying the new value
+    changed = copy.deepcopy(previous)
+    changed.overlay.desktop_flet.visual.text_background_alpha = 0.8
+    controls = controller._prepare_desktop_runtime_settings_update(previous, changed)
+
+    visual = [c for c in controls if c.get("command") == "apply_visual_config"]
+    assert len(visual) == 1, f"expected one visual config, got {controls}"
+    assert visual[0]["text_background_alpha"] == 0.8
+    assert "edge_style" in visual[0], "the payload lost the edge style"
+
+    # (c) the same, for the edge style
+    restyled = copy.deepcopy(previous)
+    restyled.overlay.desktop_flet.visual.edge_style = "outline"
+    controls = controller._prepare_desktop_runtime_settings_update(previous, restyled)
+    visual = [c for c in controls if c.get("command") == "apply_visual_config"]
+    assert len(visual) == 1
+    assert visual[0]["edge_style"] == "outline"

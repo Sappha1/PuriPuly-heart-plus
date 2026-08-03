@@ -132,11 +132,28 @@ DEFAULT_CAPTION_EDGE_STYLE = "shadow"
 _CAPTION_TEXT_BACKGROUND_RGB = "000000"
 DEFAULT_TEXT_BACKGROUND_ALPHA = 0.0
 _CAPTION_OUTLINE_COLOR = "#E6000000"
-_CAPTION_OUTLINE_OFFSETS = (
-    (-1, -1), (0, -1), (1, -1),
-    (-1, 0),           (1, 0),
-    (-1, 1),  (0, 1),  (1, 1),
+# The four corners are 1/sqrt(2), not 1. Written as (+/-1, +/-1) the diagonals
+# sit sqrt(2) = 1.41 units out while the sides sit at 1, so the rim is a square
+# and every glyph corner gets a 41% thicker edge than its sides. At the old
+# fixed 1px radius that error was 0.4px and antialiasing hid it; scaled up to
+# 3-4px it shows as lumpy, squared-off corners on round glyphs.
+_CAPTION_OUTLINE_DIAGONAL = 0.7071067811865476
+_CAPTION_OUTLINE_UNIT_RING = (
+    (-_CAPTION_OUTLINE_DIAGONAL, -_CAPTION_OUTLINE_DIAGONAL),
+    (0, -1),
+    (_CAPTION_OUTLINE_DIAGONAL, -_CAPTION_OUTLINE_DIAGONAL),
+    (-1, 0),
+    (1, 0),
+    (-_CAPTION_OUTLINE_DIAGONAL, _CAPTION_OUTLINE_DIAGONAL),
+    (0, 1),
+    (_CAPTION_OUTLINE_DIAGONAL, _CAPTION_OUTLINE_DIAGONAL),
 )
+# r370: as a fraction of the glyph, not a fixed pixel. Captions render between
+# 20px (tiny) and 56px (xlarge), so one hard-coded radius cannot read correctly
+# at both ends -- at 56px a 1px rim is invisible as an outline.
+_CAPTION_OUTLINE_RADIUS_RATIO = 0.06
+_CAPTION_OUTLINE_MIN_RADIUS = 1.0
+_CAPTION_OUTLINE_MAX_RADIUS = 4.0
 # Raised/depressed are the same two lights, swapped: a highlight on one side
 # and a shade on the other is what reads as embossed or engraved.
 _CAPTION_EMBOSS_LIGHT = "#59FFFFFF"
@@ -731,7 +748,9 @@ def build_desktop_empty_lock_action(
         height=1.0,
         weight=ft.FontWeight.BOLD,
         font_family=_desktop_caption_font_family_for_text(label),
-        shadow=_caption_text_shadow(ft, DEFAULT_CAPTION_EDGE_STYLE),
+        shadow=_caption_text_shadow(
+            ft, DEFAULT_CAPTION_EDGE_STYLE, font_size=font_size
+        ),
         decoration=None,
     )
     return ft.TextButton(
@@ -2036,7 +2055,7 @@ def _build_ruby_content(ft: Any, line: DesktopCaptionLine, text_width: float) ->
                             style=ft.TextStyle(
                                 size=ruby_size,
                                 height=1.1,
-                                shadow=_caption_text_shadow(ft, getattr(line, 'edge_style', DEFAULT_CAPTION_EDGE_STYLE)),
+                                shadow=_caption_text_shadow(ft, getattr(line, 'edge_style', DEFAULT_CAPTION_EDGE_STYLE), font_size=ruby_size),
                             bgcolor=_caption_text_background_color(
                                 getattr(line, 'text_background_alpha', 0.0)
                             ),
@@ -2059,7 +2078,7 @@ def _build_ruby_content(ft: Any, line: DesktopCaptionLine, text_width: float) ->
                                 size=char_size,
                                 height=line.line_height,
                                 weight=_flet_font_weight(ft, line.weight),
-                                shadow=_caption_text_shadow(ft, getattr(line, 'edge_style', DEFAULT_CAPTION_EDGE_STYLE)),
+                                shadow=_caption_text_shadow(ft, getattr(line, 'edge_style', DEFAULT_CAPTION_EDGE_STYLE), font_size=char_size),
                             bgcolor=_caption_text_background_color(
                                 getattr(line, 'text_background_alpha', 0.0)
                             ),
@@ -2130,7 +2149,7 @@ def _build_ruby_content(ft: Any, line: DesktopCaptionLine, text_width: float) ->
                     style=ft.TextStyle(
                         size=block_roman_size,
                         height=1.15,
-                        shadow=_caption_text_shadow(ft, getattr(line, 'edge_style', DEFAULT_CAPTION_EDGE_STYLE)),
+                        shadow=_caption_text_shadow(ft, getattr(line, 'edge_style', DEFAULT_CAPTION_EDGE_STYLE), font_size=block_roman_size),
                             bgcolor=_caption_text_background_color(
                                 getattr(line, 'text_background_alpha', 0.0)
                             ),
@@ -2153,7 +2172,7 @@ def _build_ruby_content(ft: Any, line: DesktopCaptionLine, text_width: float) ->
                         height=line.line_height,
                         weight=_flet_font_weight(ft, line.weight),
                         font_family=line.font_family,
-                        shadow=_caption_text_shadow(ft, getattr(line, 'edge_style', DEFAULT_CAPTION_EDGE_STYLE)),
+                        shadow=_caption_text_shadow(ft, getattr(line, 'edge_style', DEFAULT_CAPTION_EDGE_STYLE), font_size=cjk_size),
                             bgcolor=_caption_text_background_color(
                                 getattr(line, 'text_background_alpha', 0.0)
                             ),
@@ -2247,7 +2266,7 @@ def _build_flet_text(
             height=line.line_height,
             weight=_flet_font_weight(ft, line.weight),
             font_family=line.font_family,
-            shadow=_caption_text_shadow(ft, getattr(line, 'edge_style', DEFAULT_CAPTION_EDGE_STYLE)),
+            shadow=_caption_text_shadow(ft, getattr(line, 'edge_style', DEFAULT_CAPTION_EDGE_STYLE), font_size=line.font_size),
                             bgcolor=_caption_text_background_color(
                 getattr(line, "text_background_alpha", 0.0)
             ),
@@ -2263,7 +2282,41 @@ def normalize_caption_edge_style(style: object) -> str:
     return text if text in CAPTION_EDGE_STYLES else DEFAULT_CAPTION_EDGE_STYLE
 
 
-def _caption_text_shadow(ft: Any, style: object = DEFAULT_CAPTION_EDGE_STYLE) -> list[Any]:
+def _caption_outline_radius(font_size: object) -> float:
+    """How far the rim sits from the glyph, in the same units as the size."""
+    try:
+        size = float(font_size)  # type: ignore[arg-type]
+    except (TypeError, ValueError):
+        size = 0.0
+    if not size > 0:
+        return _CAPTION_OUTLINE_MIN_RADIUS
+    return _clamp(
+        size * _CAPTION_OUTLINE_RADIUS_RATIO,
+        _CAPTION_OUTLINE_MIN_RADIUS,
+        _CAPTION_OUTLINE_MAX_RADIUS,
+    )
+
+
+def _caption_outline_offsets(font_size: object) -> tuple[tuple[float, float], ...]:
+    """Eight points at the radius, and eight more at half of it.
+
+    A ring of eight alone is fine at 1px, where the glyph's own antialiasing
+    hides the gaps. Once the radius is wide enough to read as an outline the
+    diagonals open up and the rim looks chewed, so the inner ring fills them.
+    """
+    radius = _caption_outline_radius(font_size)
+    return tuple(
+        (dx * scale, dy * scale)
+        for scale in (radius, radius * 0.5)
+        for dx, dy in _CAPTION_OUTLINE_UNIT_RING
+    )
+
+
+def _caption_text_shadow(
+    ft: Any,
+    style: object = DEFAULT_CAPTION_EDGE_STYLE,
+    font_size: object = None,
+) -> list[Any]:
     """Glyph edge treatment (r362). Captions sit over arbitrary game footage,
     so the right answer depends on the scene, not on our taste."""
     resolved = normalize_caption_edge_style(style)
@@ -2274,7 +2327,7 @@ def _caption_text_shadow(ft: Any, style: object = DEFAULT_CAPTION_EDGE_STYLE) ->
             ft.BoxShadow(
                 color=_CAPTION_OUTLINE_COLOR, offset=offset, blur_radius=0
             )
-            for offset in _CAPTION_OUTLINE_OFFSETS
+            for offset in _caption_outline_offsets(font_size)
         ]
     if resolved == "raised":
         # lit from the top-left, so the shade falls bottom-right

@@ -6575,6 +6575,32 @@ class GuiController:
                         set_alpha(float(alpha) if alpha is not None else 0.5)
                     except Exception:
                         pass
+                # r370: the same seed for the two caption-style controls. Both
+                # setters existed from the day those controls were added and
+                # neither was ever called, so the popover opened at 0% and the
+                # default edge style however the settings actually read. A
+                # gesture that happened to land on the stored value was then
+                # dropped by the change gate with no feedback at all, which is
+                # what "I had to move it somewhere and back" was.
+                set_edge_style = getattr(dash, "set_overlay_edge_style", None)
+                if callable(set_edge_style):
+                    try:
+                        set_edge_style(
+                            str(settings.overlay.desktop_flet.visual.edge_style)
+                        )
+                    except Exception:
+                        pass
+                set_text_bg = getattr(
+                    dash, "set_overlay_text_background_alpha", None
+                )
+                if callable(set_text_bg):
+                    try:
+                        text_bg = (
+                            settings.overlay.desktop_flet.visual.text_background_alpha
+                        )
+                        set_text_bg(float(text_bg) if text_bg is not None else 0.0)
+                    except Exception:
+                        pass
 
         with contextlib.suppress(Exception):
             _sync_translator_label = getattr(self.app, "_sync_translator_label", None)

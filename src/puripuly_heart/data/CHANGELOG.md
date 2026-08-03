@@ -2,6 +2,11 @@
 
 User-facing changes per build. The latest build's highlights also appear in-app when an update is ready.
 
+## r370 — 2026-08-02
+
+- **The Outline edge style now reads as an outline.** Its colour was always black — the problem was the width. The rim was a fixed one pixel against captions that draw at 41–56px, roughly 2% of a character's height, where a video player's outline is nearer 6%. At that width it looks like slightly bolder text rather than a black edge. The rim now scales with the size actually drawn, and a second rim at half the width fills the gaps that open on the diagonals
+- **The Caption Style menu now opens on your saved settings.** The edge style and text background controls were never filled in from what was stored, so the slider always read 0% and the style always read the default however you had left them. A change is only sent to the overlay when it differs from what is saved, so any adjustment that happened to land on the stored value was dropped in silence — which is why the text background sometimes needed moving away and back before it took
+
 ## r369 — 2026-08-02
 
 - **Edge style and Text background now work.** The caption settings were being reset to their defaults at the last step before drawing: the overlay re-validates its display settings by copying them through another object, and the two new ones were left out of that copy — so whatever you picked was replaced with the default a moment before the caption was built

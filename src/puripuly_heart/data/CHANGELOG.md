@@ -2,6 +2,11 @@
 
 User-facing changes per build. The latest build's highlights also appear in-app when an update is ready.
 
+## r362 — 2026-08-01
+
+- **Character edge style for the overlay captions** — None, Drop shadow, Raised, Depressed or Outline, the same choices a video player gives you. Captions sit over whatever is on screen, so a drop shadow can vanish against a bright scene where an outline stays readable
+- (Background opacity behind the captions was already adjustable — Settings → Overlay, or the overlay's own right-click menu)
+
 ## r361 — 2026-08-01
 
 - **Short replies are matched against a bar suited to their length.** A brief "yeah" carries less information than a full sentence, so it scores lower against its own speaker — judging both by one number made short replies fail to recognise the person who just spoke

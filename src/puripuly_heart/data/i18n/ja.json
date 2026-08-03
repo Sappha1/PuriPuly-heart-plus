@@ -896,5 +896,12 @@
   "settings.saved_voices.model_reset": "音声認識をより高精度なモデルに更新したため、以前に保存した声紋は使用できなくなり削除されました。チャットメッセージの話者タグからもう一度名前を付けてください。",
   "dashboard.local_stt_notice_int8": "このパソコンのプロセッサでは軽量版の音声モデルを正確に実行できず、音声認識が自然に読めるのに内容は誤った文字列を返すことがあります。設定で音声認識を Whisper に切り替えてください。",
   "dashboard.tooltip.speaker_unknown": "ここで誰かが話しましたが、この声はまだ保存されていません。クリックして誰か指定してください",
-  "dashboard.tooltip.speaker_unidentifiable": "この行は音が小さいか途切れており、誰が話したか判別できませんでした"
+  "dashboard.tooltip.speaker_unidentifiable": "この行は音が小さいか途切れており、誰が話したか判別できませんでした",
+  "settings.overlay.edge_style.title": "文字の縁取り",
+  "settings.overlay.edge_style.tooltip": "字幕の文字の縁の描き方です。字幕は画面上の映像に重ねて表示されるため、明るい場面や情報量の多い場面では縁取り、暗い場面では影付きが読みやすくなります。",
+  "settings.overlay.edge_style.none": "なし",
+  "settings.overlay.edge_style.shadow": "影付き",
+  "settings.overlay.edge_style.raised": "浮き出し",
+  "settings.overlay.edge_style.depressed": "へこみ",
+  "settings.overlay.edge_style.outline": "縁取り"
 }

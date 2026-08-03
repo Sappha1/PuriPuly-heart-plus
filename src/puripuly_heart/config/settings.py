@@ -996,18 +996,31 @@ class DesktopFletOverlayPosition:
         self.x, self.y = _normalize_desktop_flet_position(self.x, self.y)
 
 
+# r362: glyph edge treatments, named as video players name them.
+CAPTION_EDGE_STYLES = ("none", "shadow", "raised", "depressed", "outline")
+DEFAULT_CAPTION_EDGE_STYLE = "shadow"
+
+
+def _normalize_caption_edge_style(value: object) -> str:
+    text = str(value or "").strip().lower()
+    return text if text in CAPTION_EDGE_STYLES else DEFAULT_CAPTION_EDGE_STYLE
+
+
 @dataclass(slots=True, init=False)
 class DesktopFletOverlayVisualSettings:
     background_alpha: float = DESKTOP_FLET_DEFAULT_BACKGROUND_ALPHA
+    edge_style: str = DEFAULT_CAPTION_EDGE_STYLE
 
     def __init__(
         self,
         text_scale: object = None,
         background_alpha: object = DESKTOP_FLET_DEFAULT_BACKGROUND_ALPHA,
         outline_width: object = None,
+        edge_style: object = DEFAULT_CAPTION_EDGE_STYLE,
     ) -> None:
         _ = (text_scale, outline_width)
         self.background_alpha = background_alpha
+        self.edge_style = edge_style
 
     def validate(self) -> None:
         self.background_alpha = _normalize_desktop_flet_range(
@@ -1016,6 +1029,7 @@ class DesktopFletOverlayVisualSettings:
             minimum=DESKTOP_FLET_MIN_BACKGROUND_ALPHA,
             maximum=DESKTOP_FLET_MAX_BACKGROUND_ALPHA,
         )
+        self.edge_style = _normalize_caption_edge_style(self.edge_style)
 
     @property
     def text_scale(self) -> float:
@@ -1459,6 +1473,7 @@ def _parse_desktop_flet_visual(value: object) -> DesktopFletOverlayVisualSetting
             minimum=DESKTOP_FLET_MIN_BACKGROUND_ALPHA,
             maximum=DESKTOP_FLET_MAX_BACKGROUND_ALPHA,
         ),
+        edge_style=_normalize_caption_edge_style(data.get("edge_style")),
     )
 
 

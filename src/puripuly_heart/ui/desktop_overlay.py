@@ -120,6 +120,24 @@ _DESKTOP_CAPTION_LATIN_NARROW_WIDTH_EM = 0.42
 _DESKTOP_CAPTION_SPACE_WIDTH_EM = 0.32
 _DESKTOP_CAPTION_PUNCT_WIDTH_EM = 0.38
 _DESKTOP_CAPTION_EMOJI_WIDTH_EM = 1.15
+# r362: how the glyph edges are drawn. Same names a video player uses, so
+# nobody has to learn ours.
+CAPTION_EDGE_STYLES = ("none", "shadow", "raised", "depressed", "outline")
+DEFAULT_CAPTION_EDGE_STYLE = "shadow"
+# Outline is eight hard offsets rather than a stroked paint: a stroke paint
+# replaces the fill, so a true outline needs two stacked Text controls kept in
+# registration, which the caption auto-fit would keep breaking.
+_CAPTION_OUTLINE_COLOR = "#E6000000"
+_CAPTION_OUTLINE_OFFSETS = (
+    (-1, -1), (0, -1), (1, -1),
+    (-1, 0),           (1, 0),
+    (-1, 1),  (0, 1),  (1, 1),
+)
+# Raised/depressed are the same two lights, swapped: a highlight on one side
+# and a shade on the other is what reads as embossed or engraved.
+_CAPTION_EMBOSS_LIGHT = "#59FFFFFF"
+_CAPTION_EMBOSS_DARK = "#D9000000"
+
 _DESKTOP_CAPTION_CONTACT_SHADOW_COLOR = "#C0000000"
 _DESKTOP_CAPTION_CONTACT_SHADOW_OFFSET = (0, 1)
 _DESKTOP_CAPTION_CONTACT_SHADOW_BLUR = 1.0
@@ -346,6 +364,8 @@ class DesktopCaptionVisualState:
     text_scale: float = DESKTOP_FLET_DEFAULT_TEXT_SCALE
     background_alpha: float = DESKTOP_FLET_DEFAULT_BACKGROUND_ALPHA
     outline_width: float | None = None
+    # r362: how glyph edges are drawn — see CAPTION_EDGE_STYLES.
+    edge_style: str = DEFAULT_CAPTION_EDGE_STYLE
     # Whether romanization (pinyin/romaji) is shown — used so the edit-mode SAMPLE
     # matches the user's actual overlay romanization setting.
     show_romanization: bool = True
@@ -381,6 +401,8 @@ class DesktopCaptionLine:
     max_lines: int
     font_size: int
     font_family: str | None
+    # r362: so the plain text and the reading line above it always agree.
+    edge_style: str = DEFAULT_CAPTION_EDGE_STYLE
     line_height: float = _DESKTOP_CAPTION_LINE_HEIGHT
     weight: str = "semibold"
     promoted: bool = False
@@ -420,6 +442,8 @@ class DesktopCaptionPlan:
     secondary_region_height: float
     border_radius: int
     background_alpha: float
+    # r362: glyph edge treatment chosen by the user (see CAPTION_EDGE_STYLES).
+    edge_style: str
     background_color: str
     surface_visible: bool
     full_window_background_visible: bool
@@ -592,8 +616,12 @@ def build_desktop_caption_plan(
     full_window_background_visible = interaction_mode == _DESKTOP_INTERACTION_MODE_EDIT
     surface_visible = bool(slots) or full_window_background_visible
     background_alpha = 0.0
+    edge_style = DEFAULT_CAPTION_EDGE_STYLE
     if surface_visible:
         background_alpha = visual.background_alpha
+        edge_style = normalize_caption_edge_style(
+            getattr(visual, "edge_style", DEFAULT_CAPTION_EDGE_STYLE)
+        )
     n_active_slots = max(1, min(len(slots), _DESKTOP_CAPTION_MAX_VISIBLE_SLOTS))
     slot_height = max(
         1.0,
@@ -604,6 +632,16 @@ def build_desktop_caption_plan(
     )
     secondary_region_height = (
         secondary_font_size * _DESKTOP_CAPTION_LINE_HEIGHT * _DESKTOP_CAPTION_SECONDARY_MAX_LINES
+    )
+    # r362: stamp the chosen edge on every line, so the plain text and the
+    # reading line above it can never disagree. The line factory takes enough
+    # arguments already; this is one place instead of another parameter.
+    slots = tuple(
+        replace(
+            slot,
+            lines=tuple(replace(line, edge_style=edge_style) for line in slot.lines),
+        )
+        for slot in slots
     )
     return DesktopCaptionPlan(
         slots=slots,
@@ -623,6 +661,7 @@ def build_desktop_caption_plan(
         secondary_region_height=secondary_region_height,
         border_radius=preset.border_radius,
         background_alpha=background_alpha,
+        edge_style=edge_style,
         background_color=_caption_background_color(background_alpha),
         surface_visible=surface_visible,
         full_window_background_visible=full_window_background_visible,
@@ -666,7 +705,7 @@ def build_desktop_empty_lock_action(
         height=1.0,
         weight=ft.FontWeight.BOLD,
         font_family=_desktop_caption_font_family_for_text(label),
-        shadow=_caption_text_shadow(ft),
+        shadow=_caption_text_shadow(ft, DEFAULT_CAPTION_EDGE_STYLE),
         decoration=None,
     )
     return ft.TextButton(
@@ -1945,7 +1984,7 @@ def _build_ruby_content(ft: Any, line: DesktopCaptionLine, text_width: float) ->
                             style=ft.TextStyle(
                                 size=ruby_size,
                                 height=1.1,
-                                shadow=_caption_text_shadow(ft),
+                                shadow=_caption_text_shadow(ft, getattr(line, 'edge_style', DEFAULT_CAPTION_EDGE_STYLE)),
                             ),
                         ),
                         ft.Text(
@@ -1962,7 +2001,7 @@ def _build_ruby_content(ft: Any, line: DesktopCaptionLine, text_width: float) ->
                                 size=char_size,
                                 height=line.line_height,
                                 weight=_flet_font_weight(ft, line.weight),
-                                shadow=_caption_text_shadow(ft),
+                                shadow=_caption_text_shadow(ft, getattr(line, 'edge_style', DEFAULT_CAPTION_EDGE_STYLE)),
                             ),
                         ),
                     ],
@@ -2027,7 +2066,7 @@ def _build_ruby_content(ft: Any, line: DesktopCaptionLine, text_width: float) ->
                     style=ft.TextStyle(
                         size=block_roman_size,
                         height=1.15,
-                        shadow=_caption_text_shadow(ft),
+                        shadow=_caption_text_shadow(ft, getattr(line, 'edge_style', DEFAULT_CAPTION_EDGE_STYLE)),
                     ),
                 ),
                 ft.Text(
@@ -2044,7 +2083,7 @@ def _build_ruby_content(ft: Any, line: DesktopCaptionLine, text_width: float) ->
                         height=line.line_height,
                         weight=_flet_font_weight(ft, line.weight),
                         font_family=line.font_family,
-                        shadow=_caption_text_shadow(ft),
+                        shadow=_caption_text_shadow(ft, getattr(line, 'edge_style', DEFAULT_CAPTION_EDGE_STYLE)),
                     ),
                 ),
             ],
@@ -2132,13 +2171,44 @@ def _build_flet_text(
             height=line.line_height,
             weight=_flet_font_weight(ft, line.weight),
             font_family=line.font_family,
-            shadow=_caption_text_shadow(ft),
+            shadow=_caption_text_shadow(ft, getattr(line, 'edge_style', DEFAULT_CAPTION_EDGE_STYLE)),
             foreground=None,
         ),
     )
 
 
-def _caption_text_shadow(ft: Any) -> list[Any]:
+def normalize_caption_edge_style(style: object) -> str:
+    """Fall back to the default rather than raise — an unknown value in a
+    settings file must not stop the overlay from drawing."""
+    text = str(style or "").strip().lower()
+    return text if text in CAPTION_EDGE_STYLES else DEFAULT_CAPTION_EDGE_STYLE
+
+
+def _caption_text_shadow(ft: Any, style: object = DEFAULT_CAPTION_EDGE_STYLE) -> list[Any]:
+    """Glyph edge treatment (r362). Captions sit over arbitrary game footage,
+    so the right answer depends on the scene, not on our taste."""
+    resolved = normalize_caption_edge_style(style)
+    if resolved == "none":
+        return []
+    if resolved == "outline":
+        return [
+            ft.BoxShadow(
+                color=_CAPTION_OUTLINE_COLOR, offset=offset, blur_radius=0
+            )
+            for offset in _CAPTION_OUTLINE_OFFSETS
+        ]
+    if resolved == "raised":
+        # lit from the top-left, so the shade falls bottom-right
+        return [
+            ft.BoxShadow(color=_CAPTION_EMBOSS_LIGHT, offset=(-1, -1), blur_radius=0),
+            ft.BoxShadow(color=_CAPTION_EMBOSS_DARK, offset=(1, 1), blur_radius=1.0),
+        ]
+    if resolved == "depressed":
+        # the same two lights swapped, which reads as engraved
+        return [
+            ft.BoxShadow(color=_CAPTION_EMBOSS_DARK, offset=(-1, -1), blur_radius=1.0),
+            ft.BoxShadow(color=_CAPTION_EMBOSS_LIGHT, offset=(1, 1), blur_radius=0),
+        ]
     return [
         ft.BoxShadow(
             color=_DESKTOP_CAPTION_CONTACT_SHADOW_COLOR,

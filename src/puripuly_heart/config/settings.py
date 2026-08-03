@@ -1549,7 +1549,13 @@ def _desktop_flet_visual_to_dict(
         visual = DesktopFletOverlayVisualSettings()
     visual = copy.deepcopy(visual)
     visual.validate()
-    return {"background_alpha": visual.background_alpha}
+    # r365b: the SAVE path enumerates fields too, so anything omitted here is
+    # dropped on restart even after it starts working live.
+    return {
+        "background_alpha": visual.background_alpha,
+        "edge_style": visual.edge_style,
+        "text_background_alpha": visual.text_background_alpha,
+    }
 
 
 def _desktop_flet_settings_to_dict(settings: DesktopFletOverlaySettings) -> dict[str, object]:

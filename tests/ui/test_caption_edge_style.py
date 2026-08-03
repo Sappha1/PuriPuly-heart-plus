@@ -230,3 +230,40 @@ def test_a_style_change_is_a_reason_to_push_an_update() -> None:
     assert 'getattr(previous_visual, "edge_style", None)' in source
     assert 'getattr(previous_visual, "text_background_alpha", None)' in source
     assert '"edge_style": getattr(visual, "edge_style", "shadow")' in source
+
+
+def test_the_settings_survive_a_restart() -> None:
+    """r365b: the SAVE path enumerates fields by hand too. Both settings were
+    being written out of existence on every restart, which no amount of live
+    plumbing would have fixed."""
+    import puripuly_heart.config.settings as settings_mod
+
+    saved = DesktopFletOverlayVisualSettings(
+        background_alpha=0.4, edge_style="outline", text_background_alpha=0.8
+    )
+    saved.validate()
+
+    on_disk = settings_mod._desktop_flet_visual_to_dict(saved)
+    assert "edge_style" in on_disk, "edge style is not written to disk"
+    assert "text_background_alpha" in on_disk, "text background is not written to disk"
+
+    restored = settings_mod._parse_desktop_flet_visual(on_disk)
+    assert restored.edge_style == "outline"
+    assert restored.text_background_alpha == 0.8
+
+
+def test_every_payload_builder_carries_the_styling() -> None:
+    """r365b: there are TWO apply_visual_config builders — one seeds a starting
+    overlay, the other runs on a live settings change. The first fix patched
+    only the seeding one, so nothing moved when the user changed anything.
+
+    Counting them means a third builder cannot be added without this failing.
+    """
+    source = Path("src/puripuly_heart/ui/controller.py").read_text(encoding="utf-8")
+
+    builders = source.count('"command": "apply_visual_config"')
+    assert builders == 2, f"expected 2 payload builders, found {builders}"
+
+    # every one of them has to name both settings
+    assert source.count('"edge_style"') >= builders
+    assert source.count('"text_background_alpha"') >= builders

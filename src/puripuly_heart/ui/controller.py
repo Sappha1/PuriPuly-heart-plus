@@ -2778,6 +2778,14 @@ class GuiController:
                     "command": "apply_visual_config",
                     "text_scale": next_visual.text_scale,
                     "background_alpha": next_visual.background_alpha,
+                    # r365b: this is the builder that runs on a live settings
+                    # change — the other one only seeds a starting overlay. The
+                    # first fix patched only that one, so the styling still
+                    # never moved.
+                    "edge_style": getattr(next_visual, "edge_style", "shadow"),
+                    "text_background_alpha": getattr(
+                        next_visual, "text_background_alpha", 0.0
+                    ),
                     "outline_width": next_visual.outline_width,
                     "single_turn_mode": next_single_turn,
                     "show_romanization": getattr(next_settings.overlay, "show_romanization", True),

@@ -2,6 +2,10 @@
 
 User-facing changes per build. The latest build's highlights also appear in-app when an update is ready.
 
+## r366 — 2026-08-02
+
+- **Edge style and Text background now actually change the overlay.** Two more places listed their fields by hand and dropped them: the code that sends a settings change to the overlay while it is running, and the code that writes settings to disk — so the options did nothing, and would also have been forgotten on restart
+
 ## r365 — 2026-08-02
 
 - **Fixed the new caption options doing nothing.** Edge style and Text background were saved correctly and never reached the overlay — it draws in a separate process, and the settings that cross to it are listed one by one, so anything not on that list is dropped. Both now apply as soon as you pick them

@@ -664,6 +664,10 @@ def build_desktop_caption_plan(
         )
         for slot in slots
     )
+    # r369: `lines` was materialised from the UNSTAMPED slots further up, so
+    # re-derive it — otherwise the plan carries the styling while every line
+    # inside it still holds the defaults, which is exactly what happened.
+    lines = tuple(line for slot in slots for line in slot.lines)
     return DesktopCaptionPlan(
         slots=slots,
         lines=lines,
@@ -1735,6 +1739,14 @@ def _validated_visual_state(
         text_scale=source.text_scale,
         background_alpha=source.background_alpha,
         outline_width=source.outline_width,
+        # r369: THE bug. This round-trips the state through a settings object
+        # and then reads the styling back OFF that object -- so omitting these
+        # two silently replaced whatever the user chose with the defaults,
+        # immediately before the plan was built. Every layer above this was
+        # correct, which is why the values were observably arriving and
+        # observably not drawn.
+        edge_style=source.edge_style,
+        text_background_alpha=source.text_background_alpha,
     )
     settings.validate()
     return DesktopCaptionVisualState(

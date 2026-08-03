@@ -2,6 +2,10 @@
 
 User-facing changes per build. The latest build's highlights also appear in-app when an update is ready.
 
+## r369 — 2026-08-02
+
+- **Edge style and Text background now work.** The caption settings were being reset to their defaults at the last step before drawing: the overlay re-validates its display settings by copying them through another object, and the two new ones were left out of that copy — so whatever you picked was replaced with the default a moment before the caption was built
+
 ## r368 — 2026-08-02
 
 - **Text background is now set on the caption control itself, not only inside its text style.** The values were confirmed reaching the overlay and the control, so if the style block is being overridden this is the setting that will show it

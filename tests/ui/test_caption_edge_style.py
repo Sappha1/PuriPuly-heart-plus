@@ -314,3 +314,60 @@ def test_the_applied_config_is_logged_without_a_debug_flag() -> None:
     marker = source.index("visual config applied: edge_style=%s")
     preceding = source[max(0, marker - 400):marker]
     assert "logger.info(" in preceding, "the record is not an unconditional log"
+
+
+def test_the_plan_actually_carries_the_chosen_styling() -> None:
+    """r369: THE bug, found after six failed attempts.
+
+    _validated_visual_state round-trips the state through a settings object
+    and then reads the styling back OFF that object. It was constructed
+    without these two fields, so whatever the user chose was silently replaced
+    with defaults immediately before the plan was built — while every layer
+    above it (menu, settings, payload, parser, widget) was demonstrably
+    correct. That is why the values were observably arriving and observably
+    not drawn.
+
+    Asserting on the PLAN, which is what the renderer consumes, rather than on
+    any single link in the chain.
+    """
+    import sys
+
+    sys.path.insert(0, "tests/ui")
+    from test_desktop_overlay_renderer import _block
+
+    from puripuly_heart.core.overlay.protocol import OverlayPresentationSnapshot
+
+    snapshot = OverlayPresentationSnapshot(
+        blocks=[
+            _block(
+                "b1",
+                channel="peer",
+                block_variant="finalized",
+                appearance_seq=1,
+                primary_text="hello",
+                secondary_text="bonjour",
+                secondary_enabled=True,
+            )
+        ]
+    )
+    state = overlay.DesktopCaptionVisualState(
+        edge_style="outline", text_background_alpha=0.8
+    )
+
+    plan = overlay.build_desktop_caption_plan(snapshot, visual_state=state)
+
+    assert plan.edge_style == "outline", "the plan lost the edge style"
+    assert plan.text_background_alpha == 0.8, "the plan lost the text background"
+
+    assert plan.lines, "no lines to check"
+    for line in plan.lines:
+        assert line.edge_style == "outline", f"line {line.text!r} lost the edge style"
+        assert line.text_background_alpha == 0.8, (
+            f"line {line.text!r} lost the text background"
+        )
+
+    # and the slots the renderer walks, not only the flattened view
+    for slot in plan.slots:
+        for line in slot.lines:
+            assert line.edge_style == "outline"
+            assert line.text_background_alpha == 0.8

@@ -905,5 +905,6 @@
   "settings.overlay.edge_style.depressed": "へこみ",
   "settings.overlay.edge_style.outline": "縁取り",
   "settings.overlay.text_background.title": "文字の背景",
-  "settings.overlay.text_background.tooltip": "字幕の文字そのものの後ろに描かれる帯です。字幕領域全体の背後にあるパネルとは別物です。明るい場面や情報量の多い場面では、全体を暗くせずに文字だけを読みやすくできます。"
+  "settings.overlay.text_background.tooltip": "字幕の文字そのものの後ろに描かれる帯です。字幕領域全体の背後にあるパネルとは別物です。明るい場面や情報量の多い場面では、全体を暗くせずに文字だけを読みやすくできます。",
+  "settings.overlay.edge_style": "縁取り"
 }

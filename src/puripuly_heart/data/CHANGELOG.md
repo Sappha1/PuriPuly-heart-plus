@@ -2,6 +2,10 @@
 
 User-facing changes per build. The latest build's highlights also appear in-app when an update is ready.
 
+## r364 — 2026-08-02
+
+- **Fixed the new overlay options being cut off** at the menu's width — the edge style choices ran off the right edge. Edge style is now a compact picker that expands when clicked, the same control Size and Display use, so it fits however long the option names are in your language
+
 ## r363 — 2026-08-02
 
 - **Caption appearance now lives in the overlay's right-click menu** — character edge style (None, Drop shadow, Raised, Depressed, Outline) and a new **Text background** slider

@@ -19,7 +19,7 @@ from puripuly_heart.ui.fonts import font_for_language
 from puripuly_heart.ui.i18n import get_locale, language_name, t
 from puripuly_heart.ui.overlay_peer_contract import OverlayPeerConsumerContract
 
-_BUILD_TAG = "r363"  #increment each build so user can confirm version
+_BUILD_TAG = "r364"  #increment each build so user can confirm version
 
 # ── VRCT-style dark palette ──────────────────────────────────────────────────
 _BG_MAIN = "#2e2f32"
@@ -3304,55 +3304,91 @@ class DashboardView(ft.Row):
         _text_row = _row_tt("dashboard.overlay.show_text", _bool_pill(_tx_ref, _on_typed))
 
         # ── character edge style (r362) ───────────────────────────────────────
+        # Same expanding picker as Size: a 248px popover cannot hold five style
+        # names side by side, and translations only make them longer.
         _EDGE_STYLES = ("none", "shadow", "raised", "depressed", "outline")
-        edge_pills: list[Any] = []
 
-        def _make_edge_pill(style: str):
-            pill_ref: list[Any] = [None]
+        def _edge_label(style: str) -> str:
+            return t(f"settings.overlay.edge_style.{style}", default=style)
 
-            def _click(_ev, _s=style):
-                if self._overlay_edge_style == _s:
+        _edge_btn_text = ft.Text(
+            _edge_label(self._overlay_edge_style), size=11, color=_TOGGLE_ON,
+            weight=ft.FontWeight.W_600, no_wrap=True, overflow=ft.TextOverflow.ELLIPSIS,
+        )
+        _edge_btn = ft.Container(
+            content=_edge_btn_text,
+            padding=ft.padding.symmetric(horizontal=8, vertical=4),
+            border_radius=6,
+            bgcolor="#1a2e2a",
+            border=ft.border.all(1, _TOGGLE_ON),
+        )
+
+        _edge_state = [self._overlay_edge_style]
+        _edge_icons: dict[str, Any] = {}
+        _edge_rows: list[Any] = []
+        for _style in _EDGE_STYLES:
+            _active = _style == _edge_state[0]
+            _edge_icon = ft.Icon(
+                ft.Icons.RADIO_BUTTON_CHECKED if _active else ft.Icons.RADIO_BUTTON_UNCHECKED,
+                size=15, color=_TOGGLE_ON if _active else _TEXT_FAINT,
+            )
+            _edge_icons[_style] = _edge_icon
+            _edge_lbl = ft.Text(_edge_label(_style), size=12, color=_TEXT_PRIMARY, expand=True)
+
+            def _on_edge_row(_ev, _s=_style):
+                if _edge_state[0] == _s:
                     return
+                _edge_state[0] = _s
                 self._overlay_edge_style = _s
-                for other_style, other_pill in edge_pills:
-                    active = other_style == _s
-                    other_pill.content.color = _TOGGLE_ON if active else _TEXT_MUTED
-                    other_pill.bgcolor = "#1a2e2a" if active else ft.Colors.TRANSPARENT
-                    other_pill.border = ft.border.all(
-                        1, _TOGGLE_ON if active else "#3a3b3f"
+                for _k, _ic in _edge_icons.items():
+                    _sel = _k == _s
+                    _ic.name = (
+                        ft.Icons.RADIO_BUTTON_CHECKED if _sel
+                        else ft.Icons.RADIO_BUTTON_UNCHECKED
                     )
-                    try:
-                        other_pill.update()
-                    except Exception:
-                        pass
+                    _ic.color = _TOGGLE_ON if _sel else _TEXT_FAINT
+                _edge_btn_text.value = _edge_label(_s)
+                try:
+                    _edge_btn_text.update()
+                    for _ic in _edge_icons.values():
+                        _ic.update()
+                except Exception:
+                    pass
                 if callable(self.on_overlay_edge_style_change):
                     self.on_overlay_edge_style_change(_s)
 
-            pill_ref[0] = _pill(
-                t(f"settings.overlay.edge_style.{style}"),
-                self._overlay_edge_style == style,
-                _click,
-                expand=True,
-            )
-            edge_pills.append((style, pill_ref[0]))
-            return pill_ref[0]
+            _edge_rows.append(ft.Container(
+                content=ft.Row([_edge_icon, _edge_lbl], spacing=8,
+                               vertical_alignment=ft.CrossAxisAlignment.CENTER),
+                padding=ft.padding.only(left=18, right=10, top=6, bottom=6),
+                border_radius=5,
+                on_click=_on_edge_row,
+                on_hover=lambda e: (
+                    setattr(e.control, "bgcolor", "#2a3040" if e.data == "true" else ft.Colors.TRANSPARENT)
+                    or (e.control.update() if e.control.page else None)
+                ),
+            ))
 
-        _edge_row = _section_row(
-            t("settings.overlay.edge_style.title"),
-            ft.Column(
-                [
-                    ft.Row([_make_edge_pill(s) for s in _EDGE_STYLES[:3]],
-                           spacing=4, tight=True),
-                    ft.Row([_make_edge_pill(s) for s in _EDGE_STYLES[3:]],
-                           spacing=4, tight=True),
-                ],
-                spacing=4,
-                tight=True,
-            ),
-            tooltip=t("settings.overlay.edge_style.tooltip"),
-        )
+        _edge_rows_col = ft.Column(_edge_rows, spacing=0, tight=True, visible=False)
+        _edge_expanded = [False]
+
+        def _toggle_edge(_ev):
+            _edge_expanded[0] = not _edge_expanded[0]
+            _edge_rows_col.visible = _edge_expanded[0]
+            try:
+                _edge_rows_col.update()
+            except Exception:
+                pass
+
+        _edge_btn.on_click = _toggle_edge
+        _edge_row = ft.Column([
+            _row_tt("settings.overlay.edge_style", _edge_btn),
+            _edge_rows_col,
+        ], spacing=0, tight=True)
 
         # ── text background (r363) ────────────────────────────────────────────
+        # Full width, like the opacity slider above it — a slider sharing a row
+        # with its label has nowhere to go in a narrow popover.
         text_bg_pct = ft.Text(
             f"{int(round(self._overlay_text_background_alpha * 100))}%",
             size=11, color=_TEXT_MUTED, width=32, text_align=ft.TextAlign.RIGHT,
@@ -3375,12 +3411,25 @@ class DashboardView(ft.Row):
                 self.on_overlay_text_background_change(alpha)
 
         text_bg_slider.on_change = _on_text_bg
-        _text_bg_row = _section_row(
-            t("settings.overlay.text_background.title"),
-            ft.Row([text_bg_slider, text_bg_pct], spacing=6,
-                   vertical_alignment=ft.CrossAxisAlignment.CENTER),
-            tooltip=t("settings.overlay.text_background.tooltip"),
-        )
+        _text_bg_row = ft.Column([
+            ft.Container(
+                content=ft.Row([
+                    ft.Text(t("settings.overlay.text_background.title"),
+                            size=11, color=_TEXT_MUTED),
+                    ft.Container(
+                        content=ft.Icon(ft.Icons.INFO_OUTLINE, size=11, color=_TEXT_FAINT),
+                        tooltip=t("settings.overlay.text_background.tooltip"),
+                        padding=ft.padding.only(left=3),
+                    ),
+                ], spacing=0, tight=True),
+                padding=ft.padding.only(left=10, right=10, top=4, bottom=0),
+            ),
+            ft.Container(
+                content=ft.Row([text_bg_slider, text_bg_pct], spacing=6,
+                               vertical_alignment=ft.CrossAxisAlignment.CENTER),
+                padding=ft.padding.only(left=10, right=10, top=0, bottom=2),
+            ),
+        ], spacing=0, tight=True)
 
         # ── divider helper ────────────────────────────────────────────────────
         def _div() -> ft.Container:
@@ -3428,7 +3477,7 @@ class DashboardView(ft.Row):
         )
         self._overlay_popover_close = self._open_popover_at(
             0.0, y, content, width=248.0, right_side=True,
-            est_height=560.0,
+            est_height=500.0,
         )
 
     def set_overlay_edge_style(self, style: str) -> None:

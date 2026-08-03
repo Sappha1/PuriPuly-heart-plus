@@ -905,5 +905,6 @@
   "settings.overlay.edge_style.depressed": "Depressed",
   "settings.overlay.edge_style.outline": "Outline",
   "settings.overlay.text_background.title": "Text background",
-  "settings.overlay.text_background.tooltip": "A box drawn behind the caption letters themselves, separate from the panel behind the whole caption area. Raise it to keep text readable over bright or busy scenes without dimming everything."
+  "settings.overlay.text_background.tooltip": "A box drawn behind the caption letters themselves, separate from the panel behind the whole caption area. Raise it to keep text readable over bright or busy scenes without dimming everything.",
+  "settings.overlay.edge_style": "Edge style"
 }

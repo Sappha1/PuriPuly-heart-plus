@@ -123,3 +123,48 @@ def test_the_style_names_are_translated_everywhere() -> None:
         for style in overlay.CAPTION_EDGE_STYLES:
             key = f"settings.overlay.edge_style.{style}"
             assert data.get(key), f"{code} is missing {key}"
+
+
+def test_the_text_background_is_separate_from_the_panel() -> None:
+    """r363: a video player has two backgrounds and they do different jobs —
+    the panel behind the whole caption area, and a box hugging the glyphs. The
+    second keeps text readable over a bright scene without dimming everything.
+    """
+    assert overlay._caption_text_background_color(0.0) is None, "off must draw nothing"
+    assert overlay._caption_text_background_color(1.0) == "#FF000000"
+    # 0.5 * 255 rounds to 128, not 127 — half-way values round to even
+    assert overlay._caption_text_background_color(0.5) == "#80000000"
+
+    saved = DesktopFletOverlayVisualSettings(
+        background_alpha=0.4, text_background_alpha=0.75
+    )
+    saved.validate()
+    assert saved.background_alpha == 0.4
+    assert saved.text_background_alpha == 0.75, "the two must not share a value"
+
+
+def test_the_text_background_defaults_to_off() -> None:
+    """Updating must not change how anyone's overlay already looks."""
+    fresh = DesktopFletOverlayVisualSettings()
+    fresh.validate()
+    assert fresh.text_background_alpha == 0.0
+
+
+def test_both_controls_reach_the_overlay_menu() -> None:
+    from puripuly_heart.ui.views.dashboard import DashboardView
+
+    assert hasattr(DashboardView, "set_overlay_edge_style")
+    assert hasattr(DashboardView, "set_overlay_text_background_alpha")
+
+    source = Path("src/puripuly_heart/ui/views/dashboard.py").read_text(
+        encoding="utf-8"
+    )
+    assert "_edge_row," in source, "the edge style row is not in the menu"
+    assert "_text_bg_row," in source, "the text background row is not in the menu"
+
+
+def test_the_text_background_label_is_translated_everywhere() -> None:
+    for code in ("en", "zh-CN", "ja", "ko"):
+        data = json.loads((I18N / f"{code}.json").read_text(encoding="utf-8"))
+        assert data.get("settings.overlay.text_background.title"), f"{code} missing"
+        assert data.get("settings.overlay.text_background.tooltip"), f"{code} missing"

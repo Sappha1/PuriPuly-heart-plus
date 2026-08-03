@@ -903,5 +903,7 @@
   "settings.overlay.edge_style.shadow": "그림자",
   "settings.overlay.edge_style.raised": "돌출",
   "settings.overlay.edge_style.depressed": "음각",
-  "settings.overlay.edge_style.outline": "윤곽선"
+  "settings.overlay.edge_style.outline": "윤곽선",
+  "settings.overlay.text_background.title": "글자 배경",
+  "settings.overlay.text_background.tooltip": "자막 글자 자체의 뒤에 그려지는 상자로, 자막 영역 전체 뒤의 패널과는 별개입니다. 밝거나 복잡한 장면에서 전체를 어둡게 하지 않고 글자만 잘 보이게 합니다."
 }

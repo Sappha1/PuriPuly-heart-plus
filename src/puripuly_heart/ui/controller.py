@@ -2354,6 +2354,26 @@ class GuiController:
         updated.overlay.desktop_flet.visual.validate()
         await self.apply_settings(updated)
 
+    async def set_desktop_overlay_edge_style(self, style: str) -> None:
+        """r362: caption glyph edge treatment. Shared by both overlays — they
+        run the same renderer, so one choice covers desktop and VR."""
+        if self.settings is None:
+            return
+        updated = copy.deepcopy(self.settings)
+        updated.overlay.desktop_flet.visual.edge_style = str(style)
+        updated.overlay.desktop_flet.visual.validate()
+        await self.apply_settings(updated)
+
+    async def set_desktop_overlay_text_background_alpha(self, alpha: float) -> None:
+        """r363: the box behind the glyphs, separate from the caption panel."""
+        if self.settings is None:
+            return
+        clamped = max(0.0, min(1.0, float(alpha)))
+        updated = copy.deepcopy(self.settings)
+        updated.overlay.desktop_flet.visual.text_background_alpha = clamped
+        updated.overlay.desktop_flet.visual.validate()
+        await self.apply_settings(updated)
+
     async def reset_desktop_overlay_position(self) -> None:
         await self._handle_desktop_overlay_reset_requested()
 

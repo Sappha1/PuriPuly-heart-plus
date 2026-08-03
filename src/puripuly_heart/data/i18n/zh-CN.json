@@ -903,5 +903,7 @@
   "settings.overlay.edge_style.shadow": "投影",
   "settings.overlay.edge_style.raised": "凸起",
   "settings.overlay.edge_style.depressed": "凹陷",
-  "settings.overlay.edge_style.outline": "轮廓"
+  "settings.overlay.edge_style.outline": "轮廓",
+  "settings.overlay.text_background.title": "文字背景",
+  "settings.overlay.text_background.tooltip": "在字幕文字本身后方绘制的色块，与整个字幕区域后方的面板是两回事。在明亮或杂乱的画面上调高它，可以保持文字清晰而无需压暗全部内容。"
 }

@@ -215,6 +215,11 @@ class TranslatorApp:
         self.view_dashboard.on_ocr_translate_change = self._ocr_manager.set_translate
         self.view_dashboard.on_overlay_lock_change = self._on_dashboard_overlay_lock_change
         self.view_dashboard.on_overlay_transparency_change = self._on_overlay_transparency_change
+        # r362/r363: caption appearance from the overlay's right-click menu.
+        self.view_dashboard.on_overlay_edge_style_change = self._on_overlay_edge_style_change
+        self.view_dashboard.on_overlay_text_background_change = (
+            self._on_overlay_text_background_change
+        )
         self.view_dashboard.on_chatbox_send_peer_toggle = self._on_dashboard_chatbox_send_peer_toggle
         self.view_dashboard.on_loopback_mode_change = self._on_dashboard_loopback_mode_change
         self.view_dashboard.on_loopback_translation_only_change = (
@@ -1491,6 +1496,20 @@ class TranslatorApp:
     def _on_overlay_transparency_change(self, alpha: float) -> None:
         async def _task():
             await self.controller.set_desktop_overlay_background_alpha(float(alpha))
+            self._refresh_settings_desktop_overlay_state()
+
+        self.page.run_task(_task)
+
+    def _on_overlay_edge_style_change(self, style: str) -> None:
+        async def _task():
+            await self.controller.set_desktop_overlay_edge_style(str(style))
+            self._refresh_settings_desktop_overlay_state()
+
+        self.page.run_task(_task)
+
+    def _on_overlay_text_background_change(self, alpha: float) -> None:
+        async def _task():
+            await self.controller.set_desktop_overlay_text_background_alpha(float(alpha))
             self._refresh_settings_desktop_overlay_state()
 
         self.page.run_task(_task)

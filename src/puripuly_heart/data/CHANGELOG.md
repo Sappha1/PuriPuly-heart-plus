@@ -2,6 +2,12 @@
 
 User-facing changes per build. The latest build's highlights also appear in-app when an update is ready.
 
+## r363 — 2026-08-02
+
+- **Caption appearance now lives in the overlay's right-click menu** — character edge style (None, Drop shadow, Raised, Depressed, Outline) and a new **Text background** slider
+- **Text background** is a box drawn behind the letters themselves, separate from the existing panel behind the whole caption area. Raise it to keep text readable over a bright or busy scene without dimming everything. Off by default, so nothing about your overlay changes until you touch it
+- Both settings apply to the VR overlay as well as the desktop one
+
 ## r362 — 2026-08-01
 
 - **Character edge style for the overlay captions** — None, Drop shadow, Raised, Depressed or Outline, the same choices a video player gives you. Captions sit over whatever is on screen, so a drop shadow can vanish against a bright scene where an outline stays readable

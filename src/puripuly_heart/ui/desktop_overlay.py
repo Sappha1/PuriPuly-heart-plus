@@ -127,6 +127,10 @@ DEFAULT_CAPTION_EDGE_STYLE = "shadow"
 # Outline is eight hard offsets rather than a stroked paint: a stroke paint
 # replaces the fill, so a true outline needs two stacked Text controls kept in
 # registration, which the caption auto-fit would keep breaking.
+# r363: the box that hugs the glyphs (a video player's "background", as
+# distinct from its "window"). Black, with the alpha the user picks.
+_CAPTION_TEXT_BACKGROUND_RGB = "000000"
+DEFAULT_TEXT_BACKGROUND_ALPHA = 0.0
 _CAPTION_OUTLINE_COLOR = "#E6000000"
 _CAPTION_OUTLINE_OFFSETS = (
     (-1, -1), (0, -1), (1, -1),
@@ -366,6 +370,8 @@ class DesktopCaptionVisualState:
     outline_width: float | None = None
     # r362: how glyph edges are drawn — see CAPTION_EDGE_STYLES.
     edge_style: str = DEFAULT_CAPTION_EDGE_STYLE
+    # r363: alpha of the box behind the glyphs (0 = none).
+    text_background_alpha: float = DEFAULT_TEXT_BACKGROUND_ALPHA
     # Whether romanization (pinyin/romaji) is shown — used so the edit-mode SAMPLE
     # matches the user's actual overlay romanization setting.
     show_romanization: bool = True
@@ -403,6 +409,8 @@ class DesktopCaptionLine:
     font_family: str | None
     # r362: so the plain text and the reading line above it always agree.
     edge_style: str = DEFAULT_CAPTION_EDGE_STYLE
+    # r363: alpha of the box drawn behind the glyphs themselves.
+    text_background_alpha: float = DEFAULT_TEXT_BACKGROUND_ALPHA
     line_height: float = _DESKTOP_CAPTION_LINE_HEIGHT
     weight: str = "semibold"
     promoted: bool = False
@@ -444,6 +452,8 @@ class DesktopCaptionPlan:
     background_alpha: float
     # r362: glyph edge treatment chosen by the user (see CAPTION_EDGE_STYLES).
     edge_style: str
+    # r363: alpha of the box behind the glyphs (0 = none).
+    text_background_alpha: float
     background_color: str
     surface_visible: bool
     full_window_background_visible: bool
@@ -617,10 +627,14 @@ def build_desktop_caption_plan(
     surface_visible = bool(slots) or full_window_background_visible
     background_alpha = 0.0
     edge_style = DEFAULT_CAPTION_EDGE_STYLE
+    text_background_alpha = DEFAULT_TEXT_BACKGROUND_ALPHA
     if surface_visible:
         background_alpha = visual.background_alpha
         edge_style = normalize_caption_edge_style(
             getattr(visual, "edge_style", DEFAULT_CAPTION_EDGE_STYLE)
+        )
+        text_background_alpha = _clamp(
+            float(getattr(visual, "text_background_alpha", 0.0) or 0.0), 0.0, 1.0
         )
     n_active_slots = max(1, min(len(slots), _DESKTOP_CAPTION_MAX_VISIBLE_SLOTS))
     slot_height = max(
@@ -639,7 +653,14 @@ def build_desktop_caption_plan(
     slots = tuple(
         replace(
             slot,
-            lines=tuple(replace(line, edge_style=edge_style) for line in slot.lines),
+            lines=tuple(
+                replace(
+                    line,
+                    edge_style=edge_style,
+                    text_background_alpha=text_background_alpha,
+                )
+                for line in slot.lines
+            ),
         )
         for slot in slots
     )
@@ -662,6 +683,7 @@ def build_desktop_caption_plan(
         border_radius=preset.border_radius,
         background_alpha=background_alpha,
         edge_style=edge_style,
+        text_background_alpha=text_background_alpha,
         background_color=_caption_background_color(background_alpha),
         surface_visible=surface_visible,
         full_window_background_visible=full_window_background_visible,
@@ -1781,6 +1803,15 @@ def _desktop_caption_size_preset_for_dimensions(
     return _DESKTOP_CAPTION_SIZE_PRESETS[DESKTOP_FLET_DEFAULT_SIZE_PRESET]
 
 
+def _caption_text_background_color(alpha: float) -> str | None:
+    """None when off — an explicit transparent still paints a box in some
+    renderers, and "off" has to mean nothing is drawn."""
+    resolved = _clamp(float(alpha or 0.0), 0.0, 1.0)
+    if resolved <= 0:
+        return None
+    return f"#{int(round(resolved * 255)):02X}{_CAPTION_TEXT_BACKGROUND_RGB}"
+
+
 def _caption_background_color(background_alpha: float) -> str:
     if background_alpha <= 0:
         return _DESKTOP_CAPTION_TRANSPARENT
@@ -2172,6 +2203,9 @@ def _build_flet_text(
             weight=_flet_font_weight(ft, line.weight),
             font_family=line.font_family,
             shadow=_caption_text_shadow(ft, getattr(line, 'edge_style', DEFAULT_CAPTION_EDGE_STYLE)),
+            bgcolor=_caption_text_background_color(
+                getattr(line, "text_background_alpha", 0.0)
+            ),
             foreground=None,
         ),
     )

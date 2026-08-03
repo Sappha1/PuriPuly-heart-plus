@@ -19,7 +19,7 @@ from puripuly_heart.ui.fonts import font_for_language
 from puripuly_heart.ui.i18n import get_locale, language_name, t
 from puripuly_heart.ui.overlay_peer_contract import OverlayPeerConsumerContract
 
-_BUILD_TAG = "r362"  #increment each build so user can confirm version
+_BUILD_TAG = "r363"  #increment each build so user can confirm version
 
 # ── VRCT-style dark palette ──────────────────────────────────────────────────
 _BG_MAIN = "#2e2f32"
@@ -1055,6 +1055,11 @@ class DashboardView(ft.Row):
         self.on_typed_in_overlay_toggle: object = None  # callback(value: bool) — typed
         self.on_vrc_mute_sync_toggle: object = None  # callback(value: bool)
         self.on_overlay_transparency_change: object = None  # callback(alpha: float)
+        # r362/r363: caption appearance, shared by the desktop and VR overlays.
+        self.on_overlay_edge_style_change: object = None  # callback(style: str)
+        self.on_overlay_text_background_change: object = None  # callback(alpha: float)
+        self._overlay_edge_style: str = "shadow"
+        self._overlay_text_background_alpha: float = 0.0
         self.on_overlay_mode_select: object = None  # callback(mode: "auto"|"steamvr"|"desktop")
         self.on_overlay_single_turn_change: object = None  # callback(value: bool)
         self.on_overlay_display_toggle: object = None  # callback(field: str, value: bool)
@@ -3298,6 +3303,85 @@ class DashboardView(ft.Row):
                 self.on_typed_in_overlay_toggle(val)
         _text_row = _row_tt("dashboard.overlay.show_text", _bool_pill(_tx_ref, _on_typed))
 
+        # ── character edge style (r362) ───────────────────────────────────────
+        _EDGE_STYLES = ("none", "shadow", "raised", "depressed", "outline")
+        edge_pills: list[Any] = []
+
+        def _make_edge_pill(style: str):
+            pill_ref: list[Any] = [None]
+
+            def _click(_ev, _s=style):
+                if self._overlay_edge_style == _s:
+                    return
+                self._overlay_edge_style = _s
+                for other_style, other_pill in edge_pills:
+                    active = other_style == _s
+                    other_pill.content.color = _TOGGLE_ON if active else _TEXT_MUTED
+                    other_pill.bgcolor = "#1a2e2a" if active else ft.Colors.TRANSPARENT
+                    other_pill.border = ft.border.all(
+                        1, _TOGGLE_ON if active else "#3a3b3f"
+                    )
+                    try:
+                        other_pill.update()
+                    except Exception:
+                        pass
+                if callable(self.on_overlay_edge_style_change):
+                    self.on_overlay_edge_style_change(_s)
+
+            pill_ref[0] = _pill(
+                t(f"settings.overlay.edge_style.{style}"),
+                self._overlay_edge_style == style,
+                _click,
+                expand=True,
+            )
+            edge_pills.append((style, pill_ref[0]))
+            return pill_ref[0]
+
+        _edge_row = _section_row(
+            t("settings.overlay.edge_style.title"),
+            ft.Column(
+                [
+                    ft.Row([_make_edge_pill(s) for s in _EDGE_STYLES[:3]],
+                           spacing=4, tight=True),
+                    ft.Row([_make_edge_pill(s) for s in _EDGE_STYLES[3:]],
+                           spacing=4, tight=True),
+                ],
+                spacing=4,
+                tight=True,
+            ),
+            tooltip=t("settings.overlay.edge_style.tooltip"),
+        )
+
+        # ── text background (r363) ────────────────────────────────────────────
+        text_bg_pct = ft.Text(
+            f"{int(round(self._overlay_text_background_alpha * 100))}%",
+            size=11, color=_TEXT_MUTED, width=32, text_align=ft.TextAlign.RIGHT,
+        )
+        text_bg_slider = ft.Slider(
+            value=self._overlay_text_background_alpha, min=0.0, max=1.0, divisions=100,
+            active_color=_TOGGLE_ON, inactive_color=_TOGGLE_OFF, thumb_color=_TOGGLE_ON,
+            expand=True,
+        )
+
+        def _on_text_bg(ev):
+            alpha = round(float(ev.control.value), 2)
+            self._overlay_text_background_alpha = alpha
+            text_bg_pct.value = f"{int(round(alpha * 100))}%"
+            try:
+                text_bg_pct.update()
+            except Exception:
+                pass
+            if callable(self.on_overlay_text_background_change):
+                self.on_overlay_text_background_change(alpha)
+
+        text_bg_slider.on_change = _on_text_bg
+        _text_bg_row = _section_row(
+            t("settings.overlay.text_background.title"),
+            ft.Row([text_bg_slider, text_bg_pct], spacing=6,
+                   vertical_alignment=ft.CrossAxisAlignment.CENTER),
+            tooltip=t("settings.overlay.text_background.tooltip"),
+        )
+
         # ── divider helper ────────────────────────────────────────────────────
         def _div() -> ft.Container:
             return ft.Container(height=1, bgcolor="#3a3b3f",
@@ -3330,6 +3414,9 @@ class DashboardView(ft.Row):
                     _div(),
                     _size_pill_row,
                     _div(),
+                    _edge_row,
+                    _text_bg_row,
+                    _div(),
                     _voice_row,
                     _text_row,
                     ft.Container(height=4),
@@ -3341,8 +3428,18 @@ class DashboardView(ft.Row):
         )
         self._overlay_popover_close = self._open_popover_at(
             0.0, y, content, width=248.0, right_side=True,
-            est_height=440.0,
+            est_height=560.0,
         )
+
+    def set_overlay_edge_style(self, style: str) -> None:
+        """r362: reflect the saved caption edge style in the menu."""
+        text = str(style or "").strip().lower()
+        if text in ("none", "shadow", "raised", "depressed", "outline"):
+            self._overlay_edge_style = text
+
+    def set_overlay_text_background_alpha(self, alpha: float) -> None:
+        """r363: reflect the saved text-background opacity in the menu."""
+        self._overlay_text_background_alpha = max(0.0, min(1.0, float(alpha)))
 
     def set_overlay_background_alpha(self, alpha: float) -> None:
         self._overlay_background_alpha = max(0.0, min(1.0, float(alpha)))

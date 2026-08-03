@@ -1006,10 +1006,17 @@ def _normalize_caption_edge_style(value: object) -> str:
     return text if text in CAPTION_EDGE_STYLES else DEFAULT_CAPTION_EDGE_STYLE
 
 
+# r363: the box behind the GLYPHS, separate from the panel behind the whole
+# caption area. Off by default so an update never changes how anyone's overlay
+# already looks.
+DEFAULT_TEXT_BACKGROUND_ALPHA = 0.0
+
+
 @dataclass(slots=True, init=False)
 class DesktopFletOverlayVisualSettings:
     background_alpha: float = DESKTOP_FLET_DEFAULT_BACKGROUND_ALPHA
     edge_style: str = DEFAULT_CAPTION_EDGE_STYLE
+    text_background_alpha: float = DEFAULT_TEXT_BACKGROUND_ALPHA
 
     def __init__(
         self,
@@ -1017,10 +1024,12 @@ class DesktopFletOverlayVisualSettings:
         background_alpha: object = DESKTOP_FLET_DEFAULT_BACKGROUND_ALPHA,
         outline_width: object = None,
         edge_style: object = DEFAULT_CAPTION_EDGE_STYLE,
+        text_background_alpha: object = DEFAULT_TEXT_BACKGROUND_ALPHA,
     ) -> None:
         _ = (text_scale, outline_width)
         self.background_alpha = background_alpha
         self.edge_style = edge_style
+        self.text_background_alpha = text_background_alpha
 
     def validate(self) -> None:
         self.background_alpha = _normalize_desktop_flet_range(
@@ -1030,6 +1039,12 @@ class DesktopFletOverlayVisualSettings:
             maximum=DESKTOP_FLET_MAX_BACKGROUND_ALPHA,
         )
         self.edge_style = _normalize_caption_edge_style(self.edge_style)
+        self.text_background_alpha = _normalize_desktop_flet_range(
+            self.text_background_alpha,
+            default=DEFAULT_TEXT_BACKGROUND_ALPHA,
+            minimum=0.0,
+            maximum=1.0,
+        )
 
     @property
     def text_scale(self) -> float:
@@ -1474,6 +1489,12 @@ def _parse_desktop_flet_visual(value: object) -> DesktopFletOverlayVisualSetting
             maximum=DESKTOP_FLET_MAX_BACKGROUND_ALPHA,
         ),
         edge_style=_normalize_caption_edge_style(data.get("edge_style")),
+        text_background_alpha=_normalize_desktop_flet_range(
+            data.get("text_background_alpha"),
+            default=DEFAULT_TEXT_BACKGROUND_ALPHA,
+            minimum=0.0,
+            maximum=1.0,
+        ),
     )
 
 

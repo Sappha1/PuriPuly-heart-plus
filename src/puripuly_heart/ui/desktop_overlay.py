@@ -2018,6 +2018,9 @@ def _build_ruby_content(ft: Any, line: DesktopCaptionLine, text_width: float) ->
                             color=line.color,
                             font_family=_DESKTOP_CAPTION_LATIN_FONT_FAMILY,
                             text_align=ft.TextAlign.CENTER,
+                            bgcolor=_caption_text_background_color(
+                                getattr(line, 'text_background_alpha', 0.0)
+                            ),
                             style=ft.TextStyle(
                                 size=ruby_size,
                                 height=1.1,
@@ -2037,6 +2040,9 @@ def _build_ruby_content(ft: Any, line: DesktopCaptionLine, text_width: float) ->
                                 else _DESKTOP_CAPTION_LATIN_FONT_FAMILY
                             ),
                             text_align=ft.TextAlign.CENTER,
+                            bgcolor=_caption_text_background_color(
+                                getattr(line, 'text_background_alpha', 0.0)
+                            ),
                             style=ft.TextStyle(
                                 size=char_size,
                                 height=line.line_height,
@@ -2106,6 +2112,9 @@ def _build_ruby_content(ft: Any, line: DesktopCaptionLine, text_width: float) ->
                     font_family=_DESKTOP_CAPTION_LATIN_FONT_FAMILY,
                     text_align=ft.TextAlign.CENTER,
                     width=text_width,
+                    bgcolor=_caption_text_background_color(
+                        getattr(line, 'text_background_alpha', 0.0)
+                    ),
                     style=ft.TextStyle(
                         size=block_roman_size,
                         height=1.15,
@@ -2124,6 +2133,9 @@ def _build_ruby_content(ft: Any, line: DesktopCaptionLine, text_width: float) ->
                     width=text_width,
                     max_lines=line.max_lines,
                     overflow=ft.TextOverflow.ELLIPSIS,
+                    bgcolor=_caption_text_background_color(
+                        getattr(line, 'text_background_alpha', 0.0)
+                    ),
                     style=ft.TextStyle(
                         size=cjk_size,
                         height=line.line_height,
@@ -2215,6 +2227,9 @@ def _build_flet_text(
         overflow=ft.TextOverflow.ELLIPSIS,
         no_wrap=False,
         color=line.color,
+        bgcolor=_caption_text_background_color(
+            getattr(line, 'text_background_alpha', 0.0)
+        ),
         style=ft.TextStyle(
             size=line.font_size,
             height=line.line_height,

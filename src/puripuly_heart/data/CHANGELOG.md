@@ -2,6 +2,10 @@
 
 User-facing changes per build. The latest build's highlights also appear in-app when an update is ready.
 
+## r368 — 2026-08-02
+
+- **Text background is now set on the caption control itself, not only inside its text style.** The values were confirmed reaching the overlay and the control, so if the style block is being overridden this is the setting that will show it
+
 ## r367 — 2026-08-02
 
 - **Text background now applies to lines that show a reading above the characters** (pinyin or romaji over the original). Those are drawn by different code from plain lines, and only the plain one had been updated — so on most captions the background could never appear

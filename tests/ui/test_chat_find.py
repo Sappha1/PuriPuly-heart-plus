@@ -200,6 +200,15 @@ def _key_event(key: str, *, ctrl: bool = False, shift: bool = False, alt: bool =
 
 
 def _app_with_dashboard():
+    """Built with the app's REAL nesting, not a shape invented to satisfy the
+    guard.
+
+    r372: the first version of this helper set `content_area = SimpleNamespace(
+    content=dash)`, copied from the existing Tab test. The app actually puts the
+    view in `_inner_content.content`, with `content_area.content` being the
+    Column that holds [top nav bar, view container]. Faking the shape the guard
+    expected made fifteen tests pass while Ctrl+F did nothing at all in the app.
+    """
     app = TranslatorApp.__new__(TranslatorApp)
     calls: list[str] = []
     dash = SimpleNamespace(
@@ -208,8 +217,40 @@ def _app_with_dashboard():
         handle_message_input_tab_key=lambda: calls.append("tab"),
     )
     app.view_dashboard = dash
-    app.content_area = SimpleNamespace(content=dash)
+    app._inner_content = ft.Container(content=dash)
+    top_nav = ft.Container()
+    app.content_area = ft.Container(
+        content=ft.Column([top_nav, app._inner_content])
+    )
     return app, calls
+
+
+def test_the_guard_reads_the_container_that_view_switching_writes() -> None:
+    """The bug that made r371 do nothing, in one assertion.
+
+    The shortcut guard and the code that switches views must agree on where the
+    active view lives. They did not: switching assigns `_inner_content.content`
+    while the guard compared `content_area.content`, which is the Column holding
+    the nav bar — never the dashboard. Both shortcuts were dead and the suite was
+    green, because the fake matched the guard instead of the app.
+    """
+    import re
+    from pathlib import Path
+
+    source = Path("src/puripuly_heart/ui/app.py").read_text(encoding="utf-8")
+
+    written = set(re.findall(r"self\.(_\w+)\.content = ", source))
+    assert written, "nothing assigns a view container any more — layout moved"
+
+    start = source.index("def _dashboard_is_active")
+    guard = source[start : source.index("def _on_keyboard_event", start)]
+    read = set(re.findall(r'getattr\(self, "(_\w+)", None\)', guard))
+
+    assert written & read, (
+        f"view switching writes {sorted(written)} but the shortcut guard reads "
+        f"{sorted(read)} — the guard can never be true, and every keyboard "
+        f"shortcut silently does nothing"
+    )
 
 
 def test_ctrl_f_opens_the_find_bar() -> None:
@@ -240,7 +281,9 @@ def test_tab_still_swaps_languages() -> None:
 def test_the_shortcut_does_nothing_outside_the_dashboard() -> None:
     """Settings and dialogs get their own Ctrl+F behaviour, or none."""
     app, calls = _app_with_dashboard()
-    app.content_area = SimpleNamespace(content=object())
+    # Switch views the way the app does: assign the inner container, which is
+    # exactly what _select_nav_index writes.
+    app._inner_content.content = ft.Container()
     app._on_keyboard_event(_key_event("F", ctrl=True))
     app._on_keyboard_event(_key_event("Escape"))
     app._on_keyboard_event(_key_event("Tab"))

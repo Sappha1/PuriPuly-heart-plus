@@ -904,7 +904,13 @@ def test_app_tab_key_reverses_message_input_languages_only_on_dashboard() -> Non
     calls: list[str] = []
     dashboard = SimpleNamespace(handle_message_input_tab_key=lambda: calls.append("tab") or True)
     app.view_dashboard = dashboard
-    app.content_area = DummyContent(content=dashboard)
+    # r372: the REAL nesting. content_area.content is the Column holding the top
+    # nav bar and the view container; the active view sits in _inner_content.
+    # Faking content_area=DummyContent(content=dashboard) matched the shape the
+    # guard expected rather than the one the app builds, so this test passed for
+    # months while Tab did nothing in the actual app.
+    app._inner_content = DummyContent(content=dashboard)
+    app.content_area = DummyContent(content=DummyContent(content=app._inner_content))
 
     app._on_keyboard_event(
         SimpleNamespace(key="Tab", shift=False, ctrl=False, alt=False, meta=False)
@@ -913,7 +919,9 @@ def test_app_tab_key_reverses_message_input_languages_only_on_dashboard() -> Non
         SimpleNamespace(key="Tab", shift=True, ctrl=False, alt=False, meta=False)
     )
 
-    app.content_area.content = SimpleNamespace()
+    # Leaving the dashboard means assigning the INNER container — that is what
+    # _select_nav_index does. Reassigning content_area.content changes nothing.
+    app._inner_content.content = SimpleNamespace()
     app._on_keyboard_event(
         SimpleNamespace(key="Tab", shift=False, ctrl=False, alt=False, meta=False)
     )

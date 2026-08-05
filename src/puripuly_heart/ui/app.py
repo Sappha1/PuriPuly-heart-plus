@@ -1616,14 +1616,42 @@ class TranslatorApp:
         except Exception:
             pass
 
+    def _dashboard_is_active(self) -> bool:
+        """Is the dashboard the view currently on screen?
+
+        r372: this reads `_inner_content.content`, which is what view switching
+        assigns (see _select_nav_index). It must NOT read `content_area.content`
+        — that is the Column holding [top nav bar, view container], so comparing
+        it to the dashboard is never true. Every keyboard shortcut was guarded
+        on that comparison and therefore never fired: Ctrl+F from the day it was
+        added, and Tab-to-swap-languages since the top nav bar appeared.
+        """
+        dashboard = getattr(self, "view_dashboard", None)
+        if dashboard is None:
+            return False
+        inner = getattr(self, "_inner_content", None)
+        return getattr(inner, "content", None) is dashboard
+
     def _on_keyboard_event(self, event) -> None:
         key = getattr(event, "key", None)
         dashboard = getattr(self, "view_dashboard", None)
-        content_area = getattr(self, "content_area", None)
-        on_dashboard = (
-            dashboard is not None
-            and getattr(content_area, "content", None) is dashboard
-        )
+        on_dashboard = self._dashboard_is_active()
+
+        # r372: unconditional, so "nothing happened" can be told apart from
+        # "the key never arrived". Only modified keys and Tab/Escape — plain
+        # typing would flood the log.
+        if key in ("Tab", "Escape") or any(
+            bool(getattr(event, modifier, False)) for modifier in ("ctrl", "alt", "meta")
+        ):
+            logger.info(
+                "[Keyboard] key=%r ctrl=%s shift=%s alt=%s meta=%s dashboard_active=%s",
+                key,
+                bool(getattr(event, "ctrl", False)),
+                bool(getattr(event, "shift", False)),
+                bool(getattr(event, "alt", False)),
+                bool(getattr(event, "meta", False)),
+                on_dashboard,
+            )
 
         # r371: Ctrl+F opens find-in-chat, Esc closes it — the shortcut every
         # other program has. Both are scoped to the dashboard so they cannot

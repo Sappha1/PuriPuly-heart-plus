@@ -2,6 +2,11 @@
 
 User-facing changes per build. The latest build's highlights also appear in-app when an update is ready.
 
+## r372 — 2026-08-04
+
+- **Ctrl+F now actually opens the find bar.** The shortcut first checks that the dashboard is the view on screen, and it was checking the wrong container — the one holding the top bar *and* the view, rather than the view itself — so the check could never pass and the key did nothing at all
+- **Tab to swap your languages works again**, which had been dead the same way for as long as the top bar has existed
+
 ## r371 — 2026-08-04
 
 - **Ctrl+F searches the chat log**, the way it does everywhere else. A find bar opens at the top of the chat box: type to highlight every match, Enter or the arrows to step through them, Esc to close. The counter shows which match you are on and how many there are, and it starts on the newest one — a chat is read from the bottom, and the first match is usually far above what you are looking at

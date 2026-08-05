@@ -19,7 +19,7 @@ from puripuly_heart.ui.fonts import font_for_language
 from puripuly_heart.ui.i18n import get_locale, language_name, t
 from puripuly_heart.ui.overlay_peer_contract import OverlayPeerConsumerContract
 
-_BUILD_TAG = "r375"  #increment each build so user can confirm version
+_BUILD_TAG = "r376"  #increment each build so user can confirm version
 
 # ── VRCT-style dark palette ──────────────────────────────────────────────────
 _BG_MAIN = "#2e2f32"
@@ -3920,6 +3920,13 @@ class DashboardView(ft.Row):
             self._chat_list_view.update()
         except Exception:
             pass
+        # Every match just ceased to exist; without this the counter keeps
+        # advertising hits in messages that are gone.
+        self._find_matches = []
+        self._find_index = -1
+        self._find_originals = {}
+        self.refresh_find_for_chat_change()
+        self._update_find_count()
 
     def _chat_reading_allowed(self, text: str, lang: str) -> bool:
         """Per-language chat reading preference (r284): a native reader hides
@@ -4589,6 +4596,7 @@ class DashboardView(ft.Row):
             self._pending_sent_col = None
             col.controls.clear()
             col.controls.extend([header, *content_rows])
+            _find_dirty = True
             self._last_chat_content_col = col
             try:
                 if self._chat_list_view.page:
@@ -4596,6 +4604,8 @@ class DashboardView(ft.Row):
                     self._follow_chat_if_following()
             except Exception:
                 pass
+            if _find_dirty:
+                self.refresh_find_for_chat_change()
             return
 
         entry = ft.Container(
@@ -4623,6 +4633,7 @@ class DashboardView(ft.Row):
             self._follow_chat_if_following()
         except Exception:
             pass
+        self.refresh_find_for_chat_change()
 
     def append_extra_chat_lines(self, extra_pairs: list[tuple[str, str]]) -> None:
         """Append extra-language translation lines to the most recent chat entry."""
@@ -4652,6 +4663,7 @@ class DashboardView(ft.Row):
 
     # ── Submit / input ───────────────────────────────────────────────────────
 
+        self.refresh_find_for_chat_change()
     def _on_submit(self, text: str):
         self.set_display_text(text, language_code=self._source_lang_code)
         if self._chat_list_view is not None and self._show_pending_echo:
@@ -4694,6 +4706,7 @@ class DashboardView(ft.Row):
                 self._follow_chat_if_following()
             except Exception:
                 pass
+            self.refresh_find_for_chat_change()
             self._pending_sent_col = pending_col
             self._pending_version += 1
             version = self._pending_version
@@ -4814,6 +4827,25 @@ class DashboardView(ft.Row):
                     pass
         self._run_find(raw)
 
+    def refresh_find_for_chat_change(self) -> None:
+        """Re-run the open search because the chat changed underneath it.
+
+        Called wherever messages are added, replaced or cleared. Cheap: the log
+        is capped, so this walks a bounded number of entries. Keeps the current
+        match and does not scroll — see r376.
+        """
+        if not self._find_visible:
+            return
+        if not self._find_query:
+            # Nothing searched yet, but stale highlights could still be sitting
+            # on controls that were just replaced.
+            self._clear_find_highlights()
+            return
+        try:
+            self._run_find(self._find_query, keep_position=True, scroll=False)
+        except Exception:
+            pass
+
     def _on_find_field_blur(self, e=None) -> None:
         # Clicking away cancels the armed retype; otherwise the next keystroke
         # after coming back would eat a query the user never meant to replace.
@@ -4870,7 +4902,10 @@ class DashboardView(ft.Row):
                 pass
         self._find_originals = {}
 
-    def _run_find(self, query: str) -> None:
+    def _run_find(
+        self, query: str, *, keep_position: bool = False, scroll: bool = True
+    ) -> None:
+        previous_index = self._find_index
         self._clear_find_highlights()
         query = (query or "").strip()
         self._find_query = query
@@ -4899,10 +4934,16 @@ class DashboardView(ft.Row):
                 at = haystack.find(needle, at + len(needle))
 
         if self._find_matches:
-            # Start on the newest hit: a chat is read from the bottom, and the
-            # first match is usually far above what the user is looking at.
-            self._find_index = len(self._find_matches) - 1
-        self._refresh_find_view()
+            if keep_position and 0 <= previous_index < len(self._find_matches):
+                # A message arrived underneath an open search: stay where the
+                # user was rather than leaping to the newest hit.
+                self._find_index = previous_index
+            else:
+                # Start on the newest hit: a chat is read from the bottom, and
+                # the first match is usually far above what the user is looking
+                # at.
+                self._find_index = len(self._find_matches) - 1
+        self._refresh_find_view(scroll=scroll)
 
     def find_next(self) -> None:
         self._find_step(1)
@@ -4928,11 +4969,12 @@ class DashboardView(ft.Row):
         self._find_index = (self._find_index + delta) % len(self._find_matches)
         self._refresh_find_view()
 
-    def _refresh_find_view(self) -> None:
+    def _refresh_find_view(self, *, scroll: bool = True) -> None:
         self._apply_find_highlights()
         self._update_find_count()
         self._safe_update(self._chat_list_view)
-        self._scroll_to_current_match()
+        if scroll:
+            self._scroll_to_current_match()
 
     def _apply_find_highlights(self) -> None:
         self._clear_find_highlights()

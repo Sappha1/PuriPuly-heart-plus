@@ -2,6 +2,10 @@
 
 User-facing changes per build. The latest build's highlights also appear in-app when an update is ready.
 
+## r376 — 2026-08-05
+
+- **The find results now keep up with the conversation.** With the find bar open, a message arriving underneath it was never searched: it stayed unhighlighted and the counter stopped moving. Every new, updated or cleared message now re-runs the search. Your place is kept — the highlight does not jump to the newest match every time someone speaks — and the chat is not scrolled out from under you while you read
+
 ## r375 — 2026-08-05
 
 - **Enter now keeps stepping through matches** instead of working once. Shift+Enter steps backwards

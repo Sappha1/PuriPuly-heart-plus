@@ -444,3 +444,113 @@ def test_enter_is_wired_at_the_page_level_too() -> None:
     app.view_dashboard.is_find_bar_open = lambda: False
     app._on_keyboard_event(_key_event("Enter"))
     assert calls == [], "Enter was hijacked while the find bar was closed"
+
+
+# ── r376: the search stays live while the conversation moves ─────────────
+
+
+def test_a_message_arriving_under_an_open_search_is_found() -> None:
+    """The search ran once and never again: with the bar open, a new matching
+    message was never highlighted and the counter stopped moving."""
+    dash = _dashboard(_entry("hello one"), _entry("hello two"))
+    dash._find_visible = True
+    dash._run_find("hello")
+    assert dash._find_count.value == "2/2"
+
+    arrived = _entry("hello three")
+    arrived.key = "chatentry-3"
+    dash._chat_list_view.controls.append(arrived)
+    dash.refresh_find_for_chat_change()
+
+    assert len(dash._find_matches) == 3, "the new message was not searched"
+    assert dash._find_count.value == "1/3" or dash._find_count.value.endswith("/3")
+    assert any(t.spans for t in DashboardView._find_walk_texts(arrived)), (
+        "the new message was not highlighted"
+    )
+
+
+def test_the_highlight_does_not_jump_to_the_newest_message() -> None:
+    """Re-running from scratch would drag the highlight to the newest hit every
+    time anyone said anything, which is unusable while reading."""
+    dash = _dashboard(_entry("hello one"), _entry("hello two"), _entry("hello three"))
+    dash._find_visible = True
+    dash._run_find("hello")
+    dash.find_next()                      # move off the default
+    parked = dash._find_index
+
+    arrived = _entry("hello four")
+    arrived.key = "chatentry-9"
+    dash._chat_list_view.controls.append(arrived)
+    dash.refresh_find_for_chat_change()
+
+    assert dash._find_index == parked, (
+        f"the highlight moved from {parked} to {dash._find_index} on its own"
+    )
+    assert len(dash._find_matches) == 4
+
+
+def test_a_live_refresh_does_not_scroll_the_chat() -> None:
+    """Scrolling to the current match on every incoming message would fight the
+    chat's own follow-to-bottom and yank the view while reading."""
+    dash = _dashboard(_entry("hello one"))
+    dash._find_visible = True
+    dash._run_find("hello")
+
+    scrolls = []
+    dash._scroll_to_current_match = lambda: scrolls.append(1)
+
+    arrived = _entry("hello two")
+    arrived.key = "chatentry-2"
+    dash._chat_list_view.controls.append(arrived)
+    dash.refresh_find_for_chat_change()
+
+    assert scrolls == [], "a live refresh scrolled the chat"
+
+
+def test_clearing_the_chat_drops_the_results() -> None:
+    """Otherwise the counter advertises hits in messages that are gone, and
+    stepping aims at controls no longer on screen."""
+    dash = _dashboard(_entry("hello one"), _entry("hello two"))
+    dash._find_visible = True
+    dash._run_find("hello")
+    assert dash._find_matches
+
+    dash._chat_list_view.controls.clear()
+    dash.refresh_find_for_chat_change()
+
+    assert dash._find_matches == [], "results survived the chat being cleared"
+    assert dash._find_count.value in ("", "0/0")
+
+
+def test_a_closed_find_bar_does_not_pay_for_incoming_messages() -> None:
+    dash = _dashboard(_entry("hello one"))
+    dash._find_visible = False
+    dash._find_query = "hello"
+    ran = []
+    dash._run_find = lambda *a, **k: ran.append(1)
+
+    dash.refresh_find_for_chat_change()
+    assert ran == [], "the search re-ran with the bar closed"
+
+
+def test_every_chat_mutation_refreshes_the_search() -> None:
+    """r376: the hook has to be at EVERY place the chat changes. One that
+    forgets it is not a visible bug — the results just quietly go stale."""
+    import re
+    from pathlib import Path
+
+    source = Path("src/puripuly_heart/ui/views/dashboard.py").read_text(encoding="utf-8")
+
+    mutations = (
+        len(re.findall(r"_chat_list_view\.controls\.append\(entry\)", source))
+        + len(re.findall(r"_chat_list_view\.controls\.clear\(\)", source))
+        + len(re.findall(r"col\.controls\.extend\(", source))
+    )
+    hooks = source.count("refresh_find_for_chat_change()")
+
+    assert mutations >= 4, "the chat mutation sites moved — recount them"
+    assert hooks >= mutations, (
+        f"{mutations} places change the chat but only {hooks} refresh the open "
+        f"search; the ones that do not will show a stale count and leave new "
+        f"messages unhighlighted"
+    )

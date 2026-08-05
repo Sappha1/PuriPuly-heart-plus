@@ -19,7 +19,7 @@ from puripuly_heart.ui.fonts import font_for_language
 from puripuly_heart.ui.i18n import get_locale, language_name, t
 from puripuly_heart.ui.overlay_peer_contract import OverlayPeerConsumerContract
 
-_BUILD_TAG = "r374"  #increment each build so user can confirm version
+_BUILD_TAG = "r375"  #increment each build so user can confirm version
 
 # ── VRCT-style dark palette ──────────────────────────────────────────────────
 _BG_MAIN = "#2e2f32"
@@ -455,6 +455,13 @@ class DashboardView(ft.Row):
         self._find_bar = None
         self._find_field = None
         self._find_count = None
+        # r375: Ctrl+F on an open bar arms a replacement, so the next keystroke
+        # overwrites the query the way typing over a selection would.
+        self._find_replace_armed = False
+        self._find_replace_base = ""
+        # Enter can arrive by two routes; this stops one keypress stepping twice.
+        self._find_last_step = 0.0
+        self._find_last_delta = 0
         self._single_turn_mode_backing: bool = True
 
         self._pending_sent_col: ft.Column | None = None
@@ -1582,6 +1589,7 @@ class DashboardView(ft.Row):
             content_padding=ft.padding.symmetric(horizontal=0, vertical=8),
             on_change=self._on_find_query_change,
             on_submit=self._on_find_submit,
+            on_blur=self._on_find_field_blur,
         )
         self._find_count = ft.Text(
             # Numbers only. "No results" did not fit and rendered as "No resul",
@@ -4741,7 +4749,7 @@ class DashboardView(ft.Row):
 
     # ── Find in chat (r371) ──────────────────────────────────────────────────
     def open_find_bar(self) -> None:
-        """Ctrl+F. Idempotent — pressing it again just refocuses the field."""
+        """Ctrl+F. Pressing it again arms a retype over the existing query."""
         if self._find_bar is None:
             return
         self._find_bar.visible = True
@@ -4751,8 +4759,13 @@ class DashboardView(ft.Row):
             self._find_field.focus()
         except Exception:
             pass
-        existing = (getattr(self._find_field, "value", "") or "").strip()
-        if existing:
+        existing = getattr(self._find_field, "value", "") or ""
+        if existing.strip():
+            # A browser selects the query here so the next keystroke replaces
+            # it. Flet cannot select text in a field, so the REPLACEMENT is
+            # reproduced instead of the highlight: see _on_find_query_change.
+            self._find_replace_armed = True
+            self._find_replace_base = existing
             self._run_find(existing)
 
     def close_find_bar(self) -> bool:
@@ -4765,6 +4778,7 @@ class DashboardView(ft.Row):
         self._find_query = ""
         self._find_bar.visible = False
         self._find_visible = False
+        self._find_replace_armed = False
         if self._find_count is not None:
             self._find_count.value = ""
         self._safe_update(self._find_bar)
@@ -4784,10 +4798,35 @@ class DashboardView(ft.Row):
             pass
 
     def _on_find_query_change(self, e) -> None:
-        self._run_find(getattr(e.control, "value", "") or "")
+        raw = getattr(e.control, "value", "") or ""
+        if self._find_replace_armed:
+            self._find_replace_armed = False
+            base = self._find_replace_base
+            # Typed (or pasted) onto the end of the armed query: drop the old
+            # one and keep only what was just entered, which is what typing
+            # over a selection does.
+            if base and raw.startswith(base) and len(raw) > len(base):
+                raw = raw[len(base):]
+                try:
+                    e.control.value = raw
+                    self._safe_update(e.control)
+                except Exception:
+                    pass
+        self._run_find(raw)
+
+    def _on_find_field_blur(self, e=None) -> None:
+        # Clicking away cancels the armed retype; otherwise the next keystroke
+        # after coming back would eat a query the user never meant to replace.
+        self._find_replace_armed = False
 
     def _on_find_submit(self, e) -> None:
         self.find_next()
+        # Without this, Enter works once: the field gives up focus on submit
+        # and every later Enter goes nowhere.
+        try:
+            self._find_field.focus()
+        except Exception:
+            pass
 
     def _on_find_next(self, e=None) -> None:
         self.find_next()
@@ -4874,6 +4913,18 @@ class DashboardView(ft.Row):
     def _find_step(self, delta: int) -> None:
         if not self._find_matches:
             return
+        # Enter may reach us from the field's on_submit AND from the page
+        # keyboard handler. Which one fires is a Flet detail, so both are wired
+        # and a single keypress is collapsed here -- the two arrive within a
+        # millisecond or so of each other, far tighter than anyone can press.
+        # Only the SAME direction is collapsed: one keypress delivered twice
+        # is two identical steps a millisecond apart, whereas next-then-prev is
+        # two intents however fast they arrive.
+        now = time.monotonic()
+        if delta == self._find_last_delta and now - self._find_last_step < 0.05:
+            return
+        self._find_last_step = now
+        self._find_last_delta = delta
         self._find_index = (self._find_index + delta) % len(self._find_matches)
         self._refresh_find_view()
 

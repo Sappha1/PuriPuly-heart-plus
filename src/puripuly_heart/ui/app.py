@@ -1664,6 +1664,27 @@ class TranslatorApp:
                 if callable(opener):
                     opener()
                 return
+        # r375: Enter steps to the next match (Shift+Enter the previous) while
+        # the find bar is open. The field's own on_submit does this too; which
+        # of the two actually fires is a Flet detail, so both are wired and the
+        # dashboard collapses a double-step from one keypress.
+        if on_dashboard and key == "Enter":
+            is_open = getattr(dashboard, "is_find_bar_open", None)
+            if callable(is_open):
+                try:
+                    if is_open():
+                        step = getattr(
+                            dashboard,
+                            "find_prev" if bool(getattr(event, "shift", False))
+                            else "find_next",
+                            None,
+                        )
+                        if callable(step):
+                            step()
+                            return
+                except Exception:
+                    logger.exception("Failed to step the chat find bar")
+
         if on_dashboard and key == "Escape":
             closer = getattr(dashboard, "close_find_bar", None)
             if callable(closer):

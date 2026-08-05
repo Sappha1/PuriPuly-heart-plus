@@ -36,6 +36,12 @@ def _dashboard(*entries: ft.Container) -> DashboardView:
     dash._find_count = ft.Text("")
     dash._find_bar = ft.Container(visible=False)
     dash._find_field = ft.TextField()
+    # r375 state — the real __init__ sets these; a helper that omits them
+    # tests an object the app never builds.
+    dash._find_replace_armed = False
+    dash._find_replace_base = ""
+    dash._find_last_step = 0.0
+    dash._find_last_delta = 0
     for index, entry in enumerate(entries, start=1):
         entry.key = f"chatentry-{index}"
     return dash
@@ -318,3 +324,123 @@ def test_the_find_bar_floats_instead_of_pushing_the_messages_down() -> None:
         "the find bar is stacked below the jump button; later children draw on "
         "top, and it must be the topmost thing in the chat box"
     )
+
+
+# ── r375: Enter repeats, and Ctrl+F retypes over the query ───────────────
+
+
+def test_enter_keeps_stepping_instead_of_working_once() -> None:
+    dash = (_dashboard(_entry("hello a"), _entry("hello b"), _entry("hello c")))
+    dash._run_find("hello")
+    assert dash._find_index == 2
+
+    seen = [dash._find_index]
+    for _ in range(5):
+        dash._find_last_step = 0.0     # a real keypress, not a double-delivery
+        dash.find_next()
+        seen.append(dash._find_index)
+
+    assert seen == [2, 0, 1, 2, 0, 1], f"Enter stopped repeating: {seen}"
+
+
+def test_one_keypress_arriving_twice_only_steps_once() -> None:
+    """Enter reaches us from the field's on_submit AND the page handler; which
+    one fires is a Flet detail, so both are wired. A single press must not
+    skip a match."""
+    dash = (_dashboard(_entry("hello a"), _entry("hello b"), _entry("hello c")))
+    dash._run_find("hello")
+    start = dash._find_index
+
+    dash.find_next()          # route one
+    after_first = dash._find_index
+    dash.find_next()          # the same keypress arriving by the other route
+
+    assert after_first != start, "the first delivery did not step"
+    assert dash._find_index == after_first, (
+        "one keypress advanced two matches — the two routes are not collapsed"
+    )
+
+
+def test_ctrl_f_on_an_open_bar_arms_a_retype_of_the_query() -> None:
+    """Flet cannot select text in a field, so the REPLACEMENT a selection would
+    cause is reproduced instead: the next keystroke overwrites the query."""
+    dash = (_dashboard(_entry("hello world")))
+    dash._find_bar = ft.Container(visible=False)
+    dash._find_field = ft.TextField(value="hello")
+    dash._find_visible = False
+
+    dash.open_find_bar()
+    assert dash._find_replace_armed, "Ctrl+F did not arm a retype"
+    assert dash._find_matches, "the existing query was not re-run"
+
+    # the user types "w" — the field reports "hellow"
+    dash._find_field.value = "hellow"
+    dash._on_find_query_change(SimpleNamespace(control=dash._find_field))
+
+    assert dash._find_field.value == "w", (
+        f"typing appended instead of replacing: {dash._find_field.value!r}"
+    )
+    assert dash._find_query == "w"
+    assert not dash._find_replace_armed, "the retype stayed armed for a second keystroke"
+
+
+def test_the_armed_retype_survives_pressing_enter_instead_of_typing() -> None:
+    """A browser keeps the query if you press Enter after Ctrl+F, rather than
+    clearing it. Nothing typed means nothing replaced."""
+    dash = (_dashboard(_entry("hello world")))
+    dash._find_bar = ft.Container(visible=False)
+    dash._find_field = ft.TextField(value="hello")
+
+    dash.open_find_bar()
+    dash.find_next()
+
+    assert dash._find_field.value == "hello", "the query was lost"
+    assert dash._find_matches, "the search was dropped"
+
+
+def test_clicking_away_cancels_the_armed_retype() -> None:
+    """Otherwise the next keystroke after coming back eats a query the user
+    never meant to replace."""
+    dash = (_dashboard(_entry("hello world")))
+    dash._find_bar = ft.Container(visible=False)
+    dash._find_field = ft.TextField(value="hello")
+
+    dash.open_find_bar()
+    assert dash._find_replace_armed
+    dash._on_find_field_blur()
+    assert not dash._find_replace_armed
+
+    dash._find_field.value = "hellow"
+    dash._on_find_query_change(SimpleNamespace(control=dash._find_field))
+    assert dash._find_field.value == "hellow", "a stale arming still ate the query"
+
+
+def test_no_selection_api_is_relied_on() -> None:
+    """r375: poking the client's raw selectionStart/selectionEnd DID appear to
+    highlight, but it shoved the text sideways and left a stray glyph on the
+    edge of the box. That is a mangled render, not a selection. If it ever
+    reappears in the source, this fails."""
+    from pathlib import Path
+
+    source = Path("src/puripuly_heart/ui/views/dashboard.py").read_text(encoding="utf-8")
+    for banned in ("selectionStart", "selectionEnd", "selectAll"):
+        assert banned not in source, (
+            f"{banned} is back — Flet has no selection API and forcing it "
+            f"corrupts the field's rendering"
+        )
+
+
+def test_enter_is_wired_at_the_page_level_too() -> None:
+    app, calls = _app_with_dashboard()
+    app.view_dashboard.is_find_bar_open = lambda: True
+    app.view_dashboard.find_next = lambda: calls.append("next")
+    app.view_dashboard.find_prev = lambda: calls.append("prev")
+
+    app._on_keyboard_event(_key_event("Enter"))
+    app._on_keyboard_event(_key_event("Enter", shift=True))
+    assert calls == ["next", "prev"]
+
+    calls.clear()
+    app.view_dashboard.is_find_bar_open = lambda: False
+    app._on_keyboard_event(_key_event("Enter"))
+    assert calls == [], "Enter was hijacked while the find bar was closed"

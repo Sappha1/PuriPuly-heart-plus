@@ -2,6 +2,11 @@
 
 User-facing changes per build. The latest build's highlights also appear in-app when an update is ready.
 
+## r375 — 2026-08-05
+
+- **Enter now keeps stepping through matches** instead of working once. Shift+Enter steps backwards
+- **Pressing Ctrl+F while a search is already in the box lets you type straight over it**, the way a browser does. The old query stays put if you press Enter instead, so you can repeat the same search. (The text is not shown highlighted — the interface toolkit this app is built on cannot draw a selection inside an input — but typing replaces it exactly as if it were)
+
 ## r374 — 2026-08-04
 
 - **The find panel now sits compactly in the top-right corner** instead of stretching across the chat. r373 relied on the overlay layer to both size and position it and got neither — it spanned nearly the full width and sat on the left

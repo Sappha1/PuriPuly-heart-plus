@@ -19,7 +19,7 @@ from puripuly_heart.ui.fonts import font_for_language
 from puripuly_heart.ui.i18n import get_locale, language_name, t
 from puripuly_heart.ui.overlay_peer_contract import OverlayPeerConsumerContract
 
-_BUILD_TAG = "r373"  #increment each build so user can confirm version
+_BUILD_TAG = "r374"  #increment each build so user can confirm version
 
 # ── VRCT-style dark palette ──────────────────────────────────────────────────
 _BG_MAIN = "#2e2f32"
@@ -1568,24 +1568,29 @@ class DashboardView(ft.Row):
             hint_text=_find_hint if _find_hint != "dashboard.find.hint" else "Find in chat",
             dense=True,
             expand=True,
-            height=34,
             text_size=13,
             color=_TEXT_PRIMARY,
             hint_style=ft.TextStyle(size=13, color=_TEXT_FAINT),
             # No box of its own: the panel is the frame, the way a browser's is.
             border=ft.InputBorder.NONE,
             cursor_color=_TOGGLE_ON,
-            cursor_height=16,
-            content_padding=ft.padding.symmetric(horizontal=0, vertical=6),
+            # r374: no fixed height, and told explicitly to centre. A fixed
+            # height plus vertical padding left Flutter no room to centre the
+            # text inside the field, so it pinned it to the top and the typed
+            # word sat above the chevrons instead of level with them.
+            text_vertical_align=ft.VerticalAlignment.CENTER,
+            content_padding=ft.padding.symmetric(horizontal=0, vertical=8),
             on_change=self._on_find_query_change,
             on_submit=self._on_find_submit,
         )
         self._find_count = ft.Text(
-            "", size=12, color=_TEXT_FAINT, width=52,
+            # Numbers only. "No results" did not fit and rendered as "No resul",
+            # and it would overflow differently in every language — a browser
+            # shows 0/0 for the same reason.
+            "", size=12, color=_TEXT_FAINT, width=46,
             text_align=ft.TextAlign.RIGHT, no_wrap=True,
         )
-        self._find_bar = ft.Container(
-            visible=False,
+        find_panel = ft.Container(
             width=_FIND_BAR_WIDTH,
             # Opaque: it floats over the messages, so anything showing through
             # would read as a rendering fault rather than a panel.
@@ -1619,6 +1624,19 @@ class DashboardView(ft.Row):
                 vertical_alignment=ft.CrossAxisAlignment.CENTER,
             ),
         )
+        # r374: the slot spans the width and ALIGNS the panel to the top right.
+        # r373 relied on Stack `right=`/`top=` to size and place it and got
+        # neither — the panel stretched nearly the full chat width and sat on
+        # the left. An aligned Container sizes its child to the child's own
+        # width and puts it where told, whatever the Stack does underneath.
+        # No `bottom`, so the slot is only as tall as the panel and cannot
+        # swallow clicks on the messages beneath it.
+        self._find_bar = ft.Container(
+            visible=False,
+            alignment=ft.alignment.top_right,
+            padding=ft.padding.only(top=6, right=6, left=6),
+            content=find_panel,
+        )
 
         # The message list (SelectionArea enables free Copy/Select-all of log text) plus
         # the floating jump button, stacked so the button overlays the bottom-center.
@@ -1651,7 +1669,7 @@ class DashboardView(ft.Row):
                                 # so it draws above them, and outside the Column
                                 # so opening it reflows nothing.
                                 ft.Container(
-                                    right=4, top=4,
+                                    left=0, right=0, top=0,
                                     content=self._find_bar,
                                 ),
                             ],
@@ -4905,10 +4923,7 @@ class DashboardView(ft.Row):
         if not self._find_query:
             self._find_count.value = ""
         elif not total:
-            none_label = t("dashboard.find.none")
-            self._find_count.value = (
-                none_label if none_label != "dashboard.find.none" else "0/0"
-            )
+            self._find_count.value = "0/0"
         else:
             self._find_count.value = f"{self._find_index + 1}/{total}"
         self._safe_update(self._find_count)

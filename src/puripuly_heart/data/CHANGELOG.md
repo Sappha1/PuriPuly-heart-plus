@@ -2,6 +2,12 @@
 
 User-facing changes per build. The latest build's highlights also appear in-app when an update is ready.
 
+## r374 — 2026-08-04
+
+- **The find panel now sits compactly in the top-right corner** instead of stretching across the chat. r373 relied on the overlay layer to both size and position it and got neither — it spanned nearly the full width and sat on the left
+- **The typed text is centred in the panel** rather than riding along its top edge
+- **The match counter reads 0/0 when nothing is found.** It used to say "No results", which did not fit and rendered as "No resul"
+
 ## r373 — 2026-08-04
 
 - **The find bar is now a small floating panel in the top-right corner of the chat**, the way a browser does it, instead of a full-width strip across the top. It hovers over the messages rather than pushing them down, so opening and closing it no longer reflows the chat, and it is a little chunkier with a proper drop shadow

@@ -288,3 +288,33 @@ def test_the_shortcut_does_nothing_outside_the_dashboard() -> None:
     app._on_keyboard_event(_key_event("Escape"))
     app._on_keyboard_event(_key_event("Tab"))
     assert calls == []
+
+
+def test_the_find_bar_floats_instead_of_pushing_the_messages_down() -> None:
+    """r373: asked for Chrome's shape — a small panel pinned top-right that
+    hovers over the content.
+
+    As a child of the chat box Column it took vertical space, so opening and
+    closing it reflowed every message. It has to live in the Stack that already
+    holds the message list, which is what makes it an overlay.
+    """
+    from pathlib import Path
+
+    source = Path("src/puripuly_heart/ui/views/dashboard.py").read_text(encoding="utf-8")
+
+    assert "self._notice_strip,\n                    self._find_bar," not in source, (
+        "the find bar is back in the chat box Column — it will push the "
+        "messages down every time it opens"
+    )
+    assert "content=self._find_bar," in source, (
+        "the find bar is not mounted in the Stack, so it will not render"
+    )
+
+    stack_at = source.index("content=ft.Stack(")
+    bar_at = source.index("content=self._find_bar,")
+    jump_at = source.index("content=self._chat_jump_btn,")
+    assert stack_at < bar_at, "the find bar is mounted before the Stack it belongs to"
+    assert jump_at < bar_at, (
+        "the find bar is stacked below the jump button; later children draw on "
+        "top, and it must be the topmost thing in the chat box"
+    )

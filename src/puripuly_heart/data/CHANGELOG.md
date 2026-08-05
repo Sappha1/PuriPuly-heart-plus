@@ -2,6 +2,10 @@
 
 User-facing changes per build. The latest build's highlights also appear in-app when an update is ready.
 
+## r373 — 2026-08-04
+
+- **The find bar is now a small floating panel in the top-right corner of the chat**, the way a browser does it, instead of a full-width strip across the top. It hovers over the messages rather than pushing them down, so opening and closing it no longer reflows the chat, and it is a little chunkier with a proper drop shadow
+
 ## r372 — 2026-08-04
 
 - **Ctrl+F now actually opens the find bar.** The shortcut first checks that the dashboard is the view on screen, and it was checking the wrong container — the one holding the top bar *and* the view, rather than the view itself — so the check could never pass and the key did nothing at all

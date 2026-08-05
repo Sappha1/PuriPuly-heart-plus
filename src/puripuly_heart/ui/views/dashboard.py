@@ -19,7 +19,7 @@ from puripuly_heart.ui.fonts import font_for_language
 from puripuly_heart.ui.i18n import get_locale, language_name, t
 from puripuly_heart.ui.overlay_peer_contract import OverlayPeerConsumerContract
 
-_BUILD_TAG = "r372"  #increment each build so user can confirm version
+_BUILD_TAG = "r373"  #increment each build so user can confirm version
 
 # ── VRCT-style dark palette ──────────────────────────────────────────────────
 _BG_MAIN = "#2e2f32"
@@ -36,6 +36,7 @@ _TOGGLE_ON = "#48a495"
 # r371: find-in-chat highlight. Every hit gets the translucent amber; the one
 # you are standing on goes opaque, which needs a dark foreground to stay legible
 # against it (caption text is light).
+_FIND_BAR_WIDTH = 330
 _FIND_MATCH_BG = "#59FFB300"
 _FIND_CURRENT_BG = "#FFB300"
 _FIND_CURRENT_FG = "#1A1A1A"
@@ -1553,10 +1554,10 @@ class DashboardView(ft.Row):
             label = t(key)
             return ft.IconButton(
                 icon=icon,
-                icon_size=16,
+                icon_size=18,
                 icon_color=_TEXT_MUTED,
-                width=28,
-                height=28,
+                width=30,
+                height=30,
                 tooltip=label if label != key else None,
                 on_click=handler,
                 style=ft.ButtonStyle(padding=ft.padding.all(0)),
@@ -1567,31 +1568,45 @@ class DashboardView(ft.Row):
             hint_text=_find_hint if _find_hint != "dashboard.find.hint" else "Find in chat",
             dense=True,
             expand=True,
-            height=32,
-            text_size=12,
+            height=34,
+            text_size=13,
             color=_TEXT_PRIMARY,
-            hint_style=ft.TextStyle(size=12, color=_TEXT_FAINT),
-            border_color="#3a3b3f",
-            focused_border_color=_TOGGLE_ON,
-            cursor_height=14,
-            content_padding=ft.padding.symmetric(horizontal=8, vertical=4),
+            hint_style=ft.TextStyle(size=13, color=_TEXT_FAINT),
+            # No box of its own: the panel is the frame, the way a browser's is.
+            border=ft.InputBorder.NONE,
+            cursor_color=_TOGGLE_ON,
+            cursor_height=16,
+            content_padding=ft.padding.symmetric(horizontal=0, vertical=6),
             on_change=self._on_find_query_change,
             on_submit=self._on_find_submit,
         )
         self._find_count = ft.Text(
-            "", size=11, color=_TEXT_FAINT, width=62,
+            "", size=12, color=_TEXT_FAINT, width=52,
             text_align=ft.TextAlign.RIGHT, no_wrap=True,
         )
         self._find_bar = ft.Container(
             visible=False,
-            bgcolor="#2a2b2e",
-            border=ft.border.only(bottom=ft.BorderSide(1, "#3a3b3f")),
-            padding=ft.padding.only(left=8, right=4, top=4, bottom=4),
+            width=_FIND_BAR_WIDTH,
+            # Opaque: it floats over the messages, so anything showing through
+            # would read as a rendering fault rather than a panel.
+            bgcolor="#33343a",
+            border=ft.border.all(1, "#55565a"),
+            border_radius=10,
+            padding=ft.padding.only(left=12, right=6, top=7, bottom=7),
+            shadow=ft.BoxShadow(
+                color="#73000000",
+                blur_radius=14,
+                spread_radius=0,
+                offset=ft.Offset(0, 4),
+            ),
             content=ft.Row(
                 [
-                    ft.Icon(ft.Icons.SEARCH, size=14, color=_TEXT_FAINT),
                     self._find_field,
                     self._find_count,
+                    ft.Container(
+                        width=1, height=20, bgcolor="#4b4c4f",
+                        margin=ft.margin.symmetric(horizontal=6),
+                    ),
                     _find_btn(ft.Icons.KEYBOARD_ARROW_UP, self._on_find_prev,
                               "dashboard.find.prev"),
                     _find_btn(ft.Icons.KEYBOARD_ARROW_DOWN, self._on_find_next,
@@ -1599,7 +1614,8 @@ class DashboardView(ft.Row):
                     _find_btn(ft.Icons.CLOSE, self._on_find_close,
                               "dashboard.find.close"),
                 ],
-                spacing=4,
+                spacing=0,
+                tight=True,
                 vertical_alignment=ft.CrossAxisAlignment.CENTER,
             ),
         )
@@ -1614,7 +1630,6 @@ class DashboardView(ft.Row):
                     # box so it never pushes the chat header or panel around;
                     # only the messages reflow beneath it.
                     self._notice_strip,
-                    self._find_bar,
                     ft.Container(
                         content=ft.Stack(
                             [
@@ -1630,6 +1645,14 @@ class DashboardView(ft.Row):
                                     left=0, right=0, bottom=6,
                                     alignment=ft.alignment.center,
                                     content=self._chat_jump_btn,
+                                ),
+                                # r373: pinned top-right and floating over the
+                                # messages, like a browser's. Last in the stack
+                                # so it draws above them, and outside the Column
+                                # so opening it reflows nothing.
+                                ft.Container(
+                                    right=4, top=4,
+                                    content=self._find_bar,
                                 ),
                             ],
                             expand=True,

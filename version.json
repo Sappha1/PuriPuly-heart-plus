@@ -1,11 +1,11 @@
 {
-  "build": 370,
-  "tag": "r370",
-  "date": "2026-08-02",
+  "build": 376,
+  "tag": "r376",
+  "date": "2026-08-05",
   "notes": [
-    "Caption styling for the overlay: character edge style (None, Drop shadow, Raised, Depressed, Outline) and a Text background slider, in the right-click menu",
-    "The Outline style now draws a real black rim — it was one pixel wide against captions many times that size, so it read as slightly bolder text",
-    "The Caption Style menu now opens on your saved settings, instead of always showing 0% and the default style",
-    "A setting that happened to match the saved value is no longer dropped in silence, so options no longer need moving away and back before they take"
+    "Ctrl+F searches the chat log, in a floating find bar in the top-right corner — type to highlight every match, Enter to step through them, Esc to close",
+    "It starts on the newest match rather than the oldest, and the results stay live as the conversation carries on",
+    "Pressing Ctrl+F again with a search already in the box lets you type straight over it",
+    "Tab to swap your languages works again — it had been dead for as long as the top bar has existed"
   ]
 }

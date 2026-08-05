@@ -19,7 +19,7 @@ from puripuly_heart.ui.fonts import font_for_language
 from puripuly_heart.ui.i18n import get_locale, language_name, t
 from puripuly_heart.ui.overlay_peer_contract import OverlayPeerConsumerContract
 
-_BUILD_TAG = "r370"  #increment each build so user can confirm version
+_BUILD_TAG = "r371"  #increment each build so user can confirm version
 
 # ── VRCT-style dark palette ──────────────────────────────────────────────────
 _BG_MAIN = "#2e2f32"
@@ -33,6 +33,12 @@ _TEXT_PRIMARY = "#f2f2f2"
 _TEXT_MUTED = "#a9aaae"
 _TEXT_FAINT = "#7f8084"
 _TOGGLE_ON = "#48a495"
+# r371: find-in-chat highlight. Every hit gets the translucent amber; the one
+# you are standing on goes opaque, which needs a dark foreground to stay legible
+# against it (caption text is light).
+_FIND_MATCH_BG = "#59FFB300"
+_FIND_CURRENT_BG = "#FFB300"
+_FIND_CURRENT_FG = "#1A1A1A"
 _TOGGLE_OFF = "#535457"
 _TOGGLE_ON_HOVER = "#55ac9e"
 _TOGGLE_WARNING = "#cf7b1b"
@@ -436,6 +442,18 @@ class DashboardView(ft.Row):
         self.history_items = []
         self._chat_entries: list[ft.Control] = []
         self._chat_list_view: ft.ListView | None = None
+        # r371: find-in-chat (Ctrl+F). _find_originals maps id(Text) -> (control,
+        # original value) so highlighting can be undone exactly; _find_matches is
+        # every hit in screen order as (entry, text control, start, end).
+        self._chat_entry_seq = 0
+        self._find_visible = False
+        self._find_query = ""
+        self._find_matches: list = []
+        self._find_index = -1
+        self._find_originals: dict = {}
+        self._find_bar = None
+        self._find_field = None
+        self._find_count = None
         self._single_turn_mode_backing: bool = True
 
         self._pending_sent_col: ft.Column | None = None
@@ -1528,6 +1546,64 @@ class DashboardView(ft.Row):
             tooltip=t("dashboard.jump_latest") if t("dashboard.jump_latest") != "dashboard.jump_latest" else "Jump to latest",
             visible=False,
         )
+        # ── Find in chat (r371) ──────────────────────────────────────────────
+        # Hidden until Ctrl+F. A strip at the top of the box rather than a
+        # floating panel, so it can never cover the messages being searched.
+        def _find_btn(icon, handler, key: str) -> ft.IconButton:
+            label = t(key)
+            return ft.IconButton(
+                icon=icon,
+                icon_size=16,
+                icon_color=_TEXT_MUTED,
+                width=28,
+                height=28,
+                tooltip=label if label != key else None,
+                on_click=handler,
+                style=ft.ButtonStyle(padding=ft.padding.all(0)),
+            )
+
+        _find_hint = t("dashboard.find.hint")
+        self._find_field = ft.TextField(
+            hint_text=_find_hint if _find_hint != "dashboard.find.hint" else "Find in chat",
+            dense=True,
+            expand=True,
+            height=32,
+            text_size=12,
+            color=_TEXT_PRIMARY,
+            hint_style=ft.TextStyle(size=12, color=_TEXT_FAINT),
+            border_color="#3a3b3f",
+            focused_border_color=_TOGGLE_ON,
+            cursor_height=14,
+            content_padding=ft.padding.symmetric(horizontal=8, vertical=4),
+            on_change=self._on_find_query_change,
+            on_submit=self._on_find_submit,
+        )
+        self._find_count = ft.Text(
+            "", size=11, color=_TEXT_FAINT, width=62,
+            text_align=ft.TextAlign.RIGHT, no_wrap=True,
+        )
+        self._find_bar = ft.Container(
+            visible=False,
+            bgcolor="#2a2b2e",
+            border=ft.border.only(bottom=ft.BorderSide(1, "#3a3b3f")),
+            padding=ft.padding.only(left=8, right=4, top=4, bottom=4),
+            content=ft.Row(
+                [
+                    ft.Icon(ft.Icons.SEARCH, size=14, color=_TEXT_FAINT),
+                    self._find_field,
+                    self._find_count,
+                    _find_btn(ft.Icons.KEYBOARD_ARROW_UP, self._on_find_prev,
+                              "dashboard.find.prev"),
+                    _find_btn(ft.Icons.KEYBOARD_ARROW_DOWN, self._on_find_next,
+                              "dashboard.find.next"),
+                    _find_btn(ft.Icons.CLOSE, self._on_find_close,
+                              "dashboard.find.close"),
+                ],
+                spacing=4,
+                vertical_alignment=ft.CrossAxisAlignment.CENTER,
+            ),
+        )
+
         # The message list (SelectionArea enables free Copy/Select-all of log text) plus
         # the floating jump button, stacked so the button overlays the bottom-center.
         chat_box = ft.Container(
@@ -1538,6 +1614,7 @@ class DashboardView(ft.Row):
                     # box so it never pushes the chat header or panel around;
                     # only the messages reflow beneath it.
                     self._notice_strip,
+                    self._find_bar,
                     ft.Container(
                         content=ft.Stack(
                             [
@@ -4486,6 +4563,9 @@ class DashboardView(ft.Row):
             margin=ft.margin.only(top=4),
         )
         self._last_chat_content_col = entry.content  # track for extra-language appends
+        # r371: a stable key per entry, so find can scroll to the match.
+        self._chat_entry_seq += 1
+        entry.key = f"chatentry-{self._chat_entry_seq}"
         self._chat_list_view.controls.append(entry)
         if len(self._chat_list_view.controls) > CHAT_MAX_ENTRIES:
             del self._chat_list_view.controls[:20]
@@ -4551,6 +4631,8 @@ class DashboardView(ft.Row):
                 margin=ft.margin.only(top=4),
             )
             self._last_chat_content_col = pending_col
+            self._chat_entry_seq += 1
+            entry.key = f"chatentry-{self._chat_entry_seq}"
             self._chat_list_view.controls.append(entry)
             if len(self._chat_list_view.controls) > CHAT_MAX_ENTRIES:
                 del self._chat_list_view.controls[:20]
@@ -4615,6 +4697,210 @@ class DashboardView(ft.Row):
 
     def _set_message_input_focused(self, focused: bool) -> None:
         self._message_input_focused = bool(focused)
+
+    # ── Find in chat (r371) ──────────────────────────────────────────────────
+    def open_find_bar(self) -> None:
+        """Ctrl+F. Idempotent — pressing it again just refocuses the field."""
+        if self._find_bar is None:
+            return
+        self._find_bar.visible = True
+        self._find_visible = True
+        self._safe_update(self._find_bar)
+        try:
+            self._find_field.focus()
+        except Exception:
+            pass
+        existing = (getattr(self._find_field, "value", "") or "").strip()
+        if existing:
+            self._run_find(existing)
+
+    def close_find_bar(self) -> bool:
+        """True when it actually closed, so Esc can fall through otherwise."""
+        if not self._find_visible or self._find_bar is None:
+            return False
+        self._clear_find_highlights()
+        self._find_matches = []
+        self._find_index = -1
+        self._find_query = ""
+        self._find_bar.visible = False
+        self._find_visible = False
+        if self._find_count is not None:
+            self._find_count.value = ""
+        self._safe_update(self._find_bar)
+        self._safe_update(self._chat_list_view)
+        return True
+
+    def is_find_bar_open(self) -> bool:
+        return bool(self._find_visible)
+
+    def _safe_update(self, control) -> None:
+        if control is None:
+            return
+        try:
+            if getattr(control, "page", None) is not None:
+                control.update()
+        except Exception:
+            pass
+
+    def _on_find_query_change(self, e) -> None:
+        self._run_find(getattr(e.control, "value", "") or "")
+
+    def _on_find_submit(self, e) -> None:
+        self.find_next()
+
+    def _on_find_next(self, e=None) -> None:
+        self.find_next()
+
+    def _on_find_prev(self, e=None) -> None:
+        self.find_prev()
+
+    def _on_find_close(self, e=None) -> None:
+        self.close_find_bar()
+
+    @staticmethod
+    def _find_walk_texts(node, depth: int = 0):
+        """Every ft.Text under `node`, in the order it is laid out."""
+        if node is None or depth > 30:
+            return
+        if isinstance(node, ft.Text):
+            yield node
+            return
+        for attr in ("content", "controls"):
+            child = getattr(node, attr, None)
+            if isinstance(child, (list, tuple)):
+                for item in child:
+                    yield from DashboardView._find_walk_texts(item, depth + 1)
+            elif child is not None:
+                yield from DashboardView._find_walk_texts(child, depth + 1)
+
+    def _find_iter_texts(self):
+        lv = self._chat_list_view
+        if lv is None:
+            return
+        for entry in list(getattr(lv, "controls", []) or []):
+            for text in self._find_walk_texts(entry):
+                yield entry, text
+
+    def _clear_find_highlights(self) -> None:
+        for control, original in list(self._find_originals.values()):
+            try:
+                control.value = original
+                control.spans = []
+            except Exception:
+                pass
+        self._find_originals = {}
+
+    def _run_find(self, query: str) -> None:
+        self._clear_find_highlights()
+        query = (query or "").strip()
+        self._find_query = query
+        self._find_matches = []
+        self._find_index = -1
+        if not query:
+            self._update_find_count()
+            self._safe_update(self._chat_list_view)
+            return
+
+        lowered = query.lower()
+        for entry, text in self._find_iter_texts():
+            value = getattr(text, "value", None) or ""
+            if not value:
+                continue
+            haystack = value.lower()
+            needle = lowered
+            if len(haystack) != len(value):
+                # Lowering changed the length (it does for some alphabets), so
+                # offsets into it no longer address the original. Match exactly
+                # rather than slice the wrong characters.
+                haystack, needle = value, query
+            at = haystack.find(needle)
+            while at != -1:
+                self._find_matches.append((entry, text, at, at + len(needle)))
+                at = haystack.find(needle, at + len(needle))
+
+        if self._find_matches:
+            # Start on the newest hit: a chat is read from the bottom, and the
+            # first match is usually far above what the user is looking at.
+            self._find_index = len(self._find_matches) - 1
+        self._refresh_find_view()
+
+    def find_next(self) -> None:
+        self._find_step(1)
+
+    def find_prev(self) -> None:
+        self._find_step(-1)
+
+    def _find_step(self, delta: int) -> None:
+        if not self._find_matches:
+            return
+        self._find_index = (self._find_index + delta) % len(self._find_matches)
+        self._refresh_find_view()
+
+    def _refresh_find_view(self) -> None:
+        self._apply_find_highlights()
+        self._update_find_count()
+        self._safe_update(self._chat_list_view)
+        self._scroll_to_current_match()
+
+    def _apply_find_highlights(self) -> None:
+        self._clear_find_highlights()
+        grouped: dict = {}
+        for position, (_entry, text, start, end) in enumerate(self._find_matches):
+            grouped.setdefault(id(text), (text, []))[1].append((start, end, position))
+
+        for control, ranges in grouped.values():
+            original = getattr(control, "value", None) or ""
+            if not original:
+                continue
+            self._find_originals[id(control)] = (control, original)
+            spans = []
+            cursor = 0
+            for start, end, position in sorted(ranges):
+                if start > cursor:
+                    spans.append(ft.TextSpan(original[cursor:start]))
+                current = position == self._find_index
+                spans.append(
+                    ft.TextSpan(
+                        original[start:end],
+                        ft.TextStyle(
+                            bgcolor=_FIND_CURRENT_BG if current else _FIND_MATCH_BG,
+                            color=_FIND_CURRENT_FG if current else None,
+                            weight=ft.FontWeight.W_600 if current else None,
+                        ),
+                    )
+                )
+                cursor = end
+            if cursor < len(original):
+                spans.append(ft.TextSpan(original[cursor:]))
+            control.value = ""
+            control.spans = spans
+
+    def _update_find_count(self) -> None:
+        if self._find_count is None:
+            return
+        total = len(self._find_matches)
+        if not self._find_query:
+            self._find_count.value = ""
+        elif not total:
+            none_label = t("dashboard.find.none")
+            self._find_count.value = (
+                none_label if none_label != "dashboard.find.none" else "0/0"
+            )
+        else:
+            self._find_count.value = f"{self._find_index + 1}/{total}"
+        self._safe_update(self._find_count)
+
+    def _scroll_to_current_match(self) -> None:
+        if not (0 <= self._find_index < len(self._find_matches)):
+            return
+        entry = self._find_matches[self._find_index][0]
+        key = getattr(entry, "key", None)
+        if not key or self._chat_list_view is None:
+            return
+        try:
+            self._chat_list_view.scroll_to(key=str(key), duration=200)
+        except Exception:
+            pass
 
     def handle_message_input_tab_key(self) -> bool:
         if not self._message_input_focused:

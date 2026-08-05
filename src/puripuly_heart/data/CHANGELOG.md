@@ -2,6 +2,10 @@
 
 User-facing changes per build. The latest build's highlights also appear in-app when an update is ready.
 
+## r371 — 2026-08-04
+
+- **Ctrl+F searches the chat log**, the way it does everywhere else. A find bar opens at the top of the chat box: type to highlight every match, Enter or the arrows to step through them, Esc to close. The counter shows which match you are on and how many there are, and it starts on the newest one — a chat is read from the bottom, and the first match is usually far above what you are looking at
+
 ## r370 — 2026-08-02
 
 - **The Outline edge style now reads as an outline.** Its colour was always black — the problem was the width. The rim was a fixed one pixel against captions that draw at 41–56px, roughly 2% of a character's height, where a video player's outline is nearer 6%. At that width it looks like slightly bolder text rather than a black edge. The rim now scales with the size actually drawn, and a second rim at half the width fills the gaps that open on the diagonals

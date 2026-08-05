@@ -1617,16 +1617,41 @@ class TranslatorApp:
             pass
 
     def _on_keyboard_event(self, event) -> None:
-        if getattr(event, "key", None) != "Tab":
+        key = getattr(event, "key", None)
+        dashboard = getattr(self, "view_dashboard", None)
+        content_area = getattr(self, "content_area", None)
+        on_dashboard = (
+            dashboard is not None
+            and getattr(content_area, "content", None) is dashboard
+        )
+
+        # r371: Ctrl+F opens find-in-chat, Esc closes it — the shortcut every
+        # other program has. Both are scoped to the dashboard so they cannot
+        # steal the key from Settings or a dialog.
+        if on_dashboard and isinstance(key, str) and key.lower() == "f":
+            if bool(getattr(event, "ctrl", False)) and not bool(
+                getattr(event, "alt", False)
+            ) and not bool(getattr(event, "meta", False)):
+                opener = getattr(dashboard, "open_find_bar", None)
+                if callable(opener):
+                    opener()
+                return
+        if on_dashboard and key == "Escape":
+            closer = getattr(dashboard, "close_find_bar", None)
+            if callable(closer):
+                try:
+                    if closer():
+                        return
+                except Exception:
+                    logger.exception("Failed to close the chat find bar")
+
+        if key != "Tab":
             return
         if any(
             bool(getattr(event, modifier, False)) for modifier in ("shift", "ctrl", "alt", "meta")
         ):
             return
-
-        dashboard = getattr(self, "view_dashboard", None)
-        content_area = getattr(self, "content_area", None)
-        if dashboard is None or getattr(content_area, "content", None) is not dashboard:
+        if not on_dashboard:
             return
 
         handler = getattr(dashboard, "handle_message_input_tab_key", None)

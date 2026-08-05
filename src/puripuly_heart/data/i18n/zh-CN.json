@@ -906,5 +906,10 @@
   "settings.overlay.edge_style.outline": "轮廓",
   "settings.overlay.text_background.title": "文字背景",
   "settings.overlay.text_background.tooltip": "在字幕文字本身后方绘制的色块，与整个字幕区域后方的面板是两回事。在明亮或杂乱的画面上调高它，可以保持文字清晰而无需压暗全部内容。",
-  "settings.overlay.edge_style": "边缘样式"
+  "settings.overlay.edge_style": "边缘样式",
+  "dashboard.find.hint": "在聊天中查找",
+  "dashboard.find.prev": "上一个",
+  "dashboard.find.next": "下一个",
+  "dashboard.find.close": "关闭（Esc）",
+  "dashboard.find.none": "无结果"
 }

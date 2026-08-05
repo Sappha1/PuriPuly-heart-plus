@@ -906,5 +906,10 @@
   "settings.overlay.edge_style.outline": "윤곽선",
   "settings.overlay.text_background.title": "글자 배경",
   "settings.overlay.text_background.tooltip": "자막 글자 자체의 뒤에 그려지는 상자로, 자막 영역 전체 뒤의 패널과는 별개입니다. 밝거나 복잡한 장면에서 전체를 어둡게 하지 않고 글자만 잘 보이게 합니다.",
-  "settings.overlay.edge_style": "테두리"
+  "settings.overlay.edge_style": "테두리",
+  "dashboard.find.hint": "대화에서 찾기",
+  "dashboard.find.prev": "이전 항목",
+  "dashboard.find.next": "다음 항목",
+  "dashboard.find.close": "닫기(Esc)",
+  "dashboard.find.none": "결과 없음"
 }

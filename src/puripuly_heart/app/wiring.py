@@ -718,25 +718,42 @@ def resolve_peer_stt_config(settings: AppSettings) -> ResolvedPeerSTTConfig:
         )
 
     if provider == STTProviderName.LOCAL_QWEN:
+        from puripuly_heart.core.language import get_local_qwen_language_hint
+
+        # Auto Detect ON  -> no hint, let the model decide (r310, below).
+        # Auto Detect OFF -> honour what the user pinned (r378).
+        #
+        # r308 passed the pinned peer language unconditionally; r310 reverted it
+        # after measuring the shipped model on SHORT segments (what the VAD
+        # actually emits):
+        #
+        #   EN speech, 1.3s slice, hint=None    -> "Hear me."      (transcribe)
+        #   EN speech, 1.3s slice, hint=Chinese -> "听我。"         (TRANSLATED)
+        #   JA speech, 1.3s slice, hint=English -> "The way of the king." (TRANSLATED)
+        #
+        # Long clean segments hide this, which is why r308's testing missed it.
+        # A WRONG hint turns the recognizer into a translator and makes foreign
+        # speech LOOK like the expected language, so hint-free stays the default.
+        #
+        # r378: but discarding an EXPLICIT pin as well meant the setting did
+        # nothing at all — silently ignored rather than honoured or disabled.
+        # Reported as an English speaker transcribed into Chinese: measured on
+        # this model, hint=None gave 0/5 Chinese on English clips and
+        # hint=Chinese gave 3/5, including the reported line verbatim, so the
+        # model's own detection is what picks Chinese. Pinning the language your
+        # partner actually speaks is the way out, and the documented risk is
+        # then the user's stated choice rather than a silent default.
+        pinned_peer_language = settings.languages.voice_peer_source_language
         return ResolvedPeerSTTConfig(
             provider=provider,
             source_language=peer_source_language,
             sample_rate_hz=STT_INTERNAL_SAMPLE_RATE_HZ,
             keyterms=(),
-            # NO language hint for the peer channel. r308 briefly passed the
-            # user's pinned peer language here; r310 reverted it after measuring
-            # the shipped model on SHORT segments (what the VAD actually emits):
-            #
-            #   EN speech, 1.3s slice, hint=None    -> "Hear me."      (transcribe)
-            #   EN speech, 1.3s slice, hint=Chinese -> "听我。"         (TRANSLATED)
-            #   JA speech, 1.3s slice, hint=English -> "The way of the king." (TRANSLATED)
-            #
-            # Long clean segments hide this (they transcribe correctly whatever
-            # the hint), which is why r308's testing missed it. Forcing a hint
-            # therefore turns the recognizer into a translator and makes foreign
-            # speech LOOK like the expected language — the exact failure the peer
-            # language filter cannot catch. Hint-free LID is the lesser evil.
-            language_hint=None,
+            language_hint=(
+                get_local_qwen_language_hint(pinned_peer_language)
+                if pinned_peer_language
+                else None
+            ),
         )
 
     if provider in (STTProviderName.GOOGLE_STT, STTProviderName.WHISPER):

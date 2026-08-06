@@ -2,6 +2,11 @@
 
 User-facing changes per build. The latest build's highlights also appear in-app when an update is ready.
 
+## r378 — 2026-08-05
+
+- **Choosing a language for your partner's voice now actually affects recognition.** With "Auto detect voice" turned OFF, the language you pick is passed to the local speech model; previously it was discarded, so the setting did nothing at all for that model. This is the way out if your partner's speech is being written down in the wrong language — pin the language they actually speak
+- Auto detect is unchanged and still decodes without a language hint. That is deliberate: forcing the *wrong* language on this model makes it translate rather than transcribe, which would make foreign speech look like the language you expected
+
 ## r377 — 2026-08-05
 
 - **Fixed settings and the find bar showing English on a non-English interface.** "Show what's new after updates", "Mic auto-gain", "Mic noise suppression", "Their volume auto-gain", "Speaker identification", "Manage", the On/Off values beside them, and the find box's "Find in chat" all stayed English however the interface language was set. None of it was a missing translation — every one of those was already translated in all four languages. The screens are built before your saved language is applied, so every label starts in English and only the ones on an internal list get corrected afterwards; these were never added to it

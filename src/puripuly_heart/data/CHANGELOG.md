@@ -2,6 +2,10 @@
 
 User-facing changes per build. The latest build's highlights also appear in-app when an update is ready.
 
+## r381 — 2026-08-06
+
+- **The overlay no longer disappears behind full-screen games.** It stays on top by re-asserting itself every few seconds, but that self-heal could never find its own window, so it had been doing nothing at all. The window was still marked always-on-top the whole time — it had simply been pushed underneath the game, which is why it looked switched on while nothing appeared on screen. If it ever fails to find its window now, it says so in the log instead of failing silently
+
 ## r380 — 2026-08-06
 
 - **Clicking an unnamed speaker no longer suggests someone else's name.** A line showing "Speaker 3" opened the naming box already filled in with a saved name — someone that line was not. A session's speaker group remembers whoever was recognised in it, and the app deliberately withholds that name from a voice that does not sound enough like them; the naming box was then asking for it anyway. Saving would have merged the two voices into one identity, which is exactly what the merge warning exists to prevent — except silently, because the box looked like it was confirming a name rather than creating one

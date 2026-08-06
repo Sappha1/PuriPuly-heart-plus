@@ -4080,27 +4080,72 @@ class FletDesktopRendererWindow:
     async def _return_preview_to_edit_mode(self) -> None:
         await self._set_interaction_mode(_DESKTOP_INTERACTION_MODE_EDIT, emit_event=True)
 
+    def _resolve_native_hwnd(self) -> int:
+        """This process's own top-level window.
+
+        r381: the previous implementation looked the window up by TITLE with
+        FindWindowW, and that call returns 0 for it. Verified against the live
+        overlay: EnumWindows finds hwnd 465188, title "PuriPuly Overlay" (16
+        plain ASCII characters), class FLUTTER_RUNNER_WIN32_WINDOW — while
+        FindWindowW with that exact string, and with the class name, both
+        return 0. The guard below therefore never had a handle to work with.
+
+        Asking which windows THIS process owns needs no title at all, so there
+        is nothing left to mis-match, localize, or rename.
+        """
+        try:
+            import ctypes
+            from ctypes import wintypes
+
+            user32 = ctypes.windll.user32
+            found: list[int] = []
+            own_pid = ctypes.windll.kernel32.GetCurrentProcessId()
+
+            @ctypes.WINFUNCTYPE(wintypes.BOOL, wintypes.HWND, wintypes.LPARAM)
+            def _visit(hwnd, _lparam):
+                pid = wintypes.DWORD()
+                user32.GetWindowThreadProcessId(hwnd, ctypes.byref(pid))
+                if pid.value == own_pid and user32.IsWindowVisible(hwnd):
+                    found.append(int(hwnd))
+                return True
+
+            user32.EnumWindows(_visit, 0)
+            return found[0] if found else 0
+        except Exception:
+            return 0
+
     def _reassert_native_topmost(self) -> None:
         """Force the overlay back into the TOPMOST band via Win32.
 
-        window.always_on_top=True is set at startup, but native restyles
-        (flet's ignore_mouse_events toggle on lock/pass-through changes)
-        can silently demote the window to the normal z-band — observed
-        live: Firefox/Discord/VRChat stacked ABOVE the overlay while
-        captions kept rendering into an invisible window. SetWindowPos
-        with HWND_TOPMOST is idempotent and cheap; call it after every
-        window mutation and from the periodic guard."""
+        window.always_on_top=True is set at startup, but that only asks once.
+        A full-screen game taking the foreground pushes the overlay down the
+        z-order WITHOUT clearing WS_EX_TOPMOST — measured live at position ten,
+        under the game, still flagged topmost, captions rendering into a window
+        nobody could see.
+
+        r381: one SetWindowPos(HWND_TOPMOST) is enough to re-sort it — measured
+        on the buried window, which went from z-position 8 to 1 on a single
+        call. The reason nothing recovered was never the call; it was that the
+        handle below was always 0.
+        """
         try:
             import ctypes
+
             hwnd = getattr(self, "_native_hwnd", 0)
             if not hwnd:
-                hwnd = ctypes.windll.user32.FindWindowW(
-                    None, self._window_title_value or "PuriPuly Overlay")
+                hwnd = self._resolve_native_hwnd()
                 self._native_hwnd = hwnd
+                if hwnd:
+                    logger.info("[DesktopOverlay][Topmost] window handle resolved")
+                elif not getattr(self, "_topmost_unresolved_logged", False):
+                    self._topmost_unresolved_logged = True
+                    logger.warning(
+                        "[DesktopOverlay][Topmost] could not resolve this "
+                        "process's window; the always-on-top guard cannot run"
+                    )
             if hwnd:
-                # HWND_TOPMOST(-1), SWP_NOMOVE|NOSIZE|NOACTIVATE
-                ctypes.windll.user32.SetWindowPos(
-                    hwnd, -1, 0, 0, 0, 0, 0x13)
+                # HWND_TOPMOST(-1), SWP_NOMOVE|SWP_NOSIZE|SWP_NOACTIVATE
+                ctypes.windll.user32.SetWindowPos(hwnd, -1, 0, 0, 0, 0, 0x13)
         except Exception:
             pass
 

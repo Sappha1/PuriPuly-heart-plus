@@ -683,6 +683,18 @@ class SettingsView(ft.Column):
                 rows = []
                 self._tooltip_literal_rows = rows
             rows.append((info_icon, tip))
+        # r379: let a long label SHRINK instead of overflowing. This Row is
+        # tight (sizes to content), so without this a label wider than the space
+        # available runs over the value column and hides the button — which is
+        # what "Separate 'Text Translation' box on the dashboard" did. expand_loose
+        # lets the text take what it needs UP TO the space on offer and give way
+        # after that; two lines then an ellipsis, rather than one endless line.
+        if getattr(text_ctrl, "expand", None) is None:
+            text_ctrl.expand_loose = True
+        if getattr(text_ctrl, "max_lines", None) is None:
+            text_ctrl.max_lines = 2
+        if getattr(text_ctrl, "overflow", None) is None:
+            text_ctrl.overflow = ft.TextOverflow.ELLIPSIS
         return ft.Row(
             [text_ctrl, info_icon],
             spacing=0,

@@ -2,6 +2,10 @@
 
 User-facing changes per build. The latest build's highlights also appear in-app when an update is ready.
 
+## r379 — 2026-08-06
+
+- **A long setting name no longer hides its own button.** "Separate 'Text Translation' box" ran past the edge of its row and pushed the On/Off control out of sight, so the setting could be read but not changed. Every settings row now lets a long name wrap to two lines and trim with "…" instead of overflowing, and the value column keeps its place whatever the label says — this affects all languages, where names are often longer than the English
+
 ## r378 — 2026-08-05
 
 - **Choosing a language for your partner's voice now actually affects recognition.** With "Auto detect voice" turned OFF, the language you pick is passed to the local speech model; previously it was discarded, so the setting did nothing at all for that model. This is the way out if your partner's speech is being written down in the wrong language — pin the language they actually speak

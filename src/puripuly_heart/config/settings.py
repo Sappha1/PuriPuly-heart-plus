@@ -67,11 +67,16 @@ DESKTOP_FLET_SIZE_PRESETS: dict[str, tuple[int, int]] = {
 }
 DESKTOP_FLET_DEFAULT_WIDTH = DESKTOP_FLET_SIZE_PRESETS[DESKTOP_FLET_DEFAULT_SIZE_PRESET][0]
 DESKTOP_FLET_DEFAULT_HEIGHT = DESKTOP_FLET_SIZE_PRESETS[DESKTOP_FLET_DEFAULT_SIZE_PRESET][1]
+# r380: ships EMPTY. This used to seed every new install with two personal
+# names lifted from the author's own contacts — private data sitting in a
+# public repository since the first release, and meaningless vocabulary for
+# anybody else. Custom vocabulary is something a user adds for the people THEY
+# talk to; there is no sensible global default.
 DEFAULT_CUSTOM_VOCAB_TERMS: dict[str, tuple[str, ...]] = {
-    "ko": ("아이리", "시나노"),
-    "en": ("airi", "shinano"),
-    "zh-CN": ("airi", "shinano"),
-    "ja": ("airi", "shinano"),
+    "ko": (),
+    "en": (),
+    "zh-CN": (),
+    "ja": (),
 }
 LEGACY_QWEN_DEFAULT_PROMPT = (
     "VRChat social voice chat interpretation. Use spoken, conversational language and mirror "

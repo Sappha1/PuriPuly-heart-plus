@@ -111,7 +111,7 @@ def make_peer_runtime_config(output_device: str = "Headphones (Loopback)") -> Pe
         provider=STTProviderName.DEEPGRAM,
         source_language="ko",
         sample_rate_hz=16000,
-        keyterms=("아이리", "시나노"),
+        keyterms=("Alex", "Robin"),
         deepgram_model="nova-3",
     )
     provider_signature = (

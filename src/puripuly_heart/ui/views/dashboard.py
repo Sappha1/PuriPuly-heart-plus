@@ -19,7 +19,7 @@ from puripuly_heart.ui.fonts import font_for_language
 from puripuly_heart.ui.i18n import get_locale, language_name, t
 from puripuly_heart.ui.overlay_peer_contract import OverlayPeerConsumerContract
 
-_BUILD_TAG = "r379"  #increment each build so user can confirm version
+_BUILD_TAG = "r380"  #increment each build so user can confirm version
 
 # ── VRCT-style dark palette ──────────────────────────────────────────────────
 _BG_MAIN = "#2e2f32"
@@ -4099,11 +4099,20 @@ class DashboardView(ft.Row):
         """
         if self.page is None:
             return
+        # r380: ONLY the name the line actually showed. There used to be a
+        # fallback here that asked the registry for the cluster's name whenever
+        # the line had none — but a cluster keeps the name of whoever was
+        # matched in it earlier, and the matcher deliberately WITHHOLDS that
+        # name from a voice that does not resemble the person well enough
+        # (see STICKY_NAME_THRESHOLD). So the fallback only ever fired in the
+        # one case where guessing is wrong: it re-proposed a name the matcher
+        # had just refused, on a line the chat had shown as "Speaker N".
+        #
+        # Pre-filling it is not cosmetic — pressing Save would merge this voice
+        # into that person's stored identity, which is the catastrophe r341's
+        # merge warning exists to prevent, except silently, because the dialog
+        # looks like it is confirming a name rather than creating one.
         known_name = (known_name or "").strip()
-        lookup = getattr(self, "on_speaker_name_lookup", None)
-        if not known_name and callable(lookup):
-            with contextlib.suppress(Exception):
-                known_name = str(lookup(cluster_id) or "")
 
         def _variant_count(name: str) -> int:
             counter = getattr(self, "on_speaker_variant_count", None)

@@ -5,12 +5,17 @@ from puripuly_heart.config.settings import AppSettings
 from puripuly_heart.core.stt.custom_vocab import get_effective_custom_terms
 
 
-def test_get_effective_custom_terms_uses_seeded_defaults_for_fresh_settings() -> None:
+def test_a_fresh_install_seeds_no_custom_vocabulary() -> None:
+    """r380: this used to ship two personal names — real people from the
+    author's own contacts, sitting in a public repository and pushed into every
+    new install. Custom vocabulary is for the people YOU talk to; there is no
+    sensible global default, so the default is nothing."""
     settings = AppSettings()
 
-    assert get_effective_custom_terms(settings, "ko") == ["아이리", "시나노"]
-    assert get_effective_custom_terms(settings, "en") == ["airi", "shinano"]
-    assert get_effective_custom_terms(settings, "zh-CN") == ["airi", "shinano"]
+    for language in ("ko", "en", "zh-CN", "ja"):
+        assert get_effective_custom_terms(settings, language) == [], (
+            f"{language} still ships seeded vocabulary"
+        )
 
 
 def test_get_effective_custom_terms_reads_current_language_bucket_only() -> None:

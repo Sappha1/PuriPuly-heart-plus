@@ -2971,7 +2971,7 @@ def test_peer_stt_runtime_custom_vocabulary_signature_is_disabled() -> None:
     settings.stt.custom_vocabulary_enabled = True
     settings.stt.custom_terms = {
         "ko": ["Puripuly"],
-        "zh-CN": ["airi", "shinano"],
+        "zh-CN": ["Alex", "Robin"],
     }
 
     assert controller._peer_stt_runtime_custom_vocabulary_signature(settings) == (False, ())

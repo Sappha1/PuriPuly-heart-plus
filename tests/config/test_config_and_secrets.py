@@ -1236,10 +1236,10 @@ def test_load_settings_backfills_v4_peer_blocks_from_schema3_fixture(tmp_path) -
             "low_latency_spec_retry_max": 10,
             "custom_vocabulary_enabled": True,
             "custom_terms": {
-                "ko": ["아이리", "시나노"],
-                "en": ["airi", "shinano"],
-                "zh-CN": ["airi", "shinano"],
-                "ja": ["airi", "shinano"],
+                "ko": ["Alex", "Robin"],
+                "en": ["Alex", "Robin"],
+                "zh-CN": ["Alex", "Robin"],
+                "ja": ["Alex", "Robin"],
             },
         },
         "deepgram_stt": {"model": "nova-3"},
@@ -1660,12 +1660,15 @@ def test_stt_custom_vocabulary_missing_keys_default():
 
     loaded = from_dict(data)
 
-    assert loaded.stt.custom_vocabulary_enabled is True
+    # r380: nothing is seeded any more, and the flag is derived from whether
+    # any terms exist — so a fresh install has the feature OFF rather than ON
+    # with somebody else's contacts in it.
+    assert loaded.stt.custom_vocabulary_enabled is False
     assert loaded.stt.custom_terms == {
-        "ko": ["아이리", "시나노"],
-        "en": ["airi", "shinano"],
-        "zh-CN": ["airi", "shinano"],
-        "ja": ["airi", "shinano"],
+        "ko": [],
+        "en": [],
+        "zh-CN": [],
+        "ja": [],
     }
 
 
@@ -1678,21 +1681,24 @@ def test_load_settings_backfills_seeded_custom_vocabulary_defaults(tmp_path):
 
     loaded = load_settings(path)
 
-    assert loaded.stt.custom_vocabulary_enabled is True
+    # r380: nothing is seeded any more, and the flag is derived from whether
+    # any terms exist — so a fresh install has the feature OFF rather than ON
+    # with somebody else's contacts in it.
+    assert loaded.stt.custom_vocabulary_enabled is False
     assert loaded.stt.custom_terms == {
-        "ko": ["아이리", "시나노"],
-        "en": ["airi", "shinano"],
-        "zh-CN": ["airi", "shinano"],
-        "ja": ["airi", "shinano"],
+        "ko": [],
+        "en": [],
+        "zh-CN": [],
+        "ja": [],
     }
 
     persisted = json.loads(path.read_text(encoding="utf-8"))
-    assert persisted["stt"]["custom_vocabulary_enabled"] is True
+    assert persisted["stt"]["custom_vocabulary_enabled"] is False
     assert persisted["stt"]["custom_terms"] == {
-        "ko": ["아이리", "시나노"],
-        "en": ["airi", "shinano"],
-        "zh-CN": ["airi", "shinano"],
-        "ja": ["airi", "shinano"],
+        "ko": [],
+        "en": [],
+        "zh-CN": [],
+        "ja": [],
     }
 
 

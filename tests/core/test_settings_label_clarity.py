@@ -21,7 +21,10 @@ RENAMED = {
     "settings.live_preview": "Show my message while it translates",
     "settings.chatbox_send_peer":
         "Loopback — send their speech to the VRChat chatbox",
-    "settings.separate_text_translation": "Separate 'Text Translation' box on the dashboard",
+    # r379: "on the dashboard" dropped — it overflowed the row and hid the
+    # setting's own On/Off button. The label still states the effect; where the
+    # box appears is the tooltip's job.
+    "settings.separate_text_translation": "Separate 'Text Translation' box",
     "settings.audio_host_api": "Audio host",
     "settings.section.self_vad_sensitivity": "Mic sensitivity",
     "settings.section.peer_vad_sensitivity": "Their voice sensitivity",

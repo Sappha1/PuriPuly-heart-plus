@@ -2,6 +2,11 @@
 
 User-facing changes per build. The latest build's highlights also appear in-app when an update is ready.
 
+## r380 — 2026-08-06
+
+- **Clicking an unnamed speaker no longer suggests someone else's name.** A line showing "Speaker 3" opened the naming box already filled in with a saved name — someone that line was not. A session's speaker group remembers whoever was recognised in it, and the app deliberately withholds that name from a voice that does not sound enough like them; the naming box was then asking for it anyway. Saving would have merged the two voices into one identity, which is exactly what the merge warning exists to prevent — except silently, because the box looked like it was confirming a name rather than creating one
+- **Custom vocabulary now starts empty.** New installs were seeded with two example names that meant nothing to anyone else, and the feature switched itself on to use them. It now starts off, with nothing in it, until you add your own
+
 ## r379 — 2026-08-06
 
 - **A long setting name no longer hides its own button.** "Separate 'Text Translation' box" ran past the edge of its row and pushed the On/Off control out of sight, so the setting could be read but not changed. Every settings row now lets a long name wrap to two lines and trim with "…" instead of overflowing, and the value column keeps its place whatever the label says — this affects all languages, where names are often longer than the English

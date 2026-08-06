@@ -984,7 +984,7 @@ def test_create_stt_backend_deepgram_uses_settings_and_secret() -> None:
     assert backend.model == "nova-3"
     assert backend.sample_rate_hz == 16000
     assert backend.language == get_deepgram_language(settings.languages.source_language)
-    assert list(backend.keyterms) == ["아이리", "시나노"]
+    assert list(backend.keyterms) == ["Alex", "Robin"]
 
 
 def test_create_stt_backend_deepgram_passes_effective_custom_terms() -> None:
@@ -1247,7 +1247,7 @@ def test_create_peer_stt_backend_local_qwen_uses_peer_language_without_hotwords(
     settings.languages.peer_source_language = "zh-CN"
     settings.stt.custom_vocabulary_enabled = True
     settings.stt.custom_terms = {
-        "zh-CN": ["airi", "shinano", *[f"term-{i:02d}" for i in range(20)]],
+        "zh-CN": ["Alex", "Robin", *[f"term-{i:02d}" for i in range(20)]],
     }
     secrets = InMemorySecretStore()
 
@@ -1360,7 +1360,7 @@ def test_create_stt_backend_soniox_uses_secret() -> None:
     backend = create_stt_backend(settings, secrets=secrets)
     assert isinstance(backend, SonioxRealtimeSTTBackend)
     assert backend.api_key == "k6"
-    assert list(backend.context_terms) == ["아이리", "시나노"]
+    assert list(backend.context_terms) == ["Alex", "Robin"]
 
 
 def test_create_stt_backend_soniox_passes_effective_custom_terms() -> None:

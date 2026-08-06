@@ -6438,7 +6438,7 @@ def test_custom_vocabulary_loads_current_source_language_bucket(
     assert view._custom_vocab_terms.border_color == settings_view.COLOR_DIVIDER
 
 
-def test_custom_vocabulary_loads_seeded_settings_defaults_as_initial_value(
+def test_custom_vocabulary_starts_empty_on_a_fresh_install(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     settings = AppSettings()
@@ -6447,11 +6447,11 @@ def test_custom_vocabulary_loads_seeded_settings_defaults_as_initial_value(
     view, _ = _make_settings_view(monkeypatch)
     view.load_from_settings(settings, config_path=Path("settings.json"))
 
-    assert view._custom_vocab_terms.value == "아이리\n시나노"
+    assert view._custom_vocab_terms.value == ""
     assert view._custom_vocab_terms.helper_text == ""
 
 
-def test_custom_vocabulary_loads_seeded_settings_defaults_for_zh_cn(
+def test_custom_vocabulary_starts_empty_for_zh_cn(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     settings = AppSettings()
@@ -6460,11 +6460,11 @@ def test_custom_vocabulary_loads_seeded_settings_defaults_for_zh_cn(
     view, _ = _make_settings_view(monkeypatch)
     view.load_from_settings(settings, config_path=Path("settings.json"))
 
-    assert view._custom_vocab_terms.value == "airi\nshinano"
+    assert view._custom_vocab_terms.value == ""
     assert view._custom_vocab_terms.helper_text == ""
 
 
-def test_custom_vocabulary_loads_seeded_settings_defaults_for_ja(
+def test_custom_vocabulary_starts_empty_for_ja(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     settings = AppSettings()
@@ -6473,7 +6473,7 @@ def test_custom_vocabulary_loads_seeded_settings_defaults_for_ja(
     view, _ = _make_settings_view(monkeypatch)
     view.load_from_settings(settings, config_path=Path("settings.json"))
 
-    assert view._custom_vocab_terms.value == "airi\nshinano"
+    assert view._custom_vocab_terms.value == ""
     assert view._custom_vocab_terms.helper_text == ""
 
 
@@ -6924,11 +6924,13 @@ def test_custom_vocabulary_caps_to_100_terms_and_shows_snackbar(
     view._on_custom_vocabulary_terms_change(None)
     view._on_custom_vocabulary_terms_blur(None)
 
+    # r380: the other buckets are empty now that nothing is seeded — only the
+    # language being edited holds anything.
     assert settings.stt.custom_terms == {
         "ko": terms[:100],
-        "en": ["airi", "shinano"],
-        "zh-CN": ["airi", "shinano"],
-        "ja": ["airi", "shinano"],
+        "en": [],
+        "zh-CN": [],
+        "ja": [],
     }
     assert settings.stt.custom_vocabulary_enabled is True
     assert view._custom_vocab_terms.value == "\n".join(terms[:100])

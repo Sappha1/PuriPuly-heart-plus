@@ -5972,6 +5972,17 @@ class SettingsView(ft.Column):
                 (getattr(self, "_ptt_mute_sync_text", None), "settings.option.on" if bool(getattr(_ui, "ptt_mute_sync", False)) else "settings.option.off"),
                 (getattr(self, "_steamvr_autolaunch_text", None), "settings.option.on" if bool(getattr(_ui, "autolaunch_with_steamvr", False)) else "settings.option.off"),
                 (getattr(self, "_auto_download_updates_text", None), "settings.option.on" if bool(getattr(_ui, "auto_download_updates", True)) else "settings.option.off"),
+                # r377: these five read On/Off in English on a Chinese UI —
+                # their labels were only ever set when the value changed, and a
+                # locale switch is not a value change.
+                (getattr(self, "_update_notes_text", None), "common.on" if bool(getattr(_ui, "show_update_notes_on_launch", True)) else "common.off"),
+                (getattr(self, "_speaker_id_text", None), "common.on" if bool(getattr(_stt, "speaker_id", True)) else "common.off"),
+                (getattr(self, "_mic_auto_gain_text", None), "common.on" if bool(getattr(_stt, "mic_auto_gain", True)) else "common.off"),
+                (getattr(self, "_mic_denoise_text", None), "common.on" if bool(getattr(_stt, "mic_denoise", False)) else "common.off"),
+                (getattr(self, "_auto_gain_text", None), "common.on" if bool(getattr(getattr(_s, "desktop_audio", None), "auto_gain", True)) else "common.off"),
+                (getattr(self, "_separate_text_text", None), "settings.option.on" if not bool(getattr(_ui, "unified_translation_ui", True)) else "settings.option.off"),
+                # Static label, but built at construction like the rest.
+                (getattr(self, "_saved_voices_text", None), "settings.saved_voices.manage"),
             ]
             for _ctrl, _key in _onoff_labels:
                 _content = getattr(_ctrl, "content", None)
@@ -5981,6 +5992,43 @@ class SettingsView(ft.Column):
             # Overlay-tab On/Off values + provider labels.
             with contextlib.suppress(Exception):
                 self._sync_overlay_controls()
+
+        # r377: rows whose titles were built inline with t() and never
+        # re-translated. The view is constructed before the saved locale is
+        # applied, so anything missing from here is stuck in English for the
+        # whole session — which is what a Chinese UI showing "Mic auto-gain"
+        # actually was.
+        for _attr, _key in (
+            ("_update_notes_title", "settings.update_notes"),
+            ("_speaker_id_title", "settings.speaker_id"),
+            ("_mic_auto_gain_title", "settings.mic_auto_gain"),
+            ("_mic_denoise_title", "settings.mic_denoise"),
+            ("_auto_gain_title", "settings.peer_auto_gain"),
+            ("_overlay_show_self_title", "settings.self_in_overlay"),
+            ("_overlay_single_turn_title", "settings.overlay.single_turn_mode"),
+        ):
+            _ctrl = getattr(self, _attr, None)
+            if _ctrl is not None:
+                with contextlib.suppress(Exception):
+                    _ctrl.value = t(_key)
+
+        # These hold live state or device NAMES, so they are refreshed by
+        # re-running their own setter. Forcing them to a key would replace the
+        # user's chosen microphone with the word "Default".
+        with contextlib.suppress(Exception):
+            self._sync_general_audio_card_texts()
+        with contextlib.suppress(Exception):
+            self._sync_managed_key_referral_row_value()
+        with contextlib.suppress(Exception):
+            self._sync_openrouter_fallback_card()
+        with contextlib.suppress(Exception):
+            self._sync_prompt_tab_copy()
+        with contextlib.suppress(Exception):
+            self._sync_desktop_overlay_status_control()
+        with contextlib.suppress(Exception):
+            self._set_openrouter_fallback_text(
+                self._get_openrouter_fallback_display_label(self._settings)
+            )
 
         # Section titles
         self._stt_title.value = t("settings.section.stt")

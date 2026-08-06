@@ -19,7 +19,7 @@ from puripuly_heart.ui.fonts import font_for_language
 from puripuly_heart.ui.i18n import get_locale, language_name, t
 from puripuly_heart.ui.overlay_peer_contract import OverlayPeerConsumerContract
 
-_BUILD_TAG = "r376"  #increment each build so user can confirm version
+_BUILD_TAG = "r377"  #increment each build so user can confirm version
 
 # ── VRCT-style dark palette ──────────────────────────────────────────────────
 _BG_MAIN = "#2e2f32"
@@ -1557,9 +1557,11 @@ class DashboardView(ft.Row):
         # ── Find in chat (r371) ──────────────────────────────────────────────
         # Hidden until Ctrl+F. A strip at the top of the box rather than a
         # floating panel, so it can never cover the messages being searched.
+        self._find_buttons: list = []
+
         def _find_btn(icon, handler, key: str) -> ft.IconButton:
             label = t(key)
-            return ft.IconButton(
+            button = ft.IconButton(
                 icon=icon,
                 icon_size=18,
                 icon_color=_TEXT_MUTED,
@@ -1569,6 +1571,9 @@ class DashboardView(ft.Row):
                 on_click=handler,
                 style=ft.ButtonStyle(padding=ft.padding.all(0)),
             )
+            # r377: kept so apply_locale can re-translate the tooltip.
+            self._find_buttons.append((button, key))
+            return button
 
         _find_hint = t("dashboard.find.hint")
         self._find_field = ft.TextField(
@@ -7263,6 +7268,20 @@ class DashboardView(ft.Row):
             pass
 
     def apply_locale(self) -> None:
+        # r377: the find bar is built with the rest of the dashboard, which
+        # happens BEFORE the saved locale is applied — so without this its
+        # placeholder and button tooltips are English for the whole session,
+        # however the UI language is set.
+        _find_hint = t("dashboard.find.hint")
+        if self._find_field is not None and _find_hint != "dashboard.find.hint":
+            with contextlib.suppress(Exception):
+                self._find_field.hint_text = _find_hint
+        for _btn, _key in getattr(self, "_find_buttons", ()):
+            _label = t(_key)
+            if _label != _key:
+                with contextlib.suppress(Exception):
+                    _btn.tooltip = _label
+
         self._row_stt.set_label(t("dashboard.stt_label"))
         self._row_peer.set_label(t("dashboard.peer_label"))
         self._row_trans.set_label(t("dashboard.trans_label"))

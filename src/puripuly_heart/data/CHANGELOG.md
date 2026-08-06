@@ -2,6 +2,10 @@
 
 User-facing changes per build. The latest build's highlights also appear in-app when an update is ready.
 
+## r377 — 2026-08-05
+
+- **Fixed settings and the find bar showing English on a non-English interface.** "Show what's new after updates", "Mic auto-gain", "Mic noise suppression", "Their volume auto-gain", "Speaker identification", "Manage", the On/Off values beside them, and the find box's "Find in chat" all stayed English however the interface language was set. None of it was a missing translation — every one of those was already translated in all four languages. The screens are built before your saved language is applied, so every label starts in English and only the ones on an internal list get corrected afterwards; these were never added to it
+
 ## r376 — 2026-08-05
 
 - **The find results now keep up with the conversation.** With the find bar open, a message arriving underneath it was never searched: it stayed unhighlighted and the counter stopped moving. Every new, updated or cleared message now re-runs the search. Your place is kept — the highlight does not jump to the newest match every time someone speaks — and the chat is not scrolled out from under you while you read

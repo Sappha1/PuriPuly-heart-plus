@@ -718,42 +718,37 @@ def resolve_peer_stt_config(settings: AppSettings) -> ResolvedPeerSTTConfig:
         )
 
     if provider == STTProviderName.LOCAL_QWEN:
-        from puripuly_heart.core.language import get_local_qwen_language_hint
-
-        # Auto Detect ON  -> no hint, let the model decide (r310, below).
-        # Auto Detect OFF -> honour what the user pinned (r378).
-        #
-        # r308 passed the pinned peer language unconditionally; r310 reverted it
-        # after measuring the shipped model on SHORT segments (what the VAD
-        # actually emits):
-        #
-        #   EN speech, 1.3s slice, hint=None    -> "Hear me."      (transcribe)
-        #   EN speech, 1.3s slice, hint=Chinese -> "听我。"         (TRANSLATED)
-        #   JA speech, 1.3s slice, hint=English -> "The way of the king." (TRANSLATED)
-        #
-        # Long clean segments hide this, which is why r308's testing missed it.
-        # A WRONG hint turns the recognizer into a translator and makes foreign
-        # speech LOOK like the expected language, so hint-free stays the default.
-        #
-        # r378: but discarding an EXPLICIT pin as well meant the setting did
-        # nothing at all — silently ignored rather than honoured or disabled.
-        # Reported as an English speaker transcribed into Chinese: measured on
-        # this model, hint=None gave 0/5 Chinese on English clips and
-        # hint=Chinese gave 3/5, including the reported line verbatim, so the
-        # model's own detection is what picks Chinese. Pinning the language your
-        # partner actually speaks is the way out, and the documented risk is
-        # then the user's stated choice rather than a silent default.
-        pinned_peer_language = settings.languages.voice_peer_source_language
         return ResolvedPeerSTTConfig(
             provider=provider,
             source_language=peer_source_language,
             sample_rate_hz=STT_INTERNAL_SAMPLE_RATE_HZ,
             keyterms=(),
-            language_hint=(
-                get_local_qwen_language_hint(pinned_peer_language)
-                if pinned_peer_language
-                else None
-            ),
+            # NO language hint for the peer channel, ever.
+            #
+            # This model reads `language` as the language to PRODUCE, not the
+            # language to expect, so any hint that is not what the speaker is
+            # actually saying turns it into a translator:
+            #
+            #   EN speech, hint=None    -> "Hear me."      (transcribed)
+            #   EN speech, hint=Chinese -> "听我。"          (TRANSLATED)
+            #   JA speech, hint=English -> "The way of the king." (TRANSLATED)
+            #
+            # r378 passed the user's pinned peer language when Auto Detect was
+            # off, to give them a lever after the model's own detection wrote
+            # short English ("bye bye", "hi") in Chinese. r382 reverts it. In a
+            # room where everyone spoke English with the peer language left on
+            # Chinese, EVERY line was translated into Chinese by the recognizer
+            # and then translated back to English by the translator -- the
+            # user's own sentences returned to them via a round trip, with no
+            # sign anything had gone wrong.
+            #
+            # The lever only helps when the pinned language is what is being
+            # spoken, and nothing here can tell a correct pin from a stale one:
+            # the control that sets it is the dashboard's language picker, which
+            # people reasonably read as "what I want to read". A wrong hint
+            # fabricates fluent, plausible content, which is far worse than the
+            # occasional mis-spelled short word it was meant to fix.
+            language_hint=None,
         )
 
     if provider in (STTProviderName.GOOGLE_STT, STTProviderName.WHISPER):

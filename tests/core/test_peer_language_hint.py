@@ -1,19 +1,26 @@
-"""r378: an explicit peer language must reach the local recogniser.
+"""r382: the peer recogniser is never given a language hint.
 
-Reported as an English-speaking friend appearing in Chinese characters with
-translation off. Nothing was translating — the peer channel decodes with no
-language hint, so the model's own detection chose Chinese and wrote English
-speech down in Chinese.
+r378 passed the user's pinned peer language when Auto Detect was off, to give
+them a lever after the model's own detection wrote short English ("bye bye",
+"hi") in Chinese characters.
 
-Measured on the shipped model over synthesised English clips:
+It was reverted after it did real damage. In an English-only room with the peer
+language left on Chinese, EVERY line was translated into Chinese by the
+recogniser and then translated back to English by the translator — the speaker's
+own sentence returned to them via a round trip, reading naturally, with nothing
+to indicate anything had gone wrong:
 
-    hint=None     0/5 Chinese     "Oh, I see. Right, so."
-    hint=English  0/5 Chinese
-    hint=Chinese  3/5 Chinese     "哦，我 see， right， so."
+    spoken     "I—no—don't know how to close it."
+    recognised "我，不，知道怎么close。"          <- translated, not transcribed
+    translated "—no—don't know how to close it."  <- back again
 
-The last line is the reported symptom verbatim. Hint-free therefore stays the
-default (r310: a WRONG hint turns this model into a translator), but discarding
-an EXPLICIT pin as well left the setting doing nothing at all.
+This model reads `language` as the language to PRODUCE, not the language to
+expect, so any hint that is not what is actually being spoken turns it into a
+translator. The lever only helps when the pinned language is right, and nothing
+can tell a correct pin from a stale one — the control that sets it is the
+dashboard language picker, which people reasonably read as "what I want to
+read". A wrong hint fabricates fluent, plausible content; the fault it was
+meant to fix was an occasional mis-spelled short word.
 """
 from __future__ import annotations
 
@@ -30,36 +37,26 @@ def _settings(*, auto_detect: bool, peer_language: str) -> AppSettings:
     return s
 
 
-def test_auto_detect_still_decodes_hint_free() -> None:
-    """r310's protection, unchanged: with Auto Detect on, a wrong hint would
-    turn the recogniser into a translator and make foreign speech LOOK like the
-    expected language."""
-    resolved = wiring.resolve_peer_stt_config(_settings(auto_detect=True, peer_language="zh-CN"))
-    assert resolved.language_hint is None
+def test_no_hint_is_ever_sent_however_the_peer_language_is_set() -> None:
+    """The regression in one assertion: a pinned language must not reach the
+    recogniser, because it makes it translate rather than transcribe."""
+    for auto_detect in (True, False):
+        for peer_language in ("zh-CN", "en", "ja", ""):
+            resolved = wiring.resolve_peer_stt_config(
+                _settings(auto_detect=auto_detect, peer_language=peer_language)
+            )
+            assert resolved.language_hint is None, (
+                f"auto_detect={auto_detect} peer={peer_language!r} sends "
+                f"hint={resolved.language_hint!r}; a hint that is not what is "
+                f"actually spoken makes this model translate, so an English "
+                f"room with a stale Chinese setting gets every line rewritten"
+            )
 
 
-def test_an_explicit_pin_reaches_the_recognizer() -> None:
-    """r378: this was silently discarded, so choosing a peer language did
-    nothing whatsoever for the local model."""
-    resolved = wiring.resolve_peer_stt_config(_settings(auto_detect=False, peer_language="en"))
-    assert resolved.language_hint == "English", (
-        "pinning the peer language still does not reach the model, so someone "
-        "whose partner is transcribed into the wrong language has no way out"
+def test_the_peer_language_still_reaches_everything_else() -> None:
+    """Reverting the hint must not detach the setting from the rest of the
+    pipeline — it still selects the translation source."""
+    resolved = wiring.resolve_peer_stt_config(
+        _settings(auto_detect=False, peer_language="ja")
     )
-
-    resolved = wiring.resolve_peer_stt_config(_settings(auto_detect=False, peer_language="zh-CN"))
-    assert resolved.language_hint == "Chinese"
-
-
-def test_the_pin_is_the_peer_language_not_your_own() -> None:
-    """effective_peer_source falls back to YOUR language when auto-detect is on;
-    the hint must come from what the PARTNER speaks, or pinning would feed the
-    recogniser the wrong language entirely."""
-    s = _settings(auto_detect=False, peer_language="ja")
-    s.languages.source_language = "en"
-    assert wiring.resolve_peer_stt_config(s).language_hint == "Japanese"
-
-
-def test_a_pin_the_model_does_not_know_is_dropped_rather_than_forced() -> None:
-    s = _settings(auto_detect=False, peer_language="xx-YY")
-    assert wiring.resolve_peer_stt_config(s).language_hint is None
+    assert resolved.source_language == "ja"

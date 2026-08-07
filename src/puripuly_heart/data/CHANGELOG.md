@@ -2,6 +2,10 @@
 
 User-facing changes per build. The latest build's highlights also appear in-app when an update is ready.
 
+## r382 — 2026-08-07
+
+- **Reverted r378: the language you pick for your partner is no longer sent to the speech recogniser.** It was meant to help when the recogniser guessed wrong, but it did far more harm than good. In a room where everyone was speaking English with the partner language left on Chinese, the recogniser *translated* every line into Chinese instead of writing it down — and the translator then turned that Chinese back into English, so the speaker's own sentence came back to them through a round trip, reading perfectly naturally with nothing to show it had happened. The setting only helped when it matched what was actually being spoken, and nothing could tell a correct setting from a stale one
+
 ## r381 — 2026-08-06
 
 - **The overlay no longer disappears behind full-screen games.** It stays on top by re-asserting itself every few seconds, but that self-heal could never find its own window, so it had been doing nothing at all. The window was still marked always-on-top the whole time — it had simply been pushed underneath the game, which is why it looked switched on while nothing appeared on screen. If it ever fails to find its window now, it says so in the log instead of failing silently

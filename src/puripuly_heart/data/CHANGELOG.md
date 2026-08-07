@@ -2,6 +2,10 @@
 
 User-facing changes per build. The latest build's highlights also appear in-app when an update is ready.
 
+## r383 — 2026-08-07
+
+- **Naming a voice sticks again when two saved voices sound alike.** If two saved people scored within a hair of each other, the app refused to choose between them — correctly — but that refusal also stopped it applying the name the speaker's own group already carried, so every line came back unnamed no matter how clearly it belonged to that person. Naming it again added another sample, which made the two voices even more alike, so it could never recover. A group that already belongs to someone now keeps that name; deciding which of two strangers a new voice is still needs a clear margin, and "this is not that person" still overrides everything
+
 ## r382 — 2026-08-07
 
 - **Reverted r378: the language you pick for your partner is no longer sent to the speech recogniser.** It was meant to help when the recogniser guessed wrong, but it did far more harm than good. In a room where everyone was speaking English with the partner language left on Chinese, the recogniser *translated* every line into Chinese instead of writing it down — and the translator then turned that Chinese back into English, so the speaker's own sentence came back to them through a round trip, reading perfectly naturally with nothing to show it had happened. The setting only helped when it matched what was actually being spoken, and nothing could tell a correct setting from a stale one

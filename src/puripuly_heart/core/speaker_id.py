@@ -273,6 +273,11 @@ class SpeakerRegistry:
                 index = int(np.argmax(sims))
                 ranked.append((sims[index], name, index))
             ranked.sort(key=lambda row: row[0], reverse=True)
+            # r383: keep every score. The sticky-cluster check below needs the
+            # similarity to ONE SPECIFIC person (the one this cluster belongs
+            # to), which is a different question from "who is the best match
+            # overall" and must survive the margin rule discarding the latter.
+            sim_by_name = {row[1]: row[0] for row in ranked}
 
             best_name, best_name_sim, best_variant_index = "", -1.0, -1
             runner_up_sim = -1.0
@@ -386,8 +391,19 @@ class SpeakerRegistry:
                 # r338: only inherit the cluster's name when the voice really
                 # does resemble that person — not merely the cluster they were
                 # last seen in.
-                if session_name and best_name == session_name and (
-                    best_name_sim >= STICKY_NAME_THRESHOLD
+                #
+                # r383: score THAT person directly rather than requiring them to
+                # have won the global ranking. Two people who sound alike sit
+                # inside NAMED_MARGIN of each other on every utterance, so the
+                # margin rule clears the winner and this test could never pass —
+                # every line came back unnamed however clearly it belonged to
+                # this cluster, and each re-naming pushed the two prints closer
+                # together. Deciding WHICH stranger a voice is needs a margin;
+                # confirming the person a cluster already belongs to does not.
+                session_name_sim = sim_by_name.get(session_name, -1.0)
+                if session_name and (
+                    session_name_sim >= STICKY_NAME_THRESHOLD
+                    and not self._denied_locked(vector, session_name, session_name_sim)
                 ):
                     return SpeakerMatch(
                         "named", session_name, survivor.cluster_id, best_cluster_sim
@@ -397,7 +413,7 @@ class SpeakerRegistry:
                         "[SpeakerID] withheld %r from cluster %d "
                         "(cluster sim=%.3f but name sim=%.3f < %.2f)",
                         session_name, survivor.cluster_id,
-                        best_cluster_sim, best_name_sim, STICKY_NAME_THRESHOLD,
+                        best_cluster_sim, session_name_sim, STICKY_NAME_THRESHOLD,
                     )
                 return SpeakerMatch(
                     "cluster",

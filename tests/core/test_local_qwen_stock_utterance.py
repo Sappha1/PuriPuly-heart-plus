@@ -30,9 +30,7 @@ from puripuly_heart.core.stt.local_qwen_hallucination import (
         "This is a system.",
         "A System",          # capitalisation as the user saw it
         "  a system  ",
-        "The system.",
         "system",            # the original entry still fires
-        "It is a system.",
     ],
 )
 def test_stock_utterances_are_suppressed(text: str) -> None:
@@ -51,6 +49,10 @@ def test_stock_utterances_are_suppressed(text: str) -> None:
         "a systematic approach",
         "systems",
         "My system works fine, thanks",
+        # Not observed from the model, and a person could plausibly say either
+        # as a complete answer to a question — so they must stay speakable.
+        "The system.",
+        "It is a system.",
     ],
 )
 def test_real_speech_containing_the_word_survives(text: str) -> None:

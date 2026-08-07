@@ -2,6 +2,11 @@
 
 User-facing changes per build. The latest build's highlights also appear in-app when an update is ready.
 
+## r385 — 2026-08-07
+
+- **The overlay's stay-on-top guard now finds its own window.** It has never found it. The guard exists so a full-screen game cannot bury the captions, and it re-checks every few seconds — but it was looking for a window belonging to the app's own process, and the window does not belong to that process. The app runs the interface server and starts a second program to draw with; that second program owns the window. So the search matched nothing, on every launch, in every build that has shipped it, and the overlay could still be pushed underneath a game with nothing in the log but a single warning. It now searches the programs the app actually started, prefers the real caption window when several match, and still says so if it comes up empty
+- **A message you type in the language you are translating INTO now appears on the overlay.** The overlay deliberately holds a finished line back until its translation arrives, so the caption doesn't flash the untranslated text first. Translation is skipped when what you typed is already in the target language — but the hold was not released on that path, so the line stayed held forever: it went to the VRChat chatbox and simply never appeared as a caption. Toggling the overlay did not bring it back, because nothing was left to redraw
+
 ## r384 — 2026-08-07
 
 - **"Show my own text" and "show my own voice" on the overlay now do what they say.** With voice off and text on — an ordinary combination — nothing you typed ever reached the overlay, and no amount of toggling could fix it. Two separate checks guard your own messages: one knows whether a message was typed or spoken, the other only knows that it is yours, and the second was discarding the whole channel whenever the voice setting was off. That coarse check now only asks whether you want any of your own messages at all, and leaves the choice between typed and spoken to the one that can tell them apart. The dashboard switch also saves the setting to both places it is kept — it wrote only one, so turning your own voice back on there was quietly undone at the next restart — and now takes effect on the running overlay immediately instead of at the next full settings save

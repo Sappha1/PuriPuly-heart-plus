@@ -2365,6 +2365,89 @@ def _flet_font_weight(ft: Any, weight: str) -> Any:
     return None
 
 
+# The Flutter window class. flet.exe hosts the actual window; the Python process
+# only runs the flet server, which is why an own-pid window search finds nothing.
+_FLUTTER_WINDOW_CLASS = "FLUTTER_RUNNER_WIN32_WINDOW"
+
+
+def process_family(root_pid: int, pairs) -> set:
+    """{root_pid} plus every descendant of it, from (pid, parent_pid) pairs.
+
+    Pure so it can be tested without Windows or a real process tree. Tolerates a
+    process table that is cyclic or self-parented — Windows recycles pids, so a
+    long-dead parent id can reappear as its own ancestor and a naive walk would
+    never terminate.
+    """
+    children: dict[int, list[int]] = {}
+    for pid, parent in pairs:
+        if pid == parent:
+            continue
+        children.setdefault(int(parent), []).append(int(pid))
+    family = {int(root_pid)}
+    queue = [int(root_pid)]
+    while queue:
+        for child in children.get(queue.pop(), ()):
+            if child not in family:
+                family.add(child)
+                queue.append(child)
+    return family
+
+
+def _own_process_family(root_pid: int) -> set:
+    """This process and its descendants, read from the live process table."""
+    try:
+        import ctypes
+        from ctypes import wintypes
+
+        class _ProcessEntry32(ctypes.Structure):
+            _fields_ = [
+                ("dwSize", wintypes.DWORD),
+                ("cntUsage", wintypes.DWORD),
+                ("th32ProcessID", wintypes.DWORD),
+                ("th32DefaultHeapID", ctypes.POINTER(ctypes.c_ulong)),
+                ("th32ModuleID", wintypes.DWORD),
+                ("cntThreads", wintypes.DWORD),
+                ("th32ParentProcessID", wintypes.DWORD),
+                ("pcPriClassBase", ctypes.c_long),
+                ("dwFlags", wintypes.DWORD),
+                ("szExeFile", ctypes.c_char * 260),
+            ]
+
+        kernel32 = ctypes.windll.kernel32
+        # Declare the signatures. Without an explicit HANDLE restype ctypes
+        # truncates the snapshot handle to 32 bits, which silently yields an
+        # unusable handle once the value is large enough — a failure that only
+        # appears on some machines and would put this back to resolving nothing.
+        kernel32.CreateToolhelp32Snapshot.restype = wintypes.HANDLE
+        kernel32.CreateToolhelp32Snapshot.argtypes = [wintypes.DWORD, wintypes.DWORD]
+        kernel32.Process32First.restype = wintypes.BOOL
+        kernel32.Process32First.argtypes = [wintypes.HANDLE, ctypes.POINTER(_ProcessEntry32)]
+        kernel32.Process32Next.restype = wintypes.BOOL
+        kernel32.Process32Next.argtypes = [wintypes.HANDLE, ctypes.POINTER(_ProcessEntry32)]
+        kernel32.CloseHandle.argtypes = [wintypes.HANDLE]
+        snapshot = kernel32.CreateToolhelp32Snapshot(0x00000002, 0)  # SNAPPROCESS
+        if snapshot in (0, -1) or snapshot == ctypes.c_void_p(-1).value:
+            return {int(root_pid)}
+        try:
+            entry = _ProcessEntry32()
+            entry.dwSize = ctypes.sizeof(_ProcessEntry32)
+            pairs: list[tuple[int, int]] = []
+            if kernel32.Process32First(snapshot, ctypes.byref(entry)):
+                while True:
+                    pairs.append(
+                        (int(entry.th32ProcessID), int(entry.th32ParentProcessID))
+                    )
+                    if not kernel32.Process32Next(snapshot, ctypes.byref(entry)):
+                        break
+        finally:
+            kernel32.CloseHandle(snapshot)
+        return process_family(root_pid, pairs)
+    except Exception:
+        # Worst case fall back to this process alone — same behaviour as before,
+        # rather than losing the guard entirely.
+        return {int(root_pid)}
+
+
 class DesktopOverlayStartupError(Exception):
     def __init__(self, failure_reason: str, message: str) -> None:
         super().__init__(message)
@@ -2599,6 +2682,10 @@ class FletDesktopRendererWindow:
         # The smush is a Flutter content-relayout timing bug that only shows once a caption
         # exists, so the corrective resize must fire then — not at a fixed startup moment.
         self._startup_relayout_pending: bool = False
+        # r385: tracks whether the last render actually put caption slots on
+        # screen, so the empty -> content edge can be logged once per lull
+        # rather than on every frame of a conversation.
+        self._content_surface_rendered: bool = False
 
     def prime_startup_runtime_controls(
         self,
@@ -3418,9 +3505,23 @@ class FletDesktopRendererWindow:
                     self._startup_relayout_pending = False
                     logger.info("[DesktopOverlay][Startup] first caption — scheduling relayout")
                     self._run_page_task(self._startup_relayout_after_settle)
+                # r385: the empty -> content edge, at INFO. A caption that renders
+                # into an idle locked transparent window has been reported as not
+                # appearing until the overlay was toggled; the delivery half is
+                # proven, the paint half is not. This line is what tells the two
+                # apart next time — if it appears and nothing shows on screen, the
+                # fault is paint/composite, not block selection or the self gates.
+                if bool(plan.slots) and not self._content_surface_rendered:
+                    logger.info(
+                        "[DesktopOverlay][Render] empty->content slots=%d locked=%s",
+                        len(plan.slots),
+                        self._interaction_mode != _DESKTOP_INTERACTION_MODE_EDIT,
+                    )
+                self._content_surface_rendered = bool(plan.slots)
             else:
                 content_kind = "transparent_host"
                 content = build_desktop_transparent_sizing_host(plan)
+                self._content_surface_rendered = False
         self._emit_detailed_log(
             "render "
             f"revision={self._snapshot.revision} "
@@ -4081,36 +4182,54 @@ class FletDesktopRendererWindow:
         await self._set_interaction_mode(_DESKTOP_INTERACTION_MODE_EDIT, emit_event=True)
 
     def _resolve_native_hwnd(self) -> int:
-        """This process's own top-level window.
+        """The overlay's native window — which this process does NOT own.
 
-        r381: the previous implementation looked the window up by TITLE with
-        FindWindowW, and that call returns 0 for it. Verified against the live
-        overlay: EnumWindows finds hwnd 465188, title "PuriPuly Overlay" (16
-        plain ASCII characters), class FLUTTER_RUNNER_WIN32_WINDOW — while
-        FindWindowW with that exact string, and with the class name, both
-        return 0. The guard below therefore never had a handle to work with.
+        r381 looked the window up by TITLE with FindWindowW, which returns 0 for
+        it, and replaced that with "the windows THIS process owns". The live log
+        shows the replacement never resolved a handle either — not once, in any
+        session: zero "window handle resolved" lines, and the "could not resolve"
+        warning on every launch.
 
-        Asking which windows THIS process owns needs no title at all, so there
-        is nothing left to mis-match, localize, or rename.
+        r385: the reason is four lines above that warning in the same log —
+
+            flet_desktop: Flet View found in: ...\\flet_desktop\\app\\flet\\flet.exe
+            flet_desktop: Starting Flet View app...
+
+        This process runs the flet SERVER and spawns flet.exe; that CHILD hosts
+        the Flutter window (class FLUTTER_RUNNER_WIN32_WINDOW). So a same-pid
+        test matches nothing, forever. Ask for descendants instead. The window
+        class is preferred when present but not required, so a flet rename
+        degrades rather than breaks.
         """
         try:
             import ctypes
             from ctypes import wintypes
 
             user32 = ctypes.windll.user32
-            found: list[int] = []
-            own_pid = ctypes.windll.kernel32.GetCurrentProcessId()
+            own_pid = int(ctypes.windll.kernel32.GetCurrentProcessId())
+            family = _own_process_family(own_pid)
+
+            preferred: list[int] = []
+            fallback: list[int] = []
 
             @ctypes.WINFUNCTYPE(wintypes.BOOL, wintypes.HWND, wintypes.LPARAM)
             def _visit(hwnd, _lparam):
                 pid = wintypes.DWORD()
                 user32.GetWindowThreadProcessId(hwnd, ctypes.byref(pid))
-                if pid.value == own_pid and user32.IsWindowVisible(hwnd):
-                    found.append(int(hwnd))
+                if pid.value not in family or not user32.IsWindowVisible(hwnd):
+                    return True
+                buffer = ctypes.create_unicode_buffer(256)
+                user32.GetClassNameW(hwnd, buffer, 256)
+                if buffer.value == _FLUTTER_WINDOW_CLASS:
+                    preferred.append(int(hwnd))
+                else:
+                    fallback.append(int(hwnd))
                 return True
 
             user32.EnumWindows(_visit, 0)
-            return found[0] if found else 0
+            if preferred:
+                return preferred[0]
+            return fallback[0] if fallback else 0
         except Exception:
             return 0
 

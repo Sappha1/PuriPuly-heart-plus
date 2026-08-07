@@ -161,8 +161,12 @@ def _english_stock_residue(text: str) -> str:
 # Whole utterances only. These are what Qwen produces from quiet or short audio
 # (measured at -30 dB over 1.2s); a real sentence containing "a system" has other
 # words around it and so never reduces to exactly one of these.
+# Only forms actually OBSERVED from this model. "the system" and "it is a system"
+# were in this set briefly on my guess alone and came back out: a person can say
+# "The system." as a complete answer to a question, and swallowing real speech is
+# a worse failure than letting one stray line through.
 _ENGLISH_STOCK_UTTERANCES = frozenset({
-    "system", "a system", "the system", "this is a system", "it is a system",
+    "system", "a system", "this is a system",
 })
 
 

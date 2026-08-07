@@ -1007,6 +1007,11 @@ class ClientHub:
                 publish_chatbox=True,
                 transcript=transcript,
             )
+            # r385: the overlay holds this transcript until a translation arrives
+            # (_emit_final_transcript_to_overlay), and every release site is on the
+            # translation path — which this branch has just skipped. Without this
+            # the caption is parked forever and the message never appears at all.
+            await self._release_pending_overlay_transcript(utterance_id)
             await self._enqueue_osc(utterance_id, transcript_text=text, translation_text=None)
         else:
             await self._ensure_translation(transcript)
@@ -1325,6 +1330,36 @@ class ClientHub:
         """Return the correct overlay visibility flag based on whether the utterance was typed or spoken."""
         src = self._get_source(utterance_id)
         return self.typed_in_overlay if src == "You" else self.self_in_overlay
+
+    async def _release_pending_overlay_transcript(self, utterance_id: UUID) -> None:
+        """Emit a transcript held for a translation that is no longer coming.
+
+        r385: the hold in _emit_final_transcript_to_overlay is armed by
+        _overlay_translation_will_follow (llm present + translation enabled), but
+        translation can still be skipped afterwards on a condition that check does
+        not know about — typed text already in the target language. The entry then
+        never leaves the dict and the caption never appears.
+        """
+        transcript = self._pending_overlay_transcripts.pop(utterance_id, None)
+        if transcript is None or self.overlay_sink is None:
+            return
+        if not self._overlay_flag_for_utterance(utterance_id):
+            return
+        source_language, target_language = self._self_overlay_languages_for_utterance(
+            utterance_id
+        )
+        await self._emit_overlay_event(
+            self.overlay_event_adapter.transcript_final(
+                transcript,
+                source_language=source_language,
+                target_language=target_language,
+            )
+        )
+        await self._emit_overlay_utterance_closed(
+            utterance_id=utterance_id,
+            channel=transcript.channel,
+            is_final=True,
+        )
 
     async def _emit_final_transcript_to_overlay(self, transcript: Transcript) -> None:
         if self.overlay_sink is None or not self._overlay_flag_for_utterance(transcript.utterance_id):

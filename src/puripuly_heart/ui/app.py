@@ -1438,10 +1438,47 @@ class TranslatorApp:
         if self.controller and self.controller.hub:
             self.controller.hub.chatbox_send_peer_translation_only = translation_only
 
+    def _refresh_overlay_self_gate(self) -> None:
+        """Push the presenter's coarse self gate after a dashboard toggle.
+
+        r384: neither toggle told the running presenter anything, so a correct
+        value sat unused until the next full settings apply — which, for the
+        session in which the user flipped the switch, meant never.
+        """
+        _s = getattr(self.controller, "settings", None)
+        presenter = getattr(self.controller, "_overlay_presenter", None)
+        if _s is None or presenter is None or self.page is None:
+            return
+        from puripuly_heart.config.settings import (
+            effective_overlay_show_self,
+            effective_show_peer_original,
+        )
+        show_self = effective_overlay_show_self(_s)
+        show_translation = bool(_s.overlay.show_translation)
+        show_peer_original = effective_show_peer_original(_s)
+
+        async def _task() -> None:
+            try:
+                await presenter.update_display_preferences(
+                    show_translation=show_translation,
+                    show_peer_original=show_peer_original,
+                    show_self=show_self,
+                )
+            except Exception:
+                pass
+
+        self.page.run_task(_task)
+
     def _on_dashboard_self_in_overlay_toggle(self, value: bool) -> None:
         _s = getattr(self.controller, "settings", None)
         if _s and getattr(_s, "ui", None):
             _s.ui.self_in_overlay = value
+            # r384: write BOTH stores, as the Settings card has since r334.
+            # This handler wrote only the hub flag, so switching my own voice
+            # back on left overlay.show_self False — and the load-time
+            # reconcile ANDs the pair, quietly undoing the change at restart.
+            if getattr(_s, "overlay", None) is not None:
+                _s.overlay.show_self = value
             try:
                 from puripuly_heart.config.settings import save_settings
                 save_settings(self.controller.config_path, _s)
@@ -1449,6 +1486,7 @@ class TranslatorApp:
                 pass
         if self.controller and self.controller.hub:
             self.controller.hub.self_in_overlay = value
+        self._refresh_overlay_self_gate()
 
     def _on_dashboard_typed_in_overlay_toggle(self, value: bool) -> None:
         _s = getattr(self.controller, "settings", None)
@@ -1461,6 +1499,7 @@ class TranslatorApp:
                 pass
         if self.controller and self.controller.hub:
             self.controller.hub.typed_in_overlay = value
+        self._refresh_overlay_self_gate()
 
     def _on_vrc_mute_osc_state_changed(self, muted: bool | None) -> None:
         """Callback from VrcMicState when VRChat sends a mute state update via OSC."""

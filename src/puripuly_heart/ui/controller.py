@@ -50,6 +50,7 @@ from puripuly_heart.config.settings import (
     QwenRegion,
     STTProviderName,
     TranslationConnection,
+    effective_overlay_show_self,
     effective_show_peer_original,
     load_settings,
     new_settings_for_first_run,
@@ -3154,7 +3155,7 @@ class GuiController:
                     runtime_log_detailed=self.log_detailed,
                     show_translation=self.settings.overlay.show_translation,
                     show_peer_original=effective_show_peer_original(self.settings),
-                    show_self=self.settings.overlay.show_self,
+                    show_self=effective_overlay_show_self(self.settings),
                     peer_presentation_refresh_burst=peer_presentation_refresh_burst,
                     self_presentation_refresh_burst=self_presentation_refresh_burst,
                     visible_window_target_blocks=1 if self.settings.overlay.single_turn_mode else VISIBLE_WINDOW_TARGET_BLOCKS,
@@ -4379,7 +4380,7 @@ class GuiController:
             await presenter.update_display_preferences(
                 show_translation=settings.overlay.show_translation,
                 show_peer_original=effective_show_peer_original(settings),
-                show_self=settings.overlay.show_self,
+                show_self=effective_overlay_show_self(settings),
             )
             await presenter.update_single_turn_mode(settings.overlay.single_turn_mode)
 

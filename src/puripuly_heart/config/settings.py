@@ -1176,6 +1176,23 @@ def effective_show_peer_original(settings: AppSettings) -> bool:
     return settings.overlay.show_peer_original
 
 
+def effective_overlay_show_self(settings: AppSettings) -> bool:
+    """Whether the presenter should admit ANY of the user's own content.
+
+    r384: the presenter used overlay.show_self directly, which is the "show my
+    own SPOKEN messages" setting, and applied it to the entire self channel --
+    so typed messages were dropped whenever voice was off, however plainly the
+    user had switched "show my own text" on. Measured live at ui.typed_in_overlay
+    True, overlay.show_self False: nothing appeared and no toggle could fix it.
+
+    The presenter cannot tell a typed utterance from a spoken one; the hub can,
+    and already does (`_overlay_flag_for_utterance`). So this gate only answers
+    the coarse question -- is any of it wanted at all -- and leaves the choice
+    between the two to the one that has the information.
+    """
+    return bool(settings.ui.self_in_overlay) or bool(settings.ui.typed_in_overlay)
+
+
 @dataclass(slots=True)
 class ApiKeyVerificationSettings:
     """Stores API key verification status for each provider."""

@@ -147,9 +147,30 @@ def _is_multiline_garbage(stripped: str) -> bool:
     return False
 
 
+def _english_stock_residue(text: str) -> str:
+    """Lowercased, stripped of punctuation, whitespace collapsed.
+
+    r384: the set below is matched against the RAW utterance, so the bare
+    "system" entry never caught what the model actually emits — "A system.",
+    "This is a system." — which is what a user kept seeing appear mid-dictation.
+    """
+    lowered = _PUNCT_DIGIT_STRIP_RE.sub(" ", text.strip().lower())
+    return " ".join(lowered.split())
+
+
+# Whole utterances only. These are what Qwen produces from quiet or short audio
+# (measured at -30 dB over 1.2s); a real sentence containing "a system" has other
+# words around it and so never reduces to exactly one of these.
+_ENGLISH_STOCK_UTTERANCES = frozenset({
+    "system", "a system", "the system", "this is a system", "it is a system",
+})
+
+
 def is_known_local_qwen_hallucination(text: str) -> bool:
     stripped = text.strip()
     if stripped in KNOWN_LOCAL_QWEN_HALLUCINATIONS:
+        return True
+    if _english_stock_residue(stripped) in _ENGLISH_STOCK_UTTERANCES:
         return True
     # Normalized stock-term checks (r312): drop digits/punctuation, then junk
     # if what remains is exactly a stock term or that term repeated ("的答案是：

@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import asyncio
+import threading
 import contextlib
 import importlib
 import logging
@@ -77,6 +78,34 @@ class LocalQwenSherpaLoadError(RuntimeError):
 
 class LocalQwenSherpaInferenceError(RuntimeError):
     """Raised when local sherpa inference fails for an utterance."""
+
+
+class LocalQwenLowMemoryError(LocalQwenSherpaLoadError):
+    """The machine does not have enough free memory to load the model.
+
+    r386: raised INSTEAD of attempting the load. On a machine with ~2-3GB free
+    the construction demand pages the whole system to a crawl — the app freezes
+    to a spinner, no error is ever logged, and the load can outlive the user's
+    patience by minutes. A refusal with numbers is strictly better.
+
+    Deliberately NOT the generic load error alone: the generic handler treats
+    load failures as corrupt-install and re-downloads the 900MB model, which is
+    exactly wrong when the problem is RAM.
+    """
+
+    def __init__(self, *, available_mb: int, needed_mb: int) -> None:
+        self.available_mb = int(available_mb)
+        self.needed_mb = int(needed_mb)
+        # Read by the session retry loop (core/stt/controller.py) as a duck-
+        # typed attribute — retrying a memory refusal with backoff is pointless
+        # and, worse, swallows the typed error the UI needs to localize.
+        self.non_retryable = True
+        super().__init__(
+            f"Not enough free memory to load the local speech model: "
+            f"~{needed_mb} MB needed, {available_mb} MB available. Close other "
+            f"programs (games, emulators, browsers) and toggle MIC again, or "
+            f"choose a cloud recognizer in Settings."
+        )
 
 
 class _LocalQwenSherpaImportError(ImportError):
@@ -224,6 +253,102 @@ def create_local_qwen_sherpa_recognizer(
     return recognizer_cls(recognizer_config)
 
 
+# ── shared recognizer cache (r386) ───────────────────────────────────────────
+# One recognizer instance costs ~1.15GB of RSS (measured). Construction is
+# config-identical for both channels — language hints, denoise and confidence
+# filtering are decode-time concerns — so self and peer share ONE instance,
+# keyed on the only things construction actually consumes. Concurrent decodes
+# on a shared instance are safe: verified empirically (2 threads x 6 rounds,
+# zero crashes, zero divergence) and it is upstream's own server pattern.
+#
+# Instances are retained for the process lifetime on purpose. Backends are
+# recreated on trivial settings churn (the r331/r333/r345 reload bugs), so a
+# cache tied to backend lifetime would guarantee pointless 1.15GB reloads.
+_SHARED_RECOGNIZERS: dict[tuple, object] = {}
+_SHARED_RECOGNIZERS_LOCK = threading.Lock()
+# Serializes CONSTRUCTION globally. Two concurrent 1.15GB loads demand ~2.3GB
+# at once — measured to page a 16GB machine with an emulator resident into a
+# freeze the load never returns from.
+_RECOGNIZER_BUILD_LOCK = threading.Lock()
+
+# Measured instance cost (1142 MB RSS growth) plus working headroom. Below the
+# floor the load refuses with numbers instead of thrashing the whole machine.
+LOCAL_QWEN_MODEL_LOAD_ESTIMATE_MB = 1200
+LOCAL_QWEN_MODEL_LOAD_FLOOR_MB = 1400
+
+
+def _available_memory_mb() -> int | None:
+    try:
+        import psutil
+
+        return int(psutil.virtual_memory().available / (1024 * 1024))
+    except Exception:
+        return None  # diagnostics must never block the load themselves
+
+
+def _shared_recognizer_cached(key: tuple) -> object | None:
+    with _SHARED_RECOGNIZERS_LOCK:
+        return _SHARED_RECOGNIZERS.get(key)
+
+
+def _reset_shared_local_qwen_recognizers() -> None:
+    """Test hook: drop every cached instance."""
+    with _SHARED_RECOGNIZERS_LOCK:
+        _SHARED_RECOGNIZERS.clear()
+
+
+def _require_memory_for_model_load() -> None:
+    available = _available_memory_mb()
+    if available is None:
+        return
+    if available < LOCAL_QWEN_MODEL_LOAD_FLOOR_MB:
+        logger.warning(
+            "[STT][local_qwen] refusing model load: %d MB available, ~%d MB needed",
+            available,
+            LOCAL_QWEN_MODEL_LOAD_ESTIMATE_MB,
+        )
+        raise LocalQwenLowMemoryError(
+            available_mb=available, needed_mb=LOCAL_QWEN_MODEL_LOAD_ESTIMATE_MB
+        )
+    if available < LOCAL_QWEN_MODEL_LOAD_ESTIMATE_MB + 1000:
+        logger.warning(
+            "[STT][local_qwen] low memory for model load: %d MB available — "
+            "the load will work but may be slow while the system pages",
+            available,
+        )
+
+
+def _shared_recognizer(key: tuple, factory) -> object:
+    existing = _shared_recognizer_cached(key)
+    if existing is not None:
+        return existing
+    # Bounded, not blind: a build that never returns (the AV-interference hang
+    # the 180s outer timeout exists for) would otherwise hold this lock
+    # forever — every retry would then wait out the full 180s to fail with the
+    # SAME misleading message, stranding one more worker thread each time.
+    # 170s keeps this under the outer timeout so the caller sees THIS message.
+    if not _RECOGNIZER_BUILD_LOCK.acquire(timeout=170.0):
+        raise LocalQwenSherpaLoadError(
+            "another speech-model load is still in progress — wait a moment, "
+            "then toggle MIC off and on to retry"
+        )
+    try:
+        existing = _shared_recognizer_cached(key)
+        if existing is not None:
+            # The other channel built it while this one waited — 0 MB, 0 s.
+            logger.info("[STT][local_qwen] reusing shared recognizer instance")
+            return existing
+        # Re-check under the lock: a build that just finished ahead of this
+        # one has already consumed its ~1.15GB.
+        _require_memory_for_model_load()
+        recognizer = factory()
+        with _SHARED_RECOGNIZERS_LOCK:
+            _SHARED_RECOGNIZERS[key] = recognizer
+        return recognizer
+    finally:
+        _RECOGNIZER_BUILD_LOCK.release()
+
+
 @dataclass(slots=True)
 class LocalQwenSherpaSTTBackend(STTBackend):
     model_dir: Path
@@ -269,6 +394,10 @@ class LocalQwenSherpaSTTBackend(STTBackend):
         await self._ensure_recognizer()
 
     async def close(self) -> None:
+        # Drops this backend's reference only. The shared instance stays cached
+        # (r386): backends are recreated on trivial settings churn, and tying
+        # the 1.15GB model to backend lifetime is how the r331/r333/r345
+        # reload bugs kept coming back.
         self._recognizer = None
 
     @property
@@ -283,6 +412,19 @@ class LocalQwenSherpaSTTBackend(STTBackend):
         async with self._load_lock:
             if self._recognizer is not None:
                 return self._recognizer
+
+            # r386: refuse now if the machine cannot fit the load — but only
+            # when a build will actually happen; picking up the shared
+            # instance costs nothing however scarce memory is. While the OTHER
+            # channel's build is in flight it has transiently consumed ~1GB,
+            # so measuring now would refuse a caller whose answer is seconds
+            # away and free — skip; the in-lock check inside _shared_recognizer
+            # still guards the case where that build fails.
+            if (
+                _shared_recognizer_cached(self._recognizer_cache_key()) is None
+                and not _RECOGNIZER_BUILD_LOCK.locked()
+            ):
+                _require_memory_for_model_load()
 
             # Check sentinel BEFORE any DLL loading. The crash from AV/memory issues
             # happens inside validate_local_stt_runtime_ready → ensure_local_qwen_windows_runtime,
@@ -340,15 +482,28 @@ class LocalQwenSherpaSTTBackend(STTBackend):
                         pass
             return self._recognizer
 
+    def _recognizer_cache_key(self) -> tuple:
+        return (
+            str(Path(self.model_dir).resolve()),
+            int(self.num_threads),
+            int(self.feature_dim),
+            str(self.provider),
+        )
+
     def _create_recognizer(self) -> object:
         try:
-            return create_local_qwen_sherpa_recognizer(
-                model_dir=self.model_dir,
-                num_threads=self.num_threads,
-                sample_rate_hz=LOCAL_QWEN_RECOGNIZER_SAMPLE_RATE_HZ,
-                feature_dim=self.feature_dim,
-                provider=self.provider,
+            return _shared_recognizer(
+                self._recognizer_cache_key(),
+                lambda: create_local_qwen_sherpa_recognizer(
+                    model_dir=self.model_dir,
+                    num_threads=self.num_threads,
+                    sample_rate_hz=LOCAL_QWEN_RECOGNIZER_SAMPLE_RATE_HZ,
+                    feature_dim=self.feature_dim,
+                    provider=self.provider,
+                ),
             )
+        except LocalQwenLowMemoryError:
+            raise
         except LocalQwenRuntimeBootstrapError as exc:
             raise LocalQwenSherpaLoadError(str(exc)) from exc
         except _LocalQwenSherpaImportError as exc:

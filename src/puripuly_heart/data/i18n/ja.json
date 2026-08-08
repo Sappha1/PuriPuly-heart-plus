@@ -911,5 +911,6 @@
   "dashboard.find.prev": "前の一致",
   "dashboard.find.next": "次の一致",
   "dashboard.find.close": "閉じる（Esc）",
-  "dashboard.find.none": "該当なし"
+  "dashboard.find.none": "該当なし",
+  "stt.local.low_memory": "空きメモリが不足しているため、ローカル音声モデルを読み込めません——約 {needed} GB 必要ですが、現在 {available} GB しか空いていません。他のプログラム（ゲーム、エミュレーター、ブラウザーなど）を閉じてから MIC を入れ直すか、設定でクラウド音声認識を選択してください。"
 }

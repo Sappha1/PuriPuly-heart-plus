@@ -50,13 +50,6 @@ class FinalTranscriptSuppressedNotification:
 @dataclass(slots=True)
 class ManagedSTTProvider:
     backend: STTBackend
-
-    async def warmup(self) -> None:
-        """Preload the backend's model (PeerChannelRuntime.warmup delegates
-        here) so the first real utterance doesn't pay the load."""
-        backend_warmup = getattr(self.backend, "warmup", None)
-        if callable(backend_warmup):
-            await backend_warmup()
     sample_rate_hz: int
     stt_provider_name: STTProviderName | None = None
     channel: ChannelId = "self"
@@ -78,6 +71,9 @@ class ManagedSTTProvider:
 
     _state: STTSessionState = STTSessionState.DISCONNECTED
     _active_session: STTBackendSession | None = None
+    # r386: the last failure out of _ensure_session_locked, so warmup() can
+    # re-raise a non-retryable one (see warmup's docstring).
+    _last_ensure_failure: Exception | None = None
     # Serializes session creation. Without it, warmup and the first VAD audio
     # raced through _ensure_session's is-None check concurrently and BOTH
     # opened sessions: the loser leaked ("Task was destroyed but it is
@@ -233,9 +229,21 @@ class ManagedSTTProvider:
             yield item
 
     async def warmup(self) -> None:
-        """Pre-establish STT session for faster first response."""
+        """Pre-establish STT session for faster first response.
+
+        r386: a NON-RETRYABLE failure (the local model refusing to load for
+        lack of memory) is re-raised from here — this is the enable-time path,
+        and the caller needs the typed exception to localize the message and
+        reset the toggle. The speech-event path keeps the boolean contract:
+        handle_vad_event dispatches without a try/except, so raising there
+        would kill the audio loop.
+        """
         if await self._ensure_session():
             self._emit_detailed("[STT] Session pre-warmed", fallback_level=logging.INFO)
+            return
+        failure = self._last_ensure_failure
+        if failure is not None and getattr(failure, "non_retryable", False):
+            raise failure
 
     async def _on_speech_start(self, event: SpeechStart) -> None:
         self._active_utterance_id = event.utterance_id
@@ -419,6 +427,11 @@ class ManagedSTTProvider:
                     level=logging.WARNING,
                     fallback_level=logging.WARNING,
                 )
+                # r386: a low-memory refusal does not get better on a 1.6s
+                # backoff — stop immediately so the enable path can surface
+                # the typed error instead of three identical refusals.
+                if getattr(exc, "non_retryable", False):
+                    break
                 if attempt < self.connect_attempts:
                     delay = min(
                         self.connect_retry_base_s * (2 ** (attempt - 1)),
@@ -438,6 +451,7 @@ class ManagedSTTProvider:
                 self._consumer_task = asyncio.create_task(self._consume_session_events(session))
                 self._schedule_reset_timer()
                 await self._set_state(STTSessionState.STREAMING)
+                self._last_ensure_failure = None
                 self._log_session_connected(attempts=attempt)
                 self._emit_detailed(
                     "[STT] Session ready (reset_deadline=%ss)",
@@ -447,6 +461,7 @@ class ManagedSTTProvider:
                 return True
 
         reason = str(last_exc) if last_exc is not None else "unknown error"
+        self._last_ensure_failure = last_exc
         self._emit_basic(
             "[STT] Failed to open session after %s attempts: %s",
             self.connect_attempts,

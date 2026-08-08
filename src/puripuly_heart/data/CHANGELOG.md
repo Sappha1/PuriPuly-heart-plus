@@ -2,6 +2,11 @@
 
 User-facing changes per build. The latest build's highlights also appear in-app when an update is ready.
 
+## r386 — 2026-08-07
+
+- **The local speech model now loads once and is shared, instead of twice at the same time.** Your voice and your partner's voice each built their own copy of the exact same model — about 1.1 GB apiece — and built them simultaneously at startup. On a machine without several GB of memory free, that double demand paged the whole system into a freeze: the app locked to a spinner, the load never finished, and nothing was ever written to the log. One copy now serves both, loads are queued so two can never build at once, and the model survives settings changes instead of reloading
+- **If there genuinely isn't enough free memory, the app now says so instead of freezing.** Below the required headroom the load refuses with a message showing how much is needed and how much is free, and suggests closing other programs or switching to a cloud recognizer — in your interface language. Previously the only symptom was a machine so busy paging that not even an error could be written
+
 ## r385 — 2026-08-07
 
 - **The overlay's stay-on-top guard now finds its own window.** It has never found it. The guard exists so a full-screen game cannot bury the captions, and it re-checks every few seconds — but it was looking for a window belonging to the app's own process, and the window does not belong to that process. The app runs the interface server and starts a second program to draw with; that second program owns the window. So the search matched nothing, on every launch, in every build that has shipped it, and the overlay could still be pushed underneath a game with nothing in the log but a single warning. It now searches the programs the app actually started, prefers the real caption window when several match, and still says so if it comes up empty

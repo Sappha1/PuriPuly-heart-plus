@@ -145,7 +145,10 @@ from puripuly_heart.providers.llm.openrouter import OpenRouterKeyMetadata, OpenR
 from puripuly_heart.providers.llm.qwen import QwenLLMProvider
 from puripuly_heart.providers.llm.qwen_async import AsyncQwenLLMProvider
 from puripuly_heart.providers.stt.deepgram import DeepgramRealtimeSTTBackend
-from puripuly_heart.providers.stt.local_qwen_sherpa import LocalQwenSherpaLoadError
+from puripuly_heart.providers.stt.local_qwen_sherpa import (
+    LocalQwenLowMemoryError,
+    LocalQwenSherpaLoadError,
+)
 from puripuly_heart.providers.stt.soniox import SonioxRealtimeSTTBackend
 from puripuly_heart.ui.event_bridge import UIEventBridge
 from puripuly_heart.ui.i18n import get_locale, set_locale, t
@@ -3963,6 +3966,35 @@ class GuiController:
                 resume_self=True,
                 resume_peer=self._peer_local_stt_requested(self.settings),
             )
+        except LocalQwenLowMemoryError as exc:
+            # r386: NOT the "invalid" path below — that one re-downloads the
+            # 900MB model, and this machine's problem is RAM, not files. Turn
+            # the mic back off and say exactly what is wrong and what to do.
+            self._stt_desired = False
+            dash = getattr(self.app, "view_dashboard", None)
+            if dash is not None:
+                with contextlib.suppress(Exception):
+                    dash.set_stt_enabled(False)
+            with contextlib.suppress(Exception):
+                from puripuly_heart.ui.i18n import t as _t
+
+                self.hub.ui_events.put_nowait(
+                    UIEvent(
+                        type=UIEventType.ERROR,
+                        payload=_t(
+                            "stt.local.low_memory",
+                            available=f"{exc.available_mb / 1024:.1f}",
+                            needed=f"{exc.needed_mb / 1024:.1f}",
+                        ),
+                        channel="self",
+                        runtime_log_handled=True,
+                    )
+                )
+            self.log_basic(
+                "[STT] local model load refused: "
+                f"{exc.available_mb} MB available, ~{exc.needed_mb} MB needed"
+            )
+            return False
         except (LocalSTTManifestInvalidError, LocalQwenSherpaLoadError):
             return self._handle_local_stt_unavailable(
                 "invalid",
@@ -5238,6 +5270,33 @@ class GuiController:
             async def _warm() -> None:
                 try:
                     await self._peer_runtime.warmup()
+                except LocalQwenLowMemoryError as exc:
+                    # r386: same refusal as the mic path, surfaced on the PEER
+                    # channel — and the runtime stands down rather than leaving
+                    # a green pill that refuses every utterance.
+                    with contextlib.suppress(Exception):
+                        from puripuly_heart.ui.i18n import t as _t
+
+                        self.hub.ui_events.put_nowait(
+                            UIEvent(
+                                type=UIEventType.ERROR,
+                                payload=_t(
+                                    "stt.local.low_memory",
+                                    available=f"{exc.available_mb / 1024:.1f}",
+                                    needed=f"{exc.needed_mb / 1024:.1f}",
+                                ),
+                                channel="peer",
+                                runtime_log_handled=True,
+                            )
+                        )
+                    self.log_basic(
+                        "[STT][peer] local model load refused: "
+                        f"{exc.available_mb} MB available, ~{exc.needed_mb} MB needed"
+                    )
+                    with contextlib.suppress(Exception):
+                        await self._peer_runtime.apply_policy(
+                            config=config, desired_active=False
+                        )
                 except Exception:
                     self.log_detailed("[STT] peer warmup failed (will lazy-load)")
             with contextlib.suppress(Exception):

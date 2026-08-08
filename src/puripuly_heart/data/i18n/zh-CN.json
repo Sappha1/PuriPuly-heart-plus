@@ -911,5 +911,6 @@
   "dashboard.find.prev": "上一个",
   "dashboard.find.next": "下一个",
   "dashboard.find.close": "关闭（Esc）",
-  "dashboard.find.none": "无结果"
+  "dashboard.find.none": "无结果",
+  "stt.local.low_memory": "可用内存不足，无法加载本地语音模型——大约需要 {needed} GB，当前仅剩 {available} GB。请关闭其他程序（游戏、模拟器、浏览器）后重新开启 MIC，或在设置中选择云端语音识别。"
 }

@@ -911,5 +911,6 @@
   "dashboard.find.prev": "Previous match",
   "dashboard.find.next": "Next match",
   "dashboard.find.close": "Close (Esc)",
-  "dashboard.find.none": "No results"
+  "dashboard.find.none": "No results",
+  "stt.local.low_memory": "Not enough free memory to load the local speech model — about {needed} GB needed, {available} GB free. Close other programs (games, emulators, browsers) and turn MIC on again, or pick a cloud recognizer in Settings."
 }

@@ -2,6 +2,10 @@
 
 User-facing changes per build. The latest build's highlights also appear in-app when an update is ready.
 
+## r388 — 2026-08-08
+
+- **The first caption after a quiet spell no longer flashes squashed.** The compressed "smushed" first caption is an old bug with an old fix — a corrective resize that runs when the first caption arrives. But that fix armed only at startup, on overlay off/on, and un-minimize, and it fires once. The caption window empties a few seconds after every turn, and the first caption after each lull rendered with nothing to correct it — briefly squashed until the next line arrived and laid out normally. That edge now gets the same corrective as the overlay reveal: a one-pixel size pulse, imperceptible, applied only while the overlay is locked
+
 ## r387 — 2026-08-07
 
 - **Stray "The system." lines from silence are gone — without blocking anyone from saying it.** The local speech model produces this phrase from noise, but a person can also genuinely say it, so it could not simply be banned. The measurements decided it: every noise emission came from a minimum-length audio segment (under two seconds), while real speech containing the word ran much longer. The phrase is now filtered only when it is the entire line AND the audio behind it is that short. Said inside any sentence it always goes through; said deliberately on its own at talking pace it goes through too; and when the duration isn't known, nothing is filtered

@@ -2686,6 +2686,9 @@ class FletDesktopRendererWindow:
         # screen, so the empty -> content edge can be logged once per lull
         # rather than on every frame of a conversation.
         self._content_surface_rendered: bool = False
+        # r388: a lull-edge composite pulse is in flight — prevents stacking
+        # pulses when captions arrive faster than the ~60ms pulse completes.
+        self._composite_kick_in_flight: bool = False
 
     def prime_startup_runtime_controls(
         self,
@@ -3517,6 +3520,21 @@ class FletDesktopRendererWindow:
                         len(plan.slots),
                         self._interaction_mode != _DESKTOP_INTERACTION_MODE_EDIT,
                     )
+                    # r388: the first caption after a lull renders with the
+                    # r176 compressed layout ("smushed") — observed live, ten
+                    # unguarded lull edges in one evening once the one-shot
+                    # startup relayout had been consumed. Run the reveal
+                    # path's 1px pulse: imperceptible, forces Flutter to
+                    # re-lay-out and Windows to composite. Locked mode only —
+                    # in edit mode the window is interactive and repaints
+                    # normally.
+                    if (
+                        self._interaction_mode == _DESKTOP_INTERACTION_MODE_PASS_THROUGH
+                        and not self._relayout_in_progress
+                        and not self._composite_kick_in_flight
+                    ):
+                        self._composite_kick_in_flight = True
+                        self._run_page_task(self._composite_nudge_after_reveal)
                 self._content_surface_rendered = bool(plan.slots)
             else:
                 content_kind = "transparent_host"
@@ -3654,6 +3672,7 @@ class FletDesktopRendererWindow:
                     window_update()
         finally:
             self._relayout_in_progress = False
+            self._composite_kick_in_flight = False
             with contextlib.suppress(Exception):
                 self._apply_interaction_window_chrome()
                 if callable(window_update):

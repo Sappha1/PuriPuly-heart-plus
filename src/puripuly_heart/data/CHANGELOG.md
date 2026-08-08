@@ -2,6 +2,10 @@
 
 User-facing changes per build. The latest build's highlights also appear in-app when an update is ready.
 
+## r387 — 2026-08-07
+
+- **Stray "The system." lines from silence are gone — without blocking anyone from saying it.** The local speech model produces this phrase from noise, but a person can also genuinely say it, so it could not simply be banned. The measurements decided it: every noise emission came from a minimum-length audio segment (under two seconds), while real speech containing the word ran much longer. The phrase is now filtered only when it is the entire line AND the audio behind it is that short. Said inside any sentence it always goes through; said deliberately on its own at talking pace it goes through too; and when the duration isn't known, nothing is filtered
+
 ## r386 — 2026-08-07
 
 - **The local speech model now loads once and is shared, instead of twice at the same time.** Your voice and your partner's voice each built their own copy of the exact same model — about 1.1 GB apiece — and built them simultaneously at startup. On a machine without several GB of memory free, that double demand paged the whole system into a freeze: the app locked to a spinner, the load never finished, and nothing was ever written to the log. One copy now serves both, loads are queued so two can never build at once, and the model survives settings changes instead of reloading

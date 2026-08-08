@@ -20,6 +20,11 @@ class STTBackendTranscriptEvent:
     # LLM recognizer covertly translates out-of-language speech, so the
     # transcript's script cannot be trusted for language filtering.
     detected_language: str | None = None
+    # r387: how much audio produced this text. The local model's stock noise
+    # phrases come from minimum-length VAD segments (measured: 1140-1972ms,
+    # five at exactly 1140.0), so borderline whole-line matches are suppressed
+    # only inside that band. None (cloud providers) disables that gate.
+    audio_ms: float | None = None
 
 
 class STTBackendSession(Protocol):

@@ -678,14 +678,16 @@ class ManagedSTTProvider:
                 fallback_level=logging.WARNING,
             )
 
-    def _should_suppress_final_transcript(self, text: str) -> bool:
+    def _should_suppress_final_transcript(
+        self, text: str, *, audio_ms: float | None = None
+    ) -> bool:
         # Degenerate repetition loops ("什么?什么?..." x dozens) are a universal STT
         # failure, not Qwen-specific, so suppress them for any provider.
         if is_repetition_loop(text):
             return True
         return (
             self.stt_provider_name is STTProviderName.LOCAL_QWEN
-            and is_known_local_qwen_hallucination(text)
+            and is_known_local_qwen_hallucination(text, audio_ms=audio_ms)
         )
 
     async def _handle_suppressed_final_transcript(
@@ -753,7 +755,9 @@ class ManagedSTTProvider:
                     )
                 if utterance_id is None:
                     continue
-                if ev.is_final and self._should_suppress_final_transcript(ev.text):
+                if ev.is_final and self._should_suppress_final_transcript(
+                    ev.text, audio_ms=getattr(ev, "audio_ms", None)
+                ):
                     await self._handle_suppressed_final_transcript(
                         utterance_id=utterance_id,
                     )

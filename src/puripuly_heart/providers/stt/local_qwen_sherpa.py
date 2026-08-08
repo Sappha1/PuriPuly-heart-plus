@@ -709,6 +709,7 @@ class _LocalQwenSherpaSession(STTBackendSession):
                     speaker_embedding=speaker_embedding,
                     speaker_seconds=speaker_seconds,
                     detected_language=detected_language,
+                    audio_ms=audio_ms,
                 )
             )
 

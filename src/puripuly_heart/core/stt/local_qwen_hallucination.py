@@ -169,12 +169,34 @@ _ENGLISH_STOCK_UTTERANCES = frozenset({
     "system", "a system", "this is a system",
 })
 
+# r387: forms a person could plausibly say as a complete answer, so they are
+# NOT blocked outright — only when the audio segment is in the noise band.
+# Measured: every noise emission of these sat in a 1140-1972ms segment (five
+# at exactly 1140.0ms, the VAD minimum), while real speech containing the
+# word ran 3444ms. A deliberate lone "The system." at talking pace lands in a
+# longer segment and passes; unknown duration always passes.
+_ENGLISH_STOCK_UTTERANCES_NOISE_BAND = frozenset({
+    "the system", "it is a system",
+})
+NOISE_BAND_MAX_AUDIO_MS = 2000.0
 
-def is_known_local_qwen_hallucination(text: str) -> bool:
+
+def is_known_local_qwen_hallucination(
+    text: str, *, audio_ms: float | None = None
+) -> bool:
     stripped = text.strip()
     if stripped in KNOWN_LOCAL_QWEN_HALLUCINATIONS:
         return True
-    if _english_stock_residue(stripped) in _ENGLISH_STOCK_UTTERANCES:
+    residue = _english_stock_residue(stripped)
+    if residue in _ENGLISH_STOCK_UTTERANCES:
+        return True
+    # r387: the borderline forms need the noise band as a second witness —
+    # whole-line alone is not enough, because a person can say them.
+    if (
+        residue in _ENGLISH_STOCK_UTTERANCES_NOISE_BAND
+        and audio_ms is not None
+        and 0.0 < audio_ms < NOISE_BAND_MAX_AUDIO_MS
+    ):
         return True
     # Normalized stock-term checks (r312): drop digits/punctuation, then junk
     # if what remains is exactly a stock term or that term repeated ("的答案是：

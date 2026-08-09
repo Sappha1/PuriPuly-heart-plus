@@ -1132,6 +1132,7 @@ class SettingsView(ft.Column):
             show_snackbar=lambda msg, bg: (
                 self.show_snackbar(msg, bg) if self.show_snackbar else None
             ),
+            on_value_change=self._sync_qwen_workspace_endpoint_visibility,
         )
 
         self._qwen_workspace_endpoint_field = ft.TextField(
@@ -1142,6 +1143,11 @@ class SettingsView(ft.Column):
             text_size=12,
             on_blur=self._on_qwen_workspace_endpoint_change,
             on_submit=self._on_qwen_workspace_endpoint_change,
+        )
+        # r390: hidden until it applies — a workspace key is being entered, or
+        # an endpoint is already saved (so it stays editable and clearable).
+        self._qwen_workspace_endpoint_field.visible = bool(
+            self._settings and self._settings.qwen.workspace_endpoint.strip()
         )
 
         self._whisper_model_card = self._build_clickable_text(
@@ -3688,6 +3694,7 @@ class SettingsView(ft.Column):
         )
         self._alibaba_key_beijing.visible = QwenRegion.BEIJING in qwen_regions
         self._alibaba_key_singapore.visible = QwenRegion.SINGAPORE in qwen_regions
+        self._sync_qwen_workspace_endpoint_visibility()
 
         whisper_active = STTProviderName.WHISPER in active_stt_providers
         self._whisper_model_card_wrapper.visible = whisper_active
@@ -5042,6 +5049,30 @@ class SettingsView(ft.Column):
         self._settings.overlay.peer_original_follows_chatbox_format = False
         self._sync_overlay_controls()
         self._emit_settings_changed()
+
+    def _sync_qwen_workspace_endpoint_visibility(self) -> None:
+        """Show the workspace endpoint box only when it applies.
+
+        r390: r389 showed it to everyone, which asks users of ordinary keys to
+        make sense of a field naming a format they do not have. It appears when
+        a workspace key (sk-ws-…) is in the Singapore box, or when an endpoint
+        is already saved so it can still be edited or cleared.
+        """
+        field = getattr(self, "_qwen_workspace_endpoint_field", None)
+        singapore = getattr(self, "_alibaba_key_singapore", None)
+        if field is None or singapore is None:
+            return
+        key = (singapore.value or "").strip()
+        saved = ""
+        if self._settings is not None:
+            saved = (self._settings.qwen.workspace_endpoint or "").strip()
+        visible = bool(singapore.visible) and (key.startswith("sk-ws-") or bool(saved))
+        if field.visible == visible:
+            return
+        field.visible = visible
+        if field.page:
+            with contextlib.suppress(Exception):
+                field.update()
 
     def _on_qwen_workspace_endpoint_change(self, e) -> None:
         """r389: persist the Alibaba workspace endpoint (sk-ws-… keys).

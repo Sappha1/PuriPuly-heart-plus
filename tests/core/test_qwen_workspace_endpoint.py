@@ -133,3 +133,76 @@ def test_the_field_and_error_are_localized(locale: str) -> None:
     assert data.get("settings.qwen_workspace_endpoint")
     assert data.get("settings.qwen_workspace_endpoint.hint")
     assert data.get("error.qwen_workspace_endpoint_missing")
+
+
+# ── r390: the field only appears when it applies ─────────────────────────────
+
+
+def _visibility(key_value: str, saved_endpoint: str, key_row_visible: bool = True) -> bool:
+    """Drive the real visibility rule with stand-ins for the flet widgets."""
+    from puripuly_heart.config.settings import AppSettings
+    from puripuly_heart.ui.views.settings import SettingsView
+
+    class _Field:
+        visible = False
+        page = None
+
+        def update(self) -> None:  # pragma: no cover - never has a page here
+            pass
+
+    class _Key:
+        def __init__(self) -> None:
+            self.value = key_value
+            self.visible = key_row_visible
+
+    view = object.__new__(SettingsView)
+    view._qwen_workspace_endpoint_field = _Field()
+    view._alibaba_key_singapore = _Key()
+    settings = AppSettings()
+    settings.qwen.workspace_endpoint = saved_endpoint
+    view._settings = settings
+    SettingsView._sync_qwen_workspace_endpoint_visibility(view)
+    return view._qwen_workspace_endpoint_field.visible
+
+
+def test_hidden_for_an_ordinary_key() -> None:
+    """The whole point of r390: people with classic keys should never be shown
+    a box about a key format they do not have."""
+    assert _visibility("sk-abcdef0123", "") is False
+
+
+def test_hidden_when_nothing_is_entered() -> None:
+    assert _visibility("", "") is False
+
+
+def test_shown_while_a_workspace_key_is_typed() -> None:
+    assert _visibility("sk-ws-abcdef", "") is True
+
+
+def test_shown_when_an_endpoint_is_already_saved() -> None:
+    """Otherwise a saved endpoint becomes uneditable and unclearable."""
+    assert _visibility("", WORKSPACE) is True
+
+
+def test_hidden_when_the_singapore_row_itself_is_hidden() -> None:
+    """No Qwen provider selected — the endpoint must not outlive its key row."""
+    assert _visibility("sk-ws-abcdef", "", key_row_visible=False) is False
+
+
+def test_a_partial_prefix_does_not_reveal_it() -> None:
+    assert _visibility("sk-w", "") is False
+
+
+def test_the_key_field_reports_edits_without_exposing_the_key() -> None:
+    """The callback exists so the owner can react to WHAT KIND of key is being
+    typed; it must not hand the key value around."""
+    import inspect
+
+    from puripuly_heart.ui.components.settings.api_key_field import ApiKeyField
+
+    signature = inspect.signature(ApiKeyField.__init__)
+    assert "on_value_change" in signature.parameters
+    source = inspect.getsource(ApiKeyField)
+    assert "self._on_value_change()" in source, "the callback is never fired"
+    assert "self._on_value_change(self" not in source
+    assert "_on_value_change(val" not in source, "the key value is being passed out"

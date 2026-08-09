@@ -2,6 +2,10 @@
 
 User-facing changes per build. The latest build's highlights also appear in-app when an update is ready.
 
+## r390 — 2026-08-09
+
+- **The workspace address box now only appears when it applies.** r389 added it to the API keys list for everyone, including the majority whose keys never need it — one more thing to interpret for no reason. It now shows up only while a workspace-style key is being entered, or when an address is already saved so it stays editable. With an ordinary key you see the same two fields as before
+
 ## r389 — 2026-08-08
 
 - **Alibaba workspace API keys (sk-ws-…) now work.** The Singapore Model Studio console has begun issuing workspace keys, which only authenticate against a private per-workspace address shown above the key in the console — on the shared address this app used, every request is rejected as an invalid key, which looks exactly like a broken purchase. Settings now has a field for that address under the Singapore key: paste it, and the key works. Normal sk- keys need nothing and behave as before

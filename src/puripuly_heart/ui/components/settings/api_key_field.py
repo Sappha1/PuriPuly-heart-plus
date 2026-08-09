@@ -31,6 +31,7 @@ class ApiKeyField(ft.Row):
         on_save: Callable[[str, str], None] | None = None,
         show_snackbar: Callable[[str, str], None] | None = None,
         show_status: bool = True,
+        on_value_change: Callable[[], None] | None = None,
     ):
         self._label_key = label_key
         self._secret_key = secret_key
@@ -39,6 +40,10 @@ class ApiKeyField(ft.Row):
         self._on_save = on_save
         self._show_snackbar_cb = show_snackbar
         self._show_status = show_status
+        # r390: fired on every edit and on programmatic set, so the owner can
+        # reveal fields that only apply to certain key formats. Never receives
+        # the key itself — the owner reads what it needs from the field.
+        self._on_value_change = on_value_change
         self._dirty = False
         self._last_verified_hash = ""
         self._is_verifying = False
@@ -98,6 +103,8 @@ class ApiKeyField(ft.Row):
         self._dirty = False
         if self._text_field.page:
             self._text_field.update()
+        if callable(self._on_value_change):
+            self._on_value_change()
 
     def _get_key_hash(self, key: str) -> str:
         """Get SHA-256 hash of the key."""
@@ -119,6 +126,8 @@ class ApiKeyField(ft.Row):
         """Mark the field dirty after user edits."""
         _ = e
         self._dirty = True
+        if callable(self._on_value_change):
+            self._on_value_change()
 
     def _set_status(self, status: str) -> None:
         """Update status icon based on verification state."""

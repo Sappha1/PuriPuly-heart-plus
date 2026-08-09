@@ -767,18 +767,49 @@ class GeminiSettings:
             raise ValueError("invalid gemini llm model")
 
 
+def normalize_qwen_workspace_endpoint(raw: str) -> str:
+    """The workspace origin, from whatever the user pasted.
+
+    The Model Studio console shows the endpoint WITH /compatible-mode/v1
+    appended; docs sometimes show the bare origin; users add trailing slashes
+    and whitespace. All of them normalize to the origin, so the rest of the
+    code can append /api/v1 or /compatible-mode/v1 exactly as it does for the
+    regional endpoints. Empty in, empty out.
+    """
+    value = (raw or "").strip().rstrip("/")
+    for suffix in ("/compatible-mode/v1", "/api/v1"):
+        if value.endswith(suffix):
+            value = value[: -len(suffix)].rstrip("/")
+    return value
+
+
 @dataclass(slots=True)
 class QwenSettings:
     region: QwenRegion = QwenRegion.BEIJING
     llm_model: QwenLLMModel = QwenLLMModel.QWEN_35_PLUS
+    # r389: Alibaba workspace keys (sk-ws-…) only authenticate against their
+    # own https://{WorkspaceId}.{region}.maas.aliyuncs.com endpoint — on the
+    # shared regional endpoint they 401, which looks like a broken key.
+    # Empty = classic key, regional endpoint.
+    workspace_endpoint: str = ""
 
     def validate(self) -> None:
         if not isinstance(self.region, QwenRegion):
             raise ValueError("invalid qwen region")
         if not isinstance(self.llm_model, QwenLLMModel):
             raise ValueError("invalid qwen llm model")
+        if not isinstance(self.workspace_endpoint, str):
+            raise ValueError("invalid qwen workspace endpoint")
+        normalized = normalize_qwen_workspace_endpoint(self.workspace_endpoint)
+        if normalized and not normalized.startswith("https://"):
+            raise ValueError("qwen workspace endpoint must start with https://")
 
     def get_llm_base_url(self) -> str:
+        workspace = normalize_qwen_workspace_endpoint(self.workspace_endpoint)
+        if workspace:
+            # /api/v1 form on purpose: every consumer converts that suffix to
+            # /compatible-mode/v1 the same way it does for regional URLs.
+            return workspace + "/api/v1"
         if self.region == QwenRegion.BEIJING:
             return "https://dashscope.aliyuncs.com/api/v1"
         return "https://dashscope-intl.aliyuncs.com/api/v1"
@@ -1718,6 +1749,7 @@ def to_dict(settings: AppSettings) -> dict[str, Any]:
         "qwen": {
             "region": settings.qwen.region.value,
             "llm_model": settings.qwen.llm_model.value,
+            "workspace_endpoint": settings.qwen.workspace_endpoint,
         },
         "deepseek": {
             "llm_model": settings.deepseek.llm_model.value,
@@ -3829,6 +3861,7 @@ def from_dict(data: dict[str, Any]) -> AppSettings:
             legacy_asr_endpoint=qwen_asr_raw.get("endpoint"),
         ),
         llm_model=_parse_qwen_llm_model(qwen_raw.get("llm_model", QwenLLMModel.QWEN_35_PLUS.value)),
+        workspace_endpoint=str(qwen_raw.get("workspace_endpoint", "") or ""),
     )
 
     settings = AppSettings(

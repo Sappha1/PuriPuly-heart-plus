@@ -278,6 +278,8 @@ class ApiKeyField(ft.Row):
     def _translate_error(self, msg: str) -> str:
         """Translate common error messages to user-friendly text."""
         msg_lower = msg.lower()
+        if msg_lower == "qwen_workspace_endpoint_missing":
+            return t("error.qwen_workspace_endpoint_missing")
         if msg_lower.startswith("qwen_model_unavailable:"):
             model = msg.split(":", 1)[1].strip() if ":" in msg else ""
             return t("error.qwen_model_unavailable", model=model or "unknown")

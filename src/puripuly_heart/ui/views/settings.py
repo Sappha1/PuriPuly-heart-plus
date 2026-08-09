@@ -1134,6 +1134,16 @@ class SettingsView(ft.Column):
             ),
         )
 
+        self._qwen_workspace_endpoint_field = ft.TextField(
+            label=t("settings.qwen_workspace_endpoint"),
+            hint_text=t("settings.qwen_workspace_endpoint.hint"),
+            value=(self._settings.qwen.workspace_endpoint if self._settings else ""),
+            dense=True,
+            text_size=12,
+            on_blur=self._on_qwen_workspace_endpoint_change,
+            on_submit=self._on_qwen_workspace_endpoint_change,
+        )
+
         self._whisper_model_card = self._build_clickable_text(
             self._settings.whisper_stt.model if self._settings else "large-v3-turbo",
             self._on_whisper_model_click,
@@ -1157,6 +1167,7 @@ class SettingsView(ft.Column):
                 self._deepl_usage_row,
                 self._alibaba_key_beijing,
                 self._alibaba_key_singapore,
+                self._qwen_workspace_endpoint_field,
             ],
             spacing=12,
         )
@@ -5030,6 +5041,20 @@ class SettingsView(ft.Column):
         # Explicit choice here opts out of mirroring General's chatbox format.
         self._settings.overlay.peer_original_follows_chatbox_format = False
         self._sync_overlay_controls()
+        self._emit_settings_changed()
+
+    def _on_qwen_workspace_endpoint_change(self, e) -> None:
+        """r389: persist the Alibaba workspace endpoint (sk-ws-… keys).
+
+        Stored raw; normalization happens where it is consumed, so what the
+        user sees in the field is exactly what they pasted.
+        """
+        if not self._settings:
+            return
+        value = str(getattr(e.control, "value", "") or "").strip()
+        if value == self._settings.qwen.workspace_endpoint:
+            return
+        self._settings.qwen.workspace_endpoint = value
         self._emit_settings_changed()
 
     def _on_overlay_show_self_click(self, e) -> None:

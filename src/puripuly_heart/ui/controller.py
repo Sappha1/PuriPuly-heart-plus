@@ -4511,12 +4511,16 @@ class GuiController:
             elif provider == "alibaba_beijing":
                 return await self._verify_qwen_key_with_model_fallback(
                     key,
-                    base_url="https://dashscope.aliyuncs.com/api/v1",
+                    base_url=self._qwen_verify_base_url(
+                        "https://dashscope.aliyuncs.com/api/v1"
+                    ),
                 )
             elif provider == "alibaba_singapore":
                 return await self._verify_qwen_key_with_model_fallback(
                     key,
-                    base_url="https://dashscope-intl.aliyuncs.com/api/v1",
+                    base_url=self._qwen_verify_base_url(
+                        "https://dashscope-intl.aliyuncs.com/api/v1"
+                    ),
                 )
             elif provider == "deepgram":
                 success = await DeepgramRealtimeSTTBackend.verify_api_key(key)
@@ -6886,6 +6890,18 @@ class GuiController:
 
         return "", self.settings.qwen.get_llm_base_url()
 
+    def _qwen_verify_base_url(self, regional_default: str) -> str:
+        """r389: a configured workspace endpoint replaces the regional URL —
+        workspace keys (sk-ws-…) never authenticate on the shared endpoint."""
+        from puripuly_heart.config.settings import normalize_qwen_workspace_endpoint
+
+        workspace = ""
+        if self.settings is not None:
+            workspace = normalize_qwen_workspace_endpoint(
+                getattr(self.settings.qwen, "workspace_endpoint", "")
+            )
+        return workspace + "/api/v1" if workspace else regional_default
+
     async def _verify_qwen_key_with_model_fallback(
         self,
         api_key: str,
@@ -6894,6 +6910,15 @@ class GuiController:
     ) -> tuple[bool, str]:
         if self.settings is None:
             return False, "Verification failed (check logs/console for details)"
+
+        # r389: a workspace key without its endpoint can only ever 401 — say
+        # what is actually missing instead of "verification failed".
+        from puripuly_heart.config.settings import normalize_qwen_workspace_endpoint
+
+        if api_key.strip().startswith("sk-ws-") and not normalize_qwen_workspace_endpoint(
+            getattr(self.settings.qwen, "workspace_endpoint", "")
+        ):
+            return False, "qwen_workspace_endpoint_missing"
 
         selected_model = self.settings.qwen.llm_model.value
         if await self._verify_qwen_llm_api_key(api_key, base_url=base_url, model=selected_model):

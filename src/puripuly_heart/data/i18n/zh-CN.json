@@ -912,5 +912,8 @@
   "dashboard.find.next": "下一个",
   "dashboard.find.close": "关闭（Esc）",
   "dashboard.find.none": "无结果",
-  "stt.local.low_memory": "可用内存不足，无法加载本地语音模型——大约需要 {needed} GB，当前仅剩 {available} GB。请关闭其他程序（游戏、模拟器、浏览器）后重新开启 MIC，或在设置中选择云端语音识别。"
+  "stt.local.low_memory": "可用内存不足，无法加载本地语音模型——大约需要 {needed} GB，当前仅剩 {available} GB。请关闭其他程序（游戏、模拟器、浏览器）后重新开启 MIC，或在设置中选择云端语音识别。",
+  "settings.qwen_workspace_endpoint": "阿里云工作空间端点（仅 sk-ws-… 密钥需要）",
+  "settings.qwen_workspace_endpoint.hint": "粘贴控制台中密钥上方显示的 OpenAI 兼容地址，例如 https://ws-….maas.aliyuncs.com/compatible-mode/v1——普通 sk- 密钥请留空",
+  "error.qwen_workspace_endpoint_missing": "这是工作空间密钥（sk-ws-…）。请把 Model Studio 控制台中的工作空间端点粘贴到下方输入框，然后重新验证。"
 }

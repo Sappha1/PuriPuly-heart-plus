@@ -912,5 +912,8 @@
   "dashboard.find.next": "Next match",
   "dashboard.find.close": "Close (Esc)",
   "dashboard.find.none": "No results",
-  "stt.local.low_memory": "Not enough free memory to load the local speech model — about {needed} GB needed, {available} GB free. Close other programs (games, emulators, browsers) and turn MIC on again, or pick a cloud recognizer in Settings."
+  "stt.local.low_memory": "Not enough free memory to load the local speech model — about {needed} GB needed, {available} GB free. Close other programs (games, emulators, browsers) and turn MIC on again, or pick a cloud recognizer in Settings.",
+  "settings.qwen_workspace_endpoint": "Alibaba workspace endpoint (sk-ws-… keys only)",
+  "settings.qwen_workspace_endpoint.hint": "Paste the OpenAI-compatible URL shown above your key, e.g. https://ws-….maas.aliyuncs.com/compatible-mode/v1 — leave empty for normal sk- keys",
+  "error.qwen_workspace_endpoint_missing": "This is a workspace key (sk-ws-…). Paste your workspace endpoint from the Model Studio console into the field below, then verify again."
 }

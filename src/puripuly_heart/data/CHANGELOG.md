@@ -2,6 +2,11 @@
 
 User-facing changes per build. The latest build's highlights also appear in-app when an update is ready.
 
+## r389 — 2026-08-08
+
+- **Alibaba workspace API keys (sk-ws-…) now work.** The Singapore Model Studio console has begun issuing workspace keys, which only authenticate against a private per-workspace address shown above the key in the console — on the shared address this app used, every request is rejected as an invalid key, which looks exactly like a broken purchase. Settings now has a field for that address under the Singapore key: paste it, and the key works. Normal sk- keys need nothing and behave as before
+- **Entering a workspace key without its address now says so.** Instead of a bare "verification failed", the check recognises the sk-ws- prefix and tells you, in your interface language, to paste the workspace address from the console
+
 ## r388 — 2026-08-08
 
 - **The first caption after a quiet spell no longer flashes squashed.** The compressed "smushed" first caption is an old bug with an old fix — a corrective resize that runs when the first caption arrives. But that fix armed only at startup, on overlay off/on, and un-minimize, and it fires once. The caption window empties a few seconds after every turn, and the first caption after each lull rendered with nothing to correct it — briefly squashed until the next line arrived and laid out normally. That edge now gets the same corrective as the overlay reveal: a one-pixel size pulse, imperceptible, applied only while the overlay is locked

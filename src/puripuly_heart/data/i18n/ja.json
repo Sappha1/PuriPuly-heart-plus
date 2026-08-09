@@ -912,5 +912,8 @@
   "dashboard.find.next": "次の一致",
   "dashboard.find.close": "閉じる（Esc）",
   "dashboard.find.none": "該当なし",
-  "stt.local.low_memory": "空きメモリが不足しているため、ローカル音声モデルを読み込めません——約 {needed} GB 必要ですが、現在 {available} GB しか空いていません。他のプログラム（ゲーム、エミュレーター、ブラウザーなど）を閉じてから MIC を入れ直すか、設定でクラウド音声認識を選択してください。"
+  "stt.local.low_memory": "空きメモリが不足しているため、ローカル音声モデルを読み込めません——約 {needed} GB 必要ですが、現在 {available} GB しか空いていません。他のプログラム（ゲーム、エミュレーター、ブラウザーなど）を閉じてから MIC を入れ直すか、設定でクラウド音声認識を選択してください。",
+  "settings.qwen_workspace_endpoint": "Alibaba ワークスペースエンドポイント（sk-ws-… キーのみ）",
+  "settings.qwen_workspace_endpoint.hint": "コンソールでキーの上に表示される OpenAI 互換 URL を貼り付けてください（例 https://ws-….maas.aliyuncs.com/compatible-mode/v1）。通常の sk- キーは空欄のままにします",
+  "error.qwen_workspace_endpoint_missing": "これはワークスペースキー（sk-ws-…）です。Model Studio コンソールのワークスペースエンドポイントを下の欄に貼り付けてから、再度検証してください。"
 }

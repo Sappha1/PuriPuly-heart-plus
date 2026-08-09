@@ -2,6 +2,11 @@
 
 User-facing changes per build. The latest build's highlights also appear in-app when an update is ready.
 
+## r391 — 2026-08-09
+
+- **The local speech model now works when your Windows account name is not written in English letters.** If your account name (or the folder you unzipped into) contains Chinese, Japanese, Korean, Cyrillic or accented characters, the speech engine could not read its own model files: it failed deep inside the audio library and closed the whole app, with nothing written to the log and no error on screen. From the outside the app simply froze on startup or vanished. Nothing could be done about it either, because the model is stored under your account folder. The app now hands the engine an equivalent path Windows keeps for exactly this purpose, and the model loads normally
+- This was previously mistaken for a memory problem. It was not: it happened with plenty of memory free, on every attempt, and the r386 memory improvements — one shared model instead of two — remain worthwhile on their own
+
 ## r390 — 2026-08-09
 
 - **The workspace address box now only appears when it applies.** r389 added it to the API keys list for everyone, including the majority whose keys never need it — one more thing to interpret for no reason. It now shows up only while a workspace-style key is being entered, or when an address is already saved so it stays editable. With an ordinary key you see the same two fields as before

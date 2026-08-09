@@ -215,6 +215,14 @@ def create_local_qwen_sherpa_recognizer(
 ) -> object:
     if sample_rate_hz != LOCAL_QWEN_RECOGNIZER_SAMPLE_RATE_HZ:
         raise ValueError(f"sample_rate_hz must be {LOCAL_QWEN_RECOGNIZER_SAMPLE_RATE_HZ}")
+    # r391: sherpa reads these with narrow paths and dies in native code — no
+    # Python exception, no log line, the process just disappears — when the
+    # directory contains characters outside the system codepage. Anyone whose
+    # Windows account name is not ASCII hits this every single time, because
+    # the model lives under %LOCALAPPDATA%.
+    from puripuly_heart.core.ascii_paths import ascii_safe_path
+
+    model_dir = ascii_safe_path(Path(model_dir))
     ensure_local_qwen_windows_runtime()
     try:
         import sherpa_onnx

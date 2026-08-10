@@ -19,7 +19,7 @@ from puripuly_heart.ui.fonts import font_for_language
 from puripuly_heart.ui.i18n import get_locale, language_name, t
 from puripuly_heart.ui.overlay_peer_contract import OverlayPeerConsumerContract
 
-_BUILD_TAG = "r393-steam-beta"  #increment each build so user can confirm version
+_BUILD_TAG = "r394-steam-beta"  #increment each build so user can confirm version
 
 # ── VRCT-style dark palette ──────────────────────────────────────────────────
 _BG_MAIN = "#2e2f32"
@@ -1796,7 +1796,17 @@ class DashboardView(ft.Row):
             padding=ft.padding.symmetric(horizontal=10, vertical=8),
         )
 
+        self._app_sidebar = sidebar
+        with contextlib.suppress(Exception):
+            if hasattr(self._steam_view, "on_toggle_sidebar"):
+                self._steam_view.on_toggle_sidebar = self._toggle_app_sidebar
         self.controls = [sidebar, right_panel]
+
+    def _toggle_app_sidebar(self) -> None:
+        """Collapse/restore the app's left sidebar to give the Steam tab room."""
+        with contextlib.suppress(Exception):
+            self._app_sidebar.visible = not self._app_sidebar.visible
+            self.update()
 
     # ── beta/steam-bridge: chat tab strip (VRChat | Steam) ───────────────────
     def _select_chat_tab(self, which: str) -> None:
@@ -1808,6 +1818,10 @@ class DashboardView(ft.Row):
         self._tab_steam.bgcolor = "#243447" if which == "steam" else ft.Colors.TRANSPARENT
         self._chat_body.content = (
             self._steam_view if which == "steam" else self._vrc_chat_body)
+        if which == "vrc":
+            # Never leave the app sidebar collapsed once we're back on VRChat.
+            with contextlib.suppress(Exception):
+                self._app_sidebar.visible = True
         # Update FIRST so the Steam view is mounted (its .page is set) BEFORE
         # activate() runs — otherwise activate can't schedule the connect and it
         # sits on "connecting" forever.

@@ -1,27 +1,28 @@
 # -*- coding: utf-8 -*-
 """Steam chat, embedded inside PuriPuly (beta, local only). NEVER ships.
 
-Fully embedded: a headless browser helper (no window ever) reads/sends Steam
-messages over a local socket by driving Steam's in-memory web-chat model, so it
-works without any visible browser. This Flet panel renders the chat natively:
-a collapsible friends list on the left, a chat pane on the right with avatars,
-image embeds, and live translation both ways using the app's own translator.
+Drives Steam's in-memory web-chat model through a headless helper (no window),
+and renders it natively in Flet as a Steam-like client: the full friends list
+grouped into Favorites / your categories / In-Game / Online / Offline with status
+colors and game names, a chat pane with grouped messages, avatars, image embeds,
+clickable links, and live two-way translation via the app's own translator.
 """
 from __future__ import annotations
 
 import asyncio
 import contextlib
 import json
+import re
 import socket
 from pathlib import Path
 
 import flet as ft
 
-# Exact values from the dashboard theme so the Steam tab matches the VRChat one.
+# Dashboard theme values so the tab matches the rest of the app.
 _BG_MAIN = "#2e2f32"
 _BG_SIDE = "#26272a"
 _BG_INPUT = "#323336"
-_BG_SEL = "#33343880"
+_BG_SEL = "#3a4a55"
 _BORDER_INPUT = "#5b5c5f"
 _DIVIDER = "#4b4c4f"
 _TEXT_PRIMARY = "#f2f2f2"
@@ -29,6 +30,14 @@ _TEXT_FAINT = "#7f8084"
 _SUB = "#8fa9c4"
 _ACCENT = "#48a495"
 _TOGGLE_ON = "#48a495"
+_LINK = "#6dc0e8"
+# Steam-style status colors.
+_C_INGAME = "#a1cd5e"   # green: in a game
+_C_ONLINE = "#6dc0e8"   # blue: online
+_C_OFFLINE = "#7a7c80"  # gray: offline
+_SECTION = "#8a8c90"
+
+_URL_RE = re.compile(r"(https?://[^\s]+)")
 
 _BRIDGE_ROOT = Path(
     r"C:\Users\Owner\AppData\Local\Temp\claude\E--Programming-Claude"
@@ -42,43 +51,67 @@ _DAEMON_PYTHON = (
 _CREATE_NO_WINDOW = 0x08000000
 _HOST, _PORT = "127.0.0.1", 8791
 
+_STATE_LABEL = {0: "Offline", 1: "Online", 2: "Busy", 3: "Away", 4: "Snooze",
+                5: "Looking to Trade", 6: "Looking to Play"}
+
 
 def _avatar(url: str, size: int = 30) -> ft.Control:
     if url:
-        return ft.Image(src=url, width=size, height=size, border_radius=size // 2,
+        return ft.Image(src=url, width=size, height=size, border_radius=6,
                         fit=ft.ImageFit.COVER)
-    return ft.Container(width=size, height=size, border_radius=size // 2, bgcolor="#3a3b3e")
+    return ft.Container(width=size, height=size, border_radius=6, bgcolor="#3a3b3e")
+
+
+def _name_color(state: int, ingame: bool) -> str:
+    if ingame:
+        return _C_INGAME
+    return _C_ONLINE if state else _C_OFFLINE
+
+
+def _spans(text: str, base_color: str) -> list:
+    """Split text into TextSpans, making URLs clickable."""
+    out = []
+    for part in _URL_RE.split(text or ""):
+        if not part:
+            continue
+        if _URL_RE.fullmatch(part):
+            out.append(ft.TextSpan(
+                part, ft.TextStyle(color=_LINK, decoration=ft.TextDecoration.UNDERLINE),
+                url=part))
+        else:
+            out.append(ft.TextSpan(part, ft.TextStyle(color=base_color)))
+    return out or [ft.TextSpan("", ft.TextStyle(color=base_color))]
 
 
 class SteamBridgeView(ft.Container):
     def __init__(self) -> None:
         super().__init__(expand=True, bgcolor=_BG_MAIN, padding=0)
-        # injected by the app: async translate(text, to_them:bool) -> str
-        self.translate_message = None
+        # injected by the app
+        self.translate_message = None       # async (text, to_them) -> str
+        self.on_toggle_sidebar = None        # collapses the app's left sidebar
         self._proc = None
         self._reader = None
         self._writer = None
         self._own = 0
         self._own_avatar = ""
-        self._active = None            # account id of the open chat
-        self._pending = None           # account id the user just picked
-        self._names: dict[int, str] = {}
-        self._avatars: dict[int, str] = {}
-        self._friend_items: dict[int, ft.Container] = {}
-        self._collapsed = False
+        self._active = None
+        self._pending = None
+        self._friends: dict[int, dict] = {}
+        self._last_key = None                # message grouping (sender continuity)
         self._started = False
         self._prewarmed = False
 
-        # ── left: collapsible friends list ───────────────────────────────────
-        self._friends_list = ft.ListView(expand=True, spacing=2, padding=6)
-        self._left_panel = ft.Container(width=220, bgcolor=_BG_SIDE,
+        # ── left: Steam-style friends list ───────────────────────────────────
+        self._friends_list = ft.ListView(expand=True, spacing=1, padding=6)
+        self._left_panel = ft.Container(width=248, bgcolor=_BG_SIDE,
                                         content=self._friends_list)
         self._left_divider = ft.VerticalDivider(width=1, color=_DIVIDER, thickness=1)
 
         # ── right: chat pane ─────────────────────────────────────────────────
         self._collapse_btn = ft.IconButton(
-            ft.Icons.MENU_OPEN, icon_size=18, icon_color=_TEXT_FAINT,
-            tooltip="Show/hide friends", on_click=self._toggle_panel,
+            ft.Icons.CHEVRON_LEFT, icon_size=20, icon_color=_TEXT_FAINT,
+            tooltip="Collapse the app sidebar for more room",
+            on_click=lambda e: self._toggle_sidebar(),
             style=ft.ButtonStyle(overlay_color=ft.Colors.TRANSPARENT))
         self._chat_head = ft.Row([self._collapse_btn], spacing=8,
                                  vertical_alignment=ft.CrossAxisAlignment.CENTER)
@@ -86,7 +119,7 @@ class SteamBridgeView(ft.Container):
                                padding=ft.padding.symmetric(horizontal=6, vertical=4),
                                bgcolor=_BG_MAIN)
 
-        self._messages = ft.ListView(expand=True, spacing=10, padding=14, auto_scroll=True)
+        self._messages = ft.ListView(expand=True, spacing=2, padding=14, auto_scroll=True)
         self._entry = ft.TextField(
             hint_text="Type message to send", disabled=True,
             border=ft.InputBorder.OUTLINE, border_color=_BORDER_INPUT,
@@ -122,9 +155,6 @@ class SteamBridgeView(ft.Container):
 
     # ── lifecycle ────────────────────────────────────────────────────────────
     def prewarm(self) -> None:
-        """Spawn the helper at app startup (best effort, no page needed) so the
-        Steam page is already loaded by the time the user opens the tab — kills
-        the "late load". Skips if a helper is already listening."""
         if self._prewarmed:
             return
         self._prewarmed = True
@@ -132,7 +162,7 @@ class SteamBridgeView(ft.Container):
             s = socket.socket()
             s.settimeout(0.25)
             try:
-                s.connect((_HOST, _PORT))   # already running
+                s.connect((_HOST, _PORT))
                 s.close()
                 return
             except Exception:
@@ -143,7 +173,6 @@ class SteamBridgeView(ft.Container):
                 [str(_DAEMON_PYTHON), str(_DAEMON_PY)],
                 stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL,
                 creationflags=_CREATE_NO_WINDOW)
-            self._log(f"prewarm spawned pid={self._proc.pid}")
 
     def activate(self) -> None:
         if self._started:
@@ -152,55 +181,114 @@ class SteamBridgeView(ft.Container):
         if self.page:
             self.page.run_task(self._connect)
 
-    # ── rendering ────────────────────────────────────────────────────────────
-    def _friend_row(self, acct: int, name: str, avatar: str) -> ft.Container:
-        item = ft.Container(
+    def _toggle_sidebar(self) -> None:
+        if callable(self.on_toggle_sidebar):
+            with contextlib.suppress(Exception):
+                self.on_toggle_sidebar()
+
+    # ── friends list ─────────────────────────────────────────────────────────
+    def _friend_row(self, f: dict) -> ft.Control:
+        acct = int(f["acct"])
+        state = int(f.get("state", 0))
+        ingame = bool(f.get("ingame"))
+        selected = (acct == self._active)
+        if ingame:
+            sub, sub_color = (f.get("game") or "In-Game"), _C_INGAME
+        elif state:
+            sub, sub_color = _STATE_LABEL.get(state, "Online"), _TEXT_FAINT
+        else:
+            sub, sub_color = "Offline", _TEXT_FAINT
+        return ft.Container(
             content=ft.Row([
-                _avatar(avatar, 32),
-                ft.Text(name or "Steam chat", size=13, color=_TEXT_PRIMARY,
-                        max_lines=1, overflow=ft.TextOverflow.ELLIPSIS, expand=True),
+                _avatar(f.get("avatar", ""), 34),
+                ft.Column([
+                    ft.Text(f.get("name") or "Steam friend", size=13,
+                            weight=ft.FontWeight.W_500,
+                            color=_name_color(state, ingame),
+                            max_lines=1, overflow=ft.TextOverflow.ELLIPSIS),
+                    ft.Text(sub, size=11, color=sub_color,
+                            max_lines=1, overflow=ft.TextOverflow.ELLIPSIS),
+                ], spacing=0, tight=True, expand=True),
             ], spacing=10, vertical_alignment=ft.CrossAxisAlignment.CENTER),
-            padding=ft.padding.symmetric(horizontal=10, vertical=7),
-            border_radius=8, ink=True, bgcolor=ft.Colors.TRANSPARENT,
+            padding=ft.padding.symmetric(horizontal=8, vertical=5),
+            border_radius=6, ink=True,
+            bgcolor=_BG_SEL if selected else ft.Colors.TRANSPARENT,
             on_click=lambda e, a=acct: self.page.run_task(self._open, a))
-        return item
 
-    def _build_friends(self, items: list) -> None:
+    def _section_header(self, label: str, n: int) -> ft.Control:
+        return ft.Container(
+            content=ft.Text(f"{label}  {n}", size=11, weight=ft.FontWeight.BOLD,
+                            color=_SECTION),
+            padding=ft.padding.only(left=8, top=10, bottom=3))
+
+    def _rebuild_friends(self) -> None:
+        items = list(self._friends.values())
+        # Sort key within a section: in-game, then online, then name.
+        def sk(f):
+            return (0 if f.get("ingame") else (1 if f.get("state") else 2),
+                    (f.get("name") or "").lower())
+        # Single-assignment into sections by priority.
+        favs, cats, ingame, online, offline = [], {}, [], [], []
+        for f in items:
+            if f.get("fav"):
+                favs.append(f)
+            elif f.get("groups"):
+                cats.setdefault(f["groups"][0], []).append(f)
+            elif f.get("ingame"):
+                ingame.append(f)
+            elif f.get("state"):
+                online.append(f)
+            else:
+                offline.append(f)
         self._friends_list.controls.clear()
-        self._friend_items.clear()
-        for i in items:
-            acct = int(i["acct"])
-            row = self._friend_row(acct, i.get("name", ""), i.get("avatar", ""))
-            self._friend_items[acct] = row
-            self._friends_list.controls.append(row)
-        self._highlight(self._active)
+        def add_section(label, rows):
+            if not rows:
+                return
+            self._friends_list.controls.append(self._section_header(label, len(rows)))
+            for f in sorted(rows, key=sk):
+                self._friends_list.controls.append(self._friend_row(f))
+        add_section("FAVORITES", favs)
+        for name in sorted(cats):
+            add_section(name.upper(), cats[name])
+        add_section("IN-GAME", ingame)
+        add_section("ONLINE", online)
+        add_section("OFFLINE", offline)
 
-    def _highlight(self, acct) -> None:
-        for a, row in self._friend_items.items():
-            row.bgcolor = _BG_SEL if a == acct else ft.Colors.TRANSPARENT
-
-    def _set_chat_head(self, name: str, avatar: str) -> None:
+    def _set_chat_head(self, f: dict | None) -> None:
         head = [self._collapse_btn]
-        if name:
-            head.append(_avatar(avatar, 26))
-            head.append(ft.Text(name, size=14, weight=ft.FontWeight.BOLD, color=_TEXT_PRIMARY))
+        if f:
+            state, ingame = int(f.get("state", 0)), bool(f.get("ingame"))
+            head.append(_avatar(f.get("avatar", ""), 26))
+            col = [ft.Text(f.get("name") or "Steam friend", size=14,
+                           weight=ft.FontWeight.BOLD, color=_TEXT_PRIMARY)]
+            if ingame:
+                col.append(ft.Text(f.get("game") or "In-Game", size=11, color=_C_INGAME))
+            else:
+                col.append(ft.Text(_STATE_LABEL.get(state, "Offline"), size=11,
+                                   color=(_C_ONLINE if state else _C_OFFLINE)))
+            head.append(ft.Column(col, spacing=0, tight=True))
         self._chat_head.controls = head
 
-    def _msg_row(self, *, avatar: str, name: str, name_color: str,
-                 primary: str, secondary: str, images: list) -> ft.Control:
-        col = ft.Column(spacing=3, tight=True, expand=True)
-        col.controls.append(ft.Text(name, size=12, weight=ft.FontWeight.BOLD, color=name_color))
+    # ── messages ─────────────────────────────────────────────────────────────
+    def _msg_block(self, *, avatar: str, name: str, name_color: str, grouped: bool,
+                   primary: str, secondary: str, images: list) -> ft.Control:
+        col = ft.Column(spacing=2, tight=True, expand=True)
+        if not grouped:
+            col.controls.append(ft.Text(name, size=12, weight=ft.FontWeight.BOLD,
+                                        color=name_color))
         if primary:
-            col.controls.append(ft.Text(primary, size=14, color=_TEXT_PRIMARY, selectable=True))
-        if secondary and secondary != primary:
-            col.controls.append(ft.Text(secondary, size=11, color=_SUB, italic=True,
+            col.controls.append(ft.Text(spans=_spans(primary, _TEXT_PRIMARY), size=14,
                                         selectable=True))
+        if secondary and secondary != primary:
+            col.controls.append(ft.Text(spans=_spans(secondary, _SUB), size=11,
+                                        selectable=True, italic=True))
         for url in (images or []):
             col.controls.append(ft.Container(
                 content=ft.Image(src=url, fit=ft.ImageFit.CONTAIN, width=260,
                                  border_radius=8),
                 padding=ft.padding.only(top=3)))
-        return ft.Row([_avatar(avatar), col], spacing=8,
+        av = ft.Container(width=30) if grouped else _avatar(avatar)
+        return ft.Row([av, col], spacing=8,
                       vertical_alignment=ft.CrossAxisAlignment.START)
 
     def _add(self, control: ft.Control) -> None:
@@ -213,19 +301,20 @@ class SteamBridgeView(ft.Container):
         images = m.get("images", [])
         if not text and not images:
             return
-        if m.get("from_me"):
-            self._add(self._msg_row(avatar=m.get("avatar", "") or self._own_avatar,
-                                    name="You", name_color=_TEXT_FAINT,
-                                    primary=text, secondary="", images=images))
+        from_me = bool(m.get("from_me"))
+        key = "me" if from_me else ("them:" + str(m.get("name", "")))
+        grouped = (key == self._last_key)
+        self._last_key = key
+        if from_me:
+            self._add(self._msg_block(avatar=m.get("avatar", "") or self._own_avatar,
+                                      name="You", name_color=_TEXT_FAINT, grouped=grouped,
+                                      primary=text, secondary="", images=images))
         else:
             english = await self._tr(text, False) if text else ""
-            self._add(self._msg_row(avatar=m.get("avatar", ""),
-                                    name=m.get("name", "Them"), name_color=_ACCENT,
-                                    primary=english, secondary=text, images=images))
-
-    def _set(self, text: str) -> None:
-        # No status chrome — the tab just opens and populates naturally.
-        self._log(f"status: {text}")
+            self._add(self._msg_block(avatar=m.get("avatar", ""),
+                                      name=m.get("name", "Them"), name_color=_ACCENT,
+                                      grouped=grouped, primary=english, secondary=text,
+                                      images=images))
 
     async def _tr(self, text: str, to_them: bool) -> str:
         if callable(self.translate_message):
@@ -241,21 +330,10 @@ class SteamBridgeView(ft.Container):
             with open(p, "a", encoding="utf-8") as h:
                 h.write(msg + "\n")
 
-    # ── interactions ─────────────────────────────────────────────────────────
-    def _toggle_panel(self, e=None) -> None:
-        self._collapsed = not self._collapsed
-        self._left_panel.visible = not self._collapsed
-        self._left_divider.visible = not self._collapsed
-        self._collapse_btn.icon = ft.Icons.MENU if self._collapsed else ft.Icons.MENU_OPEN
-        if self.page:
-            self.page.update()
-
     # ── helper process + socket ──────────────────────────────────────────────
     async def _connect(self) -> None:
         if self._writer is not None:
             return
-        # Wait briefly for a prewarmed helper before spawning our own, so we do
-        # not race two daemons onto the same port.
         connected = False
         for _ in range(6):
             if await self._try_open():
@@ -269,9 +347,8 @@ class SteamBridgeView(ft.Container):
                     [str(_DAEMON_PYTHON), str(_DAEMON_PY)],
                     stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL,
                     creationflags=_CREATE_NO_WINDOW)
-                self._log(f"spawned pid={self._proc.pid}")
             except Exception as exc:
-                self._log(f"spawn FAILED: {type(exc).__name__}: {exc}")
+                self._log(f"spawn FAILED: {exc}")
                 return
             for _ in range(60):
                 if await self._try_open():
@@ -279,9 +356,7 @@ class SteamBridgeView(ft.Container):
                     break
                 await asyncio.sleep(0.5)
         if not connected:
-            self._log("connect FAILED after retries")
             return
-        self._log("connected to helper socket")
         self.page.run_task(self._read_loop)
 
     async def _try_open(self) -> bool:
@@ -299,10 +374,11 @@ class SteamBridgeView(ft.Container):
             await self._writer.drain()
 
     async def _open(self, acct: int) -> None:
-        self._active = None
+        self._active = acct           # highlight immediately
         self._pending = acct
-        self._highlight(acct)
-        self._set_chat_head(self._names.get(acct, ""), self._avatars.get(acct, ""))
+        self._last_key = None
+        self._set_chat_head(self._friends.get(acct))
+        self._rebuild_friends()
         self._messages.controls.clear()
         self._entry.disabled = True
         if self.page:
@@ -317,9 +393,10 @@ class SteamBridgeView(ft.Container):
         if self.page:
             self.page.update()
         zh = await self._tr(text, True)
-        self._add(self._msg_row(avatar=self._own_avatar, name="You",
-                                name_color=_TEXT_FAINT, primary=text, secondary=zh,
-                                images=[]))
+        self._last_key = None
+        self._add(self._msg_block(avatar=self._own_avatar, name="You",
+                                  name_color=_TEXT_FAINT, grouped=False,
+                                  primary=text, secondary=zh, images=[]))
         await self._cmd({"cmd": "send", "acct": self._active, "text": zh})
 
     async def _read_loop(self) -> None:
@@ -333,42 +410,32 @@ class SteamBridgeView(ft.Container):
 
     async def _handle(self, ev: dict) -> None:
         kind = ev.get("ev")
-        if kind == "status":
-            self._set("connected" if ev.get("signed_in") else str(ev.get("mode")))
-        elif kind == "own":
+        if kind == "own":
             self._own = int(ev.get("acct", 0))
             self._own_avatar = ev.get("avatar", "") or self._own_avatar
-        elif kind == "conversations":
-            items = ev.get("items", [])
-            self._names = {int(i["acct"]): i.get("name", "") for i in items}
-            self._avatars = {int(i["acct"]): i.get("avatar", "") for i in items}
-            self._build_friends(items)
+        elif kind == "friends":
+            self._friends = {int(i["acct"]): i for i in ev.get("items", [])}
+            self._rebuild_friends()
+            if self._active in self._friends:
+                self._set_chat_head(self._friends[self._active])
             if self.page:
                 self.page.update()
         elif kind == "history":
-            if self._active_pending(ev.get("acct")):
+            if int(ev.get("acct", 0)) in (self._pending, self._active):
                 self._messages.controls.clear()
+                self._last_key = None
                 for m in ev.get("messages", []):
                     await self._render_msg(m)
         elif kind == "opened":
             if ev.get("ok"):
                 self._active = int(ev.get("acct", 0))
                 self._entry.disabled = False
-                self._highlight(self._active)
             if self.page:
                 self.page.update()
         elif kind == "inbound":
             if int(ev.get("acct", 0)) != self._active:
                 return
             await self._render_msg(ev.get("message", {}))
-
-    def _active_pending(self, acct) -> bool:
-        # history arrives right after the user picks a chat, before `opened`
-        # sets self._active — accept it for the chat the user just picked.
-        try:
-            return int(acct) in (self._pending, self._active)
-        except Exception:
-            return True
 
     async def shutdown(self) -> None:
         with contextlib.suppress(Exception):

@@ -109,17 +109,26 @@ class SteamBridgeView(ft.Container):
         self._own_name = "You"
         self._own_avatar = ""
         self._own_state = 1
+        self._own_invites = 0
         self._active = None
         self._open_seq = 0
         self._friends: dict[int, dict] = {}
         self._tabs: list[int] = []
+        self._expanded_games: set[str] = set()
         self._filter = ""
         self._tr_cache: dict[str, str] = {}
         self._started = False
         self._prewarmed = False
         self._got_friends = False
 
-        # left: search + friends list
+        # left: own profile header + favorites grid + search + friends list
+        self._own_header = ft.Container(
+            padding=ft.padding.only(left=10, right=10, top=10, bottom=6),
+            tooltip="View your Steam profile",
+            on_click=lambda e: self._open_profile(self._own))
+        self._fav_grid = ft.Row([], spacing=6, scroll=ft.ScrollMode.AUTO)
+        self._fav_box = ft.Container(content=self._fav_grid, visible=False,
+                                     padding=ft.padding.only(left=10, right=6, bottom=6))
         self._search = ft.TextField(
             hint_text="Search friends", prefix_icon=ft.Icons.SEARCH, dense=True,
             text_size=12, color=_TEXT_PRIMARY, border=ft.InputBorder.NONE,
@@ -130,8 +139,10 @@ class SteamBridgeView(ft.Container):
         self._left_panel = ft.Container(
             width=252, bgcolor=_BG_SIDE,
             content=ft.Column([
+                self._own_header,
+                self._fav_box,
                 ft.Container(content=self._search,
-                             padding=ft.padding.only(left=8, right=8, top=8, bottom=4)),
+                             padding=ft.padding.only(left=8, right=8, top=2, bottom=4)),
                 self._friends_list,
             ], spacing=0, expand=True))
 
@@ -224,6 +235,7 @@ class SteamBridgeView(ft.Container):
                                       shadow=ft.BoxShadow(blur_radius=14, color="#88000000",
                                                           offset=ft.Offset(0, 4)))
         self.content = ft.Stack([main_row, self._loading, self._ctx_menu], expand=True)
+        self._update_own_header()
 
     def _lang_button(self, which: str) -> ft.Control:
         lbl = self._from_lbl if which == "from" else self._to_lbl
@@ -352,7 +364,61 @@ class SteamBridgeView(ft.Container):
             out.append(ft.Icon(ft.Icons.SMARTPHONE, size=12, color=_TEXT_FAINT))
         return out
 
-    def _friend_row(self, f: dict) -> ft.Control:
+    def _unread_badge(self, count: int) -> ft.Control:
+        return ft.Container(
+            content=ft.Text(str(count), size=11, weight=ft.FontWeight.BOLD, color="#1b1c1e"),
+            bgcolor="#e0b400", border_radius=4,
+            padding=ft.padding.symmetric(horizontal=6, vertical=1),
+            shadow=ft.BoxShadow(blur_radius=10, spread_radius=1, color="#99e0b400"))
+
+    def _game_icon(self, url: str, size: int = 20) -> ft.Control:
+        if url:
+            return ft.Image(src=url, width=size, height=size, border_radius=4, fit=ft.ImageFit.COVER)
+        return ft.Container(width=size, height=size, border_radius=4, bgcolor="#3a3b3e")
+
+    def _update_own_header(self) -> None:
+        st = _STATE_LABEL.get(self._own_state, "Online")
+        children = [
+            _avatar(self._own_avatar, 36),
+            ft.Column([
+                ft.Text(self._own_name or "Me", size=14, weight=ft.FontWeight.BOLD,
+                        color=_TEXT_PRIMARY, max_lines=1, overflow=ft.TextOverflow.ELLIPSIS),
+                ft.Text(st, size=11, color=_name_color(self._own_state, False)),
+            ], spacing=0, tight=True, expand=True),
+        ]
+        if self._own_invites > 0:
+            children.append(ft.Container(
+                content=ft.Row([ft.Icon(ft.Icons.PERSON_ADD_ALT_1, size=15, color=_TEXT_FAINT),
+                                ft.Container(content=ft.Text(str(self._own_invites), size=10,
+                                                             weight=ft.FontWeight.BOLD, color="#fff"),
+                                             bgcolor="#c0392b", border_radius=8,
+                                             padding=ft.padding.symmetric(horizontal=5, vertical=0))],
+                               spacing=3, tight=True),
+                tooltip="Friend requests (opens Steam)", ink=True, border_radius=6,
+                padding=ft.padding.all(4),
+                on_click=lambda e: self._launch(
+                    f"https://steamcommunity.com/profiles/{self._own + _STEAMID64_BASE}/friends/pending")))
+        self._own_header.content = ft.Row(
+            children, spacing=10, vertical_alignment=ft.CrossAxisAlignment.CENTER)
+        if self.page:
+            with contextlib.suppress(Exception):
+                self._own_header.update()
+
+    def _update_fav_grid(self) -> None:
+        favs = [f for f in self._friends.values() if f.get("fav")]
+        favs.sort(key=lambda f: (0 if f.get("ingame") else (1 if f.get("state") else 2),
+                                 (f.get("name") or "").lower()))
+        cells = []
+        for f in favs[:24]:
+            acct = int(f["acct"])
+            cells.append(ft.GestureDetector(
+                content=_avatar(f.get("avatar", ""), 34),
+                on_tap=lambda e, a=acct: self.page.run_task(self._open, a),
+                on_secondary_tap_down=lambda e, fr=f: self._show_ctx(e, fr)))
+        self._fav_grid.controls = cells
+        self._fav_box.visible = bool(cells)
+
+    def _friend_row(self, f: dict, *, lead_icon: str = "") -> ft.Control:
         acct = int(f["acct"])
         state, ingame = int(f.get("state", 0)), bool(f.get("ingame"))
         if ingame:
@@ -367,37 +433,71 @@ class SteamBridgeView(ft.Container):
                     overflow=ft.TextOverflow.ELLIPSIS),
             *self._status_badges(f),
         ], spacing=4, tight=True)
-        body = ft.Row([
-            _avatar(f.get("avatar", ""), 34),
+        left = []
+        if lead_icon:
+            left.append(self._game_icon(lead_icon, 22))
+        left.append(_avatar(f.get("avatar", ""), 30))
+        children = left + [
             ft.Column([name_row, ft.Text(sub, size=11, color=sub_color, max_lines=1,
                                          overflow=ft.TextOverflow.ELLIPSIS)],
                       spacing=0, tight=True, expand=True),
-        ], spacing=10, vertical_alignment=ft.CrossAxisAlignment.CENTER)
+        ]
+        if int(f.get("unread", 0)) > 0:
+            children.append(self._unread_badge(int(f["unread"])))
+        body = ft.Row(children, spacing=8, vertical_alignment=ft.CrossAxisAlignment.CENTER)
         gd = ft.GestureDetector(
             content=body, expand=True,
             on_tap=lambda e, a=acct: self.page.run_task(self._open, a),
             on_secondary_tap_down=lambda e, fr=f: self._show_ctx(e, fr))
         return ft.Container(
-            content=gd,
-            padding=ft.padding.symmetric(horizontal=8, vertical=5),
+            content=gd, padding=ft.padding.symmetric(horizontal=8, vertical=4),
             border_radius=6, bgcolor=_BG_SEL if acct == self._active else ft.Colors.TRANSPARENT)
 
-    def _section_header(self, label: str, n: int) -> ft.Control:
+    def _section_header(self, label: str, n: int, color: str = _SECTION) -> ft.Control:
         return ft.Container(
-            content=ft.Text(f"{label}  {n}", size=11, weight=ft.FontWeight.BOLD, color=_SECTION),
+            content=ft.Text(f"{label}  {n}" if n else label, size=11,
+                            weight=ft.FontWeight.BOLD, color=color),
             padding=ft.padding.only(left=8, top=10, bottom=3))
 
-    def _game_header(self, game: str, n: int, appid: int) -> ft.Control:
-        row = []
-        if appid:
-            row.append(ft.Image(
-                src=f"https://cdn.cloudflare.steamstatic.com/steam/apps/{appid}/capsule_sm_120.jpg",
-                height=20, width=44, fit=ft.ImageFit.COVER, border_radius=3))
-        row.append(ft.Text(f"{game}  {n}", size=11, weight=ft.FontWeight.BOLD, color=_C_INGAME))
-        return ft.Container(
-            content=ft.Row(row, spacing=6, tight=True,
-                           vertical_alignment=ft.CrossAxisAlignment.CENTER),
+    def _toggle_game(self, game: str) -> None:
+        if game in self._expanded_games:
+            self._expanded_games.discard(game)
+        else:
+            self._expanded_games.add(game)
+        self._rebuild_friends()
+        if self.page:
+            with contextlib.suppress(Exception):
+                self._friends_list.update()
+
+    def _game_group(self, game: str, members: list) -> ft.Control:
+        icon = next((f.get("icon") for f in members if f.get("icon")), "")
+        header = ft.Container(
+            content=ft.Row([self._game_icon(icon, 22),
+                            ft.Text(game, size=12, weight=ft.FontWeight.BOLD, color=_C_INGAME)],
+                           spacing=8, tight=True, vertical_alignment=ft.CrossAxisAlignment.CENTER),
             padding=ft.padding.only(left=8, top=10, bottom=3))
+        expanded = game in self._expanded_games
+        shown = members if expanded else members[:2]
+        rows = [self._friend_row(f) for f in shown]
+        rest = len(members) - len(shown)
+        if rest > 0:
+            rows.append(ft.Container(
+                content=ft.Row([
+                    ft.Text(f"+{rest}", size=12, weight=ft.FontWeight.BOLD, color=_C_INGAME),
+                    ft.Text(f"Playing with {rest} other people", size=12, color=_TEXT_FAINT),
+                ], spacing=8, tight=True),
+                padding=ft.padding.symmetric(horizontal=8, vertical=4), ink=True,
+                on_click=lambda e, g=game: self._toggle_game(g)))
+        elif expanded and len(members) > 2:
+            rows.append(ft.Container(
+                content=ft.Text("Show less", size=12, color=_TEXT_FAINT),
+                padding=ft.padding.symmetric(horizontal=8, vertical=4), ink=True,
+                on_click=lambda e, g=game: self._toggle_game(g)))
+        members_box = ft.Container(
+            content=ft.Column(rows, spacing=1, tight=True),
+            margin=ft.margin.only(left=18), padding=ft.padding.only(left=8),
+            border=ft.border.only(left=ft.BorderSide(1.5, "#54555a")))
+        return ft.Column([header, members_box], spacing=0, tight=True)
 
     def _rebuild_friends(self) -> None:
         items = list(self._friends.values())
@@ -408,17 +508,22 @@ class SteamBridgeView(ft.Container):
             return (0 if f.get("ingame") else (1 if f.get("state") else 2),
                     (f.get("name") or "").lower())
 
-        recent = sorted((f for f in items if f.get("last_chat")),
-                        key=lambda f: -(f.get("last_chat") or 0))[:6]
-        recent_ids = {int(f["acct"]) for f in recent}
+        assigned: set[int] = set()
+        unread = sorted((f for f in items if int(f.get("unread", 0)) > 0),
+                        key=lambda f: -(f.get("last_chat") or 0))
+        assigned |= {int(f["acct"]) for f in unread}
+        recent = [f for f in sorted((f for f in items if f.get("last_chat")),
+                                    key=lambda f: -(f.get("last_chat") or 0))
+                  if int(f["acct"]) not in assigned][:4]
+        assigned |= {int(f["acct"]) for f in recent}
 
-        favs, cats, ingame, online, offline = [], {}, [], [], []
+        # Favorites live in the quick-access grid at the top, so here they just
+        # fall into their normal status/game sections (Steam-style).
+        cats, ingame, online, offline = {}, [], [], []
         for f in items:
-            if int(f["acct"]) in recent_ids and not self._filter:
+            if int(f["acct"]) in assigned and not self._filter:
                 continue
-            if f.get("fav"):
-                favs.append(f)
-            elif f.get("groups"):
+            if f.get("groups"):
                 cats.setdefault(f["groups"][0], []).append(f)
             elif f.get("ingame"):
                 ingame.append(f)
@@ -426,30 +531,40 @@ class SteamBridgeView(ft.Container):
                 online.append(f)
             else:
                 offline.append(f)
-        self._friends_list.controls.clear()
 
-        def add_section(label, rows, presorted=False):
+        self._friends_list.controls.clear()
+        C = self._friends_list.controls
+
+        def add_section(label, rows, presorted=False, color=_SECTION):
             if not rows:
                 return
-            self._friends_list.controls.append(self._section_header(label, len(rows)))
+            C.append(self._section_header(label, len(rows), color))
             for f in (rows if presorted else sorted(rows, key=sk)):
-                self._friends_list.controls.append(self._friend_row(f))
+                C.append(self._friend_row(f))
 
         if not self._filter:
+            if unread:
+                C.append(self._section_header("UNREAD MESSAGES", 0, "#e0b400"))
+                for f in sorted(unread, key=sk):
+                    C.append(self._friend_row(f))
             add_section("RECENT", recent, presorted=True)
-        add_section("FAVORITES", favs)
         for name in sorted(cats):
             add_section(name.upper(), cats[name])
-        # In-game friends grouped by the game they're playing (Steam-style).
+        # In-game: 2+ friends in a game -> its own group; solo games -> "Other Games".
         by_game: dict[str, list] = {}
         for f in ingame:
             by_game.setdefault(f.get("game") or "In-Game", []).append(f)
+        others = []
         for game in sorted(by_game):
             rows = by_game[game]
-            gappid = next((f.get("appid") for f in rows if f.get("appid")), 0)
-            self._friends_list.controls.append(self._game_header(game, len(rows), gappid))
-            for f in sorted(rows, key=sk):
-                self._friends_list.controls.append(self._friend_row(f))
+            if len(rows) >= 2:
+                C.append(self._game_group(game, sorted(rows, key=sk)))
+            else:
+                others += rows
+        if others:
+            C.append(self._section_header("OTHER GAMES", 0, _SECTION))
+            for f in sorted(others, key=sk):
+                C.append(self._friend_row(f, lead_icon=f.get("icon", "")))
         add_section("ONLINE", online)
         add_section("OFFLINE", offline)
 
@@ -685,13 +800,24 @@ class SteamBridgeView(ft.Container):
         await self._cmd({"cmd": "send", "acct": self._active, "text": zh})
 
     async def _read_loop(self) -> None:
-        with contextlib.suppress(Exception):
+        try:
             async for raw in self._reader:
                 try:
                     ev = json.loads(raw.decode("utf-8").strip() or "{}")
                 except Exception:
                     continue
                 await self._handle(ev)
+        except Exception:
+            pass
+        # Connection closed (daemon died/restarted) — self-heal so the tab does
+        # not go dead/blank. Reconnect (respawns the helper if needed).
+        self._reader = None
+        self._writer = None
+        if self._started:
+            await asyncio.sleep(1.0)
+            await self._connect()
+            if self._active is not None:
+                await self._cmd({"cmd": "open", "acct": self._active})
 
     def _hide_loading(self) -> None:
         if self._loading.visible:
@@ -707,10 +833,13 @@ class SteamBridgeView(ft.Container):
             self._own_name = ev.get("name") or "You"
             self._own_avatar = ev.get("avatar", "") or self._own_avatar
             self._own_state = int(ev.get("state", 1) or 1)
+            self._own_invites = int(ev.get("invites", 0) or 0)
+            self._update_own_header()
         elif kind == "friends":
             self._friends = {int(i["acct"]): i for i in ev.get("items", [])}
             self._got_friends = True
             self._hide_loading()
+            self._update_fav_grid()
             self._rebuild_friends()
             self._rebuild_tabs()
             if self._active in self._friends:

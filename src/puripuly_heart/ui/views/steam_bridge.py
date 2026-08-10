@@ -144,19 +144,28 @@ class SteamBridgeView(ft.Container):
         self._fav_grid = ft.Row([], spacing=6, scroll=ft.ScrollMode.AUTO)
         self._fav_box = ft.Container(content=self._fav_grid, visible=False,
                                      padding=ft.padding.only(left=10, right=6, bottom=4))
+        # Borderless field inside a fixed-height box — Flet's TextField ignores
+        # `height` when it has a prefix icon, so build the box ourselves.
         self._search = ft.TextField(
-            hint_text="Search friends", prefix_icon=ft.Icons.SEARCH, dense=True, height=34,
-            text_size=12, color=_TEXT_PRIMARY, border=ft.InputBorder.NONE,
-            bgcolor=_BG_INPUT, border_radius=6, hint_style=ft.TextStyle(color=_TEXT_FAINT, size=12),
-            content_padding=ft.padding.only(left=4, right=6, top=0, bottom=0),
+            hint_text="Search friends", dense=True, height=30,
+            text_size=13, color=_TEXT_PRIMARY, expand=True,
+            border=ft.InputBorder.NONE, bgcolor=ft.Colors.TRANSPARENT,
+            text_vertical_align=ft.VerticalAlignment.CENTER,
+            hint_style=ft.TextStyle(color=_TEXT_FAINT, size=13),
+            content_padding=ft.padding.symmetric(horizontal=0, vertical=0),
             on_change=lambda e: self._on_search(e.control.value))
+        search_box = ft.Container(
+            content=ft.Row([ft.Icon(ft.Icons.SEARCH, size=16, color=_TEXT_FAINT), self._search],
+                           spacing=6, vertical_alignment=ft.CrossAxisAlignment.CENTER),
+            bgcolor=_BG_INPUT, border_radius=6, height=32,
+            padding=ft.padding.only(left=8, right=8))
         self._friends_list = ft.ListView(expand=True, spacing=1, padding=6)
         self._left_panel = ft.Container(
             width=252, bgcolor=_BG_SIDE,
             content=ft.Column([
                 self._own_header,
                 self._fav_box,
-                ft.Container(content=self._search,
+                ft.Container(content=search_box,
                              padding=ft.padding.only(left=8, right=8, top=0, bottom=4)),
                 self._friends_list,
             ], spacing=0, expand=True))
@@ -500,15 +509,12 @@ class SteamBridgeView(ft.Container):
         if self._own_invites > 0:
             children.append(ft.Container(
                 content=ft.Row([
-                    ft.Icon(ft.Icons.PERSON_ADD_ALT_1, size=16, color=_TEXT_FAINT),
-                    ft.Container(content=ft.Text(str(self._own_invites), size=10,
-                                                 weight=ft.FontWeight.BOLD, color="#fff"),
-                                 bgcolor="#c0392b", border_radius=9, height=18,
-                                 alignment=ft.alignment.center,
-                                 padding=ft.padding.symmetric(horizontal=5, vertical=0)),
+                    ft.Icon(ft.Icons.PERSON_ADD_ALT_1, size=17, color="#d96a6a"),
+                    ft.Text(str(self._own_invites), size=12, weight=ft.FontWeight.BOLD,
+                            color="#d96a6a"),
                 ], spacing=3, tight=True),
                 tooltip=f"{self._own_invites} friend requests (opens Steam)", ink=True,
-                border_radius=6, padding=ft.padding.all(3),
+                border_radius=6, padding=ft.padding.all(4),
                 on_click=lambda e: self._launch(
                     f"https://steamcommunity.com/profiles/{self._own + _STEAMID64_BASE}/friends/pending")))
         self._own_header.content = ft.Row(
@@ -779,6 +785,8 @@ class SteamBridgeView(ft.Container):
             b["stickers"] += m.get("stickers", [])
         for b in blocks:
             b["text"] = " ".join(t.strip() for t in b["texts"] if t.strip())
+            if b["from_me"] and b["text"]:
+                b["secondary_visible"] = b["text"]   # keep the sent (Chinese) visible
         return blocks
 
     def _block_control(self, b: dict) -> ft.Control:
@@ -795,6 +803,10 @@ class SteamBridgeView(ft.Container):
         b["_ctrl"] = text_ctrl
         if b.get("text"):
             col.controls.append(text_ctrl)
+        # for my own messages, show the language actually sent (e.g. the Chinese)
+        if b.get("secondary_visible"):
+            col.controls.append(ft.Text(b["secondary_visible"], size=12, color=_SUB,
+                                        italic=True, selectable=True))
         for url in b.get("stickers", []):
             col.controls.append(ft.Image(src=url, width=120, height=120, fit=ft.ImageFit.CONTAIN))
         for url in b.get("images", []):
@@ -835,6 +847,8 @@ class SteamBridgeView(ft.Container):
         b = {"from_me": bool(m.get("from_me")), "name": m.get("name", ""),
              "avatar": m.get("avatar", ""), "text": (m.get("text", "") or "").strip(),
              "images": m.get("images", []), "stickers": m.get("stickers", [])}
+        if b["from_me"] and b["text"]:
+            b["secondary_visible"] = b["text"]       # show the sent (Chinese) too
         self._messages.controls.append(self._block_control(b))
         if self.page:
             self.page.update()
@@ -896,7 +910,7 @@ class SteamBridgeView(ft.Container):
         self._set_chat_head(self._friends.get(acct))
         self._rebuild_friends()
         self._messages.controls.clear()
-        self._entry.disabled = True
+        self._entry.disabled = False   # let them type right away, don't wait for load
         if self.page:
             self.page.update()
         await self._cmd({"cmd": "open", "acct": acct})

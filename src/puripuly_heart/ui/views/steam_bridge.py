@@ -156,12 +156,10 @@ class SteamBridgeView(ft.Container):
         self._prewarmed = False
         self._got_friends = False
 
-        # left: own profile header + favorites grid + search + friends list
+        # left: own profile header + search + friends list (favorites are a
+        # named section at the top of the list, Steam-style — see _rebuild_friends)
         self._own_header = ft.Container(
             padding=ft.padding.only(left=10, right=10, top=6, bottom=4))
-        self._fav_grid = ft.Row([], spacing=6, scroll=ft.ScrollMode.AUTO)
-        self._fav_box = ft.Container(content=self._fav_grid, visible=False,
-                                     padding=ft.padding.only(left=10, right=6, bottom=4))
         # Borderless field inside a fixed-height box — Flet's TextField ignores
         # `height` when it has a prefix icon, so build the box ourselves.
         self._search = ft.TextField(
@@ -182,7 +180,6 @@ class SteamBridgeView(ft.Container):
             width=252, bgcolor=_BG_SIDE,
             content=ft.Column([
                 self._own_header,
-                self._fav_box,
                 ft.Container(content=search_box,
                              padding=ft.padding.only(left=8, right=8, top=0, bottom=4)),
                 self._friends_list,
@@ -557,20 +554,6 @@ class SteamBridgeView(ft.Container):
     async def _set_status(self, state: int) -> None:
         await self._cmd({"cmd": "status", "state": int(state)})
 
-    def _update_fav_grid(self) -> None:
-        favs = [f for f in self._friends.values() if f.get("fav")]
-        favs.sort(key=lambda f: (0 if f.get("ingame") else (1 if f.get("state") else 2),
-                                 (f.get("name") or "").lower()))
-        cells = []
-        for f in favs[:24]:
-            acct = int(f["acct"])
-            cells.append(ft.GestureDetector(
-                content=_avatar(f.get("avatar", ""), 34),
-                on_tap=lambda e, a=acct: self.page.run_task(self._open, a),
-                on_secondary_tap_down=lambda e, fr=f: self._show_ctx(e, fr)))
-        self._fav_grid.controls = cells
-        self._fav_box.visible = bool(cells)
-
     def _friend_row(self, f: dict, *, lead_icon: str = "") -> ft.Control:
         acct = int(f["acct"])
         state, ingame = int(f.get("state", 0)), bool(f.get("ingame"))
@@ -655,11 +638,25 @@ class SteamBridgeView(ft.Container):
 
     def _game_group(self, game: str, members: list) -> ft.Control:
         icon = next((f.get("icon") for f in members if f.get("icon")), "")
+        collapsed = game in self._collapsed_sections
         header = ft.Container(
-            content=ft.Row([self._game_icon(icon, 22),
-                            ft.Text(game, size=12, weight=ft.FontWeight.BOLD, color=_C_INGAME)],
-                           spacing=8, tight=True, vertical_alignment=ft.CrossAxisAlignment.CENTER),
-            padding=ft.padding.only(left=8, top=10, bottom=3))
+            content=ft.Row([
+                ft.Icon(ft.Icons.CHEVRON_RIGHT if collapsed else ft.Icons.EXPAND_MORE,
+                        size=14, color=_C_INGAME),
+                self._game_icon(icon, 22),
+                ft.Text(f"{game}  {len(members)}", size=12, weight=ft.FontWeight.BOLD,
+                        color=_C_INGAME),
+            ], spacing=6, tight=True, vertical_alignment=ft.CrossAxisAlignment.CENTER),
+            padding=ft.padding.only(left=4, top=10, bottom=3), ink=True,
+            on_click=lambda e, g=game: self._toggle_section(g))
+        if collapsed:
+            active_rows = [self._friend_row(f) for f in members if int(f["acct"]) == self._active]
+            if not active_rows:
+                return header
+            box = ft.Container(content=ft.Column(active_rows, spacing=1, tight=True),
+                               margin=ft.margin.only(left=18), padding=ft.padding.only(left=8),
+                               border=ft.border.only(left=ft.BorderSide(1.5, "#54555a")))
+            return ft.Column([header, box], spacing=0, tight=True)
         expanded = game in self._expanded_games
         shown = members if expanded else members[:2]
         rows = [self._friend_row(f) for f in shown]
@@ -695,7 +692,13 @@ class SteamBridgeView(ft.Container):
                     (f.get("name") or "").lower())
 
         assigned: set[int] = set()
-        unread = sorted((f for f in items if int(f.get("unread", 0)) > 0),
+        # Favorites get their own pinned section at the very top (Steam-style),
+        # with full name + status rows — so they're taken out of every other
+        # section here to avoid duplication.
+        favs = sorted((f for f in items if f.get("fav")), key=sk)
+        assigned |= {int(f["acct"]) for f in favs}
+        unread = sorted((f for f in items
+                         if int(f.get("unread", 0)) > 0 and int(f["acct"]) not in assigned),
                         key=lambda f: -(f.get("last_chat") or 0))
         assigned |= {int(f["acct"]) for f in unread}
         recent = [f for f in sorted((f for f in items if f.get("last_chat")),
@@ -703,8 +706,8 @@ class SteamBridgeView(ft.Container):
                   if int(f["acct"]) not in assigned][:4]
         assigned |= {int(f["acct"]) for f in recent}
 
-        # Favorites live in the quick-access grid at the top, so here they just
-        # fall into their normal status/game sections (Steam-style).
+        # Favorites are pinned in their own top section (assigned above), so the
+        # remaining friends fall into their normal status/game sections.
         cats, ingame, online, offline = {}, [], [], []
         for f in items:
             if int(f["acct"]) in assigned and not self._filter:
@@ -732,6 +735,12 @@ class SteamBridgeView(ft.Container):
                     C.append(self._friend_row(f))
 
         if not self._filter:
+            if favs:
+                _fc = "FAVORITES" in self._collapsed_sections
+                C.append(self._section_header("FAVORITES", len(favs), _ACCENT, _fc))
+                for f in favs:
+                    if not _fc or int(f["acct"]) == self._active:
+                        C.append(self._friend_row(f))
             if unread:
                 _uc = "UNREAD MESSAGES" in self._collapsed_sections
                 C.append(self._section_header("UNREAD MESSAGES", 0, "#e0b400", _uc))
@@ -755,9 +764,11 @@ class SteamBridgeView(ft.Container):
             if len(rows) < 2:
                 others += rows
         if others:
-            C.append(self._section_header("OTHER GAMES", 0, _SECTION))
+            _oc = "OTHER GAMES" in self._collapsed_sections
+            C.append(self._section_header("OTHER GAMES", len(others), _SECTION, _oc))
             for f in sorted(others, key=sk):
-                C.append(self._friend_row(f, lead_icon=f.get("icon", "")))
+                if not _oc or int(f["acct"]) == self._active:
+                    C.append(self._friend_row(f, lead_icon=f.get("icon", "")))
         add_section("ONLINE", online)
         add_section("OFFLINE", offline)
 
@@ -789,7 +800,6 @@ class SteamBridgeView(ft.Container):
             ], spacing=8, tight=True, vertical_alignment=ft.CrossAxisAlignment.CENTER),
             padding=ft.padding.only(left=8, right=4, top=4, bottom=4),
             border_radius=8, bgcolor=_BG_SEL if active else _BG_MENU,
-            border=ft.border.all(1, _TOGGLE_ON if active else ft.Colors.TRANSPARENT),
             on_click=lambda e, a=acct: self.page.run_task(self._open, a))
 
     def _rebuild_tabs(self) -> None:
@@ -1102,7 +1112,6 @@ class SteamBridgeView(ft.Container):
                 if a not in self._search_index:
                     self._search_index[a] = _search_key(i.get("name", ""))
             self._hide_loading()
-            self._update_fav_grid()
             self._rebuild_friends()
             self._rebuild_tabs()
             if self._active in self._friends:

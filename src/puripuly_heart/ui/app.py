@@ -338,15 +338,30 @@ class TranslatorApp:
         self.view_dashboard.on_nav_change = self._on_nav_change
         self._wire_update_flow()
 
-        # beta/steam-bridge: let the Steam helper use the user's configured
-        # source/target languages.
+        # beta/steam-bridge: translate Steam messages with the app's own
+        # configured translator + the user's source/target languages.
         with contextlib.suppress(Exception):
             _sv = getattr(self.view_dashboard, "_steam_view", None)
             if _sv is not None:
-                def _steam_langs():
+                from uuid import uuid4 as _uuid4
+
+                async def _steam_translate(text: str, to_them: bool) -> str:
                     langs = self.controller.settings.languages
-                    return (langs.source_language, langs.target_language)
-                _sv.get_languages = _steam_langs
+                    mine = langs.source_language or "en"
+                    theirs = langs.target_language or "zh-CN"
+                    src, tgt = (mine, theirs) if to_them else (theirs, mine)
+                    llm = getattr(self.controller.hub, "llm", None)
+                    if llm is None:
+                        from puripuly_heart.providers.llm.free_web import (
+                            FreeWebTranslationProvider,
+                        )
+                        llm = FreeWebTranslationProvider("bing")
+                    res = await llm.translate(
+                        utterance_id=_uuid4(), text=text, system_prompt="",
+                        source_language=src, target_language=tgt, context="")
+                    return getattr(res, "text", text) or text
+
+                _sv.translate_message = _steam_translate
 
         # Top nav bar for non-dashboard views (back + tab icons)
         _NAV_ICONS = [

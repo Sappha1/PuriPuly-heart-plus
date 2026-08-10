@@ -59,6 +59,16 @@ _URL_RE = re.compile(r"(https?://[^\s]+)")
 # in a different script than the reader (so we don't translate English->English).
 _CJK_RE = re.compile(r"[㐀-鿿぀-ヿ가-힣]")
 _CJK_LANGS = {"zh-CN", "zh-TW", "ja", "ko"}
+_EMOTE_RE = re.compile(r":([a-zA-Z][a-zA-Z0-9_]{1,}):")
+
+
+def _extract_emoticons(text: str) -> tuple[str, list[str]]:
+    """Pull Steam emoticon tokens (:name:) out of the text so they can render as
+    images; returns (text_without_tokens, [names])."""
+    names = _EMOTE_RE.findall(text or "")
+    if not names:
+        return text or "", []
+    return _EMOTE_RE.sub("", text or "").strip(), names
 
 _LANGS = [
     ("en", "English"), ("zh-CN", "中文(简)"), ("zh-TW", "中文(繁)"), ("ja", "日本語"),
@@ -100,7 +110,7 @@ def _name_color(state: int, ingame: bool) -> str:
     return _C_ONLINE if state else _C_OFFLINE
 
 
-def _spans(text: str) -> list:
+def _spans(text: str, base_color: str = _TEXT_PRIMARY) -> list:
     out = []
     for part in _URL_RE.split(text or ""):
         if not part:
@@ -110,8 +120,8 @@ def _spans(text: str) -> list:
                 part, ft.TextStyle(color=_LINK, decoration=ft.TextDecoration.UNDERLINE),
                 url=part))
         else:
-            out.append(ft.TextSpan(part, ft.TextStyle(color=_TEXT_PRIMARY)))
-    return out or [ft.TextSpan("", ft.TextStyle(color=_TEXT_PRIMARY))]
+            out.append(ft.TextSpan(part, ft.TextStyle(color=base_color)))
+    return out or [ft.TextSpan("", ft.TextStyle(color=base_color))]
 
 
 class SteamBridgeView(ft.Container):
@@ -138,6 +148,7 @@ class SteamBridgeView(ft.Container):
         self._search_index: dict[int, str] = {}
         self._tabs: list[int] = []
         self._expanded_games: set[str] = set()
+        self._collapsed_sections: set[str] = set()
         self._filter = ""
         self._tr_cache: dict[str, str] = {}
         self._tr_dirty = 0
@@ -188,17 +199,24 @@ class SteamBridgeView(ft.Container):
             ft.Icon(ft.Icons.ARROW_RIGHT_ALT, size=15, color=_TEXT_FAINT),
             self._lang_button("to"),
         ], spacing=4, tight=True)
+        # The tabs ARE the header — each tab shows the friend's name + status, the
+        # active one highlighted. No separate (redundant) person header.
+        self._tab_strip = ft.Row([], spacing=6, scroll=ft.ScrollMode.AUTO, expand=True)
         top_bar = ft.Container(
-            content=ft.Row([self._chat_headinfo, ft.Container(expand=True), lang_box],
-                           spacing=6, vertical_alignment=ft.CrossAxisAlignment.CENTER),
-            padding=ft.padding.symmetric(horizontal=12, vertical=6), bgcolor=_BG_MAIN)
+            content=ft.Row([self._tab_strip, lang_box], spacing=8,
+                           vertical_alignment=ft.CrossAxisAlignment.CENTER),
+            padding=ft.padding.only(left=8, right=12, top=6, bottom=4), bgcolor=_BG_MAIN)
+        self._tab_bar = ft.Container(visible=False)   # kept: _rebuild_tabs toggles it
 
-        self._tab_strip = ft.Row([], spacing=4, scroll=ft.ScrollMode.AUTO)
-        self._tab_bar = ft.Container(content=self._tab_strip, visible=False,
-                                     padding=ft.padding.only(left=8, right=8, top=4, bottom=2),
-                                     bgcolor=_BG_MAIN)
-
-        self._messages = ft.ListView(expand=True, spacing=10, padding=14, auto_scroll=True)
+        self._messages = ft.ListView(expand=True, spacing=10, padding=14, auto_scroll=True,
+                                     on_scroll=self._on_msg_scroll)
+        self._max_scroll = 0.0
+        self._jump_btn = ft.Container(
+            visible=False, right=14, bottom=12, width=34, height=34, border_radius=17,
+            bgcolor="#3a3b3e", border=ft.border.all(1, "#55565a"),
+            alignment=ft.alignment.center, tooltip="Jump to latest",
+            content=ft.Icon(ft.Icons.KEYBOARD_DOUBLE_ARROW_DOWN_ROUNDED, size=18, color="#e8e8e8"),
+            on_click=lambda e: self._jump_to_latest())
         self._typing_text = ft.Text("", size=12, color=_TEXT_FAINT)
         typing_row = ft.Container(content=self._typing_text, height=20,
                                   padding=ft.padding.only(left=14),
@@ -234,10 +252,11 @@ class SteamBridgeView(ft.Container):
             padding=ft.padding.symmetric(horizontal=8, vertical=6), bgcolor=_BG_MAIN)
 
         chat_area = ft.Column([
-            self._tab_bar,
             top_bar,
             ft.Divider(height=1, color=_DIVIDER, thickness=1),
-            ft.Container(content=ft.SelectionArea(content=self._messages), expand=True),
+            ft.Container(content=ft.Stack([
+                ft.SelectionArea(content=self._messages), self._jump_btn,
+            ], expand=True), expand=True),
             typing_row,
             ft.Divider(height=1, color=_DIVIDER, thickness=1),
             input_row,
@@ -602,11 +621,27 @@ class SteamBridgeView(ft.Container):
                 padding=ft.padding.symmetric(horizontal=8, vertical=7)))
         return rows
 
-    def _section_header(self, label: str, n: int, color: str = _SECTION) -> ft.Control:
+    def _section_header(self, label: str, n: int, color: str = _SECTION,
+                        collapsed: bool = False) -> ft.Control:
         return ft.Container(
-            content=ft.Text(f"{label}  {n}" if n else label, size=11,
-                            weight=ft.FontWeight.BOLD, color=color),
-            padding=ft.padding.only(left=8, top=10, bottom=3))
+            content=ft.Row([
+                ft.Icon(ft.Icons.CHEVRON_RIGHT if collapsed else ft.Icons.EXPAND_MORE,
+                        size=14, color=color),
+                ft.Text(f"{label}  {n}" if n else label, size=11,
+                        weight=ft.FontWeight.BOLD, color=color),
+            ], spacing=1, tight=True, vertical_alignment=ft.CrossAxisAlignment.CENTER),
+            padding=ft.padding.only(left=4, top=10, bottom=3), ink=True,
+            on_click=lambda e, l=label: self._toggle_section(l))
+
+    def _toggle_section(self, label: str) -> None:
+        if label in self._collapsed_sections:
+            self._collapsed_sections.discard(label)
+        else:
+            self._collapsed_sections.add(label)
+        self._rebuild_friends()
+        if self.page:
+            with contextlib.suppress(Exception):
+                self._friends_list.update()
 
     def _toggle_game(self, game: str) -> None:
         if game in self._expanded_games:
@@ -689,15 +724,20 @@ class SteamBridgeView(ft.Container):
         def add_section(label, rows, presorted=False, color=_SECTION):
             if not rows:
                 return
-            C.append(self._section_header(label, len(rows), color))
+            collapsed = label in self._collapsed_sections
+            C.append(self._section_header(label, len(rows), color, collapsed))
             for f in (rows if presorted else sorted(rows, key=sk)):
-                C.append(self._friend_row(f))
+                # keep the active chat's friend visible even when collapsed
+                if not collapsed or int(f["acct"]) == self._active:
+                    C.append(self._friend_row(f))
 
         if not self._filter:
             if unread:
-                C.append(self._section_header("UNREAD MESSAGES", 0, "#e0b400"))
+                _uc = "UNREAD MESSAGES" in self._collapsed_sections
+                C.append(self._section_header("UNREAD MESSAGES", 0, "#e0b400", _uc))
                 for f in sorted(unread, key=sk):
-                    C.append(self._friend_row(f))
+                    if not _uc or int(f["acct"]) == self._active:
+                        C.append(self._friend_row(f))
             add_section("RECENT", recent, presorted=True)
         for name in sorted(cats):
             add_section(name.upper(), cats[name])
@@ -722,48 +762,38 @@ class SteamBridgeView(ft.Container):
         add_section("OFFLINE", offline)
 
     def _set_chat_head(self, f: dict | None) -> None:
-        if not f:
-            self._chat_headinfo.content = None
-            self._chat_headinfo.on_click = None
-            return
-        state, ingame = int(f.get("state", 0)), bool(f.get("ingame"))
-        sub = (f.get("game") or "In-Game") if ingame else _STATE_LABEL.get(state, "Offline")
-        self._chat_headinfo.content = ft.Row([
-            _avatar(f.get("avatar", ""), 30),
-            ft.Column([
-                ft.Row([ft.Text(f.get("name") or "Steam friend", size=14,
-                                weight=ft.FontWeight.BOLD, color=_TEXT_PRIMARY),
-                        *self._status_badges(f)], spacing=4, tight=True),
-                ft.Text(sub, size=11, color=_name_color(state, ingame)),
-            ], spacing=0, tight=True),
-        ], spacing=8, vertical_alignment=ft.CrossAxisAlignment.CENTER)
-        acct = int(f["acct"])
-        self._chat_headinfo.on_click = lambda e, a=acct: self._open_profile(a)
-        self._chat_headinfo.tooltip = "View Steam profile"
+        # The tabs now serve as the header (see _tab_chip); nothing to do here.
+        return
 
-    # ── chat tabs ────────────────────────────────────────────────────────────
+    # ── chat tabs (act as the header) ────────────────────────────────────────
     def _tab_chip(self, acct: int) -> ft.Control:
         f = self._friends.get(acct, {})
         active = (acct == self._active)
-        name = (f.get("name") or "Chat")
+        state, ingame = int(f.get("state", 0)), bool(f.get("ingame"))
+        sub = (f.get("game") or "In-Game") if ingame else _STATE_LABEL.get(state, "Offline")
         return ft.Container(
             content=ft.Row([
-                _avatar(f.get("avatar", ""), 18),
-                ft.Text(name, size=12, color=_TEXT_PRIMARY if active else _TEXT_FAINT,
-                        max_lines=1, overflow=ft.TextOverflow.ELLIPSIS,
-                        weight=ft.FontWeight.W_500 if active else ft.FontWeight.NORMAL),
+                _avatar(f.get("avatar", ""), 26),
+                ft.Column([
+                    ft.Text(f.get("name") or "Chat", size=13,
+                            color=_TEXT_PRIMARY if active else _TEXT_FAINT,
+                            max_lines=1, overflow=ft.TextOverflow.ELLIPSIS,
+                            weight=ft.FontWeight.BOLD if active else ft.FontWeight.W_500),
+                    ft.Text(sub, size=10, color=_name_color(state, ingame) if active else _TEXT_FAINT,
+                            max_lines=1, overflow=ft.TextOverflow.ELLIPSIS),
+                ], spacing=0, tight=True),
                 ft.IconButton(ft.Icons.CLOSE, icon_size=13, icon_color=_TEXT_FAINT,
-                              tooltip="Close", width=22, height=22,
+                              tooltip="Close", width=20, height=20,
                               on_click=lambda e, a=acct: self._close_tab(a),
                               style=ft.ButtonStyle(padding=ft.padding.all(0))),
-            ], spacing=6, tight=True, vertical_alignment=ft.CrossAxisAlignment.CENTER),
-            padding=ft.padding.only(left=8, right=2, top=3, bottom=3),
-            border_radius=6, bgcolor=_BG_SEL if active else _BG_MENU,
+            ], spacing=8, tight=True, vertical_alignment=ft.CrossAxisAlignment.CENTER),
+            padding=ft.padding.only(left=8, right=4, top=4, bottom=4),
+            border_radius=8, bgcolor=_BG_SEL if active else _BG_MENU,
+            border=ft.border.all(1, _TOGGLE_ON if active else ft.Colors.TRANSPARENT),
             on_click=lambda e, a=acct: self.page.run_task(self._open, a))
 
     def _rebuild_tabs(self) -> None:
         self._tab_strip.controls = [self._tab_chip(a) for a in self._tabs]
-        self._tab_bar.visible = bool(self._tabs)
 
     def _close_tab(self, acct: int) -> None:
         if acct in self._tabs:
@@ -781,6 +811,20 @@ class SteamBridgeView(ft.Container):
             self.page.update()
 
     # ── messages ─────────────────────────────────────────────────────────────
+    def _on_msg_scroll(self, e) -> None:
+        with contextlib.suppress(Exception):
+            self._max_scroll = e.max_scroll_extent or 0.0
+            want = e.pixels < (e.max_scroll_extent or 0) - 90
+            if self._jump_btn.visible != want:
+                self._jump_btn.visible = want
+                self._jump_btn.update()
+
+    def _jump_to_latest(self) -> None:
+        with contextlib.suppress(Exception):
+            self._messages.scroll_to(offset=self._max_scroll or 1000000, duration=200)
+            self._jump_btn.visible = False
+            self._jump_btn.update()
+
     def _romanize(self, text: str) -> str:
         """Pinyin (Chinese) / romaji (Japanese) of the original — matches the
         VRChat tab's reading line. Empty if not romanizable or not applicable."""
@@ -849,7 +893,8 @@ class SteamBridgeView(ft.Container):
             b["images"] += m.get("images", [])
             b["stickers"] += m.get("stickers", [])
         for b in blocks:
-            b["text"] = " ".join(t.strip() for t in b["texts"] if t.strip())
+            joined = " ".join(t.strip() for t in b["texts"] if t.strip())
+            b["text"], b["emoticons"] = _extract_emoticons(joined)
         return blocks
 
     def _block_control(self, b: dict) -> ft.Control:
@@ -864,20 +909,26 @@ class SteamBridgeView(ft.Container):
         col.controls.append(ft.Text(name, size=12, weight=ft.FontWeight.BOLD, color=name_color))
         orig = b.get("text", "")
         translated = self._needs_tr(orig)
-        # Matches the VRChat tab: ORIGINAL first, then pinyin/romaji, then the
-        # translation underneath (only for messages that actually get translated).
-        if orig:
-            col.controls.append(ft.Text(spans=_spans(orig), size=14, selectable=True))
         if orig and translated:
+            # Matches the VRChat tab exactly: pinyin/romaji (top), then the original
+            # in GRAY, then the translation as the prominent line.
             noml = _URL_RE.sub("", orig).strip()   # don't romanize/translate the URL
             if self._show_pinyin:
                 roman = self._romanize(noml)
                 if roman:
-                    col.controls.append(ft.Text(roman, size=12, italic=True,
+                    col.controls.append(ft.Text(roman, size=12.5, italic=True,
                                                 color=_ACCENT, selectable=True))
-            tr_ctrl = ft.Text("", size=13, color="#c2c6cc", selectable=True)
+            col.controls.append(ft.Text(spans=_spans(orig, "#9aa0a6"), size=14, selectable=True))
+            tr_ctrl = ft.Text("", size=14, weight=ft.FontWeight.W_500,
+                              color=_TEXT_PRIMARY, selectable=True)
             b["_ctrl"] = tr_ctrl                    # the translation line, filled below
             col.controls.append(tr_ctrl)
+        elif orig:
+            col.controls.append(ft.Text(spans=_spans(orig), size=14, selectable=True))
+        if b.get("emoticons"):
+            col.controls.append(ft.Row(
+                [ft.Image(src=self._emoticon_url(n), width=28, height=28, fit=ft.ImageFit.CONTAIN)
+                 for n in b["emoticons"]], spacing=3, wrap=True))
         for url in b.get("stickers", []):
             col.controls.append(ft.Image(src=url, width=120, height=120, fit=ft.ImageFit.CONTAIN))
         for url in b.get("images", []):
@@ -915,8 +966,9 @@ class SteamBridgeView(ft.Container):
         self._save_cache()
 
     async def _append_message(self, m: dict) -> None:
+        text, emos = _extract_emoticons((m.get("text", "") or "").strip())
         b = {"from_me": bool(m.get("from_me")), "name": m.get("name", ""),
-             "avatar": m.get("avatar", ""), "text": (m.get("text", "") or "").strip(),
+             "avatar": m.get("avatar", ""), "text": text, "emoticons": emos,
              "images": m.get("images", []), "stickers": m.get("stickers", [])}
         self._messages.controls.append(self._block_control(b))
         if self.page:

@@ -19,7 +19,7 @@ from puripuly_heart.ui.fonts import font_for_language
 from puripuly_heart.ui.i18n import get_locale, language_name, t
 from puripuly_heart.ui.overlay_peer_contract import OverlayPeerConsumerContract
 
-_BUILD_TAG = "r395-steam-beta"  #increment each build so user can confirm version
+_BUILD_TAG = "r396-steam-beta"  #increment each build so user can confirm version
 
 # ── VRCT-style dark palette ──────────────────────────────────────────────────
 _BG_MAIN = "#2e2f32"
@@ -1830,10 +1830,10 @@ class DashboardView(ft.Row):
         # VRChat-only header actions don't apply to the Steam tab.
         with contextlib.suppress(Exception):
             self._vrc_header_actions.visible = (which != "steam")
-        if which == "vrc":
-            # Never leave the app sidebar collapsed once we're back on VRChat.
-            with contextlib.suppress(Exception):
-                self._app_sidebar.visible = True
+        # The Steam tab wants the whole width — auto-hide the app sidebar there,
+        # restore it on VRChat.
+        with contextlib.suppress(Exception):
+            self._app_sidebar.visible = (which != "steam")
         # Update FIRST so the Steam view is mounted (its .page is set) BEFORE
         # activate() runs — otherwise activate can't schedule the connect and it
         # sits on "connecting" forever.

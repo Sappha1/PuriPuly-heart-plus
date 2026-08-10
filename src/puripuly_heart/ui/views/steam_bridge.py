@@ -80,10 +80,9 @@ _LANG_LABEL = dict(_LANGS)
 _EMOJIS = ["😀", "😂", "🥰", "😊", "😎", "😉", "😢", "😭", "😡", "👍", "👎", "🙏",
            "👋", "❤️", "💔", "🔥", "✨", "🎉", "😴", "🤔", "😳", "🥺", "😤", "💀"]
 
-_BRIDGE_ROOT = Path(
-    r"C:\Users\Owner\AppData\Local\Temp\claude\E--Programming-Claude"
-    r"\6d59879c-8d48-4d69-98ef-fc5f025d4ef6\scratchpad"
-)
+# Persistent home for the Steam helper (daemon code + Playwright venv + Edge login
+# profile). Moved OUT of the session temp scratchpad so it survives a temp wipe.
+_BRIDGE_ROOT = Path(r"C:\Users\Owner\AppData\Local\PuriPulyHeart\bridge")
 _DAEMON_PY = _BRIDGE_ROOT / "steam_bridge" / "daemon.py"
 _CACHE_FILE = _BRIDGE_ROOT / "steam_bridge" / "tr_cache.json"
 _VENV_SCRIPTS = _BRIDGE_ROOT / "steamprobe-venv" / "Scripts"
@@ -591,9 +590,16 @@ class SteamBridgeView(ft.Container):
             content=body, expand=True,
             on_tap=lambda e, a=acct: self.page.run_task(self._open, a),
             on_secondary_tap_down=lambda e, fr=f: self._show_ctx(e, fr))
+        # Highlight on HOVER (like the real Steam friends list) rather than pinning a
+        # permanent highlight on the open chat's friend.
         return ft.Container(
             content=gd, padding=ft.padding.symmetric(horizontal=8, vertical=4),
-            border_radius=6, bgcolor=_BG_SEL if acct == self._active else ft.Colors.TRANSPARENT)
+            border_radius=6, bgcolor=ft.Colors.TRANSPARENT, on_hover=self._row_hover)
+
+    def _row_hover(self, e) -> None:
+        e.control.bgcolor = "#34363b" if e.data == "true" else ft.Colors.TRANSPARENT
+        with contextlib.suppress(Exception):
+            e.control.update()
 
     def _skeleton_rows(self) -> list:
         sk = "#3234384d"

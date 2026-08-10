@@ -19,7 +19,7 @@ from puripuly_heart.ui.fonts import font_for_language
 from puripuly_heart.ui.i18n import get_locale, language_name, t
 from puripuly_heart.ui.overlay_peer_contract import OverlayPeerConsumerContract
 
-_BUILD_TAG = "r410-steam-beta"  #increment each build so user can confirm version
+_BUILD_TAG = "r411-steam-beta"  #increment each build so user can confirm version
 
 # ── VRCT-style dark palette ──────────────────────────────────────────────────
 _BG_MAIN = "#2e2f32"
@@ -1556,8 +1556,9 @@ class DashboardView(ft.Row):
         # the title button's 4px), so the logo lands at the same spot as on the Chat
         # tab and the Chat/Steam tabs keep the identical X. Shown only on Steam.
         self._steam_brand = ft.Container(
-            width=230, height=34, visible=False, bgcolor="#26272a",
+            width=230, visible=False, bgcolor="#26272a",
             padding=ft.padding.only(left=20),
+            alignment=ft.alignment.center_left,
             content=ft.Row(
                 [
                     ft.Text("PuriPulyHeart+", size=14, weight=ft.FontWeight.BOLD, color=_TOGGLE_ON),

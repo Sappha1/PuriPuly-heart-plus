@@ -55,6 +55,10 @@ _FLAG_MOBILE = 0x200
 _FLAG_VR = 0x800
 _STEAMID64_BASE = 76561197960265728
 _URL_RE = re.compile(r"(https?://[^\s]+)")
+# CJK ideographs, Japanese kana, Korean hangul — used to decide if a message is
+# in a different script than the reader (so we don't translate English->English).
+_CJK_RE = re.compile(r"[㐀-鿿぀-ヿ가-힣]")
+_CJK_LANGS = {"zh-CN", "zh-TW", "ja", "ko"}
 
 _LANGS = [
     ("en", "English"), ("zh-CN", "中文(简)"), ("zh-TW", "中文(繁)"), ("ja", "日本語"),
@@ -71,6 +75,7 @@ _BRIDGE_ROOT = Path(
     r"\6d59879c-8d48-4d69-98ef-fc5f025d4ef6\scratchpad"
 )
 _DAEMON_PY = _BRIDGE_ROOT / "steam_bridge" / "daemon.py"
+_CACHE_FILE = _BRIDGE_ROOT / "steam_bridge" / "tr_cache.json"
 _VENV_SCRIPTS = _BRIDGE_ROOT / "steamprobe-venv" / "Scripts"
 _DAEMON_PYTHON = (
     _VENV_SCRIPTS / "pythonw.exe" if (_VENV_SCRIPTS / "pythonw.exe").exists()
@@ -134,6 +139,7 @@ class SteamBridgeView(ft.Container):
         self._expanded_games: set[str] = set()
         self._filter = ""
         self._tr_cache: dict[str, str] = {}
+        self._tr_dirty = 0
         self._started = False
         self._prewarmed = False
         self._got_friends = False
@@ -242,14 +248,10 @@ class SteamBridgeView(ft.Container):
             ft.Container(content=chat_area, expand=True),
         ], spacing=0, expand=True, vertical_alignment=ft.CrossAxisAlignment.STRETCH)
 
-        # never-blank loading overlay
-        self._loading = ft.Container(
-            expand=True, bgcolor=_BG_MAIN, alignment=ft.alignment.center, visible=True,
-            content=ft.Column([
-                ft.ProgressRing(width=34, height=34, stroke_width=3, color=_ACCENT),
-                ft.Text("Loading your Steam friends…", size=13, color=_TEXT_FAINT),
-            ], spacing=14, horizontal_alignment=ft.CrossAxisAlignment.CENTER,
-               alignment=ft.MainAxisAlignment.CENTER))
+        # No spinner/loading screen — show a skeleton of the friends list instead,
+        # so a cold start reads as "content loading in", not a loading screen.
+        self._friends_list.controls = self._skeleton_rows()
+        self._loading = ft.Container(visible=False)   # kept only so _hide_loading is a no-op
 
         # right-click context menu (cursor-positioned) + a backdrop so any click
         # dismisses it. The backdrop closes on left OR right click.
@@ -274,6 +276,7 @@ class SteamBridgeView(ft.Container):
         self.content = ft.Stack([main_row, self._loading,
                                   self._emoji_backdrop, self._emoji_panel,
                                   self._ctx_backdrop, self._ctx_menu], expand=True)
+        self._load_cache()
         self._update_own_header()
 
     def _lang_button(self, which: str) -> ft.Control:
@@ -486,11 +489,14 @@ class SteamBridgeView(ft.Container):
                 ft.Icon(ft.Icons.ARROW_DROP_DOWN, size=16, color=_TEXT_FAINT),
             ], spacing=0, tight=True),
             tooltip="Set status",
-            items=[ft.PopupMenuItem(text=label,
-                                    on_click=lambda e, s=st: self.page.run_task(self._set_status, s))
+            items=[ft.PopupMenuItem(
+                       height=32,
+                       content=ft.Text(label, size=13, color=_TEXT_PRIMARY),
+                       on_click=lambda e, s=st: self.page.run_task(self._set_status, s))
                    for label, st in opts]
-            + [ft.PopupMenuItem(),
-               ft.PopupMenuItem(text="View my Steam profile",
+            + [ft.PopupMenuItem(height=1),
+               ft.PopupMenuItem(height=32,
+                                content=ft.Text("View my Steam profile", size=13, color=_TEXT_PRIMARY),
                                 on_click=lambda e: self._open_profile(self._own))])
 
     def _update_own_header(self) -> None:
@@ -574,6 +580,21 @@ class SteamBridgeView(ft.Container):
         return ft.Container(
             content=gd, padding=ft.padding.symmetric(horizontal=8, vertical=4),
             border_radius=6, bgcolor=_BG_SEL if acct == self._active else ft.Colors.TRANSPARENT)
+
+    def _skeleton_rows(self) -> list:
+        sk = "#3234384d"
+        rows = []
+        for _ in range(10):
+            rows.append(ft.Container(
+                content=ft.Row([
+                    ft.Container(width=32, height=32, border_radius=6, bgcolor=sk),
+                    ft.Column([
+                        ft.Container(width=110, height=11, border_radius=4, bgcolor=sk),
+                        ft.Container(width=68, height=9, border_radius=4, bgcolor="#2c2d3033"),
+                    ], spacing=5, tight=True),
+                ], spacing=10, vertical_alignment=ft.CrossAxisAlignment.CENTER),
+                padding=ft.padding.symmetric(horizontal=8, vertical=7)))
+        return rows
 
     def _section_header(self, label: str, n: int, color: str = _SECTION) -> ft.Control:
         return ft.Container(
@@ -754,11 +775,31 @@ class SteamBridgeView(ft.Container):
             self.page.update()
 
     # ── messages ─────────────────────────────────────────────────────────────
-    async def _tr(self, text: str) -> str:
+    def _needs_tr(self, text: str) -> bool:
+        """True only when the text is in a different script than the reader —
+        so we never translate English->English (which wastes DeepL and reads odd)."""
         if not text:
-            return ""
+            return False
+        has_cjk = bool(_CJK_RE.search(text))
+        return (not has_cjk) if self._src_lang in _CJK_LANGS else has_cjk
+
+    def _load_cache(self) -> None:
+        with contextlib.suppress(Exception):
+            if _CACHE_FILE.exists():
+                self._tr_cache = json.loads(_CACHE_FILE.read_text(encoding="utf-8"))
+
+    def _save_cache(self) -> None:
+        with contextlib.suppress(Exception):
+            if len(self._tr_cache) > 8000:
+                self._tr_cache = dict(list(self._tr_cache.items())[-6000:])
+            _CACHE_FILE.write_text(json.dumps(self._tr_cache, ensure_ascii=False),
+                                   encoding="utf-8")
+
+    async def _tr(self, text: str) -> str:
+        if not text or not self._needs_tr(text):
+            return text                       # already in my language — no DeepL
         if text in self._tr_cache:
-            return self._tr_cache[text]
+            return self._tr_cache[text]       # cached from this or a past session
         out = text
         if callable(self.translate_message):
             with contextlib.suppress(Exception):
@@ -766,6 +807,10 @@ class SteamBridgeView(ft.Container):
                 if r:
                     out = r
         self._tr_cache[text] = out
+        self._tr_dirty += 1
+        if self._tr_dirty >= 8:               # persist so restarts don't re-burn DeepL
+            self._tr_dirty = 0
+            self._save_cache()
         return out
 
     def _coalesce(self, messages: list) -> list:
@@ -785,8 +830,10 @@ class SteamBridgeView(ft.Container):
             b["stickers"] += m.get("stickers", [])
         for b in blocks:
             b["text"] = " ".join(t.strip() for t in b["texts"] if t.strip())
-            if b["from_me"] and b["text"]:
-                b["secondary_visible"] = b["text"]   # keep the sent (Chinese) visible
+            # Show the ORIGINAL (e.g. their Chinese, or the Chinese we sent) as a
+            # second line under the translation — for any message that gets translated.
+            if b["text"] and self._needs_tr(b["text"]):
+                b["secondary_visible"] = b["text"]
         return blocks
 
     def _block_control(self, b: dict) -> ft.Control:
@@ -803,10 +850,14 @@ class SteamBridgeView(ft.Container):
         b["_ctrl"] = text_ctrl
         if b.get("text"):
             col.controls.append(text_ctrl)
-        # for my own messages, show the language actually sent (e.g. the Chinese)
+        # the ORIGINAL text (their Chinese / the Chinese we sent), with a small
+        # translate icon in front — like Steam's "translated" marker.
         if b.get("secondary_visible"):
-            col.controls.append(ft.Text(b["secondary_visible"], size=12, color=_SUB,
-                                        italic=True, selectable=True))
+            col.controls.append(ft.Row([
+                ft.Icon(ft.Icons.TRANSLATE, size=12, color=_TEXT_FAINT),
+                ft.Text(b["secondary_visible"], size=12, color="#9aa0a6",
+                        selectable=True, expand=True),
+            ], spacing=5, vertical_alignment=ft.CrossAxisAlignment.START))
         for url in b.get("stickers", []):
             col.controls.append(ft.Image(src=url, width=120, height=120, fit=ft.ImageFit.CONTAIN))
         for url in b.get("images", []):
@@ -825,7 +876,6 @@ class SteamBridgeView(ft.Container):
         tc = b.get("_ctrl")
         if tc is not None:
             tc.spans = _spans(tr)
-            tc.tooltip = b["text"]
             with contextlib.suppress(Exception):
                 tc.update()
 
@@ -838,17 +888,17 @@ class SteamBridgeView(ft.Container):
             self._messages.controls.append(self._block_control(b))
         if self.page:
             self.page.update()
-        for b in blocks:
-            if seq != self._open_seq:
-                return
-            await self._translate_block(b, seq)
+        # translate all blocks at once (cached ones are instant) instead of
+        # one-by-one — much faster, and skips English->English entirely
+        await asyncio.gather(*(self._translate_block(b, seq) for b in blocks))
+        self._save_cache()
 
     async def _append_message(self, m: dict) -> None:
         b = {"from_me": bool(m.get("from_me")), "name": m.get("name", ""),
              "avatar": m.get("avatar", ""), "text": (m.get("text", "") or "").strip(),
              "images": m.get("images", []), "stickers": m.get("stickers", [])}
-        if b["from_me"] and b["text"]:
-            b["secondary_visible"] = b["text"]       # show the sent (Chinese) too
+        if b["text"] and self._needs_tr(b["text"]):
+            b["secondary_visible"] = b["text"]       # show the original too
         self._messages.controls.append(self._block_control(b))
         if self.page:
             self.page.update()
@@ -990,11 +1040,13 @@ class SteamBridgeView(ft.Container):
             if int(ev.get("acct", 0)) == self._active:
                 await self._render_history(ev.get("messages", []), self._open_seq)
         elif kind == "opened":
-            if ev.get("ok"):
-                self._active = int(ev.get("acct", 0))
+            # Do NOT set self._active here — it's already set by _open() to what the
+            # user last clicked. A late "opened" from a chat they switched AWAY from
+            # would otherwise hijack the active chat and blank the history.
+            if ev.get("ok") and int(ev.get("acct", 0)) == self._active:
                 self._entry.disabled = False
-            if self.page:
-                self.page.update()
+                if self.page:
+                    self.page.update()
         elif kind == "typing":
             if int(ev.get("acct", 0)) == self._active:
                 self._set_typing(ev.get("name", "") if ev.get("typing") else "")

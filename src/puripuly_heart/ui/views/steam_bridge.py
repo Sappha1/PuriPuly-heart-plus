@@ -942,11 +942,28 @@ class SteamBridgeView(ft.Container):
         for url in b.get("stickers", []):
             col.controls.append(ft.Image(src=url, width=120, height=120, fit=ft.ImageFit.CONTAIN))
         for url in b.get("images", []):
-            col.controls.append(ft.Container(
-                content=ft.Image(src=url, fit=ft.ImageFit.CONTAIN, width=260, border_radius=8),
-                padding=ft.padding.only(top=2)))
+            col.controls.append(self._image_control(url))
         return ft.Row([_avatar(b["avatar"]), col], spacing=8,
                       vertical_alignment=ft.CrossAxisAlignment.START)
+
+    def _image_control(self, url: str) -> ft.Control:
+        # Show ONLY the image (never the raw steamusercontent URL as text). Left-
+        # click opens it full size; right-click copies the link, for when it's
+        # wanted.
+        img = ft.Image(src=url, fit=ft.ImageFit.CONTAIN, width=260, border_radius=8)
+        return ft.Container(
+            content=ft.GestureDetector(
+                content=img, mouse_cursor=ft.MouseCursor.CLICK,
+                on_tap=lambda e, u=url: self.page and self.page.launch_url(u),
+                on_secondary_tap_down=lambda e, u=url: self._copy_link(u)),
+            padding=ft.padding.only(top=2))
+
+    def _copy_link(self, url: str) -> None:
+        if not self.page:
+            return
+        with contextlib.suppress(Exception):
+            self.page.set_clipboard(url)
+            self.page.open(ft.SnackBar(ft.Text("Link copied"), duration=1400))
 
     async def _translate_block(self, b: dict, seq: int) -> None:
         orig = b.get("text", "")

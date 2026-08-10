@@ -19,7 +19,7 @@ from puripuly_heart.ui.fonts import font_for_language
 from puripuly_heart.ui.i18n import get_locale, language_name, t
 from puripuly_heart.ui.overlay_peer_contract import OverlayPeerConsumerContract
 
-_BUILD_TAG = "r406-steam-beta"  #increment each build so user can confirm version
+_BUILD_TAG = "r407-steam-beta"  #increment each build so user can confirm version
 
 # ── VRCT-style dark palette ──────────────────────────────────────────────────
 _BG_MAIN = "#2e2f32"
@@ -1551,8 +1551,24 @@ class DashboardView(ft.Row):
             vertical_alignment=ft.CrossAxisAlignment.CENTER,
             spacing=0,
         )
+        # Steam tab hides the app sidebar for room, which would slide the tab strip
+        # left. This brand block sits where the sidebar was (same 220px width) so the
+        # Chat/Steam tabs stay at the exact same X on both tabs, and it doubles as the
+        # missing app-logo header above the Steam friends list. Hidden on VRChat (the
+        # sidebar already shows the logo there).
+        self._steam_brand = ft.Container(
+            content=ft.Row(
+                [
+                    ft.Text("PuriPulyHeart+", size=14, weight=ft.FontWeight.BOLD, color=_TOGGLE_ON),
+                    ft.Text(_BUILD_TAG, size=10, color=_TEXT_FAINT),
+                ],
+                spacing=6, tight=True, vertical_alignment=ft.CrossAxisAlignment.CENTER,
+            ),
+            width=220, visible=False, padding=ft.padding.only(left=2),
+        )
         chat_header = ft.Row(
             [
+                self._steam_brand,
                 self._tab_vrc,
                 ft.Container(width=4),
                 self._tab_steam,
@@ -1815,6 +1831,10 @@ class DashboardView(ft.Row):
         """Collapse/restore the app's left sidebar to give the Steam tab room."""
         with contextlib.suppress(Exception):
             self._app_sidebar.visible = not self._app_sidebar.visible
+            # Only stand in with the brand when the sidebar is actually hidden on the
+            # Steam tab — otherwise we'd double the logo and push the tabs over.
+            self._steam_brand.visible = (
+                self._chat_tab == "steam" and not self._app_sidebar.visible)
             self.update()
 
     # ── beta/steam-bridge: chat tab strip (VRChat | Steam) ───────────────────
@@ -1831,9 +1851,12 @@ class DashboardView(ft.Row):
         with contextlib.suppress(Exception):
             self._vrc_header_actions.visible = (which != "steam")
         # The Steam tab wants the whole width — auto-hide the app sidebar there,
-        # restore it on VRChat.
+        # restore it on VRChat. The brand block stands in for the sidebar so the
+        # tabs don't shift (and it's the logo header above the friends list).
         with contextlib.suppress(Exception):
             self._app_sidebar.visible = (which != "steam")
+        with contextlib.suppress(Exception):
+            self._steam_brand.visible = (which == "steam")
         # Update FIRST so the Steam view is mounted (its .page is set) BEFORE
         # activate() runs — otherwise activate can't schedule the connect and it
         # sits on "connecting" forever.

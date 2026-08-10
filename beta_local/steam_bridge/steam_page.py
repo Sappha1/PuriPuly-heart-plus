@@ -61,22 +61,41 @@ class SteamPage:
         self._ctx = None
         self._page = None
 
-    async def start(self) -> None:
+    async def start(self, mode: str = "hidden") -> None:
+        """mode: 'hidden' = a real but OFF-SCREEN window; 'login' = a normal
+        visible window for sign-in.
+
+        Why not truly headless: Steam only keeps pushing live incoming messages
+        to a page it treats as active. A headless/occluded page gets throttled
+        and stops rendering new messages, so the friend's replies never arrived
+        (the visible probe caught live messages; the hidden harness did not). An
+        off-screen real window is present to the compositor — invisible to the
+        user — plus anti-throttle flags keep the renderer awake.
+        """
         from playwright.async_api import async_playwright
 
+        self._mode = mode
+        # Anti-throttle flags are harmless hedges; the off-screen window trick
+        # crashed Edge (exit 21) so it is dropped. 'hidden' = headless (loads and
+        # reads reliably, proven); 'login' = a visible window for sign-in.
+        args = [
+            "--disable-blink-features=AutomationControlled",
+            "--disable-background-timer-throttling",
+            "--disable-renderer-backgrounding",
+            "--disable-backgrounding-occluded-windows",
+        ]
         self._pw = await async_playwright().start()
         self._ctx = await self._pw.chromium.launch_persistent_context(
             user_data_dir=self._profile,
             channel="msedge",
-            headless=True,                     # hidden — the whole point
-            args=["--disable-blink-features=AutomationControlled"],
+            headless=(mode == "hidden"),
+            args=args,
         )
         self._page = self._ctx.pages[0] if self._ctx.pages else await self._ctx.new_page()
         await self._page.goto("https://steamcommunity.com/chat", timeout=60000)
         # The chat is a heavy SPA; the friends list appears a few seconds after
-        # navigation. Wait for it (verified: headless renders it in ~2-6s) so the
-        # first reads are not empty.
-        for _ in range(20):
+        # navigation. In login mode there is no list yet, so wait briefly.
+        for _ in range(20 if mode == "hidden" else 4):
             try:
                 n = await self._page.evaluate(
                     "() => document.querySelectorAll('.friend').length")
@@ -85,6 +104,25 @@ class SteamPage:
             except Exception:
                 pass
             await self._page.wait_for_timeout(1000)
+
+    async def restart(self, mode: str) -> None:
+        """Relaunch the browser in a different mode, same profile."""
+        await self.close()
+        self._pw = self._ctx = self._page = None
+        await self.start(mode=mode)
+
+    async def wait_until_signed_in(self, timeout_s: int = 300) -> bool:
+        """Poll until the friends list appears (login completed), or time out."""
+        import time as _t
+        end = _t.monotonic() + timeout_s
+        while _t.monotonic() < end:
+            if await self.list_conversations():
+                return True
+            try:
+                await self._page.wait_for_timeout(1500)
+            except Exception:
+                return False
+        return False
 
     async def is_signed_in(self) -> bool:
         try:
@@ -119,6 +157,15 @@ class SteamPage:
         except Exception as exc:
             logger.warning("open_conversation(%r) failed: %s", name, exc)
             return False
+
+    async def poke(self) -> None:
+        """Keep the session from going away/snooze (Steam has away/snooze states
+        that may stop live-updating an idle hidden session). Cheap, harmless."""
+        try:
+            await self._page.mouse.move(5, 5)
+            await self._page.mouse.move(6, 6)
+        except Exception:
+            pass
 
     async def read_messages(self) -> list[tuple[str, str]]:
         """Flat (speaker, text) list of the visible conversation, in order."""

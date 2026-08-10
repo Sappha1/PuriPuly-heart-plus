@@ -331,6 +331,10 @@ class TranslatorApp:
 
         self.view_api_requests = ApiRequestsView()
         self.view_about = AboutView()
+        # beta/steam-bridge (local only): Steam chat tab, view index 5.
+        from puripuly_heart.ui.views.steam_bridge import SteamBridgeView
+
+        self.view_steam = SteamBridgeView()
         self.view_settings.set_overlay_runtime_state(self.overlay_state)
 
         self._nav_selected = 0
@@ -344,6 +348,7 @@ class TranslatorApp:
             (ft.Icons.ARTICLE, "Logs"),
             (ft.Icons.INFO_OUTLINE, "About"),
             (ft.Icons.SWAP_VERT, "API"),  # view index 4 (appended: About stays 3)
+            (ft.Icons.CHAT_BUBBLE_OUTLINE, "Steam"),  # view index 5 (beta, local only)
         ]
         _ON = "#48a495"
         _OFF = "#6e7175"
@@ -1123,7 +1128,11 @@ class TranslatorApp:
                     self._queue_settings_mutation_task(_task)
 
         view_map = {0: self.view_dashboard, 1: self.view_settings, 2: self.view_logs,
-                    3: self.view_about, 4: self.view_api_requests}
+                    3: self.view_about, 4: self.view_api_requests, 5: self.view_steam}
+        if index == 5:
+            # Lazily spin up the Steam helper only when the tab is first opened.
+            with contextlib.suppress(Exception):
+                self.view_steam.activate()
         self._inner_content.content = view_map.get(index, self.view_dashboard)
         self._inner_content.padding = self._content_padding_for_index(index)
         self._top_nav_bar.visible = index != 0

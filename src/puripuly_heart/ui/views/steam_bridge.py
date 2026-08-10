@@ -62,8 +62,9 @@ class SteamBridgeView(ft.Container):
         self._avatars: dict[str, str] = {}
         self._started = False
 
-        self._status = ft.Text("connecting to Steam…", size=11, color=_TEXT_FAINT)
-        self._convos = ft.ListView(expand=True, spacing=1, padding=6)
+        # Friend picker: a horizontal strip at the top (no left column, so the
+        # chat + input use the full width like the VRChat tab).
+        self._convos = ft.Row(scroll=ft.ScrollMode.AUTO, spacing=6, height=40)
         self._messages = ft.ListView(expand=True, spacing=8, padding=14, auto_scroll=True)
         self._header = ft.Text("", size=14, weight=ft.FontWeight.BOLD, color=_TEXT_PRIMARY)
         # Input styled identically to the VRChat tab's message box.
@@ -86,21 +87,17 @@ class SteamBridgeView(ft.Container):
             ], spacing=6, vertical_alignment=ft.CrossAxisAlignment.CENTER),
             padding=ft.padding.symmetric(horizontal=8, vertical=6), bgcolor=_BG_MAIN)
 
-        left = ft.Container(
-            width=210, bgcolor=_BG_SIDE,
-            content=ft.Column([
-                ft.Container(padding=8, content=self._status),
-                ft.Divider(height=1, color=_DIVIDER),
-                self._convos,
-            ], spacing=0, expand=True))
-        # Right side mirrors the VRChat tab: messages (expand), divider, input row.
-        right = ft.Column([
+        # Full-width layout matching the VRChat tab: friend strip on top, then
+        # messages (expand), divider, and the input row along the bottom.
+        self.content = ft.Column([
+            ft.Container(padding=ft.padding.symmetric(horizontal=8, vertical=6),
+                        content=self._convos),
+            ft.Divider(height=1, color=_DIVIDER, thickness=1),
             ft.Container(content=self._messages, expand=True),
             ft.Divider(height=1, color=_DIVIDER, thickness=1),
             input_row,
         ], spacing=4, expand=True,
            horizontal_alignment=ft.CrossAxisAlignment.STRETCH)
-        self.content = ft.Row([left, right], spacing=0, expand=True)
 
     def activate(self) -> None:
         if self._started:
@@ -127,9 +124,8 @@ class SteamBridgeView(ft.Container):
             self.page.update()
 
     def _set(self, text: str) -> None:
-        self._status.value = text
-        if self.page:
-            self.page.update()
+        # No status chrome — the tab just opens and populates naturally.
+        self._log(f"status: {text}")
 
     async def _tr(self, text: str, to_them: bool) -> str:
         if callable(self.translate_message):
@@ -231,18 +227,17 @@ class SteamBridgeView(ft.Container):
         elif kind == "conversations":
             items = ev.get("items", [])
             self._avatars = {i["name"]: i.get("avatar", "") for i in items}
+            # Horizontal chips: avatar + name, click to open.
             self._convos.controls = [
                 ft.Container(
-                    padding=ft.padding.symmetric(vertical=6, horizontal=8),
-                    border_radius=4, ink=True,
+                    padding=ft.padding.symmetric(vertical=4, horizontal=8),
+                    border_radius=16, bgcolor=_BG_INPUT, ink=True,
                     on_click=lambda e, n=i["name"]: self.page.run_task(self._open, n),
                     content=ft.Row([
-                        _avatar(i.get("avatar", ""), 26),
-                        ft.Text(i["name"], size=12, color=_TEXT_PRIMARY, no_wrap=True,
-                                overflow=ft.TextOverflow.ELLIPSIS, expand=True),
-                    ], spacing=8))
+                        _avatar(i.get("avatar", ""), 22),
+                        ft.Text(i["name"], size=12, color=_TEXT_PRIMARY, no_wrap=True),
+                    ], spacing=6, tight=True))
                 for i in items]
-            self._set("")
             if self.page:
                 self.page.update()
         elif kind == "opened":

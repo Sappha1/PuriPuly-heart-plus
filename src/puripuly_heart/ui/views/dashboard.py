@@ -1808,11 +1808,14 @@ class DashboardView(ft.Row):
         self._tab_steam.bgcolor = "#243447" if which == "steam" else ft.Colors.TRANSPARENT
         self._chat_body.content = (
             self._steam_view if which == "steam" else self._vrc_chat_body)
+        # Update FIRST so the Steam view is mounted (its .page is set) BEFORE
+        # activate() runs — otherwise activate can't schedule the connect and it
+        # sits on "connecting" forever.
+        with contextlib.suppress(Exception):
+            self.update()
         if which == "steam":
             with contextlib.suppress(Exception):
                 self._steam_view.activate()
-        with contextlib.suppress(Exception):
-            self.update()
 
     # ── Sidebar nav ──────────────────────────────────────────────────────────
 

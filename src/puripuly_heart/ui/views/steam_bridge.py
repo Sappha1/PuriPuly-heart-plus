@@ -177,7 +177,7 @@ class SteamBridgeView(ft.Container):
             padding=ft.padding.only(left=8, right=8))
         self._friends_list = ft.ListView(expand=True, spacing=1, padding=6)
         self._left_panel = ft.Container(
-            width=252, bgcolor=_BG_SIDE,
+            width=230, bgcolor=_BG_SIDE,
             content=ft.Column([
                 self._own_header,
                 ft.Container(content=search_box,
@@ -276,7 +276,7 @@ class SteamBridgeView(ft.Container):
         # right-clicking a different friend while the menu is open switches it in
         # one click, while a click in the chat area still dismisses the menu.
         self._ctx_backdrop = ft.Container(
-            visible=False, left=253, top=0, right=0, bottom=0,
+            visible=False, left=231, top=0, right=0, bottom=0,
             content=ft.GestureDetector(
                 on_tap=lambda e: self._hide_ctx(),
                 on_secondary_tap_down=lambda e: self._hide_ctx(),

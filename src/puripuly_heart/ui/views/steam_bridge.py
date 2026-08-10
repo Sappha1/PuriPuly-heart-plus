@@ -15,9 +15,23 @@ import contextlib
 import json
 import re
 import socket
+import unicodedata
 from pathlib import Path
 
 import flet as ft
+
+
+def _search_key(name: str) -> str:
+    """name (lowercased) + its romanization, so 'aba' matches 阿巴阿巴 (ā bā…)."""
+    base = (name or "").lower()
+    roman = ""
+    with contextlib.suppress(Exception):
+        from puripuly_heart.core.transliteration import to_pinyin
+        py = to_pinyin(name)
+        if py and py != name:
+            nfd = unicodedata.normalize("NFD", py)
+            roman = "".join(c for c in nfd if not unicodedata.combining(c)).replace(" ", "").lower()
+    return f"{base} {roman}".strip()
 
 _BG_MAIN = "#2e2f32"
 _BG_SIDE = "#26272a"
@@ -110,9 +124,12 @@ class SteamBridgeView(ft.Container):
         self._own_avatar = ""
         self._own_state = 1
         self._own_invites = 0
+        self._own_invisible = False
+        self._emoticons: list[str] = []
         self._active = None
         self._open_seq = 0
         self._friends: dict[int, dict] = {}
+        self._search_index: dict[int, str] = {}
         self._tabs: list[int] = []
         self._expanded_games: set[str] = set()
         self._filter = ""
@@ -123,17 +140,15 @@ class SteamBridgeView(ft.Container):
 
         # left: own profile header + favorites grid + search + friends list
         self._own_header = ft.Container(
-            padding=ft.padding.only(left=10, right=10, top=10, bottom=6),
-            tooltip="View your Steam profile",
-            on_click=lambda e: self._open_profile(self._own))
+            padding=ft.padding.only(left=10, right=10, top=6, bottom=4))
         self._fav_grid = ft.Row([], spacing=6, scroll=ft.ScrollMode.AUTO)
         self._fav_box = ft.Container(content=self._fav_grid, visible=False,
-                                     padding=ft.padding.only(left=10, right=6, bottom=6))
+                                     padding=ft.padding.only(left=10, right=6, bottom=4))
         self._search = ft.TextField(
             hint_text="Search friends", prefix_icon=ft.Icons.SEARCH, dense=True,
             text_size=12, color=_TEXT_PRIMARY, border=ft.InputBorder.NONE,
-            bgcolor=_BG_INPUT, border_radius=8, hint_style=ft.TextStyle(color=_TEXT_FAINT),
-            content_padding=ft.padding.symmetric(horizontal=8, vertical=6),
+            bgcolor=_BG_INPUT, border_radius=6, hint_style=ft.TextStyle(color=_TEXT_FAINT, size=12),
+            content_padding=ft.padding.only(left=6, right=6, top=2, bottom=2),
             on_change=lambda e: self._on_search(e.control.value))
         self._friends_list = ft.ListView(expand=True, spacing=1, padding=6)
         self._left_panel = ft.Container(
@@ -142,7 +157,7 @@ class SteamBridgeView(ft.Container):
                 self._own_header,
                 self._fav_box,
                 ft.Container(content=self._search,
-                             padding=ft.padding.only(left=8, right=8, top=2, bottom=4)),
+                             padding=ft.padding.only(left=8, right=8, top=0, bottom=4)),
                 self._friends_list,
             ], spacing=0, expand=True))
 
@@ -181,11 +196,10 @@ class SteamBridgeView(ft.Container):
             bgcolor=_BG_INPUT, border_radius=8,
             content_padding=ft.padding.symmetric(horizontal=12, vertical=8),
             on_submit=lambda e: self.page.run_task(self._send))
-        emoji_btn = ft.PopupMenuButton(
-            icon=ft.Icons.EMOJI_EMOTIONS_OUTLINED, icon_size=20, icon_color=_TEXT_FAINT,
-            tooltip="Emoji", menu_position=ft.PopupMenuPosition.OVER,
-            items=[ft.PopupMenuItem(text=e, on_click=lambda ev, em=e: self._insert_emoji(em))
-                   for e in _EMOJIS])
+        emoji_btn = ft.IconButton(
+            ft.Icons.EMOJI_EMOTIONS_OUTLINED, icon_size=20, icon_color=_TEXT_FAINT,
+            tooltip="Emoji & emoticons", on_click=lambda e: self._toggle_emoji(),
+            style=ft.ButtonStyle(overlay_color=ft.Colors.TRANSPARENT))
         input_row = ft.Container(
             content=ft.Row([
                 self._entry,
@@ -228,13 +242,29 @@ class SteamBridgeView(ft.Container):
             ], spacing=14, horizontal_alignment=ft.CrossAxisAlignment.CENTER,
                alignment=ft.MainAxisAlignment.CENTER))
 
-        # right-click context menu (cursor-positioned)
+        # right-click context menu (cursor-positioned) + a backdrop so any click
+        # dismisses it. The backdrop closes on left OR right click.
+        self._ctx_backdrop = ft.GestureDetector(
+            visible=False, on_tap=lambda e: self._hide_ctx(),
+            on_secondary_tap_down=lambda e: self._hide_ctx(),
+            content=ft.Container(expand=True, bgcolor=ft.Colors.TRANSPARENT))
         self._ctx_menu = ft.Container(visible=False, bgcolor=_BG_MENU, border_radius=8,
                                       border=ft.border.all(1, "#4b4c4f"), padding=4,
-                                      width=190, left=60, top=60,
+                                      width=210, left=60, top=60,
                                       shadow=ft.BoxShadow(blur_radius=14, color="#88000000",
                                                           offset=ft.Offset(0, 4)))
-        self.content = ft.Stack([main_row, self._loading, self._ctx_menu], expand=True)
+        # emoji / emoticon picker panel (anchored bottom-right, over the input)
+        self._emoji_panel = ft.Container(
+            visible=False, bgcolor=_BG_MENU, border_radius=10,
+            border=ft.border.all(1, "#4b4c4f"), width=320, height=340,
+            right=8, bottom=64, padding=8,
+            shadow=ft.BoxShadow(blur_radius=16, color="#99000000", offset=ft.Offset(0, 4)))
+        self._emoji_backdrop = ft.GestureDetector(
+            visible=False, on_tap=lambda e: self._toggle_emoji(False),
+            content=ft.Container(expand=True, bgcolor=ft.Colors.TRANSPARENT))
+        self.content = ft.Stack([main_row, self._loading,
+                                  self._emoji_backdrop, self._emoji_panel,
+                                  self._ctx_backdrop, self._ctx_menu], expand=True)
         self._update_own_header()
 
     def _lang_button(self, which: str) -> ft.Control:
@@ -295,6 +325,47 @@ class SteamBridgeView(ft.Container):
         if self.page:
             self._entry.update()
 
+    def _insert_emoticon(self, name: str) -> None:
+        # Steam emoticons are sent as :name: and render on both ends.
+        self._entry.value = (self._entry.value or "") + f":{name}: "
+        if self.page:
+            self._entry.update()
+        self._toggle_emoji(False)
+
+    def _emoticon_url(self, name: str) -> str:
+        return f"https://community.fastly.steamstatic.com/economy/emoticon/{name}"
+
+    def _build_emoji_panel(self) -> None:
+        def cell(control, on_click, tip=None):
+            return ft.Container(content=control, on_click=on_click, ink=True, border_radius=6,
+                                padding=3, width=36, height=36, tooltip=tip,
+                                alignment=ft.alignment.center)
+        sections = [ft.Text("EMOJI", size=11, weight=ft.FontWeight.BOLD, color=_SECTION),
+                    ft.Row([cell(ft.Text(e, size=20), (lambda ev, em=e: self._insert_emoji(em)))
+                            for e in _EMOJIS], wrap=True, spacing=2, run_spacing=2)]
+        if self._emoticons:
+            sections.append(ft.Text("MY EMOTICONS", size=11, weight=ft.FontWeight.BOLD,
+                                    color=_SECTION))
+            sections.append(ft.Row([
+                cell(ft.Image(src=self._emoticon_url(n), width=26, height=26,
+                              fit=ft.ImageFit.CONTAIN),
+                     (lambda ev, nm=n: self._insert_emoticon(nm)), tip=f":{n}:")
+                for n in self._emoticons], wrap=True, spacing=2, run_spacing=2))
+        else:
+            sections.append(ft.Text("Your Steam emoticons load with your account…",
+                                    size=11, color=_TEXT_FAINT))
+        self._emoji_panel.content = ft.Column(sections, spacing=6, tight=True,
+                                              scroll=ft.ScrollMode.AUTO)
+
+    def _toggle_emoji(self, show=None) -> None:
+        show = (not self._emoji_panel.visible) if show is None else show
+        if show:
+            self._build_emoji_panel()
+        self._emoji_panel.visible = show
+        self._emoji_backdrop.visible = show
+        if self.page:
+            self.page.update()
+
     def _not_yet(self, label: str) -> None:
         with contextlib.suppress(Exception):
             self.page.open(ft.SnackBar(ft.Text(f"{label} aren't wired up yet in the beta.")))
@@ -317,13 +388,31 @@ class SteamBridgeView(ft.Container):
     # ── right-click context menu ─────────────────────────────────────────────
     def _menu_actions(self, f: dict) -> list:
         acct = int(f["acct"])
+        sid = acct + _STEAMID64_BASE
         acts = [("Open chat", lambda: self.page.run_task(self._open, acct)),
                 ("View Steam profile", lambda: self._open_profile(acct))]
+        if f.get("fav"):
+            acts.append(("Remove from Favorites",
+                         lambda: self.page.run_task(self._set_favorite, acct, False)))
+        else:
+            acts.append(("Add to Favorites",
+                         lambda: self.page.run_task(self._set_favorite, acct, True)))
         if f.get("ingame") and f.get("appid"):
             ap = f["appid"]
             acts.append(("Game store page",
                          lambda: self._launch(f"https://store.steampowered.com/app/{ap}")))
+            acts.append(("Community hub",
+                         lambda: self._launch(f"https://steamcommunity.com/app/{ap}")))
+        acts.append(("Copy profile link",
+                     lambda: self._copy(f"https://steamcommunity.com/profiles/{sid}")))
         return acts
+
+    async def _set_favorite(self, acct: int, on: bool) -> None:
+        await self._cmd({"cmd": "favorite", "acct": int(acct), "on": bool(on)})
+
+    def _copy(self, text: str) -> None:
+        with contextlib.suppress(Exception):
+            self.page.set_clipboard(text)
 
     def _show_ctx(self, e, f: dict) -> None:
         rows = []
@@ -343,12 +432,14 @@ class SteamBridgeView(ft.Container):
         self._ctx_menu.left = max(4.0, gx - 8)
         self._ctx_menu.top = max(40.0, gy - 44)
         self._ctx_menu.visible = True
+        self._ctx_backdrop.visible = True
         if self.page:
             self.page.update()
 
     def _hide_ctx(self) -> None:
-        if self._ctx_menu.visible:
+        if self._ctx_menu.visible or self._ctx_backdrop.visible:
             self._ctx_menu.visible = False
+            self._ctx_backdrop.visible = False
             if self.page:
                 self.page.update()
 
@@ -376,33 +467,57 @@ class SteamBridgeView(ft.Container):
             return ft.Image(src=url, width=size, height=size, border_radius=4, fit=ft.ImageFit.COVER)
         return ft.Container(width=size, height=size, border_radius=4, bgcolor="#3a3b3e")
 
-    def _update_own_header(self) -> None:
-        st = _STATE_LABEL.get(self._own_state, "Online")
-        children = [
-            _avatar(self._own_avatar, 36),
-            ft.Column([
+    def _status_menu(self) -> ft.Control:
+        # name + caret; opens a Steam-style status menu
+        opts = [("Online", 1), ("Away", 3), ("Invisible", 7), ("Offline", 0)]
+        return ft.PopupMenuButton(
+            content=ft.Row([
                 ft.Text(self._own_name or "Me", size=14, weight=ft.FontWeight.BOLD,
                         color=_TEXT_PRIMARY, max_lines=1, overflow=ft.TextOverflow.ELLIPSIS),
-                ft.Text(st, size=11, color=_name_color(self._own_state, False)),
-            ], spacing=0, tight=True, expand=True),
+                ft.Icon(ft.Icons.ARROW_DROP_DOWN, size=16, color=_TEXT_FAINT),
+            ], spacing=0, tight=True),
+            tooltip="Set status",
+            items=[ft.PopupMenuItem(text=label,
+                                    on_click=lambda e, s=st: self.page.run_task(self._set_status, s))
+                   for label, st in opts]
+            + [ft.PopupMenuItem(),
+               ft.PopupMenuItem(text="View my Steam profile",
+                                on_click=lambda e: self._open_profile(self._own))])
+
+    def _update_own_header(self) -> None:
+        if self._own_invisible:
+            status_row = ft.Row([ft.Icon(ft.Icons.VISIBILITY_OFF, size=13, color=_TEXT_FAINT),
+                                 ft.Text("Invisible", size=11, color=_TEXT_FAINT)],
+                                spacing=4, tight=True)
+        else:
+            status_row = ft.Text(_STATE_LABEL.get(self._own_state, "Online"), size=11,
+                                 color=_name_color(self._own_state, False))
+        children = [
+            ft.GestureDetector(content=_avatar(self._own_avatar, 32),
+                               on_tap=lambda e: self._open_profile(self._own)),
+            ft.Column([self._status_menu(), status_row], spacing=0, tight=True, expand=True),
         ]
         if self._own_invites > 0:
             children.append(ft.Container(
-                content=ft.Row([ft.Icon(ft.Icons.PERSON_ADD_ALT_1, size=15, color=_TEXT_FAINT),
-                                ft.Container(content=ft.Text(str(self._own_invites), size=10,
-                                                             weight=ft.FontWeight.BOLD, color="#fff"),
-                                             bgcolor="#c0392b", border_radius=8,
-                                             padding=ft.padding.symmetric(horizontal=5, vertical=0))],
-                               spacing=3, tight=True),
+                content=ft.Stack([
+                    ft.Icon(ft.Icons.PERSON_ADD_ALT_1, size=18, color=_TEXT_FAINT),
+                    ft.Container(content=ft.Text(str(self._own_invites), size=9,
+                                                 weight=ft.FontWeight.BOLD, color="#fff"),
+                                 bgcolor="#c0392b", border_radius=8, right=-4, top=-4,
+                                 padding=ft.padding.symmetric(horizontal=4, vertical=0)),
+                ], width=24, height=20),
                 tooltip="Friend requests (opens Steam)", ink=True, border_radius=6,
                 padding=ft.padding.all(4),
                 on_click=lambda e: self._launch(
                     f"https://steamcommunity.com/profiles/{self._own + _STEAMID64_BASE}/friends/pending")))
         self._own_header.content = ft.Row(
-            children, spacing=10, vertical_alignment=ft.CrossAxisAlignment.CENTER)
+            children, spacing=8, vertical_alignment=ft.CrossAxisAlignment.CENTER)
         if self.page:
             with contextlib.suppress(Exception):
                 self._own_header.update()
+
+    async def _set_status(self, state: int) -> None:
+        await self._cmd({"cmd": "status", "state": int(state)})
 
     def _update_fav_grid(self) -> None:
         favs = [f for f in self._friends.values() if f.get("fav")]
@@ -502,7 +617,9 @@ class SteamBridgeView(ft.Container):
     def _rebuild_friends(self) -> None:
         items = list(self._friends.values())
         if self._filter:
-            items = [f for f in items if self._filter in (f.get("name") or "").lower()]
+            q = self._filter
+            items = [f for f in items
+                     if q in self._search_index.get(int(f["acct"]), (f.get("name") or "").lower())]
 
         def sk(f):
             return (0 if f.get("ingame") else (1 if f.get("state") else 2),
@@ -551,15 +668,17 @@ class SteamBridgeView(ft.Container):
         for name in sorted(cats):
             add_section(name.upper(), cats[name])
         # In-game: 2+ friends in a game -> its own group; solo games -> "Other Games".
+        # Groups sorted by how many friends are in each game (most first), like Steam.
         by_game: dict[str, list] = {}
         for f in ingame:
             by_game.setdefault(f.get("game") or "In-Game", []).append(f)
         others = []
-        for game in sorted(by_game):
-            rows = by_game[game]
-            if len(rows) >= 2:
-                C.append(self._game_group(game, sorted(rows, key=sk)))
-            else:
+        multi = [(g, r) for g, r in by_game.items() if len(r) >= 2]
+        multi.sort(key=lambda gr: (-len(gr[1]), gr[0].lower()))
+        for game, rows in multi:
+            C.append(self._game_group(game, sorted(rows, key=sk)))
+        for game, rows in by_game.items():
+            if len(rows) < 2:
                 others += rows
         if others:
             C.append(self._section_header("OTHER GAMES", 0, _SECTION))
@@ -834,10 +953,16 @@ class SteamBridgeView(ft.Container):
             self._own_avatar = ev.get("avatar", "") or self._own_avatar
             self._own_state = int(ev.get("state", 1) or 1)
             self._own_invites = int(ev.get("invites", 0) or 0)
+            self._own_invisible = bool(ev.get("invisible"))
+            if ev.get("emoticons"):
+                self._emoticons = list(ev.get("emoticons"))
             self._update_own_header()
         elif kind == "friends":
             self._friends = {int(i["acct"]): i for i in ev.get("items", [])}
             self._got_friends = True
+            for a, i in self._friends.items():
+                if a not in self._search_index:
+                    self._search_index[a] = _search_key(i.get("name", ""))
             self._hide_loading()
             self._update_fav_grid()
             self._rebuild_friends()

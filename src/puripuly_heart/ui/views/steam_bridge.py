@@ -2,17 +2,17 @@
 """Steam chat, embedded inside PuriPuly (beta, local only). NEVER ships.
 
 Fully embedded: a headless browser helper (no window ever) reads/sends Steam
-messages over a local socket; this Flet panel renders the chat natively inside
-the app. Auto-connects on open (you are already signed in), renders your
-conversations with avatars, translates incoming messages into your language and
-your typed messages into theirs using the app's own translator.
+messages over a local socket by driving Steam's in-memory web-chat model, so it
+works without any visible browser. This Flet panel renders the chat natively:
+a collapsible friends list on the left, a chat pane on the right with avatars,
+image embeds, and live translation both ways using the app's own translator.
 """
 from __future__ import annotations
 
 import asyncio
 import contextlib
 import json
-import os
+import socket
 from pathlib import Path
 
 import flet as ft
@@ -21,6 +21,7 @@ import flet as ft
 _BG_MAIN = "#2e2f32"
 _BG_SIDE = "#26272a"
 _BG_INPUT = "#323336"
+_BG_SEL = "#33343880"
 _BORDER_INPUT = "#5b5c5f"
 _DIVIDER = "#4b4c4f"
 _TEXT_PRIMARY = "#f2f2f2"
@@ -58,23 +59,34 @@ class SteamBridgeView(ft.Container):
         self._reader = None
         self._writer = None
         self._own = 0
+        self._own_avatar = ""
         self._active = None            # account id of the open chat
         self._pending = None           # account id the user just picked
         self._names: dict[int, str] = {}
         self._avatars: dict[int, str] = {}
+        self._friend_items: dict[int, ft.Container] = {}
+        self._collapsed = False
         self._started = False
+        self._prewarmed = False
 
-        # Friend picker: a clean dropdown (readable), no left column, so the
-        # chat + input use the full width like the VRChat tab. Option key is the
-        # account id; the visible label is the friend's name.
-        self._convo_dd = ft.Dropdown(
-            hint_text="Select a Steam chat", width=280, text_size=13,
-            border_color=_BORDER_INPUT, bgcolor=_BG_INPUT, color=_TEXT_PRIMARY,
-            hint_style=ft.TextStyle(color=_TEXT_FAINT), content_padding=8,
-            on_change=lambda e: self.page.run_task(self._open, int(e.control.value)))
-        self._messages = ft.ListView(expand=True, spacing=8, padding=14, auto_scroll=True)
-        self._header = ft.Text("", size=14, weight=ft.FontWeight.BOLD, color=_TEXT_PRIMARY)
-        # Input styled identically to the VRChat tab's message box.
+        # ── left: collapsible friends list ───────────────────────────────────
+        self._friends_list = ft.ListView(expand=True, spacing=2, padding=6)
+        self._left_panel = ft.Container(width=220, bgcolor=_BG_SIDE,
+                                        content=self._friends_list)
+        self._left_divider = ft.VerticalDivider(width=1, color=_DIVIDER, thickness=1)
+
+        # ── right: chat pane ─────────────────────────────────────────────────
+        self._collapse_btn = ft.IconButton(
+            ft.Icons.MENU_OPEN, icon_size=18, icon_color=_TEXT_FAINT,
+            tooltip="Show/hide friends", on_click=self._toggle_panel,
+            style=ft.ButtonStyle(overlay_color=ft.Colors.TRANSPARENT))
+        self._chat_head = ft.Row([self._collapse_btn], spacing=8,
+                                 vertical_alignment=ft.CrossAxisAlignment.CENTER)
+        top_bar = ft.Container(content=self._chat_head,
+                               padding=ft.padding.symmetric(horizontal=6, vertical=4),
+                               bgcolor=_BG_MAIN)
+
+        self._messages = ft.ListView(expand=True, spacing=10, padding=14, auto_scroll=True)
         self._entry = ft.TextField(
             hint_text="Type message to send", disabled=True,
             border=ft.InputBorder.OUTLINE, border_color=_BORDER_INPUT,
@@ -94,17 +106,44 @@ class SteamBridgeView(ft.Container):
             ], spacing=6, vertical_alignment=ft.CrossAxisAlignment.CENTER),
             padding=ft.padding.symmetric(horizontal=8, vertical=6), bgcolor=_BG_MAIN)
 
-        # Full-width layout matching the VRChat tab: friend strip on top, then
-        # messages (expand), divider, and the input row along the bottom.
-        self.content = ft.Column([
-            ft.Container(padding=ft.padding.symmetric(horizontal=8, vertical=6),
-                        content=self._convo_dd),
+        chat_area = ft.Column([
+            top_bar,
             ft.Divider(height=1, color=_DIVIDER, thickness=1),
             ft.Container(content=self._messages, expand=True),
             ft.Divider(height=1, color=_DIVIDER, thickness=1),
             input_row,
-        ], spacing=4, expand=True,
-           horizontal_alignment=ft.CrossAxisAlignment.STRETCH)
+        ], spacing=0, expand=True)
+
+        self.content = ft.Row([
+            self._left_panel,
+            self._left_divider,
+            ft.Container(content=chat_area, expand=True),
+        ], spacing=0, expand=True, vertical_alignment=ft.CrossAxisAlignment.STRETCH)
+
+    # ── lifecycle ────────────────────────────────────────────────────────────
+    def prewarm(self) -> None:
+        """Spawn the helper at app startup (best effort, no page needed) so the
+        Steam page is already loaded by the time the user opens the tab — kills
+        the "late load". Skips if a helper is already listening."""
+        if self._prewarmed:
+            return
+        self._prewarmed = True
+        with contextlib.suppress(Exception):
+            s = socket.socket()
+            s.settimeout(0.25)
+            try:
+                s.connect((_HOST, _PORT))   # already running
+                s.close()
+                return
+            except Exception:
+                s.close()
+        with contextlib.suppress(Exception):
+            import subprocess
+            self._proc = subprocess.Popen(
+                [str(_DAEMON_PYTHON), str(_DAEMON_PY)],
+                stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL,
+                creationflags=_CREATE_NO_WINDOW)
+            self._log(f"prewarm spawned pid={self._proc.pid}")
 
     def activate(self) -> None:
         if self._started:
@@ -114,14 +153,53 @@ class SteamBridgeView(ft.Container):
             self.page.run_task(self._connect)
 
     # ── rendering ────────────────────────────────────────────────────────────
+    def _friend_row(self, acct: int, name: str, avatar: str) -> ft.Container:
+        item = ft.Container(
+            content=ft.Row([
+                _avatar(avatar, 32),
+                ft.Text(name or "Steam chat", size=13, color=_TEXT_PRIMARY,
+                        max_lines=1, overflow=ft.TextOverflow.ELLIPSIS, expand=True),
+            ], spacing=10, vertical_alignment=ft.CrossAxisAlignment.CENTER),
+            padding=ft.padding.symmetric(horizontal=10, vertical=7),
+            border_radius=8, ink=True, bgcolor=ft.Colors.TRANSPARENT,
+            on_click=lambda e, a=acct: self.page.run_task(self._open, a))
+        return item
+
+    def _build_friends(self, items: list) -> None:
+        self._friends_list.controls.clear()
+        self._friend_items.clear()
+        for i in items:
+            acct = int(i["acct"])
+            row = self._friend_row(acct, i.get("name", ""), i.get("avatar", ""))
+            self._friend_items[acct] = row
+            self._friends_list.controls.append(row)
+        self._highlight(self._active)
+
+    def _highlight(self, acct) -> None:
+        for a, row in self._friend_items.items():
+            row.bgcolor = _BG_SEL if a == acct else ft.Colors.TRANSPARENT
+
+    def _set_chat_head(self, name: str, avatar: str) -> None:
+        head = [self._collapse_btn]
+        if name:
+            head.append(_avatar(avatar, 26))
+            head.append(ft.Text(name, size=14, weight=ft.FontWeight.BOLD, color=_TEXT_PRIMARY))
+        self._chat_head.controls = head
+
     def _msg_row(self, *, avatar: str, name: str, name_color: str,
-                 primary: str, secondary: str) -> ft.Control:
-        col = ft.Column(spacing=1, tight=True, expand=True)
+                 primary: str, secondary: str, images: list) -> ft.Control:
+        col = ft.Column(spacing=3, tight=True, expand=True)
         col.controls.append(ft.Text(name, size=12, weight=ft.FontWeight.BOLD, color=name_color))
-        col.controls.append(ft.Text(primary, size=14, color=_TEXT_PRIMARY, selectable=True))
+        if primary:
+            col.controls.append(ft.Text(primary, size=14, color=_TEXT_PRIMARY, selectable=True))
         if secondary and secondary != primary:
             col.controls.append(ft.Text(secondary, size=11, color=_SUB, italic=True,
                                         selectable=True))
+        for url in (images or []):
+            col.controls.append(ft.Container(
+                content=ft.Image(src=url, fit=ft.ImageFit.CONTAIN, width=260,
+                                 border_radius=8),
+                padding=ft.padding.only(top=3)))
         return ft.Row([_avatar(avatar), col], spacing=8,
                       vertical_alignment=ft.CrossAxisAlignment.START)
 
@@ -129,6 +207,21 @@ class SteamBridgeView(ft.Container):
         self._messages.controls.append(control)
         if self.page:
             self.page.update()
+
+    async def _render_msg(self, m: dict) -> None:
+        text = m.get("text", "")
+        images = m.get("images", [])
+        if not text and not images:
+            return
+        if m.get("from_me"):
+            self._add(self._msg_row(avatar=m.get("avatar", "") or self._own_avatar,
+                                    name="You", name_color=_TEXT_FAINT,
+                                    primary=text, secondary="", images=images))
+        else:
+            english = await self._tr(text, False) if text else ""
+            self._add(self._msg_row(avatar=m.get("avatar", ""),
+                                    name=m.get("name", "Them"), name_color=_ACCENT,
+                                    primary=english, secondary=text, images=images))
 
     def _set(self, text: str) -> None:
         # No status chrome — the tab just opens and populates naturally.
@@ -148,19 +241,30 @@ class SteamBridgeView(ft.Container):
             with open(p, "a", encoding="utf-8") as h:
                 h.write(msg + "\n")
 
+    # ── interactions ─────────────────────────────────────────────────────────
+    def _toggle_panel(self, e=None) -> None:
+        self._collapsed = not self._collapsed
+        self._left_panel.visible = not self._collapsed
+        self._left_divider.visible = not self._collapsed
+        self._collapse_btn.icon = ft.Icons.MENU if self._collapsed else ft.Icons.MENU_OPEN
+        if self.page:
+            self.page.update()
+
     # ── helper process + socket ──────────────────────────────────────────────
     async def _connect(self) -> None:
         if self._writer is not None:
             return
-        # Connect first — a helper may already be running (one per session).
-        connected = await self._try_open()
+        # Wait briefly for a prewarmed helper before spawning our own, so we do
+        # not race two daemons onto the same port.
+        connected = False
+        for _ in range(6):
+            if await self._try_open():
+                connected = True
+                break
+            await asyncio.sleep(0.5)
         if not connected:
-            # Spawn via plain Popen: does NOT depend on a Proactor asyncio loop,
-            # which the frozen app may not have (create_subprocess_exec would then
-            # raise NotImplementedError and nothing would start).
             import subprocess
             try:
-                self._log(f"spawn: {_DAEMON_PYTHON} {_DAEMON_PY} exists={_DAEMON_PY.exists()} py_exists={Path(_DAEMON_PYTHON).exists()}")
                 self._proc = subprocess.Popen(
                     [str(_DAEMON_PYTHON), str(_DAEMON_PY)],
                     stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL,
@@ -168,7 +272,6 @@ class SteamBridgeView(ft.Container):
                 self._log(f"spawned pid={self._proc.pid}")
             except Exception as exc:
                 self._log(f"spawn FAILED: {type(exc).__name__}: {exc}")
-                self._set(f"could not start Steam helper: {exc}")
                 return
             for _ in range(60):
                 if await self._try_open():
@@ -177,7 +280,6 @@ class SteamBridgeView(ft.Container):
                 await asyncio.sleep(0.5)
         if not connected:
             self._log("connect FAILED after retries")
-            self._set("could not reach the Steam helper")
             return
         self._log("connected to helper socket")
         self.page.run_task(self._read_loop)
@@ -199,6 +301,8 @@ class SteamBridgeView(ft.Container):
     async def _open(self, acct: int) -> None:
         self._active = None
         self._pending = acct
+        self._highlight(acct)
+        self._set_chat_head(self._names.get(acct, ""), self._avatars.get(acct, ""))
         self._messages.controls.clear()
         self._entry.disabled = True
         if self.page:
@@ -213,8 +317,9 @@ class SteamBridgeView(ft.Container):
         if self.page:
             self.page.update()
         zh = await self._tr(text, True)
-        self._add(self._msg_row(avatar="", name="You", name_color=_TEXT_FAINT,
-                                primary=text, secondary=zh))
+        self._add(self._msg_row(avatar=self._own_avatar, name="You",
+                                name_color=_TEXT_FAINT, primary=text, secondary=zh,
+                                images=[]))
         await self._cmd({"cmd": "send", "acct": self._active, "text": zh})
 
     async def _read_loop(self) -> None:
@@ -229,20 +334,18 @@ class SteamBridgeView(ft.Container):
     async def _handle(self, ev: dict) -> None:
         kind = ev.get("ev")
         if kind == "status":
-            self._set("Steam connected" if ev.get("signed_in") else f"Steam: {ev.get('mode')}")
+            self._set("connected" if ev.get("signed_in") else str(ev.get("mode")))
         elif kind == "own":
             self._own = int(ev.get("acct", 0))
+            self._own_avatar = ev.get("avatar", "") or self._own_avatar
         elif kind == "conversations":
             items = ev.get("items", [])
             self._names = {int(i["acct"]): i.get("name", "") for i in items}
             self._avatars = {int(i["acct"]): i.get("avatar", "") for i in items}
-            self._convo_dd.options = [
-                ft.dropdown.Option(key=str(i["acct"]), text=(i.get("name") or "Steam chat"))
-                for i in items]
+            self._build_friends(items)
             if self.page:
                 self.page.update()
         elif kind == "history":
-            # Only render if this is still the chat the user is looking at.
             if self._active_pending(ev.get("acct")):
                 self._messages.controls.clear()
                 for m in ev.get("messages", []):
@@ -251,18 +354,13 @@ class SteamBridgeView(ft.Container):
             if ev.get("ok"):
                 self._active = int(ev.get("acct", 0))
                 self._entry.disabled = False
-                self._set("")
-            else:
-                self._set("could not open that chat")
+                self._highlight(self._active)
             if self.page:
                 self.page.update()
         elif kind == "inbound":
             if int(ev.get("acct", 0)) != self._active:
                 return
-            original = ev.get("text", "")
-            english = await self._tr(original, False)
-            self._add(self._msg_row(avatar=ev.get("avatar", ""), name=ev.get("name", "Them"),
-                                    name_color=_ACCENT, primary=english, secondary=original))
+            await self._render_msg(ev.get("message", {}))
 
     def _active_pending(self, acct) -> bool:
         # history arrives right after the user picks a chat, before `opened`
@@ -271,19 +369,6 @@ class SteamBridgeView(ft.Container):
             return int(acct) in (self._pending, self._active)
         except Exception:
             return True
-
-    async def _render_msg(self, m: dict) -> None:
-        text = m.get("text", "")
-        if not text:
-            return
-        if m.get("from_me"):
-            self._add(self._msg_row(avatar="", name="You", name_color=_TEXT_FAINT,
-                                    primary=text, secondary=""))
-        else:
-            english = await self._tr(text, False)
-            self._add(self._msg_row(avatar=m.get("avatar", ""),
-                                    name=m.get("name", "Them"), name_color=_ACCENT,
-                                    primary=english, secondary=text))
 
     async def shutdown(self) -> None:
         with contextlib.suppress(Exception):

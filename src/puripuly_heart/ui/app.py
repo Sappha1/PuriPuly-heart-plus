@@ -362,6 +362,9 @@ class TranslatorApp:
                     return getattr(res, "text", text) or text
 
                 _sv.translate_message = _steam_translate
+                # Pre-warm the Steam helper now so the tab has no "late load".
+                with contextlib.suppress(Exception):
+                    _sv.prewarm()
 
         # Top nav bar for non-dashboard views (back + tab icons)
         _NAV_ICONS = [

@@ -17,14 +17,17 @@ from pathlib import Path
 
 import flet as ft
 
+# Exact values from the dashboard theme so the Steam tab matches the VRChat one.
 _BG_MAIN = "#2e2f32"
 _BG_SIDE = "#26272a"
 _BG_INPUT = "#323336"
+_BORDER_INPUT = "#5b5c5f"
+_DIVIDER = "#4b4c4f"
 _TEXT_PRIMARY = "#f2f2f2"
-_TEXT_FAINT = "#9a9b9f"
+_TEXT_FAINT = "#7f8084"
 _SUB = "#8fa9c4"
 _ACCENT = "#48a495"
-_ROW_SEL = "#33454f"
+_TOGGLE_ON = "#48a495"
 
 _BRIDGE_ROOT = Path(
     r"C:\Users\Owner\AppData\Local\Temp\claude\E--Programming-Claude"
@@ -63,28 +66,40 @@ class SteamBridgeView(ft.Container):
         self._convos = ft.ListView(expand=True, spacing=1, padding=6)
         self._messages = ft.ListView(expand=True, spacing=8, padding=14, auto_scroll=True)
         self._header = ft.Text("", size=14, weight=ft.FontWeight.BOLD, color=_TEXT_PRIMARY)
+        # Input styled identically to the VRChat tab's message box.
         self._entry = ft.TextField(
-            hint_text="Type — it sends translated", expand=True, disabled=True,
-            border_color=_BG_INPUT, focused_border_color=_ACCENT, color=_TEXT_PRIMARY,
-            bgcolor=_BG_INPUT, text_size=13, content_padding=10,
+            hint_text="Type message to send", disabled=True,
+            border=ft.InputBorder.OUTLINE, border_color=_BORDER_INPUT,
+            focused_border_color=_TOGGLE_ON, text_size=13, color=_TEXT_PRIMARY,
+            hint_style=ft.TextStyle(color=_TEXT_FAINT, italic=True),
+            expand=True, multiline=True, min_lines=2, max_lines=4, shift_enter=True,
+            bgcolor=_BG_INPUT, border_radius=8,
+            content_padding=ft.padding.symmetric(horizontal=12, vertical=8),
             on_submit=lambda e: self.page.run_task(self._send))
+        input_row = ft.Container(
+            content=ft.Row([
+                self._entry,
+                ft.IconButton(ft.Icons.SEND_ROUNDED, icon_size=18, icon_color=_TOGGLE_ON,
+                              on_click=lambda e: self.page.run_task(self._send),
+                              style=ft.ButtonStyle(overlay_color=ft.Colors.TRANSPARENT,
+                                                   padding=ft.padding.all(8))),
+            ], spacing=6, vertical_alignment=ft.CrossAxisAlignment.CENTER),
+            padding=ft.padding.symmetric(horizontal=8, vertical=6), bgcolor=_BG_MAIN)
 
         left = ft.Container(
             width=210, bgcolor=_BG_SIDE,
             content=ft.Column([
                 ft.Container(padding=8, content=self._status),
-                ft.Divider(height=1, color="#333"),
+                ft.Divider(height=1, color=_DIVIDER),
                 self._convos,
             ], spacing=0, expand=True))
+        # Right side mirrors the VRChat tab: messages (expand), divider, input row.
         right = ft.Column([
-            ft.Container(padding=10, content=ft.Row([self._header], spacing=8)),
-            ft.Divider(height=1, color="#333"),
             ft.Container(content=self._messages, expand=True),
-            ft.Container(padding=8, content=ft.Row([
-                self._entry,
-                ft.IconButton(ft.Icons.SEND_ROUNDED, icon_color=_ACCENT,
-                              on_click=lambda e: self.page.run_task(self._send))])),
-        ], spacing=0, expand=True)
+            ft.Divider(height=1, color=_DIVIDER, thickness=1),
+            input_row,
+        ], spacing=4, expand=True,
+           horizontal_alignment=ft.CrossAxisAlignment.STRETCH)
         self.content = ft.Row([left, right], spacing=0, expand=True)
 
     def activate(self) -> None:
@@ -124,27 +139,52 @@ class SteamBridgeView(ft.Container):
                     return out
         return text
 
+    def _log(self, msg: str) -> None:
+        with contextlib.suppress(Exception):
+            p = _BRIDGE_ROOT / "steam_bridge" / "view_debug.log"
+            with open(p, "a", encoding="utf-8") as h:
+                h.write(msg + "\n")
+
     # ── helper process + socket ──────────────────────────────────────────────
     async def _connect(self) -> None:
         if self._writer is not None:
             return
-        try:
-            self._proc = await asyncio.create_subprocess_exec(
-                str(_DAEMON_PYTHON), str(_DAEMON_PY),
-                stdout=asyncio.subprocess.DEVNULL, stderr=asyncio.subprocess.DEVNULL,
-                creationflags=_CREATE_NO_WINDOW)
-        except Exception:
-            self._proc = None  # a daemon may already be running; try to connect anyway
-        for _ in range(40):
+        # Connect first — a helper may already be running (one per session).
+        connected = await self._try_open()
+        if not connected:
+            # Spawn via plain Popen: does NOT depend on a Proactor asyncio loop,
+            # which the frozen app may not have (create_subprocess_exec would then
+            # raise NotImplementedError and nothing would start).
+            import subprocess
             try:
-                self._reader, self._writer = await asyncio.open_connection(_HOST, _PORT)
-                break
-            except Exception:
+                self._log(f"spawn: {_DAEMON_PYTHON} {_DAEMON_PY} exists={_DAEMON_PY.exists()} py_exists={Path(_DAEMON_PYTHON).exists()}")
+                self._proc = subprocess.Popen(
+                    [str(_DAEMON_PYTHON), str(_DAEMON_PY)],
+                    stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL,
+                    creationflags=_CREATE_NO_WINDOW)
+                self._log(f"spawned pid={self._proc.pid}")
+            except Exception as exc:
+                self._log(f"spawn FAILED: {type(exc).__name__}: {exc}")
+                self._set(f"could not start Steam helper: {exc}")
+                return
+            for _ in range(60):
+                if await self._try_open():
+                    connected = True
+                    break
                 await asyncio.sleep(0.5)
-        if self._writer is None:
+        if not connected:
+            self._log("connect FAILED after retries")
             self._set("could not reach the Steam helper")
             return
+        self._log("connected to helper socket")
         self.page.run_task(self._read_loop)
+
+    async def _try_open(self) -> bool:
+        try:
+            self._reader, self._writer = await asyncio.open_connection(_HOST, _PORT)
+            return True
+        except Exception:
+            return False
 
     async def _cmd(self, obj: dict) -> None:
         if self._writer is None:

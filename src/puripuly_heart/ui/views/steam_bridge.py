@@ -145,10 +145,10 @@ class SteamBridgeView(ft.Container):
         self._fav_box = ft.Container(content=self._fav_grid, visible=False,
                                      padding=ft.padding.only(left=10, right=6, bottom=4))
         self._search = ft.TextField(
-            hint_text="Search friends", prefix_icon=ft.Icons.SEARCH, dense=True,
+            hint_text="Search friends", prefix_icon=ft.Icons.SEARCH, dense=True, height=34,
             text_size=12, color=_TEXT_PRIMARY, border=ft.InputBorder.NONE,
             bgcolor=_BG_INPUT, border_radius=6, hint_style=ft.TextStyle(color=_TEXT_FAINT, size=12),
-            content_padding=ft.padding.only(left=6, right=6, top=2, bottom=2),
+            content_padding=ft.padding.only(left=4, right=6, top=0, bottom=0),
             on_change=lambda e: self._on_search(e.control.value))
         self._friends_list = ft.ListView(expand=True, spacing=1, padding=6)
         self._left_panel = ft.Container(
@@ -499,15 +499,16 @@ class SteamBridgeView(ft.Container):
         ]
         if self._own_invites > 0:
             children.append(ft.Container(
-                content=ft.Stack([
-                    ft.Icon(ft.Icons.PERSON_ADD_ALT_1, size=18, color=_TEXT_FAINT),
-                    ft.Container(content=ft.Text(str(self._own_invites), size=9,
+                content=ft.Row([
+                    ft.Icon(ft.Icons.PERSON_ADD_ALT_1, size=16, color=_TEXT_FAINT),
+                    ft.Container(content=ft.Text(str(self._own_invites), size=10,
                                                  weight=ft.FontWeight.BOLD, color="#fff"),
-                                 bgcolor="#c0392b", border_radius=8, right=-4, top=-4,
-                                 padding=ft.padding.symmetric(horizontal=4, vertical=0)),
-                ], width=24, height=20),
-                tooltip="Friend requests (opens Steam)", ink=True, border_radius=6,
-                padding=ft.padding.all(4),
+                                 bgcolor="#c0392b", border_radius=9, height=18,
+                                 alignment=ft.alignment.center,
+                                 padding=ft.padding.symmetric(horizontal=5, vertical=0)),
+                ], spacing=3, tight=True),
+                tooltip=f"{self._own_invites} friend requests (opens Steam)", ink=True,
+                border_radius=6, padding=ft.padding.all(3),
                 on_click=lambda e: self._launch(
                     f"https://steamcommunity.com/profiles/{self._own + _STEAMID64_BASE}/friends/pending")))
         self._own_header.content = ft.Row(

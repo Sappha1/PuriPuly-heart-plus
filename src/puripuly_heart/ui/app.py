@@ -338,6 +338,16 @@ class TranslatorApp:
         self.view_dashboard.on_nav_change = self._on_nav_change
         self._wire_update_flow()
 
+        # beta/steam-bridge: let the Steam helper use the user's configured
+        # source/target languages.
+        with contextlib.suppress(Exception):
+            _sv = getattr(self.view_dashboard, "_steam_view", None)
+            if _sv is not None:
+                def _steam_langs():
+                    langs = self.controller.settings.languages
+                    return (langs.source_language, langs.target_language)
+                _sv.get_languages = _steam_langs
+
         # Top nav bar for non-dashboard views (back + tab icons)
         _NAV_ICONS = [
             (ft.Icons.SETTINGS, "Settings"),

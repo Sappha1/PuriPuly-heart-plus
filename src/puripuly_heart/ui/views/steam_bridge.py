@@ -1,13 +1,12 @@
 # -*- coding: utf-8 -*-
 """Steam chat, embedded inside PuriPuly (beta, local only). NEVER ships.
 
-Drives Steam's in-memory web-chat model through a headless helper (no window),
-rendered natively in Flet as a Steam-like client: the full friends list grouped
-Recent / Favorites / categories / In-Game / Online / Offline with status colors,
-game names and VR/mobile/snooze badges; a chat pane that coalesces each person's
-consecutive lines into flowing text, shows the message immediately and swaps in
-the translation as it arrives (original on hover), renders stickers / images /
-links; right-click a friend for options; pick languages in the tab.
+Native Flet rendering of Steam's in-memory web-chat model (driven by a headless
+helper): searchable friends list grouped Recent / Favorites / categories /
+In-Game / Online / Offline with status colors, game names and VR/mobile/snooze
+badges; chat tabs; a pane that coalesces each person's lines into flowing text,
+shows the message immediately and swaps in the translation as it arrives; right-
+click a friend for options; compact in-tab language picker.
 """
 from __future__ import annotations
 
@@ -49,6 +48,7 @@ _LANGS = [
     ("ru", "Русский"), ("pt", "Português"), ("it", "Italiano"), ("id", "Indonesia"),
     ("vi", "Tiếng Việt"), ("th", "ไทย"), ("ar", "العربية"),
 ]
+_LANG_LABEL = dict(_LANGS)
 _EMOJIS = ["😀", "😂", "🥰", "😊", "😎", "😉", "😢", "😭", "😡", "👍", "👎", "🙏",
            "👋", "❤️", "💔", "🔥", "✨", "🎉", "😴", "🤔", "😳", "🥺", "😤", "💀"]
 
@@ -112,32 +112,49 @@ class SteamBridgeView(ft.Container):
         self._active = None
         self._open_seq = 0
         self._friends: dict[int, dict] = {}
+        self._tabs: list[int] = []
+        self._filter = ""
         self._tr_cache: dict[str, str] = {}
         self._started = False
         self._prewarmed = False
+        self._got_friends = False
 
-        # left: friends list
+        # left: search + friends list
+        self._search = ft.TextField(
+            hint_text="Search friends", prefix_icon=ft.Icons.SEARCH, dense=True,
+            text_size=12, color=_TEXT_PRIMARY, border=ft.InputBorder.NONE,
+            bgcolor=_BG_INPUT, border_radius=8, hint_style=ft.TextStyle(color=_TEXT_FAINT),
+            content_padding=ft.padding.symmetric(horizontal=8, vertical=6),
+            on_change=lambda e: self._on_search(e.control.value))
         self._friends_list = ft.ListView(expand=True, spacing=1, padding=6)
-        self._left_panel = ft.Container(width=252, bgcolor=_BG_SIDE,
-                                        content=self._friends_list)
+        self._left_panel = ft.Container(
+            width=252, bgcolor=_BG_SIDE,
+            content=ft.Column([
+                ft.Container(content=self._search,
+                             padding=ft.padding.only(left=8, right=8, top=8, bottom=4)),
+                self._friends_list,
+            ], spacing=0, expand=True))
 
         # right: chat pane
         self._chat_headinfo = ft.Container()
-        self._from_dd = self._lang_dd(self._src_lang,
-                                      lambda e: setattr(self, "_src_lang", e.control.value))
-        self._to_dd = self._lang_dd(self._tgt_lang,
-                                    lambda e: setattr(self, "_tgt_lang", e.control.value))
-        lang_box = ft.Container(
-            content=ft.Row([self._from_dd,
-                            ft.Icon(ft.Icons.ARROW_RIGHT_ALT, size=15, color=_TEXT_FAINT),
-                            self._to_dd], spacing=2, tight=True),
-            bgcolor=_BG_MENU, border_radius=8,
-            padding=ft.padding.symmetric(horizontal=6, vertical=2))
+        self._from_lbl = ft.Text(_LANG_LABEL.get(self._src_lang, "English"),
+                                 size=12, color=_TEXT_PRIMARY, weight=ft.FontWeight.W_500)
+        self._to_lbl = ft.Text(_LANG_LABEL.get(self._tgt_lang, "中文(简)"),
+                               size=12, color=_TEXT_PRIMARY, weight=ft.FontWeight.W_500)
+        lang_box = ft.Row([
+            self._lang_button("from"),
+            ft.Icon(ft.Icons.ARROW_RIGHT_ALT, size=15, color=_TEXT_FAINT),
+            self._lang_button("to"),
+        ], spacing=4, tight=True)
         top_bar = ft.Container(
-            content=ft.Row([
-                self._chat_headinfo, ft.Container(expand=True), lang_box,
-            ], spacing=6, vertical_alignment=ft.CrossAxisAlignment.CENTER),
+            content=ft.Row([self._chat_headinfo, ft.Container(expand=True), lang_box],
+                           spacing=6, vertical_alignment=ft.CrossAxisAlignment.CENTER),
             padding=ft.padding.symmetric(horizontal=12, vertical=6), bgcolor=_BG_MAIN)
+
+        self._tab_strip = ft.Row([], spacing=4, scroll=ft.ScrollMode.AUTO)
+        self._tab_bar = ft.Container(content=self._tab_strip, visible=False,
+                                     padding=ft.padding.only(left=8, right=8, top=4, bottom=2),
+                                     bgcolor=_BG_MAIN)
 
         self._messages = ft.ListView(expand=True, spacing=10, padding=14, auto_scroll=True)
         self._typing_text = ft.Text("", size=12, color=_TEXT_FAINT)
@@ -178,6 +195,7 @@ class SteamBridgeView(ft.Container):
         chat_area = ft.Column([
             top_bar,
             ft.Divider(height=1, color=_DIVIDER, thickness=1),
+            self._tab_bar,
             ft.Container(content=ft.SelectionArea(content=self._messages), expand=True),
             typing_row,
             ft.Divider(height=1, color=_DIVIDER, thickness=1),
@@ -190,23 +208,50 @@ class SteamBridgeView(ft.Container):
             ft.Container(content=chat_area, expand=True),
         ], spacing=0, expand=True, vertical_alignment=ft.CrossAxisAlignment.STRETCH)
 
-        # right-click context menu (overlays the whole view)
+        # never-blank loading overlay
+        self._loading = ft.Container(
+            expand=True, bgcolor=_BG_MAIN, alignment=ft.alignment.center, visible=True,
+            content=ft.Column([
+                ft.ProgressRing(width=34, height=34, stroke_width=3, color=_ACCENT),
+                ft.Text("Loading your Steam friends…", size=13, color=_TEXT_FAINT),
+            ], spacing=14, horizontal_alignment=ft.CrossAxisAlignment.CENTER,
+               alignment=ft.MainAxisAlignment.CENTER))
+
+        # right-click context menu (cursor-positioned)
         self._ctx_menu = ft.Container(visible=False, bgcolor=_BG_MENU, border_radius=8,
                                       border=ft.border.all(1, "#4b4c4f"), padding=4,
-                                      width=190, left=258, top=60,
+                                      width=190, left=60, top=60,
                                       shadow=ft.BoxShadow(blur_radius=14, color="#88000000",
                                                           offset=ft.Offset(0, 4)))
-        self._ctx_backdrop = ft.GestureDetector(
-            visible=False, on_tap=lambda e: self._hide_ctx(),
-            content=ft.Container(expand=True, bgcolor=ft.Colors.TRANSPARENT))
-        self.content = ft.Stack([main_row, self._ctx_backdrop, self._ctx_menu], expand=True)
+        self.content = ft.Stack([main_row, self._loading, self._ctx_menu], expand=True)
 
-    def _lang_dd(self, value, on_change) -> ft.Dropdown:
-        return ft.Dropdown(
-            value=value, width=104, text_size=12, dense=True,
-            border=ft.InputBorder.NONE, bgcolor=_BG_MENU, color=_TEXT_PRIMARY,
-            content_padding=ft.padding.symmetric(horizontal=6, vertical=4),
-            options=[ft.dropdown.Option(c, l) for c, l in _LANGS], on_change=on_change)
+    def _lang_button(self, which: str) -> ft.Control:
+        lbl = self._from_lbl if which == "from" else self._to_lbl
+
+        def make_item(code, label):
+            def h(e):
+                if which == "from":
+                    self._src_lang = code
+                else:
+                    self._tgt_lang = code
+                lbl.value = _LANG_LABEL.get(code, code)
+                with contextlib.suppress(Exception):
+                    lbl.update()
+            return ft.PopupMenuItem(text=label, on_click=h)
+
+        return ft.PopupMenuButton(
+            content=ft.Row([lbl, ft.Icon(ft.Icons.ARROW_DROP_DOWN, size=14, color=_TEXT_FAINT)],
+                           spacing=0, tight=True),
+            tooltip=("Your language" if which == "from" else "Their language"),
+            items=[make_item(c, l) for c, l in _LANGS])
+
+    def set_languages(self, src: str, tgt: str) -> None:
+        if src:
+            self._src_lang = src
+            self._from_lbl.value = _LANG_LABEL.get(src, src)
+        if tgt:
+            self._tgt_lang = tgt
+            self._to_lbl.value = _LANG_LABEL.get(tgt, tgt)
 
     # ── lifecycle ────────────────────────────────────────────────────────────
     def prewarm(self) -> None:
@@ -250,6 +295,13 @@ class SteamBridgeView(ft.Container):
         if acct:
             self._launch(f"https://steamcommunity.com/profiles/{acct + _STEAMID64_BASE}")
 
+    def _on_search(self, q: str) -> None:
+        self._filter = (q or "").strip().lower()
+        self._rebuild_friends()
+        if self.page:
+            with contextlib.suppress(Exception):
+                self._friends_list.update()
+
     # ── right-click context menu ─────────────────────────────────────────────
     def _menu_actions(self, f: dict) -> list:
         acct = int(f["acct"])
@@ -274,20 +326,19 @@ class SteamBridgeView(ft.Container):
                 padding=ft.padding.symmetric(horizontal=10, vertical=7),
                 border_radius=6, ink=True, on_click=make(cb)))
         self._ctx_menu.content = ft.Column(rows, spacing=1, tight=True)
-        try:
-            self._ctx_menu.top = max(40.0, float(getattr(e, "global_y", 0) or 0) - 40)
-        except Exception:
-            self._ctx_menu.top = 60
+        gx = float(getattr(e, "global_x", 0) or getattr(e, "local_x", 0) or 60)
+        gy = float(getattr(e, "global_y", 0) or getattr(e, "local_y", 0) or 60)
+        self._ctx_menu.left = max(4.0, gx - 8)
+        self._ctx_menu.top = max(40.0, gy - 44)
         self._ctx_menu.visible = True
-        self._ctx_backdrop.visible = True
         if self.page:
             self.page.update()
 
     def _hide_ctx(self) -> None:
-        self._ctx_menu.visible = False
-        self._ctx_backdrop.visible = False
-        if self.page:
-            self.page.update()
+        if self._ctx_menu.visible:
+            self._ctx_menu.visible = False
+            if self.page:
+                self.page.update()
 
     # ── friends list ─────────────────────────────────────────────────────────
     def _status_badges(self, f: dict) -> list:
@@ -336,21 +387,34 @@ class SteamBridgeView(ft.Container):
             content=ft.Text(f"{label}  {n}", size=11, weight=ft.FontWeight.BOLD, color=_SECTION),
             padding=ft.padding.only(left=8, top=10, bottom=3))
 
+    def _game_header(self, game: str, n: int, appid: int) -> ft.Control:
+        row = []
+        if appid:
+            row.append(ft.Image(
+                src=f"https://cdn.cloudflare.steamstatic.com/steam/apps/{appid}/capsule_sm_120.jpg",
+                height=20, width=44, fit=ft.ImageFit.COVER, border_radius=3))
+        row.append(ft.Text(f"{game}  {n}", size=11, weight=ft.FontWeight.BOLD, color=_C_INGAME))
+        return ft.Container(
+            content=ft.Row(row, spacing=6, tight=True,
+                           vertical_alignment=ft.CrossAxisAlignment.CENTER),
+            padding=ft.padding.only(left=8, top=10, bottom=3))
+
     def _rebuild_friends(self) -> None:
         items = list(self._friends.values())
+        if self._filter:
+            items = [f for f in items if self._filter in (f.get("name") or "").lower()]
 
         def sk(f):
             return (0 if f.get("ingame") else (1 if f.get("state") else 2),
                     (f.get("name") or "").lower())
 
-        # Recent: most recently messaged, shown at the very top.
         recent = sorted((f for f in items if f.get("last_chat")),
                         key=lambda f: -(f.get("last_chat") or 0))[:6]
         recent_ids = {int(f["acct"]) for f in recent}
 
         favs, cats, ingame, online, offline = [], {}, [], [], []
         for f in items:
-            if int(f["acct"]) in recent_ids:
+            if int(f["acct"]) in recent_ids and not self._filter:
                 continue
             if f.get("fav"):
                 favs.append(f)
@@ -371,11 +435,21 @@ class SteamBridgeView(ft.Container):
             for f in (rows if presorted else sorted(rows, key=sk)):
                 self._friends_list.controls.append(self._friend_row(f))
 
-        add_section("RECENT", recent, presorted=True)
+        if not self._filter:
+            add_section("RECENT", recent, presorted=True)
         add_section("FAVORITES", favs)
         for name in sorted(cats):
             add_section(name.upper(), cats[name])
-        add_section("IN-GAME", ingame)
+        # In-game friends grouped by the game they're playing (Steam-style).
+        by_game: dict[str, list] = {}
+        for f in ingame:
+            by_game.setdefault(f.get("game") or "In-Game", []).append(f)
+        for game in sorted(by_game):
+            rows = by_game[game]
+            gappid = next((f.get("appid") for f in rows if f.get("appid")), 0)
+            self._friends_list.controls.append(self._game_header(game, len(rows), gappid))
+            for f in sorted(rows, key=sk):
+                self._friends_list.controls.append(self._friend_row(f))
         add_section("ONLINE", online)
         add_section("OFFLINE", offline)
 
@@ -398,6 +472,45 @@ class SteamBridgeView(ft.Container):
         acct = int(f["acct"])
         self._chat_headinfo.on_click = lambda e, a=acct: self._open_profile(a)
         self._chat_headinfo.tooltip = "View Steam profile"
+
+    # ── chat tabs ────────────────────────────────────────────────────────────
+    def _tab_chip(self, acct: int) -> ft.Control:
+        f = self._friends.get(acct, {})
+        active = (acct == self._active)
+        name = (f.get("name") or "Chat")
+        return ft.Container(
+            content=ft.Row([
+                _avatar(f.get("avatar", ""), 18),
+                ft.Text(name, size=12, color=_TEXT_PRIMARY if active else _TEXT_FAINT,
+                        max_lines=1, overflow=ft.TextOverflow.ELLIPSIS,
+                        weight=ft.FontWeight.W_500 if active else ft.FontWeight.NORMAL),
+                ft.IconButton(ft.Icons.CLOSE, icon_size=13, icon_color=_TEXT_FAINT,
+                              tooltip="Close", width=22, height=22,
+                              on_click=lambda e, a=acct: self._close_tab(a),
+                              style=ft.ButtonStyle(padding=ft.padding.all(0))),
+            ], spacing=6, tight=True, vertical_alignment=ft.CrossAxisAlignment.CENTER),
+            padding=ft.padding.only(left=8, right=2, top=3, bottom=3),
+            border_radius=6, bgcolor=_BG_SEL if active else _BG_MENU,
+            on_click=lambda e, a=acct: self.page.run_task(self._open, a))
+
+    def _rebuild_tabs(self) -> None:
+        self._tab_strip.controls = [self._tab_chip(a) for a in self._tabs]
+        self._tab_bar.visible = bool(self._tabs)
+
+    def _close_tab(self, acct: int) -> None:
+        if acct in self._tabs:
+            self._tabs.remove(acct)
+        if acct == self._active:
+            if self._tabs:
+                self.page.run_task(self._open, self._tabs[-1])
+                return
+            self._active = None
+            self._set_chat_head(None)
+            self._messages.controls.clear()
+            self._entry.disabled = True
+        self._rebuild_tabs()
+        if self.page:
+            self.page.update()
 
     # ── messages ─────────────────────────────────────────────────────────────
     async def _tr(self, text: str) -> str:
@@ -430,7 +543,6 @@ class SteamBridgeView(ft.Container):
             b["images"] += m.get("images", [])
             b["stickers"] += m.get("stickers", [])
         for b in blocks:
-            # consolidate their line-break-per-thought into one flowing message
             b["text"] = " ".join(t.strip() for t in b["texts"] if t.strip())
         return blocks
 
@@ -466,7 +578,7 @@ class SteamBridgeView(ft.Container):
         tc = b.get("_ctrl")
         if tc is not None:
             tc.spans = _spans(tr)
-            tc.tooltip = b["text"]        # original on hover
+            tc.tooltip = b["text"]
             with contextlib.suppress(Exception):
                 tc.update()
 
@@ -474,13 +586,11 @@ class SteamBridgeView(ft.Container):
         blocks = self._coalesce(messages)
         if seq != self._open_seq:
             return
-        # Show the messages (original text) immediately — no blank wait.
         self._messages.controls.clear()
         for b in blocks:
             self._messages.controls.append(self._block_control(b))
         if self.page:
             self.page.update()
-        # Then fill in translations in place as they arrive.
         for b in blocks:
             if seq != self._open_seq:
                 return
@@ -541,8 +651,12 @@ class SteamBridgeView(ft.Container):
                 self._typing_text.update()
 
     async def _open(self, acct: int) -> None:
+        self._hide_ctx()
         self._open_seq += 1
         self._active = acct
+        if acct not in self._tabs:
+            self._tabs.append(acct)
+        self._rebuild_tabs()
         self._set_typing("")
         self._set_chat_head(self._friends.get(acct))
         self._rebuild_friends()
@@ -565,7 +679,6 @@ class SteamBridgeView(ft.Container):
                 r = await self.translate_message(text, True)
                 if r:
                     zh = r
-        # Seed the cache so my own bubble shows what I typed (not a round-trip).
         self._tr_cache[zh] = text
         await self._append_message({"from_me": True, "name": self._own_name,
                                     "avatar": self._own_avatar, "text": zh})
@@ -580,6 +693,13 @@ class SteamBridgeView(ft.Container):
                     continue
                 await self._handle(ev)
 
+    def _hide_loading(self) -> None:
+        if self._loading.visible:
+            self._loading.visible = False
+            if self.page:
+                with contextlib.suppress(Exception):
+                    self._loading.update()
+
     async def _handle(self, ev: dict) -> None:
         kind = ev.get("ev")
         if kind == "own":
@@ -589,7 +709,10 @@ class SteamBridgeView(ft.Container):
             self._own_state = int(ev.get("state", 1) or 1)
         elif kind == "friends":
             self._friends = {int(i["acct"]): i for i in ev.get("items", [])}
+            self._got_friends = True
+            self._hide_loading()
             self._rebuild_friends()
+            self._rebuild_tabs()
             if self._active in self._friends:
                 self._set_chat_head(self._friends[self._active])
             if self.page:

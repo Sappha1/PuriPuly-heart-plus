@@ -366,12 +366,8 @@ class TranslatorApp:
                 # Seed the Steam tab's language pickers from the app settings.
                 with contextlib.suppress(Exception):
                     _langs = self.controller.settings.languages
-                    if getattr(_langs, "source_language", None):
-                        _sv._src_lang = _langs.source_language
-                        _sv._from_dd.value = _langs.source_language
-                    if getattr(_langs, "target_language", None):
-                        _sv._tgt_lang = _langs.target_language
-                        _sv._to_dd.value = _langs.target_language
+                    _sv.set_languages(getattr(_langs, "source_language", "") or "",
+                                      getattr(_langs, "target_language", "") or "")
                 # Pre-warm the Steam helper now so the tab has no "late load".
                 with contextlib.suppress(Exception):
                     _sv.prewarm()

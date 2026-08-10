@@ -19,7 +19,7 @@ from puripuly_heart.ui.fonts import font_for_language
 from puripuly_heart.ui.i18n import get_locale, language_name, t
 from puripuly_heart.ui.overlay_peer_contract import OverlayPeerConsumerContract
 
-_BUILD_TAG = "r394-steam-beta"  #increment each build so user can confirm version
+_BUILD_TAG = "r395-steam-beta"  #increment each build so user can confirm version
 
 # ── VRCT-style dark palette ──────────────────────────────────────────────────
 _BG_MAIN = "#2e2f32"
@@ -1528,12 +1528,10 @@ class DashboardView(ft.Row):
             content=ft.Text("Steam", size=11, weight=ft.FontWeight.W_600, color=_TEXT_FAINT),
             padding=ft.padding.symmetric(horizontal=10, vertical=5), border_radius=6,
             bgcolor=ft.Colors.TRANSPARENT, on_click=lambda e: self._select_chat_tab("steam"))
-        chat_header = ft.Row(
+        # These header actions apply to the VRChat chat only — hidden on the
+        # Steam tab (Mute Sync / Loopback / OCR / Overlay / Clear do nothing there).
+        self._vrc_header_actions = ft.Row(
             [
-                self._tab_vrc,
-                ft.Container(width=4),
-                self._tab_steam,
-                ft.Container(expand=True),
                 self._vrc_mute_sync_btn,
                 ft.Container(width=4),
                 ft.GestureDetector(
@@ -1549,6 +1547,17 @@ class DashboardView(ft.Row):
                 self._overlay_header_btn,
                 ft.Container(width=4),
                 self._chat_clear_button,
+            ],
+            vertical_alignment=ft.CrossAxisAlignment.CENTER,
+            spacing=0,
+        )
+        chat_header = ft.Row(
+            [
+                self._tab_vrc,
+                ft.Container(width=4),
+                self._tab_steam,
+                ft.Container(expand=True),
+                self._vrc_header_actions,
             ],
             vertical_alignment=ft.CrossAxisAlignment.CENTER,
             spacing=0,
@@ -1818,6 +1827,9 @@ class DashboardView(ft.Row):
         self._tab_steam.bgcolor = "#243447" if which == "steam" else ft.Colors.TRANSPARENT
         self._chat_body.content = (
             self._steam_view if which == "steam" else self._vrc_chat_body)
+        # VRChat-only header actions don't apply to the Steam tab.
+        with contextlib.suppress(Exception):
+            self._vrc_header_actions.visible = (which != "steam")
         if which == "vrc":
             # Never leave the app sidebar collapsed once we're back on VRChat.
             with contextlib.suppress(Exception):

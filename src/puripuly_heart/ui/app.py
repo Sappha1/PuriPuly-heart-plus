@@ -346,9 +346,10 @@ class TranslatorApp:
                 from uuid import uuid4 as _uuid4
 
                 async def _steam_translate(text: str, to_them: bool) -> str:
-                    langs = self.controller.settings.languages
-                    mine = langs.source_language or "en"
-                    theirs = langs.target_language or "zh-CN"
+                    # Use the Steam tab's own picked languages (defaults seeded
+                    # from the app settings) so it works with the sidebar hidden.
+                    mine = getattr(_sv, "_src_lang", None) or "en"
+                    theirs = getattr(_sv, "_tgt_lang", None) or "zh-CN"
                     src, tgt = (mine, theirs) if to_them else (theirs, mine)
                     llm = getattr(self.controller.hub, "llm", None)
                     if llm is None:
@@ -362,6 +363,15 @@ class TranslatorApp:
                     return getattr(res, "text", text) or text
 
                 _sv.translate_message = _steam_translate
+                # Seed the Steam tab's language pickers from the app settings.
+                with contextlib.suppress(Exception):
+                    _langs = self.controller.settings.languages
+                    if getattr(_langs, "source_language", None):
+                        _sv._src_lang = _langs.source_language
+                        _sv._from_dd.value = _langs.source_language
+                    if getattr(_langs, "target_language", None):
+                        _sv._tgt_lang = _langs.target_language
+                        _sv._to_dd.value = _langs.target_language
                 # Pre-warm the Steam helper now so the tab has no "late load".
                 with contextlib.suppress(Exception):
                     _sv.prewarm()

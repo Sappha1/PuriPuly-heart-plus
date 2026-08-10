@@ -19,7 +19,7 @@ from puripuly_heart.ui.fonts import font_for_language
 from puripuly_heart.ui.i18n import get_locale, language_name, t
 from puripuly_heart.ui.overlay_peer_contract import OverlayPeerConsumerContract
 
-_BUILD_TAG = "r409-steam-beta"  #increment each build so user can confirm version
+_BUILD_TAG = "r410-steam-beta"  #increment each build so user can confirm version
 
 # ── VRCT-style dark palette ──────────────────────────────────────────────────
 _BG_MAIN = "#2e2f32"
@@ -1551,14 +1551,24 @@ class DashboardView(ft.Row):
             vertical_alignment=ft.CrossAxisAlignment.CENTER,
             spacing=0,
         )
-        # Steam tab hides the app sidebar for room, which would slide the tab strip
-        # left. The app name already lives in the (native) window title bar, so we do
-        # NOT repeat it here — this is just a blank 230px anchor, colored like the
-        # friends panel so it reads as the top of that column, that keeps the
-        # Chat/Steam tabs at the identical X on both tabs. Shown only on the Steam tab.
+        # Steam tab hides the app sidebar for room. This 230px brand cell sits above
+        # the friends list (matching the sidebar header: 20px inset = its 16px pad +
+        # the title button's 4px), so the logo lands at the same spot as on the Chat
+        # tab and the Chat/Steam tabs keep the identical X. Shown only on Steam.
         self._steam_brand = ft.Container(
             width=230, height=34, visible=False, bgcolor="#26272a",
+            padding=ft.padding.only(left=20),
+            content=ft.Row(
+                [
+                    ft.Text("PuriPulyHeart+", size=14, weight=ft.FontWeight.BOLD, color=_TOGGLE_ON),
+                    ft.Text(_BUILD_TAG, size=10, color=_TEXT_FAINT),
+                ],
+                spacing=6, tight=True, vertical_alignment=ft.CrossAxisAlignment.CENTER,
+            ),
         )
+        # The Steam language selector (English → 中文) lives up here in the tab bar,
+        # far right, filled in after the Steam view is built (below).
+        self._steam_lang_slot = ft.Container(visible=False)
         chat_header = ft.Row(
             [
                 self._steam_brand,
@@ -1567,6 +1577,7 @@ class DashboardView(ft.Row):
                 self._tab_steam,
                 ft.Container(expand=True),
                 self._vrc_header_actions,
+                self._steam_lang_slot,
             ],
             vertical_alignment=ft.CrossAxisAlignment.CENTER,
             spacing=0,
@@ -1793,6 +1804,10 @@ class DashboardView(ft.Row):
             self._steam_view = SteamBridgeView()
         except Exception:
             self._steam_view = ft.Container()
+        # Hoist the Steam view's language selector up into the tab bar (far right).
+        with contextlib.suppress(Exception):
+            if getattr(self._steam_view, "lang_bar", None) is not None:
+                self._steam_lang_slot.content = self._steam_view.lang_bar
         self._chat_body = ft.Container(content=self._vrc_chat_body, expand=True)
         right_panel = ft.Container(
             content=ft.Column(
@@ -1855,6 +1870,8 @@ class DashboardView(ft.Row):
             self._app_sidebar.visible = (which != "steam")
         with contextlib.suppress(Exception):
             self._steam_brand.visible = (which == "steam")
+        with contextlib.suppress(Exception):
+            self._steam_lang_slot.visible = (which == "steam")
         # On Steam, drop the right panel's LEFT padding so the friends list is flush
         # to the window edge like the sidebar is; restore normal padding on VRChat.
         with contextlib.suppress(Exception):

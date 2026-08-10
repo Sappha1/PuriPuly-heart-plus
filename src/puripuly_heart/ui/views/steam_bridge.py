@@ -144,6 +144,7 @@ class SteamBridgeView(ft.Container):
         self._emoticons: list[str] = []
         self._active = None
         self._open_seq = 0
+        self._last_block = None       # last rendered msg block, for same-sender coalescing
         self._friends: dict[int, dict] = {}
         self._search_index: dict[int, str] = {}
         self._tabs: list[int] = []
@@ -175,7 +176,9 @@ class SteamBridgeView(ft.Container):
                            spacing=6, vertical_alignment=ft.CrossAxisAlignment.CENTER),
             bgcolor=_BG_INPUT, border_radius=6, height=32,
             padding=ft.padding.only(left=8, right=8))
-        self._friends_list = ft.ListView(expand=True, spacing=1, padding=6)
+        self._friends_list = ft.ListView(
+            expand=True, spacing=1,
+            padding=ft.padding.only(left=4, right=10, top=6, bottom=6))
         self._left_panel = ft.Container(
             width=230, bgcolor=_BG_SIDE,
             content=ft.Column([
@@ -191,7 +194,10 @@ class SteamBridgeView(ft.Container):
                                  size=12, color=_TEXT_PRIMARY, weight=ft.FontWeight.W_500)
         self._to_lbl = ft.Text(_LANG_LABEL.get(self._tgt_lang, "中文(简)"),
                                size=12, color=_TEXT_PRIMARY, weight=ft.FontWeight.W_500)
-        lang_box = ft.Row([
+        # The language selector is hoisted OUT into the dashboard's tab bar (far
+        # right, same row as Chat/Steam). The dashboard reads self.lang_bar and mounts
+        # it there; kept as an attribute so set_languages() still updates the labels.
+        self.lang_bar = ft.Row([
             self._lang_button("from"),
             ft.Icon(ft.Icons.ARROW_RIGHT_ALT, size=15, color=_TEXT_FAINT),
             self._lang_button("to"),
@@ -200,7 +206,7 @@ class SteamBridgeView(ft.Container):
         # active one highlighted. No separate (redundant) person header.
         self._tab_strip = ft.Row([], spacing=6, scroll=ft.ScrollMode.AUTO, expand=True)
         top_bar = ft.Container(
-            content=ft.Row([self._tab_strip, lang_box], spacing=8,
+            content=ft.Row([self._tab_strip], spacing=8,
                            vertical_alignment=ft.CrossAxisAlignment.CENTER),
             padding=ft.padding.only(left=8, right=12, top=6, bottom=4), bgcolor=_BG_MAIN)
         self._tab_bar = ft.Container(visible=False)   # kept: _rebuild_tabs toggles it
@@ -665,7 +671,8 @@ class SteamBridgeView(ft.Container):
             rows.append(ft.Container(
                 content=ft.Row([
                     ft.Text(f"+{rest}", size=12, weight=ft.FontWeight.BOLD, color=_C_INGAME),
-                    ft.Text(f"Playing with {rest} other people", size=12, color=_TEXT_FAINT),
+                    ft.Text(f"more playing", size=12, color=_TEXT_FAINT,
+                            max_lines=1, overflow=ft.TextOverflow.ELLIPSIS),
                 ], spacing=8, tight=True),
                 padding=ft.padding.symmetric(horizontal=8, vertical=4), ink=True,
                 on_click=lambda e, g=game: self._toggle_game(g)))
@@ -782,7 +789,7 @@ class SteamBridgeView(ft.Container):
         active = (acct == self._active)
         state, ingame = int(f.get("state", 0)), bool(f.get("ingame"))
         sub = (f.get("game") or "In-Game") if ingame else _STATE_LABEL.get(state, "Offline")
-        return ft.Container(
+        chip = ft.Container(
             content=ft.Row([
                 _avatar(f.get("avatar", ""), 26),
                 ft.Column([
@@ -801,6 +808,10 @@ class SteamBridgeView(ft.Container):
             padding=ft.padding.only(left=8, right=4, top=4, bottom=4),
             border_radius=8, bgcolor=_BG_SEL if active else _BG_MENU,
             on_click=lambda e, a=acct: self.page.run_task(self._open, a))
+        # Right-click (mouse 3) anywhere on the tab closes it, like a browser tab.
+        return ft.GestureDetector(
+            content=chip,
+            on_secondary_tap_down=lambda e, a=acct: self._close_tab(a))
 
     def _rebuild_tabs(self) -> None:
         self._tab_strip.controls = [self._tab_chip(a) for a in self._tabs]
@@ -907,6 +918,39 @@ class SteamBridgeView(ft.Container):
             b["text"], b["emoticons"] = _extract_emoticons(joined)
         return blocks
 
+    def _message_body_controls(self, b: dict) -> list:
+        """The lines for ONE message (no name/avatar): pinyin → original (gray) →
+        translation, then emotes/stickers/images. Shared by the first message in a
+        block and by same-sender messages coalesced into it."""
+        out: list = []
+        orig = b.get("text", "")
+        translated = self._needs_tr(orig)
+        if orig and translated:
+            # Matches the VRChat tab: pinyin/romaji (top), original in GRAY, then
+            # the translation as the prominent line.
+            noml = _URL_RE.sub("", orig).strip()   # don't romanize/translate the URL
+            if self._show_pinyin:
+                roman = self._romanize(noml)
+                if roman:
+                    out.append(ft.Text(roman, size=12.5, italic=True,
+                                       color=_ACCENT, selectable=True))
+            out.append(ft.Text(spans=_spans(orig, "#9aa0a6"), size=14, selectable=True))
+            tr_ctrl = ft.Text("", size=14, weight=ft.FontWeight.W_500,
+                              color=_TEXT_PRIMARY, selectable=True)
+            b["_ctrl"] = tr_ctrl                    # the translation line, filled below
+            out.append(tr_ctrl)
+        elif orig:
+            out.append(ft.Text(spans=_spans(orig), size=14, selectable=True))
+        if b.get("emoticons"):
+            out.append(ft.Row(
+                [ft.Image(src=self._emoticon_url(n), width=28, height=28, fit=ft.ImageFit.CONTAIN)
+                 for n in b["emoticons"]], spacing=3, wrap=True))
+        for url in b.get("stickers", []):
+            out.append(ft.Image(src=url, width=120, height=120, fit=ft.ImageFit.CONTAIN))
+        for url in b.get("images", []):
+            out.append(self._image_control(url))
+        return out
+
     def _block_control(self, b: dict) -> ft.Control:
         if b["from_me"]:
             name_color = _name_color(self._own_state, False)
@@ -917,32 +961,9 @@ class SteamBridgeView(ft.Container):
             name = b.get("name") or "Them"
         col = ft.Column(spacing=1, tight=True, expand=True)
         col.controls.append(ft.Text(name, size=12, weight=ft.FontWeight.BOLD, color=name_color))
-        orig = b.get("text", "")
-        translated = self._needs_tr(orig)
-        if orig and translated:
-            # Matches the VRChat tab exactly: pinyin/romaji (top), then the original
-            # in GRAY, then the translation as the prominent line.
-            noml = _URL_RE.sub("", orig).strip()   # don't romanize/translate the URL
-            if self._show_pinyin:
-                roman = self._romanize(noml)
-                if roman:
-                    col.controls.append(ft.Text(roman, size=12.5, italic=True,
-                                                color=_ACCENT, selectable=True))
-            col.controls.append(ft.Text(spans=_spans(orig, "#9aa0a6"), size=14, selectable=True))
-            tr_ctrl = ft.Text("", size=14, weight=ft.FontWeight.W_500,
-                              color=_TEXT_PRIMARY, selectable=True)
-            b["_ctrl"] = tr_ctrl                    # the translation line, filled below
-            col.controls.append(tr_ctrl)
-        elif orig:
-            col.controls.append(ft.Text(spans=_spans(orig), size=14, selectable=True))
-        if b.get("emoticons"):
-            col.controls.append(ft.Row(
-                [ft.Image(src=self._emoticon_url(n), width=28, height=28, fit=ft.ImageFit.CONTAIN)
-                 for n in b["emoticons"]], spacing=3, wrap=True))
-        for url in b.get("stickers", []):
-            col.controls.append(ft.Image(src=url, width=120, height=120, fit=ft.ImageFit.CONTAIN))
-        for url in b.get("images", []):
-            col.controls.append(self._image_control(url))
+        col.controls.extend(self._message_body_controls(b))
+        # remember this block so the next same-sender message can append to it
+        self._last_block = {"from_me": b["from_me"], "name": b.get("name") or "", "col": col}
         return ft.Row([_avatar(b["avatar"]), col], spacing=8,
                       vertical_alignment=ft.CrossAxisAlignment.START)
 
@@ -983,6 +1004,7 @@ class SteamBridgeView(ft.Container):
         if seq != self._open_seq:
             return
         self._messages.controls.clear()
+        self._last_block = None            # fresh chat — don't coalesce across it
         for b in blocks:
             self._messages.controls.append(self._block_control(b))
         if self.page:
@@ -997,7 +1019,14 @@ class SteamBridgeView(ft.Container):
         b = {"from_me": bool(m.get("from_me")), "name": m.get("name", ""),
              "avatar": m.get("avatar", ""), "text": text, "emoticons": emos,
              "images": m.get("images", []), "stickers": m.get("stickers", [])}
-        self._messages.controls.append(self._block_control(b))
+        lb = self._last_block
+        if (lb and lb["from_me"] == b["from_me"] and lb["name"] == (b.get("name") or "")):
+            # Same sender as the previous block → append the new lines to it instead
+            # of starting a new avatar+name block (Steam-/VRChat-tab style grouping).
+            with contextlib.suppress(Exception):
+                lb["col"].controls.extend(self._message_body_controls(b))
+        else:
+            self._messages.controls.append(self._block_control(b))
         if self.page:
             self.page.update()
         await self._translate_block(b, self._open_seq)
@@ -1072,16 +1101,22 @@ class SteamBridgeView(ft.Container):
         self._entry.value = ""
         if self.page:
             self._entry.update()
-        zh = text
-        if callable(self.translate_message):
+        # Pull out :emoticon: shortcodes BEFORE translating — Steam renders them on
+        # both ends, but a translator would mangle ":cyanheart:" into "cyanheart".
+        clean, emos = _extract_emoticons(text)
+        zh = clean
+        if clean and callable(self.translate_message):
             with contextlib.suppress(Exception):
-                r = await self.translate_message(text, True)
+                r = await self.translate_message(clean, True)
                 if r:
                     zh = r
-        self._tr_cache[zh] = text
+        codes = " ".join(f":{n}:" for n in emos)
+        out = (f"{zh} {codes}".strip() if zh else codes)
+        if clean:
+            self._tr_cache[zh] = clean
         await self._append_message({"from_me": True, "name": self._own_name,
-                                    "avatar": self._own_avatar, "text": zh})
-        await self._cmd({"cmd": "send", "acct": self._active, "text": zh})
+                                    "avatar": self._own_avatar, "text": out})
+        await self._cmd({"cmd": "send", "acct": self._active, "text": out})
 
     async def _read_loop(self) -> None:
         try:

@@ -130,6 +130,7 @@ class SteamBridgeView(ft.Container):
         self._own_state = 1
         self._own_invites = 0
         self._own_invisible = False
+        self._show_pinyin = True     # seeded from the app's chat pinyin setting
         self._emoticons: list[str] = []
         self._active = None
         self._open_seq = 0
@@ -233,9 +234,9 @@ class SteamBridgeView(ft.Container):
             padding=ft.padding.symmetric(horizontal=8, vertical=6), bgcolor=_BG_MAIN)
 
         chat_area = ft.Column([
+            self._tab_bar,
             top_bar,
             ft.Divider(height=1, color=_DIVIDER, thickness=1),
-            self._tab_bar,
             ft.Container(content=ft.SelectionArea(content=self._messages), expand=True),
             typing_row,
             ft.Divider(height=1, color=_DIVIDER, thickness=1),
@@ -255,10 +256,15 @@ class SteamBridgeView(ft.Container):
 
         # right-click context menu (cursor-positioned) + a backdrop so any click
         # dismisses it. The backdrop closes on left OR right click.
-        self._ctx_backdrop = ft.GestureDetector(
-            visible=False, on_tap=lambda e: self._hide_ctx(),
-            on_secondary_tap_down=lambda e: self._hide_ctx(),
-            content=ft.Container(expand=True, bgcolor=ft.Colors.TRANSPARENT))
+        # Backdrop covers only the chat area (x>=253), NOT the friends list — so
+        # right-clicking a different friend while the menu is open switches it in
+        # one click, while a click in the chat area still dismisses the menu.
+        self._ctx_backdrop = ft.Container(
+            visible=False, left=253, top=0, right=0, bottom=0,
+            content=ft.GestureDetector(
+                on_tap=lambda e: self._hide_ctx(),
+                on_secondary_tap_down=lambda e: self._hide_ctx(),
+                content=ft.Container(expand=True, bgcolor=ft.Colors.TRANSPARENT)))
         self._ctx_menu = ft.Container(visible=False, bgcolor=_BG_MENU, border_radius=8,
                                       border=ft.border.all(1, "#4b4c4f"), padding=4,
                                       width=210, left=60, top=60,
@@ -775,6 +781,20 @@ class SteamBridgeView(ft.Container):
             self.page.update()
 
     # ── messages ─────────────────────────────────────────────────────────────
+    def _romanize(self, text: str) -> str:
+        """Pinyin (Chinese) / romaji (Japanese) of the original — matches the
+        VRChat tab's reading line. Empty if not romanizable or not applicable."""
+        if not text:
+            return ""
+        with contextlib.suppress(Exception):
+            if re.search(r"[぀-ヿ]", text):        # kana -> Japanese
+                from puripuly_heart.core.transliteration import to_romaji
+                return to_romaji(text) or ""
+            if re.search(r"[㐀-鿿]", text):        # Han ideographs -> Chinese
+                from puripuly_heart.core.transliteration import to_pinyin_grouped
+                return to_pinyin_grouped(text) or ""
+        return ""
+
     def _needs_tr(self, text: str) -> bool:
         """True only when the text is in a different script than the reader —
         so we never translate English->English (which wastes DeepL and reads odd)."""
@@ -830,10 +850,6 @@ class SteamBridgeView(ft.Container):
             b["stickers"] += m.get("stickers", [])
         for b in blocks:
             b["text"] = " ".join(t.strip() for t in b["texts"] if t.strip())
-            # Show the ORIGINAL (e.g. their Chinese, or the Chinese we sent) as a
-            # second line under the translation — for any message that gets translated.
-            if b["text"] and self._needs_tr(b["text"]):
-                b["secondary_visible"] = b["text"]
         return blocks
 
     def _block_control(self, b: dict) -> ft.Control:
@@ -844,20 +860,24 @@ class SteamBridgeView(ft.Container):
             f = self._friends.get(self._active or 0, {})
             name_color = _name_color(int(f.get("state", 1)), bool(f.get("ingame")))
             name = b.get("name") or "Them"
-        col = ft.Column(spacing=2, tight=True, expand=True)
+        col = ft.Column(spacing=1, tight=True, expand=True)
         col.controls.append(ft.Text(name, size=12, weight=ft.FontWeight.BOLD, color=name_color))
-        text_ctrl = ft.Text(spans=_spans(b.get("text", "")), size=14, selectable=True)
-        b["_ctrl"] = text_ctrl
-        if b.get("text"):
-            col.controls.append(text_ctrl)
-        # the ORIGINAL text (their Chinese / the Chinese we sent), with a small
-        # translate icon in front — like Steam's "translated" marker.
-        if b.get("secondary_visible"):
-            col.controls.append(ft.Row([
-                ft.Icon(ft.Icons.TRANSLATE, size=12, color=_TEXT_FAINT),
-                ft.Text(b["secondary_visible"], size=12, color="#9aa0a6",
-                        selectable=True, expand=True),
-            ], spacing=5, vertical_alignment=ft.CrossAxisAlignment.START))
+        orig = b.get("text", "")
+        translated = self._needs_tr(orig)
+        # Matches the VRChat tab: ORIGINAL first, then pinyin/romaji, then the
+        # translation underneath (only for messages that actually get translated).
+        if orig:
+            col.controls.append(ft.Text(spans=_spans(orig), size=14, selectable=True))
+        if orig and translated:
+            noml = _URL_RE.sub("", orig).strip()   # don't romanize/translate the URL
+            if self._show_pinyin:
+                roman = self._romanize(noml)
+                if roman:
+                    col.controls.append(ft.Text(roman, size=12, italic=True,
+                                                color=_ACCENT, selectable=True))
+            tr_ctrl = ft.Text("", size=13, color="#c2c6cc", selectable=True)
+            b["_ctrl"] = tr_ctrl                    # the translation line, filled below
+            col.controls.append(tr_ctrl)
         for url in b.get("stickers", []):
             col.controls.append(ft.Image(src=url, width=120, height=120, fit=ft.ImageFit.CONTAIN))
         for url in b.get("images", []):
@@ -868,16 +888,17 @@ class SteamBridgeView(ft.Container):
                       vertical_alignment=ft.CrossAxisAlignment.START)
 
     async def _translate_block(self, b: dict, seq: int) -> None:
-        if not b.get("text"):
-            return
-        tr = await self._tr(b["text"])
-        if seq != self._open_seq or tr == b["text"]:
-            return
+        orig = b.get("text", "")
         tc = b.get("_ctrl")
-        if tc is not None:
-            tc.spans = _spans(tr)
-            with contextlib.suppress(Exception):
-                tc.update()
+        if not orig or tc is None:
+            return
+        noml = _URL_RE.sub("", orig).strip()       # translate the text, not the URL
+        tr = await self._tr(noml)
+        if seq != self._open_seq or not tr or tr == noml:
+            return
+        tc.spans = _spans(tr)
+        with contextlib.suppress(Exception):
+            tc.update()
 
     async def _render_history(self, messages: list, seq: int) -> None:
         blocks = self._coalesce(messages)
@@ -897,8 +918,6 @@ class SteamBridgeView(ft.Container):
         b = {"from_me": bool(m.get("from_me")), "name": m.get("name", ""),
              "avatar": m.get("avatar", ""), "text": (m.get("text", "") or "").strip(),
              "images": m.get("images", []), "stickers": m.get("stickers", [])}
-        if b["text"] and self._needs_tr(b["text"]):
-            b["secondary_visible"] = b["text"]       # show the original too
         self._messages.controls.append(self._block_control(b))
         if self.page:
             self.page.update()
@@ -959,7 +978,9 @@ class SteamBridgeView(ft.Container):
         self._set_typing("")
         self._set_chat_head(self._friends.get(acct))
         self._rebuild_friends()
-        self._messages.controls.clear()
+        # Don't clear here — keep the previous messages visible until the new
+        # chat's history arrives (then _render_history swaps atomically), so a
+        # fast switch doesn't flash blank.
         self._entry.disabled = False   # let them type right away, don't wait for load
         if self.page:
             self.page.update()

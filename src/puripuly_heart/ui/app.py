@@ -368,6 +368,9 @@ class TranslatorApp:
                     _langs = self.controller.settings.languages
                     _sv.set_languages(getattr(_langs, "source_language", "") or "",
                                       getattr(_langs, "target_language", "") or "")
+                # Match the VRChat chat tab's pinyin/romaji reading setting.
+                with contextlib.suppress(Exception):
+                    _sv._show_pinyin = bool(getattr(self.view_dashboard, "_chat_show_pinyin", True))
                 # Pre-warm the Steam helper now so the tab has no "late load".
                 with contextlib.suppress(Exception):
                     _sv.prewarm()

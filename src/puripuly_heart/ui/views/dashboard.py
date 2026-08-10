@@ -1517,9 +1517,22 @@ class DashboardView(ft.Row):
             border=_pill_border_off,
         )
         self._chat_header_label = ft.Text(t("dashboard.chat"), size=11, color=_TEXT_FAINT, weight=ft.FontWeight.W_500)
+        # beta/steam-bridge (local only): tab strip — VRChat chat (default) and a
+        # Steam chat, swapped in the body below.
+        self._chat_tab = "vrc"
+        self._tab_vrc = ft.Container(
+            content=ft.Text(t("dashboard.chat"), size=11, weight=ft.FontWeight.W_600, color=_TOGGLE_ON),
+            padding=ft.padding.symmetric(horizontal=10, vertical=5), border_radius=6,
+            bgcolor="#243447", on_click=lambda e: self._select_chat_tab("vrc"))
+        self._tab_steam = ft.Container(
+            content=ft.Text("Steam", size=11, weight=ft.FontWeight.W_600, color=_TEXT_FAINT),
+            padding=ft.padding.symmetric(horizontal=10, vertical=5), border_radius=6,
+            bgcolor=ft.Colors.TRANSPARENT, on_click=lambda e: self._select_chat_tab("steam"))
         chat_header = ft.Row(
             [
-                self._chat_header_label,
+                self._tab_vrc,
+                ft.Container(width=4),
+                self._tab_steam,
                 ft.Container(expand=True),
                 self._vrc_mute_sync_btn,
                 ft.Container(width=4),
@@ -1746,13 +1759,28 @@ class DashboardView(ft.Row):
         )
 
         # ── Right panel ──────────────────────────────────────────────────────
+        # beta/steam-bridge: the VRChat chat (chat_box + input) and the Steam
+        # chat share the body below the tab strip; the tabs swap which is shown.
+        self._vrc_chat_body = ft.Column(
+            [
+                chat_box,
+                ft.Divider(height=1, color=_DIVIDER, thickness=1),
+                input_row,
+            ],
+            spacing=4, expand=True,
+            horizontal_alignment=ft.CrossAxisAlignment.STRETCH,
+        )
+        try:
+            from puripuly_heart.ui.views.steam_bridge import SteamBridgeView
+            self._steam_view = SteamBridgeView()
+        except Exception:
+            self._steam_view = ft.Container()
+        self._chat_body = ft.Container(content=self._vrc_chat_body, expand=True)
         right_panel = ft.Container(
             content=ft.Column(
                 [
                     chat_header,
-                    chat_box,
-                    ft.Divider(height=1, color=_DIVIDER, thickness=1),
-                    input_row,
+                    self._chat_body,
                 ],
                 spacing=4,
                 expand=True,
@@ -1769,6 +1797,22 @@ class DashboardView(ft.Row):
         )
 
         self.controls = [sidebar, right_panel]
+
+    # ── beta/steam-bridge: chat tab strip (VRChat | Steam) ───────────────────
+    def _select_chat_tab(self, which: str) -> None:
+        self._chat_tab = which
+        on, off = _TOGGLE_ON, _TEXT_FAINT
+        self._tab_vrc.content.color = on if which == "vrc" else off
+        self._tab_vrc.bgcolor = "#243447" if which == "vrc" else ft.Colors.TRANSPARENT
+        self._tab_steam.content.color = on if which == "steam" else off
+        self._tab_steam.bgcolor = "#243447" if which == "steam" else ft.Colors.TRANSPARENT
+        self._chat_body.content = (
+            self._steam_view if which == "steam" else self._vrc_chat_body)
+        if which == "steam":
+            with contextlib.suppress(Exception):
+                self._steam_view.activate()
+        with contextlib.suppress(Exception):
+            self.update()
 
     # ── Sidebar nav ──────────────────────────────────────────────────────────
 

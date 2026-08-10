@@ -19,7 +19,7 @@ from puripuly_heart.ui.fonts import font_for_language
 from puripuly_heart.ui.i18n import get_locale, language_name, t
 from puripuly_heart.ui.overlay_peer_contract import OverlayPeerConsumerContract
 
-_BUILD_TAG = "r408-steam-beta"  #increment each build so user can confirm version
+_BUILD_TAG = "r409-steam-beta"  #increment each build so user can confirm version
 
 # ── VRCT-style dark palette ──────────────────────────────────────────────────
 _BG_MAIN = "#2e2f32"
@@ -1551,20 +1551,13 @@ class DashboardView(ft.Row):
             vertical_alignment=ft.CrossAxisAlignment.CENTER,
             spacing=0,
         )
-        # Steam tab hides the app sidebar for room. This brand cell sits exactly
-        # above the Steam friends list (same 230px column, flush left, same 16px inset
-        # as the real sidebar header) so it reads as the friends-list header — brand on
-        # top, list pushed down below — and keeps the Chat/Steam tabs at the identical
-        # X on both tabs. Hidden on VRChat (the sidebar already shows the logo there).
+        # Steam tab hides the app sidebar for room, which would slide the tab strip
+        # left. The app name already lives in the (native) window title bar, so we do
+        # NOT repeat it here — this is just a blank 230px anchor, colored like the
+        # friends panel so it reads as the top of that column, that keeps the
+        # Chat/Steam tabs at the identical X on both tabs. Shown only on the Steam tab.
         self._steam_brand = ft.Container(
-            content=ft.Row(
-                [
-                    ft.Text("PuriPulyHeart+", size=14, weight=ft.FontWeight.BOLD, color=_TOGGLE_ON),
-                    ft.Text(_BUILD_TAG, size=10, color=_TEXT_FAINT),
-                ],
-                spacing=6, tight=True, vertical_alignment=ft.CrossAxisAlignment.CENTER,
-            ),
-            width=230, visible=False, padding=ft.padding.only(left=16),
+            width=230, height=34, visible=False, bgcolor="#26272a",
         )
         chat_header = ft.Row(
             [

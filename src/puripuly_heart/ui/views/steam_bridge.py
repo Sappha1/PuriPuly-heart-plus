@@ -23,7 +23,7 @@ import flet as ft
 
 
 def _search_key(name: str) -> str:
-    """name (lowercased) + its romanization, so 'aba' matches 阿巴阿巴 (ā bā…)."""
+    """name (lowercased) + its romanization, so 'xiaoming' matches 小明 (xiǎo míng)."""
     base = (name or "").lower()
     roman = ""
     with contextlib.suppress(Exception):

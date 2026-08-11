@@ -2,6 +2,10 @@
 
 User-facing changes per build. The latest build's highlights also appear in-app when an update is ready.
 
+## r436 — 2026-08-11
+
+- **New optional module: Steam Chat.** Chat with your Steam friends in their language from a new Steam tab — incoming messages are translated for you and yours are translated for them. Install or remove it any time under Settings → General → Modules. It's brand new, so there may be some bugs
+
 ## r391 — 2026-08-09
 
 - **The local speech model now works when your Windows account name is not written in English letters.** If your account name (or the folder you unzipped into) contains Chinese, Japanese, Korean, Cyrillic or accented characters, the speech engine could not read its own model files: it failed deep inside the audio library and closed the whole app, with nothing written to the log and no error on screen. From the outside the app simply froze on startup or vanished. Nothing could be done about it either, because the model is stored under your account folder. The app now hands the engine an equivalent path Windows keeps for exactly this purpose, and the model loads normally

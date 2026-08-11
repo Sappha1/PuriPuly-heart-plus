@@ -1,11 +1,8 @@
 {
-  "build": 376,
-  "tag": "r376",
-  "date": "2026-08-05",
+  "build": 436,
+  "tag": "r436",
+  "date": "2026-08-11",
   "notes": [
-    "Ctrl+F searches the chat log, in a floating find bar in the top-right corner — type to highlight every match, Enter to step through them, Esc to close",
-    "It starts on the newest match rather than the oldest, and the results stay live as the conversation carries on",
-    "Pressing Ctrl+F again with a search already in the box lets you type straight over it",
-    "Tab to swap your languages works again — it had been dead for as long as the top bar has existed"
+    "New optional module: Steam Chat — talk with your Steam friends in their language from a new Steam tab, with messages translated both ways. Install it under Settings → General → Modules. It's brand new, so there may be some bugs"
   ]
 }

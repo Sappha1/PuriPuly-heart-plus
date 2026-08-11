@@ -23,8 +23,16 @@ from typing import Callable
 
 _CREATE_NO_WINDOW = 0x08000000 if sys.platform.startswith("win") else 0
 
-# Dev helper location (source machine only; harmless elsewhere).
-_DEV_ROOT = Path(r"C:\Users\Owner\Desktop\PuriPuly-heart-2.1.2\steam-helper")
+def _project_dev_root() -> Path:
+    """The source checkout's steam-helper (dev machines only). Frozen dev
+    builds run from <project>\\dist-dev\\PuriPulyHeart; source runs resolve
+    relative to this file. End-user installs simply won't have it."""
+    if getattr(sys, "frozen", False):
+        return Path(sys.executable).resolve().parent.parent.parent / "steam-helper"
+    return Path(__file__).resolve().parents[3] / "steam-helper"
+
+
+_DEV_ROOT = _project_dev_root()
 
 
 def modules_steam_root() -> Path:

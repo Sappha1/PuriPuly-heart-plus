@@ -81,8 +81,11 @@ _EMOJIS = ["😀", "😂", "🥰", "😊", "😎", "😉", "😢", "😭", "😡
            "👋", "❤️", "💔", "🔥", "✨", "🎉", "😴", "🤔", "😳", "🥺", "😤", "💀"]
 
 # Persistent home for the Steam helper (daemon code + Playwright venv + Edge login
-# profile). Moved OUT of the session temp scratchpad so it survives a temp wipe.
-_BRIDGE_ROOT = Path(r"C:\Users\Owner\AppData\Local\PuriPulyHeart\bridge")
+# profile), next to the app so it survives a temp wipe. NOTE: must NOT live under
+# AppData\Local — the Claude Store-app sandbox redirects new AppData\Local folders
+# into its private container, so files written there aren't visible to this (normal)
+# app. The Desktop project dir is a real, shared path.
+_BRIDGE_ROOT = Path(r"C:\Users\Owner\Desktop\PuriPuly-heart-2.1.2\steam-helper")
 _DAEMON_PY = _BRIDGE_ROOT / "steam_bridge" / "daemon.py"
 _CACHE_FILE = _BRIDGE_ROOT / "steam_bridge" / "tr_cache.json"
 _VENV_SCRIPTS = _BRIDGE_ROOT / "steamprobe-venv" / "Scripts"

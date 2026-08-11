@@ -256,3 +256,7 @@ opencode.json
 vrct refernece/
 
 dist-dev/
+
+# Steam bridge helper (daemon + Playwright venv + Edge login profile) — local beta only
+steam-helper/
+dist-dev/

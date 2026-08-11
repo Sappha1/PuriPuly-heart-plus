@@ -1,8 +1,8 @@
 {
-  "build": 437,
-  "tag": "r437",
+  "build": 438,
+  "tag": "r438",
   "date": "2026-08-11",
   "notes": [
-    "Steam Chat module fixes: image sending works, and messages typed during a brief disconnect are held and sent automatically on reconnect instead of being lost"
+    "Steam Chat: instant chat switching — previously opened chats appear immediately from cache, the previous chat never lingers under a new tab, and empty chats say so instead of showing a blank pane"
   ]
 }

@@ -2,6 +2,10 @@
 
 User-facing changes per build. The latest build's highlights also appear in-app when an update is ready.
 
+## r438 — 2026-08-11
+
+- Steam Chat: switching chats now swaps instantly — chats you've opened before appear immediately from cache instead of re-loading, the previous chat never lingers under the new tab, and an empty chat says so instead of showing a blank pane
+
 ## r437 — 2026-08-11
 
 - Steam Chat module fixes: sending images works now, and a message typed while the connection is briefly down is held with a notice and sent automatically once it reconnects, instead of being lost

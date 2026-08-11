@@ -1,0 +1,767 @@
+# -*- coding: utf-8 -*-
+"""Async wrapper around a hidden Edge running Steam's web chat. The bridge's Steam half.
+
+Reads/sends by driving Steam's in-memory web-chat model (window.g_FriendsUIApp),
+which works headless — Steam only *renders* messages in a visible window, but the
+WebSocket + JS data model run regardless of paint. See the store map below.
+
+The store is MobX: Observable Map/Set are NOT `instanceof Map/Set`, so we iterate
+with `.forEach(...)` (never spread / Object.keys, which expose MobX internals).
+
+    g_FriendsUIApp.m_FriendStore
+        .m_setFriendAccountIDs           ObservableSet of ALL friend account ids
+        .GetFriend(acct).m_persona        m_strPlayerName / m_ePersonaState /
+                                          m_unGamePlayedAppID / m_strGameExtraInfo
+        .GetFriend(acct).avatar_url_medium
+        .m_FavoritesStore.BIsFavorited(acct)
+        .m_FriendGroupStore.m_mapGroups   custom categories (m_strName, m_rgAccountIDMembers)
+    g_FriendsUIApp.m_ChatStore.m_FriendChatStore
+        .m_rgFriendChats[]  one per 1:1 chat (m_unAccountIDFriend, OnActivate(),
+                            LoadMoreHistory(), m_rgChatMessages[], SendChatMessage())
+"""
+from __future__ import annotations
+
+import contextlib
+import logging
+
+logger = logging.getLogger("steam_page")
+
+# Ready once the FRIENDS list is received (chats load later / may be empty).
+STORE_READY_JS = r"""
+() => {
+  const a = window.g_FriendsUIApp;
+  if (!a || !a.m_FriendStore) return false;
+  return a.m_FriendStore.m_bReceivedFriendsList === true;
+}
+"""
+
+OWN_ACCOUNT_JS = r"""
+() => { try { return window.g_FriendsUIApp.m_FriendStore.m_self.m_unAccountID || 0; }
+        catch (e) { return 0; } }
+"""
+
+OWN_INFO_JS = r"""
+async () => {
+  const fs = window.g_FriendsUIApp.m_FriendStore;
+  const self = fs.m_self;
+  const url = o => (o && (o.avatar_url_medium
+      || (o.m_persona && o.m_persona.avatar_url_medium))) || "";
+  try {
+    let av = url(self);
+    if (!av && fs.GetFriend) av = url(fs.GetFriend(self.m_unAccountID));
+    const name = (self.m_persona && self.m_persona.m_strPlayerName)
+        || self.m_strPlayerNameNormalized || "";
+    let invites = 0;
+    try { const s = fs.m_setIncomingInviteAccountIDs; if (s && s.forEach) s.forEach(() => invites++); } catch (e) {}
+    let invisible = false;
+    try { invisible = fs.BIsInvisibleMode ? !!fs.BIsInvisibleMode() : false; } catch (e) {}
+    // Own in-game/presence: the WEB session's own m_eUserPersonaState reflects
+    // THIS session, not the desktop client — the friends-store persona for our
+    // own account carries the real presence + game the desktop client reports.
+    let appid = 0, game = "", state = 0;
+    try {
+      const pf = ((fs.GetFriend && fs.GetFriend(self.m_unAccountID)) || {}).m_persona;
+      const p = pf || self.m_persona;
+      if (p) {
+        state = p.m_ePersonaState || 0;
+        appid = p.m_unGamePlayedAppID || 0;
+        game = p.m_strGameExtraInfo || "";
+        if (appid && !game) {
+          try { const ov = window.g_FriendsUIApp.m_AppInfoStore.GetAppInfo(appid);
+                if (ov) game = ov.m_strName || ""; } catch (e) {}
+        }
+      }
+    } catch (e) {}
+    if (!state) state = fs.m_eUserPersonaState || 0;
+    if (!invisible && state === 7) invisible = true;
+    // INVIS-RECON: candidate sources for the DESKTOP client's invisible mode
+    // (the r428 lesson says the in-page state is session-scoped — record every
+    // candidate so diag shows which one flips when the user goes invisible).
+    let st_self = 0, st_fp = 0, binvis = false, pub = "err";
+    try { st_self = (self.m_persona && self.m_persona.m_ePersonaState) || 0; } catch (e) {}
+    try { st_fp = (((fs.GetFriend && fs.GetFriend(self.m_unAccountID)) || {}).m_persona || {}).m_ePersonaState || 0; } catch (e) {}
+    try { binvis = fs.BIsInvisibleMode ? !!fs.BIsInvisibleMode() : false; } catch (e) {}
+    try {
+      const sid64 = (76561197960265728n + BigInt(self.m_unAccountID || 0)).toString();
+      const r2 = await fetch(
+          "https://steamcommunity.com/profiles/" + sid64 + "/?xml=1&cb=" + Date.now(),
+          {credentials: "omit", cache: "no-store"});
+      if (r2.ok) {
+        const t2 = await r2.text();
+        pub = ((t2.match(/<onlineState>([^<]+)<\/onlineState>/) || [])[1]) || "err";
+      }
+    } catch (e) {}
+    // We ARE this account's logged-in session, so when the PUBLIC profile
+    // reads "offline" the account is invisible (a signed-in public profile
+    // otherwise reads online/in-game). Caveat: a fully-private profile also
+    // reads offline; recon 03:22 confirmed this user's profile is public.
+    if (pub === "offline") invisible = true;
+    // OWN-RECON ground truth: every in-page model only knows THIS web session
+    // (state=1, no game, even while the desktop client is in VRChat). The
+    // miniprofile endpoint is server-side truth for the DESKTOP client.
+    try {
+      const r = await fetch(
+          "https://steamcommunity.com/miniprofile/" + (self.m_unAccountID || 0)
+              + "/json?cb=a" + Date.now(),
+          {credentials: "include", cache: "no-store"});
+      if (r.ok) {
+        const mini = await r.json();
+        const ig = mini && mini.in_game;
+        if (ig && (ig.name || ig.is_non_steam)) {
+          game = ig.name || game || "a game";
+          if (!appid) appid = 1;        // truthy -> ingame
+          if (!state) state = 1;
+        } else {
+          appid = 0; game = "";
+        }
+      }
+    } catch (e) {}
+    return {acct: self.m_unAccountID || 0, name, avatar: av || "",
+            state, invites, invisible,
+            ingame: !!appid, game,
+            st_self, st_fp, binvis, pub};
+  } catch (e) { return {acct: 0, name: "", avatar: "", state: 0}; }
+}
+"""
+
+# The FULL friends list with status. state: 0 offline,1 online,2 busy,3 away,
+# 4 snooze,5 trade,6 play. flags bits: 0x200 mobile, 0x800 VR.
+FRIENDS_JS = r"""
+async () => {
+  const a = window.g_FriendsUIApp, fs = a.m_FriendStore, ai = a.m_AppInfoStore;
+  const forEach = (o, f) => { try { o && o.forEach(f); } catch (e) {} };
+  const nameOf = f => {
+    const p = f && f.m_persona;
+    return (f && f.m_strNickname) || (p && p.m_strPlayerName)
+        || (f && f.m_strPlayerNameNormalized) || "";
+  };
+  const avatarOf = f => {
+    try { return f.avatar_url_medium || (f.m_persona && f.m_persona.avatar_url_medium) || ""; }
+    catch (e) { return ""; }
+  };
+  const ids = []; forEach(fs.m_setFriendAccountIDs, x => ids.push(x));
+  // resolve game names: ensure app info for every in-game appid first
+  const appids = new Set();
+  for (const acct of ids) {
+    const p = fs.GetFriend(acct) && fs.GetFriend(acct).m_persona;
+    if (p && p.m_unGamePlayedAppID) appids.add(p.m_unGamePlayedAppID);
+  }
+  try { if (ai && ai.EnsureAppInfoForAppIDs && appids.size) await ai.EnsureAppInfoForAppIDs([...appids]); } catch (e) {}
+  const appName = appid => {
+    if (!appid) return "";
+    try { const ov = ai.GetAppInfo(appid); if (ov) return ov.m_strName || ov.name || ""; } catch (e) {}
+    return "";
+  };
+  const appIcon = appid => {
+    if (!appid) return "";
+    try {
+      const ov = ai.GetAppInfo(appid);
+      if (ov && ov.m_strIconURL)
+        return "https://cdn.cloudflare.steamstatic.com/steamcommunity/public/images/apps/"
+             + appid + "/" + ov.m_strIconURL + ".jpg";
+    } catch (e) {}
+    return "";
+  };
+  const groupOf = {};
+  forEach(fs.m_FriendGroupStore.m_mapGroups, g => {
+    if (!g) return;
+    let nm; try { nm = g.m_strName; } catch (e) {}
+    let mem; try { mem = g.m_rgAccountIDMembers; } catch (e) {}
+    forEach(mem, acct => { (groupOf[acct] = groupOf[acct] || []).push(nm || "Group"); });
+  });
+  // last-message time + unread count per friend
+  const lastChat = {}, unread = {};
+  try {
+    for (const c of (a.m_ChatStore.m_FriendChatStore.m_rgFriendChats || [])) {
+      lastChat[c.m_unAccountIDFriend] = c.m_rtLastMessageReceived || 0;
+      unread[c.m_unAccountIDFriend] = c.m_cUnreadChatMessages || 0;
+    }
+  } catch (e) {}
+  const out = [];
+  for (const acct of ids) {
+    const f = fs.GetFriend(acct); if (!f) continue;
+    const p = f.m_persona;
+    const state = p ? (p.m_ePersonaState || 0) : 0;
+    const appid = p ? (p.m_unGamePlayedAppID || 0) : 0;
+    const ingame = !!appid;
+    let game = "";
+    if (ingame) game = appName(appid) || (p.m_strGameExtraInfo || "") || "In-Game";
+    let fav = false; try { fav = !!fs.m_FavoritesStore.BIsFavorited(acct); } catch (e) {}
+    out.push({ acct, name: nameOf(f), avatar: avatarOf(f), state, ingame, game,
+               appid, icon: ingame ? appIcon(appid) : "",
+               flags: p ? (p.m_unPersonaStateFlags || 0) : 0,
+               fav, groups: groupOf[acct] || [], last_chat: lastChat[acct] || 0,
+               unread: unread[acct] || 0 });
+  }
+  return out;
+}
+"""
+
+
+class SteamPage:
+    def __init__(self, profile_dir: str):
+        self._profile = profile_dir
+        self._pw = None
+        self._ctx = None
+        self._page = None
+        self._own = 0
+
+    async def start(self, mode: str = "hidden") -> None:
+        from playwright.async_api import async_playwright
+
+        self._mode = mode
+        args = [
+            "--disable-blink-features=AutomationControlled",
+            "--disable-background-timer-throttling",
+            "--disable-renderer-backgrounding",
+            "--disable-backgrounding-occluded-windows",
+        ]
+        hidden = (mode == "hidden")
+        if hidden:
+            # New headless (Chrome/Edge) behaves like a real browser — old headless
+            # throttles background timers and the CM WebSocket, so LIVE incoming
+            # messages never arrive. --headless=new keeps the socket fully alive.
+            args = args + ["--headless=new"]
+        self._pw = await async_playwright().start()
+        # Edge is preinstalled on Windows 10/11; fall back to Chrome for the
+        # rare machine without it (the login MUST happen inside THIS persistent
+        # profile — an external/default browser's session is unreachable).
+        self._ctx = await self._launch_ctx_with_fallback(
+            user_data_dir=self._profile,
+            channel="msedge",
+            headless=False,   # hidden mode is windowless via --headless=new; login = visible
+            args=args,
+        )
+        # CRITICAL for live messages: --headless=new reports the page as HIDDEN
+        # (document.visibilityState==='hidden'), so Steam treats the tab as a
+        # background tab and throttles + eventually DROPS the CM WebSocket that
+        # delivers live chat — incoming messages stop arriving and sends silently
+        # fail. Spoof the page as permanently visible+focused BEFORE Steam's code
+        # runs (init script runs on every document) so the socket stays hot.
+        with contextlib.suppress(Exception):
+            await self._ctx.add_init_script(
+                r"""
+                try {
+                  const vis = (o, prop, val) => {
+                    try { Object.defineProperty(o, prop, { configurable: true, get: () => val }); }
+                    catch (e) {}
+                  };
+                  vis(document, 'visibilityState', 'visible');
+                  vis(document, 'hidden', false);
+                  vis(document, 'webkitVisibilityState', 'visible');
+                  vis(document, 'webkitHidden', false);
+                  document.hasFocus = () => true;
+                  // swallow the app's own 'hidden' visibilitychange if one ever fires
+                  document.addEventListener('visibilitychange', (e) => {
+                    if (document.visibilityState !== 'visible') e.stopImmediatePropagation();
+                  }, true);
+                } catch (e) {}
+                """)
+        self._page = self._ctx.pages[0] if self._ctx.pages else await self._ctx.new_page()
+        await self._page.goto("https://steamcommunity.com/chat", timeout=60000)
+        for _ in range(40 if mode == "hidden" else 6):
+            try:
+                if await self._page.evaluate(STORE_READY_JS):
+                    self._own = await self._page.evaluate(OWN_ACCOUNT_JS) or 0
+                    return
+            except Exception:
+                pass
+            await self._page.wait_for_timeout(1000)
+
+
+    async def _launch_ctx_with_fallback(self, *args, **kwargs):
+        try:
+            return await self._pw.chromium.launch_persistent_context(*args, **kwargs)
+        except Exception:
+            if kwargs.get("channel") == "msedge":
+                kwargs["channel"] = "chrome"
+                return await self._pw.chromium.launch_persistent_context(*args, **kwargs)
+            raise
+
+    async def restart(self, mode: str) -> None:
+        await self.close()
+        self._pw = self._ctx = self._page = None
+        await self.start(mode=mode)
+
+    async def wait_until_signed_in(self, timeout_s: int = 300) -> bool:
+        import time as _t
+        end = _t.monotonic() + timeout_s
+        while _t.monotonic() < end:
+            try:
+                if await self._page.evaluate(STORE_READY_JS):
+                    self._own = await self._page.evaluate(OWN_ACCOUNT_JS) or 0
+                    return True
+                await self._page.wait_for_timeout(1500)
+            except Exception:
+                return False
+        return False
+
+    async def is_signed_in(self) -> bool:
+        try:
+            return bool(await self._page.evaluate(STORE_READY_JS))
+        except Exception:
+            return False
+
+    async def own_account_id(self) -> int:
+        if not self._own:
+            try:
+                self._own = await self._page.evaluate(OWN_ACCOUNT_JS) or 0
+            except Exception:
+                self._own = 0
+        return self._own
+
+    async def own_info(self) -> dict:
+        try:
+            return await self._page.evaluate(OWN_INFO_JS) or {}
+        except Exception:
+            return {}
+
+    async def list_friends(self) -> list[dict]:
+        """The FULL friends list with per-friend status."""
+        try:
+            return await self._page.evaluate(FRIENDS_JS) or []
+        except Exception:
+            return []
+
+    async def preload_recent(self, n: int = 20) -> None:
+        """Warm history for the n most-recent chats so opening them is instant."""
+        try:
+            await self._page.evaluate(
+                r"""async (n) => {
+                  const a = window.g_FriendsUIApp;
+                  const rg = a.m_ChatStore.m_FriendChatStore.m_rgFriendChats || [];
+                  const sorted = [...rg].sort(
+                    (x, y) => (y.m_rtLastMessageReceived || 0) - (x.m_rtLastMessageReceived || 0)
+                  ).slice(0, n);
+                  for (const c of sorted) {
+                    try {
+                      if ((!c.m_rgChatMessages || !c.m_rgChatMessages.length) && c.LoadMoreHistory)
+                        await c.LoadMoreHistory();
+                    } catch (e) {}
+                  }
+                  return true;
+                }""",
+                n,
+            )
+        except Exception:
+            pass
+
+    async def open_conversation(self, acct: int) -> bool:
+        """Activate the friend chat (GetFriendChat get-or-creates it for friends
+        you have never messaged) and pull its history from the CM."""
+        try:
+            ok = await self._page.evaluate(
+                r"""async (acct) => {
+                  const a = window.g_FriendsUIApp;
+                  const cs = a.m_ChatStore, fcs = cs.m_FriendChatStore;
+                  let c = (fcs.m_rgFriendChats || []).find(x => x.m_unAccountIDFriend === acct);
+                  if (!c) { try { c = cs.GetFriendChat(acct); } catch (e) {} }
+                  if (!c) { try { c = fcs.GetFriendChat(acct); } catch (e) {} }
+                  if (!c) return false;
+                  try { c.OnActivate && c.OnActivate(); } catch (e) {}
+                  // CRITICAL: Steam streams live message BODIES only to a chat that
+                  // has a registered VIEW (this is what opening a chat in the real UI
+                  // does). Without it the session is told a message arrived
+                  // (m_rtLastMessageReceived updates) but never appends it. Register
+                  // one view + pull the session from the server so new messages flow.
+                  try { if (c.AddChatView) c.AddChatView(); } catch (e) {}
+                  try { if (c.InitMessageSessionFromServer) await c.InitMessageSessionFromServer(); } catch (e) {}
+                  // History arrives from the CM a beat after LoadMoreHistory —
+                  // wait for it to populate so the chat isn't blank.
+                  try {
+                    for (let i = 0; i < 10 && (!c.m_rgChatMessages || c.m_rgChatMessages.length === 0); i++) {
+                      if (c.LoadMoreHistory) await c.LoadMoreHistory();
+                      await new Promise(r => setTimeout(r, 300));
+                    }
+                  } catch (e) {}
+                  return true;
+                }""",
+                acct,
+            )
+            return bool(ok)
+        except Exception as exc:
+            logger.warning("open_conversation(%r) failed: %s", acct, exc)
+            return False
+
+    async def read_messages(self, acct: int) -> list[dict]:
+        try:
+            return await self._page.evaluate(
+                r"""(acct) => {
+                  const a = window.g_FriendsUIApp;
+                  const cs = a.m_ChatStore, fcs = cs.m_FriendChatStore;
+                  let c = (fcs.m_rgFriendChats || []).find(x => x.m_unAccountIDFriend === acct);
+                  if (!c) { try { c = cs.GetFriendChat(acct); } catch (e) {} }
+                  if (!c || !Array.isArray(c.m_rgChatMessages)) return [];
+                  const out = [];
+                  for (const m of c.m_rgChatMessages) {
+                    if (m.eDeleteState) continue;
+                    if (m.m_bNoUserContent) continue;
+                    const t = (m.strMessageInternal || "").trim();
+                    if (!t) continue;
+                    out.push({from: m.unAccountID || 0, text: t,
+                              ordinal: m.unOrdinal || 0, ts: m.rtTimestamp || 0});
+                  }
+                  return out;
+                }""",
+                acct,
+            ) or []
+        except Exception:
+            return []
+
+    async def fetch_messages(self, acct: int, since_ts: int) -> list[dict]:
+        """LIVE inbound via SERVER FETCH (not the local array / push, which Steam
+        withholds from this background session while the user's real client is
+        primary). GetMessagesFromTimeRange(start,end) returns {messages,...} pulled
+        fresh from the server — the reliable way to see new messages. Same message
+        shape as read_messages."""
+        try:
+            return await self._page.evaluate(
+                r"""async (args) => {
+                  const [acct, since] = args;
+                  const a = window.g_FriendsUIApp;
+                  const cs = a.m_ChatStore, fcs = cs.m_FriendChatStore;
+                  let c = (fcs.m_rgFriendChats || []).find(x => x.m_unAccountIDFriend === acct);
+                  if (!c) { try { c = cs.GetFriendChat(acct); } catch (e) {} }
+                  if (!c || !c.GetMessagesFromTimeRange) return [];
+                  const now = Math.floor(Date.now() / 1000) + 5;
+                  let r = null;
+                  try { r = await c.GetMessagesFromTimeRange(since, now); } catch (e) { return []; }
+                  const msgs = (r && r.messages) ? r.messages : (Array.isArray(r) ? r : []);
+                  const out = [];
+                  for (const m of msgs) {
+                    if (m.eDeleteState) continue;
+                    if (m.m_bNoUserContent) continue;
+                    const t = (m.strMessageInternal || "").trim();
+                    if (!t) continue;
+                    out.push({from: m.unAccountID || 0, text: t,
+                              ordinal: m.unOrdinal || 0, ts: m.rtTimestamp || 0});
+                  }
+                  return out;
+                }""",
+                [acct, int(since_ts)],
+            ) or []
+        except Exception:
+            return []
+
+    async def is_typing(self, acct: int) -> bool:
+        try:
+            return bool(await self._page.evaluate(
+                r"""(acct) => {
+                  const a = window.g_FriendsUIApp;
+                  const c = (a.m_ChatStore.m_FriendChatStore.m_rgFriendChats || [])
+                      .find(x => x.m_unAccountIDFriend === acct);
+                  return c ? !!c.m_bFriendIsTyping : false;
+                }""", acct))
+        except Exception:
+            return False
+
+    async def send(self, acct: int, text: str) -> bool:
+        try:
+            return bool(await self._page.evaluate(
+                r"""async (args) => {
+                  const [acct, text] = args;
+                  const a = window.g_FriendsUIApp;
+                  const cs = a.m_ChatStore, fcs = cs.m_FriendChatStore;
+                  let c = (fcs.m_rgFriendChats || []).find(x => x.m_unAccountIDFriend === acct);
+                  if (!c) { try { c = cs.GetFriendChat(acct); } catch (e) {} }
+                  if (!c || !c.SendChatMessage) return false;
+                  try { await c.SendChatMessage(text); return true; } catch (e) { return false; }
+                }""",
+                [acct, text],
+            ))
+        except Exception as exc:
+            logger.warning("send failed: %s", exc)
+            return False
+
+    async def list_emoticons(self) -> list[str]:
+        """The user's owned emoticon names (rendered as economy images by the app)."""
+        try:
+            await self._page.evaluate(
+                "async () => { try { const es = window.g_FriendsUIApp.m_ChatStore.m_EmoticonStore;"
+                " if (es.RequestEmoticonList) await es.RequestEmoticonList(); } catch(e){} }")
+            return await self._page.evaluate(
+                r"""() => {
+                  try {
+                    const es = window.g_FriendsUIApp.m_ChatStore.m_EmoticonStore;
+                    const list = es.SearchEmoticons ? es.SearchEmoticons('') : [];
+                    const arr = Array.isArray(list) ? list : [...(list || [])];
+                    return arr.map(e => e.name).filter(Boolean);
+                  } catch (e) { return []; }
+                }""") or []
+        except Exception:
+            return []
+
+    async def set_favorite(self, acct: int, on: bool) -> bool:
+        try:
+            return bool(await self._page.evaluate(
+                r"""async (args) => {
+                  const [acct, on] = args;
+                  const fav = window.g_FriendsUIApp.m_FriendStore.m_FavoritesStore;
+                  try {
+                    if (on) fav.AddToFavorites(acct); else fav.RemoveFromFavorites(acct);
+                    if (fav.SaveFavorites) await fav.SaveFavorites();
+                    return true;
+                  } catch (e) { return false; }
+                }""", [acct, on]))
+        except Exception:
+            return False
+
+    async def set_status(self, state: int) -> bool:
+        try:
+            return bool(await self._page.evaluate(
+                r"""async (state) => {
+                  const fs = window.g_FriendsUIApp.m_FriendStore;
+                  for (const fn of ['SetUserPersonaState', 'ChangeUserPersonaState',
+                                    'SetPersonaState', 'ChangeStatus']) {
+                    try { if (typeof fs[fn] === 'function') { await fs[fn](state); return true; } } catch (e) {}
+                  }
+                  return false;
+                }""", state))
+        except Exception:
+            return False
+
+    async def reactivate(self, acct: int) -> None:
+        """Nudge Steam to keep pushing live messages for the open chat to this
+        (headless) page — OnActivate + a focus event."""
+        try:
+            await self._page.evaluate(
+                r"""(acct) => {
+                  const a = window.g_FriendsUIApp, cs = a.m_ChatStore;
+                  let c = (cs.m_FriendChatStore.m_rgFriendChats || []).find(x => x.m_unAccountIDFriend === acct);
+                  if (!c) { try { c = cs.GetFriendChat(acct); } catch (e) {} }
+                  try { if (c && c.OnActivate) c.OnActivate(); } catch (e) {}
+                  // Re-assert foreground so Steam never parks the CM socket.
+                  try { window.dispatchEvent(new Event('focus')); } catch (e) {}
+                  try { document.dispatchEvent(new Event('visibilitychange')); } catch (e) {}
+                  return true;
+                }""", acct)
+        except Exception:
+            pass
+
+    async def chat_debug(self, acct: int) -> dict:
+        """Diagnostic: why aren't live messages appended in this headless session?
+        Dumps unread/msg counts, last-recv time, connection state, and every method
+        on the chat object so we can find a 'fetch newer messages' call."""
+        try:
+            return await self._page.evaluate(
+                r"""async (acct) => {
+                  const a = window.g_FriendsUIApp;
+                  const cs = a.m_ChatStore, fcs = cs.m_FriendChatStore;
+                  let c = (fcs.m_rgFriendChats||[]).find(x=>x.m_unAccountIDFriend===acct);
+                  if (!c) return { none: true };
+                  const names = new Set();
+                  try { let p = Object.getPrototypeOf(c);
+                        while (p && p !== Object.prototype) {
+                          Object.getOwnPropertyNames(p).forEach(n => { try { if (typeof c[n] === 'function') names.add(n); } catch(e){} });
+                          p = Object.getPrototypeOf(p);
+                        } } catch(e){}
+                  const num = v => (typeof v === 'number' ? v : null);
+                  // any instance property mentioning "view" (find the view counter)
+                  let views = {};
+                  try { Object.getOwnPropertyNames(c).forEach(k => {
+                    if (/view/i.test(k)) { const v = c[k];
+                      views[k] = (typeof v === 'number' || typeof v === 'boolean') ? v
+                               : (v && typeof v.size === 'number') ? ('set:'+v.size)
+                               : (Array.isArray(v)) ? ('arr:'+v.length) : typeof v; }
+                  }); } catch(e){}
+                  // Does a SERVER FETCH return the messages the local array is missing?
+                  let fetch = {};
+                  try {
+                    const m = c.GetMostRecentChatMsg && c.GetMostRecentChatMsg();
+                    fetch.mostRecent = m ? (m.strMessageInternal || m.m_strMessage || '').slice(0, 20) : null;
+                  } catch (e) { fetch.mrErr = '' + e; }
+                  try {
+                    if (c.GetMessagesFromTimeRange) {
+                      const now = Math.floor(Date.now() / 1000);
+                      let r = null;
+                      try { r = await c.GetMessagesFromTimeRange(now - 900, now); } catch (e1) {
+                        try { r = await c.GetMessagesFromTimeRange(now - 900, now, 30); } catch (e2) { fetch.rangeErr = '' + e2; }
+                      }
+                      const msgs = r && r.messages ? r.messages : (Array.isArray(r) ? r : []);
+                      fetch.rangeLen = msgs.length;
+                      try {
+                        if (msgs.length) {
+                          const last = msgs[msgs.length - 1];
+                          fetch.msgKeys = Object.keys(last).slice(0, 16);
+                          fetch.msgSample = JSON.stringify(last).slice(0, 300);
+                        }
+                      } catch (e) { fetch.msgErr = '' + e; }
+                    }
+                  } catch (e) { fetch.rangeErr = '' + e; }
+                  let conn = {};
+                  try {
+                    const ci = cs.m_CMInterface || a.m_CMInterface;
+                    conn.hasCM = !!ci;
+                    for (const m of ['BConnected','BIsConnected','BConnectedToServer','GetConnectionState']) {
+                      try { if (ci && typeof ci[m] === 'function') conn[m] = ci[m](); } catch(e){}
+                    }
+                    conn.appOnline = (typeof a.BConnectedToServer === 'function') ? a.BConnectedToServer() : undefined;
+                    conn.eState = num(a.m_eConnectionState);
+                  } catch(e){}
+                  return {
+                    unread: num(c.m_cUnreadChatMessages),
+                    msgCount: (c.m_rgChatMessages||[]).length,
+                    lastRecv: num(c.m_rtLastMessageReceived),
+                    lastRead: num(c.m_rtLastMessageRead),
+                    activeTS: num(c.m_rtActive),
+                    isActive: c.m_bIsActive,
+                    typing: c.m_bFriendIsTyping,
+                    methods: [...names].sort(),
+                    views,
+                    fetch,
+                    conn,
+                  };
+                }""", acct) or {}
+        except Exception as exc:
+            return {"error": str(exc)}
+
+    async def send_image(self, acct: int, b64: str, fname: str, mime: str,
+                         spoiler: bool = False) -> dict:
+        """Upload an image to Steam UGC and deliver it to the friend, reproducing
+        the web client's flow (recon r415): POST chat/beginfileupload/ (sha1, size,
+        dims) -> PUT the bytes to the returned host with the returned headers ->
+        POST chat/commitfileupload/ (+friend_steamid via
+        PopulateCommitFileUploadFormData) — commit delivers the message."""
+        try:
+            return await self._page.evaluate(
+                r"""async (args) => {
+                  const [acct, b64, fname, mime, spoiler] = args;
+                  const a = window.g_FriendsUIApp, cs = a.m_ChatStore;
+                  let c = (cs.m_FriendChatStore.m_rgFriendChats||[]).find(x=>x.m_unAccountIDFriend===acct);
+                  if (!c) { try { c = cs.GetFriendChat(acct); } catch(e){} }
+                  if (!c) return { step:'chat', err:'no chat' };
+                  const bytes = Uint8Array.from(atob(b64), ch => ch.charCodeAt(0));
+                  const digest = await crypto.subtle.digest('SHA-1', bytes);
+                  const sha = [...new Uint8Array(digest)].map(b=>b.toString(16).padStart(2,'0')).join('');
+                  let w = 0, h = 0;
+                  try { const bmp = await createImageBitmap(new Blob([bytes], {type: mime}));
+                        w = bmp.width; h = bmp.height; bmp.close && bmp.close(); }
+                  catch (e) { return { step:'decode', err: ''+e }; }
+                  const sessionid = (document.cookie.match(/sessionid=([^;]+)/)||[])[1] || '';
+                  const mk = () => {
+                    const fd = new FormData();
+                    fd.append('sessionid', sessionid);
+                    fd.append('l', 'english');
+                    fd.append('file_size', String(bytes.length));
+                    fd.append('file_name', fname);
+                    fd.append('file_sha', sha);
+                    fd.append('file_image_width', String(w));
+                    fd.append('file_image_height', String(h));
+                    fd.append('file_type', mime);
+                    return fd;
+                  };
+                  const r1 = await fetch(c.GetBeginFileUploadURL(),
+                                         {method:'POST', body: mk(), credentials:'include'});
+                  let j1 = null, raw1 = '';
+                  try { raw1 = await r1.text(); j1 = JSON.parse(raw1); } catch(e){}
+                  if (!j1 || j1.success !== 1)
+                    return { step:'begin', status: r1.status, resp: JSON.stringify(j1).slice(0,300) };
+                  const res = j1.result || j1;
+                  const putURL = (res.use_https ? 'https://' : 'http://') + res.url_host + res.url_path;
+                  const hdrs = {};
+                  (res.request_headers||[]).forEach(x => { hdrs[x.name] = x.value; });
+                  const r2 = await fetch(putURL, {method:'PUT', headers: hdrs, body: bytes});
+                  if (!(r2.status >= 200 && r2.status < 300))
+                    return { step:'put', status: r2.status };
+                  const fd2 = mk();
+                  fd2.append('success', '1');
+                  // ugcid is a 64-bit id: JSON.parse mangles it above 2^53
+                  // (the commit-400 bug) — take the digits from the raw body.
+                  fd2.append('ugcid',
+                      (raw1.match(/"ugcid"\s*:\s*"?(\d+)"?/) || [])[1] || String(res.ugcid));
+                  fd2.append('timestamp',
+                      (raw1.match(/"timestamp"\s*:\s*"?(\d+)"?/) || [])[1] || String(res.timestamp));
+                  try { c.PopulateCommitFileUploadFormData(fd2, {bSpoiler: !!spoiler}, {}); } catch(e){}
+                  const r3 = await fetch(c.GetCommitFileUploadURL(),
+                                         {method:'POST', body: fd2, credentials:'include'});
+                  let j3 = null; try { j3 = await r3.json(); } catch(e){}
+                  if (!j3 || j3.success !== 1)
+                    return { step:'commit', status: r3.status, resp: JSON.stringify(j3).slice(0,300) };
+                  return { ok: true, ugcid: String(res.ugcid) };
+                }""",
+                [acct, b64, fname, mime, bool(spoiler)],
+            ) or {"step": "eval", "err": "no result"}
+        except Exception as exc:
+            return {"step": "py", "err": str(exc)}
+
+    async def dump_own_recon(self) -> dict:
+        """Recon: every candidate source for OWN presence (state/game/invisible).
+        The friends-store persona reports Online/no-game, so find where the truth
+        lives: full persona scalars + the miniprofile endpoint (hover cards)."""
+        try:
+            return await self._page.evaluate(
+                r"""async () => {
+                  const a = window.g_FriendsUIApp, fs = a.m_FriendStore;
+                  const own = fs.m_self ? fs.m_self.m_unAccountID : 0;
+                  const scal = o => { const r = {};
+                    try { for (const k of Object.keys(o)) { const v = o[k];
+                      if (v === null || ['number','string','boolean'].includes(typeof v)) r[k] = v; } }
+                    catch(e){} return r; };
+                  const out = { own };
+                  try { out.selfPersona = scal(fs.m_self.m_persona || {}); } catch(e){}
+                  try { out.friendPersona = scal(((fs.GetFriend && fs.GetFriend(own)) || {}).m_persona || {}); } catch(e){}
+                  try { out.eUserState = fs.m_eUserPersonaState; } catch(e){}
+                  try { out.invisible = fs.BIsInvisibleMode ? fs.BIsInvisibleMode() : null; } catch(e){}
+                  try {
+                    const r = await fetch('https://steamcommunity.com/miniprofile/' + own + '/json',
+                                          {credentials: 'include'});
+                    out.miniStatus = r.status;
+                    try { out.mini = await r.json(); } catch(e) { out.miniErr = 'json ' + e; }
+                  } catch (e) { out.miniErr = '' + e; }
+                  return out;
+                }""") or {}
+        except Exception as exc:
+            return {"error": str(exc)}
+
+    async def dump_upload_methods(self, acct: int) -> dict:
+        """Recon for image-send: the source of the chat's file-upload helpers, so
+        the Begin→PUT→Commit flow can be reproduced from page JS."""
+        try:
+            return await self._page.evaluate(
+                r"""(acct) => {
+                  const a = window.g_FriendsUIApp, cs = a.m_ChatStore;
+                  let c = (cs.m_FriendChatStore.m_rgFriendChats||[]).find(x=>x.m_unAccountIDFriend===acct);
+                  if (!c) { try { c = cs.GetFriendChat(acct); } catch(e){} }
+                  if (!c) return { none: true };
+                  const out = {};
+                  for (const n of ['GetBeginFileUploadURL','GetCommitFileUploadURL',
+                                   'PopulateCommitFileUploadFormData','GetMaxFileSizeMB',
+                                   'LogFileUploadMessage']) {
+                    try { out[n] = ('' + c[n]).slice(0, 1400); } catch (e) { out[n] = 'ERR ' + e; }
+                  }
+                  try { out.maxMB = c.GetMaxFileSizeMB ? c.GetMaxFileSizeMB() : null; } catch (e) {}
+                  try {
+                    out.beginURL = c.GetBeginFileUploadURL ? c.GetBeginFileUploadURL() : null;
+                    out.commitURL = c.GetCommitFileUploadURL ? c.GetCommitFileUploadURL() : null;
+                  } catch (e) { out.urlErr = '' + e; }
+                  return out;
+                }""", acct) or {}
+        except Exception as exc:
+            return {"error": str(exc)}
+
+    async def poke(self) -> None:
+        try:
+            await self._page.evaluate("() => { try { window.dispatchEvent(new Event('focus')); } catch(e){} }")
+        except Exception:
+            pass
+
+    async def sign_out(self) -> None:
+        """Clear the persistent profile's Steam login (cookies + storage) so the
+        next start lands on the signed-out community page."""
+        with contextlib.suppress(Exception):
+            await self._ctx.clear_cookies()
+        with contextlib.suppress(Exception):
+            await self._page.evaluate(
+                "() => { try { localStorage.clear(); sessionStorage.clear(); } "
+                "catch (e) {} }")
+        with contextlib.suppress(Exception):
+            await self._page.reload()
+
+    async def close(self) -> None:
+        try:
+            if self._ctx:
+                await self._ctx.close()
+            if self._pw:
+                await self._pw.stop()
+        except Exception:
+            pass

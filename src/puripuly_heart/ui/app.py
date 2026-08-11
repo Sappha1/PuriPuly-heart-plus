@@ -294,6 +294,7 @@ class TranslatorApp:
         calibration_cancel = getattr(self.controller, "cancel_overlay_calibration", None)
         if callable(calibration_begin):
             self.view_settings.on_overlay_calibration_begin = calibration_begin
+            self.view_settings.on_module_action = self._on_module_action
         if callable(calibration_change):
             self.view_settings.on_overlay_calibration_change = calibration_change
         if callable(calibration_apply):
@@ -2939,6 +2940,138 @@ class TranslatorApp:
         dlg.open = True
         with contextlib.suppress(Exception):
             self.page.update()
+
+    def _on_module_action(self, module: str, action: str) -> None:
+        """Modules section in Settings: install/uninstall for OCR and Steam."""
+        if module == "ocr":
+            if action == "install":
+                self._prompt_ocr_module_download()
+            else:
+                self._on_ocr_remove_module()
+            return
+        if action == "remove":
+            self._steam_module_remove_prompt()
+        else:
+            self._steam_module_install_prompt()
+
+    def _refresh_modules_card(self) -> None:
+        sv = getattr(self, "view_settings", None)
+        if sv is not None:
+            with contextlib.suppress(Exception):
+                sv.refresh_modules_status()
+                self.page.update()
+
+    def _steam_module_remove_prompt(self) -> None:
+        from puripuly_heart.ui.i18n import t
+
+        from puripuly_heart.core import steam_module
+        mb = steam_module.size_bytes() // (1024 * 1024)
+        dlg = ft.AlertDialog(
+            modal=True,
+            title=ft.Text(t("settings.module.steam_remove_title")),
+            content=ft.Text(t("settings.module.steam_remove_body", mb=str(mb)),
+                            size=13, width=420),
+        )
+
+        def _close(_e=None) -> None:
+            dlg.open = False
+            with contextlib.suppress(Exception):
+                self.page.update()
+
+        def _confirm(_e=None) -> None:
+            async def _task() -> None:
+                import asyncio as _aio
+                freed = await _aio.to_thread(steam_module.uninstall)
+                dash = getattr(self, "view_dashboard", None)
+                if dash is not None:
+                    with contextlib.suppress(Exception):
+                        dash._select_chat_tab("vrc")
+                        dash._tab_steam.visible = False
+                dlg.content = ft.Text(
+                    t("settings.module.steam_removed",
+                      mb=str(max(1, freed // (1024 * 1024)))), size=13, width=420)
+                dlg.actions = [ft.TextButton(t("ocr_module.close"), on_click=_close)]
+                self._refresh_modules_card()
+                with contextlib.suppress(Exception):
+                    self.page.update()
+
+            dlg.actions = []
+            with contextlib.suppress(Exception):
+                self.page.update()
+            self.page.run_task(_task)
+
+        dlg.actions = [
+            ft.TextButton(t("ocr_module.cancel"), on_click=_close),
+            ft.TextButton(t("settings.module.remove"), on_click=_confirm),
+        ]
+        self.page.overlay.append(dlg)
+        dlg.open = True
+        with contextlib.suppress(Exception):
+            self.page.update()
+
+    def _steam_module_install_prompt(self) -> None:
+        from puripuly_heart.ui.i18n import t
+
+        from puripuly_heart.core import steam_module
+        body = ft.Text(t("settings.module.steam_installing_env"), size=13, width=420)
+        prog = ft.ProgressRing(width=20, height=20, stroke_width=2)
+        dlg = ft.AlertDialog(
+            modal=True,
+            title=ft.Text(t("settings.module.steam")),
+            content=ft.Row([prog, body], spacing=12),
+        )
+
+        def _close(_e=None) -> None:
+            dlg.open = False
+            with contextlib.suppress(Exception):
+                self.page.update()
+
+        stage_box = {"stage": "env"}
+
+        async def _task() -> None:
+            import asyncio as _aio
+
+            async def _poll() -> None:
+                keys = {"env": "settings.module.steam_installing_env",
+                        "deps": "settings.module.steam_installing_deps",
+                        "files": "settings.module.steam_installing_files"}
+                while stage_box["stage"] not in ("done", "error"):
+                    body.value = t(keys.get(stage_box["stage"],
+                                            "settings.module.steam_installing_env"))
+                    with contextlib.suppress(Exception):
+                        body.update()
+                    await _aio.sleep(0.4)
+
+            poller = _aio.ensure_future(_poll())
+            try:
+                await _aio.to_thread(
+                    steam_module.install,
+                    lambda st: stage_box.__setitem__("stage", st))
+                stage_box["stage"] = "done"
+                dlg.content = ft.Text(
+                    t("settings.module.steam_installed_restart"),
+                    size=13, width=420)
+            except Exception as exc:
+                stage_box["stage"] = "error"
+                msg = str(exc)
+                if "no-python" in msg:
+                    text = t("settings.module.steam_needs_python")
+                else:
+                    text = t("settings.module.install_failed", err=msg[:160])
+                dlg.content = ft.Text(text, size=13, width=420)
+            finally:
+                poller.cancel()
+            dlg.actions = [ft.TextButton(t("ocr_module.close"), on_click=_close)]
+            self._refresh_modules_card()
+            with contextlib.suppress(Exception):
+                self.page.update()
+
+        dlg.actions = []
+        self.page.overlay.append(dlg)
+        dlg.open = True
+        with contextlib.suppress(Exception):
+            self.page.update()
+        self.page.run_task(_task)
 
     def _on_ocr_remove_module(self) -> None:
         """Confirm-and-remove for the OCR module (frees ~340 MB on disk).

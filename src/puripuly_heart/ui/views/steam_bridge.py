@@ -100,7 +100,18 @@ _EMOJIS = ["😀", "😂", "🥰", "😊", "😎", "😉", "😢", "😭", "😡
 # AppData\Local — the Claude Store-app sandbox redirects new AppData\Local folders
 # into its private container, so files written there aren't visible to this (normal)
 # app. The Desktop project dir is a real, shared path.
-_BRIDGE_ROOT = Path(r"C:\Users\Owner\Desktop\PuriPuly-heart-2.1.2\steam-helper")
+def _resolve_bridge_root() -> Path:
+    dev = Path(r"C:\Users\Owner\Desktop\PuriPuly-heart-2.1.2\steam-helper")
+    if dev.exists():
+        return dev
+    try:
+        from puripuly_heart.core.steam_module import installed_helper_root
+        return installed_helper_root()
+    except Exception:
+        return dev
+
+
+_BRIDGE_ROOT = _resolve_bridge_root()
 _DAEMON_PY = _BRIDGE_ROOT / "steam_bridge" / "daemon.py"
 _CACHE_FILE = _BRIDGE_ROOT / "steam_bridge" / "tr_cache.json"
 _PREFS_FILE = _BRIDGE_ROOT / "steam_bridge" / "view_prefs.json"

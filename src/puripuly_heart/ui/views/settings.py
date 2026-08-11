@@ -235,6 +235,7 @@ class SettingsView(ft.Column):
         self.on_verify_api_key: Callable[[str, str], object] | None = None
         self.on_secret_cleared: Callable[[str], None] | None = None  # key name
         self.on_overlay_calibration_begin: Callable[[], OverlayCalibration] | None = None
+        self.on_module_action: Callable[[str, str], None] | None = None  # (module, install|remove)
         self.on_overlay_calibration_change: Callable[[str, object], OverlayCalibration] | None = (
             None
         )
@@ -354,6 +355,48 @@ class SettingsView(ft.Column):
         if self.page:
             with contextlib.suppress(Exception):
                 self.update()
+
+    def _module_click(self, module: str) -> None:
+        if callable(self.on_module_action):
+            action = "remove" if self._modules_installed.get(module) else "install"
+            self.on_module_action(module, action)
+
+    def refresh_modules_status(self) -> None:
+        """Re-read on-disk state for the Modules card (called on open and after
+        any install/uninstall)."""
+        def _fill(module: str, installed: bool, mb: int,
+                  status_ctrl, btn) -> None:
+            self._modules_installed[module] = installed
+            status_ctrl.value = (
+                t("settings.module.installed", mb=str(mb)) if installed
+                else t("settings.module.not_installed"))
+            btn.text = (t("settings.module.remove") if installed
+                        else t("settings.module.install"))
+
+        with contextlib.suppress(Exception):
+            from puripuly_heart.core.ocr_module import (installed_module_dir,
+                                                        module_ready)
+            from puripuly_heart.ocr.manager import ocr_engine_available
+            inst = bool(ocr_engine_available())
+            mb = 0
+            with contextlib.suppress(Exception):
+                d = installed_module_dir()
+                if module_ready():
+                    mb = sum(f.stat().st_size for f in d.rglob("*")
+                             if f.is_file()) // (1024 * 1024)
+                elif inst:
+                    mb = 340       # installer-bundled / dev copy: nominal size
+            _fill("ocr", inst, mb, self._ocr_mod_status, self._ocr_mod_btn)
+        with contextlib.suppress(Exception):
+            from puripuly_heart.core import steam_module
+            inst = steam_module.module_ready()
+            mb = steam_module.size_bytes() // (1024 * 1024) if inst else 0
+            _fill("steam", inst, mb, self._steam_mod_status, self._steam_mod_btn)
+        with contextlib.suppress(Exception):
+            self._ocr_mod_status.update()
+            self._ocr_mod_btn.update()
+            self._steam_mod_status.update()
+            self._steam_mod_btn.update()
 
     def _section_header(self, key: str) -> ft.Control:
         """Small muted heading inside a settings tab (r334) — a long tab still
@@ -1209,6 +1252,47 @@ class SettingsView(ft.Column):
             height=None,
         )
         api_keys_row = api_card
+
+        # === Modules: optional components (OCR overlay, Steam Chat) ===
+        self._modules_installed: dict = {}
+        self._ocr_mod_status = ft.Text("", size=12, color=COLOR_NEUTRAL)
+        self._steam_mod_status = ft.Text("", size=12, color=COLOR_NEUTRAL)
+        self._ocr_mod_btn = ft.OutlinedButton(
+            "", on_click=lambda e: self._module_click("ocr"))
+        self._steam_mod_btn = ft.OutlinedButton(
+            "", on_click=lambda e: self._module_click("steam"))
+        self._modules_title = ft.Text(
+            t("settings.section.modules"), size=13,
+            weight=ft.FontWeight.W_600, color=COLOR_NEUTRAL)
+        self._ocr_mod_name = ft.Text(t("settings.module.ocr"), size=13,
+                                     weight=ft.FontWeight.W_600)
+        self._ocr_mod_desc = ft.Text(t("settings.module.ocr_desc"), size=11.5,
+                                     color=COLOR_NEUTRAL)
+        self._steam_mod_name = ft.Text(t("settings.module.steam"), size=13,
+                                       weight=ft.FontWeight.W_600)
+        self._steam_mod_desc = ft.Text(t("settings.module.steam_desc"), size=11.5,
+                                       color=COLOR_NEUTRAL)
+
+        def _mod_row(name, desc, status, btn):
+            return ft.Row([
+                ft.Column([name, desc, status], spacing=2, expand=True),
+                btn,
+            ], alignment=ft.MainAxisAlignment.SPACE_BETWEEN,
+               vertical_alignment=ft.CrossAxisAlignment.CENTER)
+
+        self._modules_card = self._wrap_card(
+            ft.Column([
+                self._modules_title,
+                ft.Container(height=10),
+                _mod_row(self._ocr_mod_name, self._ocr_mod_desc,
+                         self._ocr_mod_status, self._ocr_mod_btn),
+                ft.Divider(height=10, color=ft.Colors.TRANSPARENT),
+                _mod_row(self._steam_mod_name, self._steam_mod_desc,
+                         self._steam_mod_status, self._steam_mod_btn),
+            ], spacing=4),
+            height=None,
+        )
+        self.refresh_modules_status()
 
         # === General Tab Row 1: UI / Include Original / Integrated Context ===
         self._ui_text = self._build_clickable_text(
@@ -2591,6 +2675,7 @@ class SettingsView(ft.Column):
                 "general": [
                     general_primary_row,
                     general_updates_row,
+                    self._modules_card,
                 ],
                 "audio": [
                     audio_devices_row,

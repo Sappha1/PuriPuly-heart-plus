@@ -61,6 +61,19 @@ _URL_RE = re.compile(r"(https?://[^\s]+)")
 # in a different script than the reader (so we don't translate English->English).
 _CJK_RE = re.compile(r"[㐀-鿿぀-ヿ가-힣]")
 _CJK_LANGS = {"zh-CN", "zh-TW", "ja", "ko"}
+from puripuly_heart.ui.i18n import t as _T
+
+
+def _send_fmt_labels() -> dict:
+    return {
+        "orig_trans": _T("steam.fmt_orig_trans", default="Original + Translation"),
+        "orig_read_trans": _T("steam.fmt_orig_read_trans", default="Original + Pinyin + Translation"),
+        "read_trans": _T("steam.fmt_read_trans", default="Pinyin + Translation"),
+        "read_only": _T("steam.fmt_read_only", default="Pinyin Only"),
+        "trans_only": _T("steam.fmt_trans_only", default="Translation Only"),
+    }
+
+
 _EMOTE_RE = re.compile(r"[:ː]([a-zA-Z][a-zA-Z0-9_]{1,})[:ː]")
 
 
@@ -114,6 +127,16 @@ _SEND_FMT_LABEL = {
     "read_only": "Pinyin Only",
     "trans_only": "Translation Only",
 }
+
+def _state_labels() -> dict:
+    return {
+        0: _T("steam.state_offline", default="Offline"),
+        1: _T("steam.state_online", default="Online"),
+        3: _T("steam.state_away", default="Away"),
+        4: _T("steam.state_snooze", default="Snooze"),
+        7: _T("steam.state_invisible", default="Invisible"),
+    }
+
 
 _STATE_LABEL = {0: "Offline", 1: "Online", 2: "Busy", 3: "Away", 4: "Snooze",
                 5: "Looking to Trade", 6: "Looking to Play"}
@@ -214,7 +237,7 @@ class SteamBridgeView(ft.Container):
         # Borderless field inside a fixed-height box — Flet's TextField ignores
         # `height` when it has a prefix icon, so build the box ourselves.
         self._search = ft.TextField(
-            hint_text="Search friends", dense=True, height=30,
+            hint_text=_T("steam.search", default="Search friends"), dense=True, height=30,
             text_size=13, color=_TEXT_PRIMARY, expand=True,
             border=ft.InputBorder.NONE, bgcolor=ft.Colors.TRANSPARENT,
             text_vertical_align=ft.VerticalAlignment.CENTER,
@@ -288,7 +311,7 @@ class SteamBridgeView(ft.Container):
                                   padding=ft.padding.only(left=14),
                                   alignment=ft.alignment.center_left)
         self._entry = ft.TextField(
-            hint_text="Type message to send", disabled=True,
+            hint_text=_T("steam.input_hint", default="Type message to send"), disabled=True,
             border=ft.InputBorder.OUTLINE, border_color=_BORDER_INPUT,
             focused_border_color=_TOGGLE_ON, text_size=13, color=_TEXT_PRIMARY,
             hint_style=ft.TextStyle(color=_TEXT_FAINT, italic=True),
@@ -457,7 +480,7 @@ class SteamBridgeView(ft.Container):
             self._build_settings_panel()
             with contextlib.suppress(Exception):
                 self._settings_panel.update()
-        self._notice("Applies to new messages — Retranslate history converts this chat.")
+        self._notice(_T("steam.applies_new", default="Applies to new messages — Retranslate history converts this chat."))
 
     def _notice(self, msg: str) -> None:
         if self.page:
@@ -521,18 +544,18 @@ class SteamBridgeView(ft.Container):
         self._state_mode = mode
         if mode == "off":
             self._state_icon.name = ft.Icons.POWER_SETTINGS_NEW
-            self._state_title.value = "Steam Chat is turned off"
-            self._state_caption.value = (
-                "The Steam helper and its hidden browser are not running, so "
-                "this module uses no RAM.")
-            self._state_btn_text.value = "Turn on"
+            self._state_title.value = _T("steam.off_title", default="Steam Chat is turned off")
+            self._state_caption.value = _T(
+                "steam.off_caption",
+                default="The Steam helper and its hidden browser are not running, so this module uses no RAM.")
+            self._state_btn_text.value = _T("steam.off_btn", default="Turn on")
         else:
             self._state_icon.name = ft.Icons.LOGIN
-            self._state_title.value = "Not signed in to Steam"
-            self._state_caption.value = (
-                "Signing in opens a Steam window — log in there and it closes "
-                "by itself when Steam finishes loading.")
-            self._state_btn_text.value = "Sign in to Steam"
+            self._state_title.value = _T("steam.signin_title", default="Not signed in to Steam")
+            self._state_caption.value = _T(
+                "steam.signin_caption",
+                default="Signing in opens a Steam window — log in there and it closes by itself.")
+            self._state_btn_text.value = _T("steam.signin_btn", default="Sign in to Steam")
         self._state_overlay.visible = True
         if self.page:
             with contextlib.suppress(Exception):
@@ -556,8 +579,9 @@ class SteamBridgeView(ft.Container):
             self._reader = None
             self.activate()
         else:
-            self._state_caption.value = ("A Steam sign-in window is opening — "
-                                         "log in there. This can take a moment…")
+            self._state_caption.value = _T(
+                "steam.signin_wait",
+                default="A Steam sign-in window is opening — log in there. This can take a moment…")
             with contextlib.suppress(Exception):
                 self._state_caption.update()
             if self.page:
@@ -566,13 +590,13 @@ class SteamBridgeView(ft.Container):
     def _signout_prompt(self) -> None:
         dlg = ft.AlertDialog(
             modal=True,
-            title=ft.Text("Sign out of Steam?", size=15),
-            content=ft.Text(
-                "This disconnects the Steam tab and clears the saved login. "
-                "Signing back in opens a Steam window.", size=13),
+            title=ft.Text(_T("steam.signout_q", default="Sign out of Steam?"), size=15),
+            content=ft.Text(_T(
+                "steam.signout_body",
+                default="This disconnects the Steam tab and clears the saved login. Signing back in opens a Steam window."), size=13),
             actions=[
-                ft.TextButton("Cancel", on_click=lambda e: self.page.close(dlg)),
-                ft.TextButton("Sign out", on_click=lambda e: (
+                ft.TextButton(_T("steam.cancel", default="Cancel"), on_click=lambda e: self.page.close(dlg)),
+                ft.TextButton(_T("steam.sign_out", default="Sign out"), on_click=lambda e: (
                     self.page.close(dlg),
                     self._toggle_settings(False),
                     self.page.run_task(self._cmd, {"cmd": "signout"}),
@@ -754,53 +778,61 @@ class SteamBridgeView(ft.Container):
         self._settings_panel.content = ft.Column([
             ft.Row([
                 ft.Icon(ft.Icons.TUNE, size=17, color=_TEXT_FAINT),
-                ft.Text("Steam Chat Settings", size=14, weight=ft.FontWeight.W_600,
+                ft.Text(_T("steam.settings_title", default="Steam Chat Settings"), size=14, weight=ft.FontWeight.W_600,
                         color=_TEXT_PRIMARY),
             ], spacing=8, vertical_alignment=ft.CrossAxisAlignment.CENTER),
-            menu_row("My language", "Their messages are translated into this",
+            menu_row(_T("steam.my_language", default="My language"), _T("steam.tip_my_language", default="Their messages are translated into this"),
                      self._lang_name(self._src_lang), lang_items("from")),
-            menu_row("Their language", "Your messages are translated into this",
+            menu_row(_T("steam.their_language", default="Their language"), _T("steam.tip_their_language", default="Your messages are translated into this"),
                      self._lang_name(self._tgt_lang), lang_items("to")),
-            pill_row("Translator", "Which model translates this chat",
+            pill_row(_T("steam.translator", default="Translator"), _T("steam.tip_translator", default="Which model translates this chat"),
                      self._translator_pill_label(),
                      lambda e: (self.open_translator_picker()
                                 if callable(self.open_translator_picker) else None)),
             ft.Divider(height=1, color="#4b4c4f"),
-            pill_row("Send to them", "What your friend receives on Steam",
-                     _SEND_FMT_LABEL[self._send_fmt],
+            pill_row(_T("steam.send_to_them", default="Send to them"), _T("steam.tip_send", default="What your friend receives on Steam"),
+                     _send_fmt_labels()[self._send_fmt],
                      lambda e: self._toggle_fmt_expanded()),
             *([radio_row(lbl, m == self._send_fmt,
                          (lambda e, m=m: self._set_send_fmt(m)))
-               for m, lbl in _SEND_FMT_LABEL.items()] if self._fmt_expanded else []),
+               for m, lbl in _send_fmt_labels().items()] if self._fmt_expanded else []),
             ft.Divider(height=1, color="#4b4c4f"),
-            toggle_row("Show Pinyin", "Reading line above originals in this chat",
+            toggle_row(_T("steam.show_pinyin", default="Show Pinyin"), _T("steam.tip_show_pinyin", default="Reading line above originals in this chat"),
                        self._show_pinyin, self._set_pinyin),
             *([check_row(lbl, val, cb)
                for lbl, val, cb in (
-                   ("Chinese pinyin", self._read_zh, self._set_read_zh),
-                   ("Japanese romaji", self._read_ja, self._set_read_ja),
-                   ("Korean romaja", self._read_ko, self._set_read_ko),
-                   ("Other languages (Latin)", self._read_latin, self._set_read_latin),
+                   (_T("steam.reading_zh", default="Chinese pinyin"), self._read_zh, self._set_read_zh),
+                   (_T("steam.reading_ja", default="Japanese romaji"), self._read_ja, self._set_read_ja),
+                   (_T("steam.reading_ko", default="Korean romaja"), self._read_ko, self._set_read_ko),
+                   (_T("steam.reading_latin", default="Other languages (Latin)"), self._read_latin, self._set_read_latin),
                )] if self._show_pinyin else []),
-            toggle_row("Grouped Pinyin", "Whole words instead of per-syllable",
+            toggle_row(_T("steam.grouped_pinyin", default="Grouped Pinyin"), _T("steam.tip_grouped", default="Whole words instead of per-syllable"),
                        self._pinyin_grouped, self._set_pinyin_grouped),
-            toggle_row("Show original text", "The untranslated line above the translation",
+            toggle_row(_T("steam.show_original", default="Show original text"), _T("steam.tip_show_original", default="The untranslated line above the translation"),
                        self._show_original, self._set_show_original),
-            toggle_row("Translate their messages", "Off shows their originals only",
+            toggle_row(_T("steam.translate_theirs", default="Translate their messages"), _T("steam.tip_translate_theirs", default="Off shows their originals only"),
                        self._tr_incoming, self._set_tr_incoming),
             ft.Divider(height=1, color="#4b4c4f"),
-            btn("Reload chat history", lambda e: self._reload_chat(),
-                tip="Re-fetch this chat from Steam and redraw it with the current "
-                    "settings. Cached translations are reused — nothing is re-billed."),
-            btn("Retranslate history", lambda e: self._retranslate_prompt(),
-                tip="Redo translations (e.g. after changing language)"),
+            btn(_T("steam.reload_history", default="Reload chat history"), lambda e: self._reload_chat(),
+                tip=_T("steam.tip_reload", default="Re-fetch this chat from Steam and redraw it with the current settings.")),
+            btn(_T("steam.retranslate", default="Retranslate history"), lambda e: self._retranslate_prompt(),
+                tip=_T("steam.tip_retranslate", default="Redo translations")),
             ft.Divider(height=1, color="#4b4c4f"),
-            btn("Sign out of Steam", lambda e: self._signout_prompt(),
-                tip="Disconnects this tab and clears the saved Steam login"),
-            btn("Turn off Steam module", lambda e: self._module_off(),
-                tip="Stops the Steam helper and its hidden browser so they use "
-                    "no RAM. Turn it back on any time from this tab."),
+            btn(_T("steam.sign_out", default="Sign out of Steam"), lambda e: self._signout_prompt(),
+                tip=_T("steam.tip_sign_out", default="Disconnects this tab and clears the saved Steam login")),
+            btn(_T("steam.module_off", default="Turn off Steam module"), lambda e: self._module_off(),
+                tip=_T("steam.tip_module_off", default="Stops the Steam helper and its hidden browser so they use no RAM.")),
         ], spacing=1, tight=True)
+        # Never taller than the window: cap + scroll (the user's "menu is cut
+        # off" bug — small windows or many visible rows overflowed).
+        rows = len(self._settings_panel.content.controls)
+        est = rows * 33 + 28
+        avail = int(getattr(self.page, "height", 0) or 760) - 110
+        if avail > 220 and est > avail:
+            self._settings_panel.content.scroll = ft.ScrollMode.AUTO
+            self._settings_panel.height = avail
+        else:
+            self._settings_panel.height = None
 
 
     def _set_pinyin(self, v) -> None:
@@ -934,7 +966,7 @@ class SteamBridgeView(ft.Container):
                 chars += len(t)
         if not chars:
             with contextlib.suppress(Exception):
-                self.page.open(ft.SnackBar(ft.Text("Nothing here needs retranslating.")))
+                self.page.open(ft.SnackBar(ft.Text(_T("steam.retr_none", default="Nothing here needs retranslating."))))
             return
         paid = True
         cb = getattr(self, "translator_is_paid", None)
@@ -944,20 +976,21 @@ class SteamBridgeView(ft.Container):
         if not paid:
             # free model — nothing to warn about, just do it
             with contextlib.suppress(Exception):
-                self.page.open(ft.SnackBar(ft.Text("Retranslating…")))
+                self.page.open(ft.SnackBar(ft.Text(_T("steam.retr_free", default="Retranslating…"))))
             self.page.run_task(self._retranslate_all)
             return
         dlg = ft.AlertDialog(
             modal=True,
-            title=ft.Text("Retranslate history?", size=15),
-            content=ft.Text(
-                f"This will re-send ≈{chars} characters to your API translator "
-                f"(e.g. DeepL bills per character), replacing the cached translations "
-                f"for this chat. Tip: pick a free model (e.g. Bing) under "
-                f"Translator to do this at no cost.", size=13),
+            title=ft.Text(_T("steam.retr_q", default="Retranslate history?"), size=15),
+            content=ft.Text(_T(
+                "steam.retr_body", chars=chars,
+                default=f"This will re-send ≈{chars} characters to your API "
+                        f"translator, replacing the cached translations for this "
+                        f"chat. Tip: pick a free model (e.g. Bing) under "
+                        f"Translator to do this at no cost."), size=13),
             actions=[
-                ft.TextButton("Cancel", on_click=lambda e: self.page.close(dlg)),
-                ft.TextButton("Retranslate",
+                ft.TextButton(_T("steam.cancel", default="Cancel"), on_click=lambda e: self.page.close(dlg)),
+                ft.TextButton(_T("steam.retranslate", default="Retranslate"),
                               on_click=lambda e: (self.page.close(dlg),
                                                   self.page.run_task(self._retranslate_all))),
             ])
@@ -1072,7 +1105,7 @@ class SteamBridgeView(ft.Container):
     def _attach_image(self, path: str) -> None:
         # Steam-style upload dialog: preview, filename, Upload, Tag as Spoiler.
         name = Path(path).name
-        spoiler = ft.Checkbox(label="Tag as Spoiler", value=False,
+        spoiler = ft.Checkbox(label=_T("steam.spoiler", default="Tag as Spoiler"), value=False,
                               label_style=ft.TextStyle(size=13, color=_TEXT_FAINT))
         dlg = ft.AlertDialog(
             modal=False, bgcolor=_BG_MENU,
@@ -1082,7 +1115,8 @@ class SteamBridgeView(ft.Container):
                 ft.Text(f"'{name}'", size=13, color=_TEXT_FAINT,
                         text_align=ft.TextAlign.CENTER),
                 ft.ElevatedButton(
-                    "Upload", bgcolor="#3d6dcc", color="#ffffff", width=380,
+                    _T("steam.upload", default="Upload"),
+                    bgcolor="#3d6dcc", color="#ffffff", width=380,
                     on_click=lambda e: self.page.run_task(
                         self._do_upload, path, bool(spoiler.value), dlg)),
                 spoiler,
@@ -1247,10 +1281,10 @@ class SteamBridgeView(ft.Container):
             status_row = ft.Row(parts, spacing=4, tight=True)
         elif self._own_invisible:
             status_row = ft.Row([ft.Icon(ft.Icons.VISIBILITY_OFF, size=13, color=_TEXT_FAINT),
-                                 ft.Text("Invisible", size=11, color=_TEXT_FAINT)],
+                                 ft.Text(_T("steam.state_invisible", default="Invisible"), size=11, color=_TEXT_FAINT)],
                                 spacing=4, tight=True)
         else:
-            status_row = ft.Text(_STATE_LABEL.get(self._own_state, "Online"), size=11,
+            status_row = ft.Text(_state_labels().get(self._own_state, "Online"), size=11,
                                  color=_name_color(self._own_state, False))
         children = [
             ft.GestureDetector(content=_avatar(self._own_avatar, 32),
@@ -1283,7 +1317,7 @@ class SteamBridgeView(ft.Container):
         if ingame:
             sub, sub_color = (f.get("game") or "In-Game"), _C_INGAME
         elif state:
-            sub, sub_color = _STATE_LABEL.get(state, "Online"), _TEXT_FAINT
+            sub, sub_color = _state_labels().get(state, "Online"), _TEXT_FAINT
         else:
             sub, sub_color = "Offline", _TEXT_FAINT
         name_row = ft.Row([
@@ -1513,7 +1547,7 @@ class SteamBridgeView(ft.Container):
         f = self._friends.get(acct, {})
         active = (acct == self._active)
         state, ingame = int(f.get("state", 0)), bool(f.get("ingame"))
-        sub = (f.get("game") or "In-Game") if ingame else _STATE_LABEL.get(state, "Offline")
+        sub = (f.get("game") or "In-Game") if ingame else _state_labels().get(state, "Offline")
         # Unread dot: a background tab whose chat has a newer message than we've
         # shown gets Steam's amber dot (cleared by opening the tab).
         unread = (not active
@@ -1932,9 +1966,9 @@ class SteamBridgeView(ft.Container):
         # Pop-out viewer like real Steam (click an image to enlarge).
         actions = []
         if url.startswith("http"):
-            actions = [ft.TextButton("Open in browser",
+            actions = [ft.TextButton(_T("steam.open_browser", default="Open in browser"),
                                      on_click=lambda e, u=url: self.page.launch_url(u)),
-                       ft.TextButton("Copy link",
+                       ft.TextButton(_T("steam.copy_link", default="Copy link"),
                                      on_click=lambda e, u=url: self._copy_link(u))]
         dlg = ft.AlertDialog(
             # Frameless like real Steam: the image floats on the dim backdrop
@@ -1952,7 +1986,7 @@ class SteamBridgeView(ft.Container):
             return
         with contextlib.suppress(Exception):
             self.page.set_clipboard(url)
-            self.page.open(ft.SnackBar(ft.Text("Link copied"), duration=1400))
+            self.page.open(ft.SnackBar(ft.Text(_T("steam.link_copied", default="Link copied")), duration=1400))
 
     async def _translate_block(self, b: dict, seq: int, *, force: bool = False) -> None:
         orig = b.get("text", "")
@@ -2105,7 +2139,8 @@ class SteamBridgeView(ft.Container):
             await self._writer.drain()
 
     def _set_typing(self, name: str) -> None:
-        self._typing_text.value = f"{name} is typing…" if name else ""
+        self._typing_text.value = (
+            _T("steam.typing", name=name, default=f"{name} is typing…") if name else "")
         if self.page:
             with contextlib.suppress(Exception):
                 self._typing_text.update()

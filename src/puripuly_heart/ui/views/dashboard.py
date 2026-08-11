@@ -19,7 +19,7 @@ from puripuly_heart.ui.fonts import font_for_language
 from puripuly_heart.ui.i18n import get_locale, language_name, t
 from puripuly_heart.ui.overlay_peer_contract import OverlayPeerConsumerContract
 
-_BUILD_TAG = "r431-steam-beta"  #increment each build so user can confirm version
+_BUILD_TAG = "r432-steam-beta"  #increment each build so user can confirm version
 
 # ── VRCT-style dark palette ──────────────────────────────────────────────────
 _BG_MAIN = "#2e2f32"
@@ -1853,12 +1853,16 @@ class DashboardView(ft.Row):
             with contextlib.suppress(Exception):
                 lp = self._steam_view.detach_left_panel()
                 brand = ft.Container(
-                    content=ft.Row([
-                        ft.Text("PuriPulyHeart+", size=14, weight=ft.FontWeight.BOLD,
-                                color=_TOGGLE_ON),
-                        ft.Text(_BUILD_TAG, size=10, color=_TEXT_FAINT),
-                    ], spacing=6, tight=True,
-                       vertical_alignment=ft.CrossAxisAlignment.CENTER),
+                    content=ft.GestureDetector(
+                        content=ft.Row([
+                            ft.Text("PuriPulyHeart+", size=14, weight=ft.FontWeight.BOLD,
+                                    color=_TOGGLE_ON),
+                            ft.Text(_BUILD_TAG, size=10, color=_TEXT_FAINT),
+                        ], spacing=6, tight=True,
+                           vertical_alignment=ft.CrossAxisAlignment.CENTER),
+                        on_tap_down=self._on_title_menu_tap,
+                        mouse_cursor=ft.MouseCursor.CLICK),
+                    tooltip=t("dashboard.tooltip.title_menu"), ink=True,
                     padding=ft.padding.symmetric(horizontal=16, vertical=10))
                 self._steam_side = ft.Container(
                     width=220, visible=False, bgcolor="#26272a",

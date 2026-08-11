@@ -1002,5 +1002,18 @@
   "steam.loading_history": "チャット履歴を読み込み中",
   "steam.not_delivered": "Steamとの接続が切れていました。再接続後にメッセージは自動送信されます。",
   "steam.redelivered": "再接続しました。保留中のメッセージを送信しました。",
-  "steam.no_messages": "まだメッセージはありません"
+  "steam.no_messages": "まだメッセージはありません",
+  "steam.idle_title": "Steamチャットは実行中です",
+  "steam.idle_caption": "リストからフレンドを選んでチャットを開始できます。モジュールをオフにするとRAMをすべて解放します。",
+  "steam.turn_off": "オフにする",
+  "steam.copy_image": "画像をコピー",
+  "steam.image_copied": "画像をコピーしました",
+  "steam.copy_failed": "コピーに失敗しました",
+  "settings.module.steam_installing_runtime": "小さなPythonランタイムをダウンロード中（約11 MB）",
+  "steam.stickers_section": "マイステッカー",
+  "steam.popout_tip": "別ウィンドウで開く",
+  "steam.popped_title": "別ウィンドウで開いています",
+  "steam.popped_caption": "そのウィンドウを閉じるか、下のボタンでここに戻せます。",
+  "steam.popped_btn": "ここに戻す",
+  "steam.close": "閉じる"
 }

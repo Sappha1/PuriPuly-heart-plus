@@ -286,6 +286,10 @@ def main(argv: list[str] | None = None) -> int:
         if wrapped_command:
             return _run_launch_wrapper(wrapped_command)
         raw_argv = raw_argv[:launch_index]
+    if "--steam-window" in raw_argv:
+        from puripuly_heart.ui.steam_window import run_steam_window
+
+        return run_steam_window()
     argv = raw_argv
 
     logging_sinks = configure_main_logging()

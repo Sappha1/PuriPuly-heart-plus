@@ -19,7 +19,7 @@ from puripuly_heart.ui.fonts import font_for_language
 from puripuly_heart.ui.i18n import get_locale, language_name, t
 from puripuly_heart.ui.overlay_peer_contract import OverlayPeerConsumerContract
 
-_BUILD_TAG = "r438"  #increment each build so user can confirm version
+_BUILD_TAG = "r439"  #increment each build so user can confirm version
 
 # ── VRCT-style dark palette ──────────────────────────────────────────────────
 _BG_MAIN = "#2e2f32"
@@ -1823,7 +1823,18 @@ class DashboardView(ft.Row):
         with contextlib.suppress(Exception):
             if hasattr(self._steam_view, "on_toggle_sidebar"):
                 self._steam_view.on_toggle_sidebar = self._toggle_app_sidebar
+            if hasattr(self._steam_view, "on_module_state"):
+                self._steam_view.on_module_state = self._set_steam_chip_active
+                with contextlib.suppress(Exception):
+                    self._set_steam_chip_active(bool(self._steam_view._module_on))
         self.controls = [sidebar, right_panel]
+
+    def _set_steam_chip_active(self, active: bool) -> None:
+        """Grey the Steam tab chip while the module is off — it stays clickable
+        (that's where the Turn on screen lives), it just reads inactive."""
+        with contextlib.suppress(Exception):
+            self._tab_steam.opacity = 1.0 if active else 0.45
+            self._tab_steam.update()
 
     def _toggle_app_sidebar(self) -> None:
         """Show/hide the app's left sidebar (the Steam friends column lives in its

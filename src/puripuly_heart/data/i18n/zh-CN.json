@@ -1002,5 +1002,18 @@
   "steam.loading_history": "正在加载聊天记录",
   "steam.not_delivered": "与 Steam 的连接已断开——重新连接后你的消息会自动发送。",
   "steam.redelivered": "已重新连接——排队的消息已发送。",
-  "steam.no_messages": "还没有消息"
+  "steam.no_messages": "还没有消息",
+  "steam.idle_title": "Steam 聊天正在运行",
+  "steam.idle_caption": "从列表中选择好友即可开始聊天。关闭模块可释放其占用的全部内存。",
+  "steam.turn_off": "关闭",
+  "steam.copy_image": "复制图片",
+  "steam.image_copied": "图片已复制",
+  "steam.copy_failed": "复制失败",
+  "settings.module.steam_installing_runtime": "正在下载小型 Python 运行环境（约 11 MB）",
+  "steam.stickers_section": "我的贴纸",
+  "steam.popout_tip": "在独立窗口中打开",
+  "steam.popped_title": "已在独立窗口中打开",
+  "steam.popped_caption": "关闭那个窗口，或使用下面的按钮，即可把聊天带回这里。",
+  "steam.popped_btn": "带回此处",
+  "steam.close": "关闭"
 }

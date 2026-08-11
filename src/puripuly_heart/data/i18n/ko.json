@@ -1002,5 +1002,18 @@
   "steam.loading_history": "채팅 기록 불러오는 중",
   "steam.not_delivered": "Steam 연결이 끊겨 있었습니다. 다시 연결되면 메시지가 자동으로 전송됩니다.",
   "steam.redelivered": "다시 연결됨 — 대기 중이던 메시지를 보냈습니다.",
-  "steam.no_messages": "아직 메시지가 없습니다"
+  "steam.no_messages": "아직 메시지가 없습니다",
+  "steam.idle_title": "Steam 채팅 실행 중",
+  "steam.idle_caption": "목록에서 친구를 선택해 채팅을 시작하세요. 모듈을 끄면 RAM을 모두 해제합니다.",
+  "steam.turn_off": "끄기",
+  "steam.copy_image": "이미지 복사",
+  "steam.image_copied": "이미지 복사됨",
+  "steam.copy_failed": "복사 실패",
+  "settings.module.steam_installing_runtime": "소형 Python 런타임 다운로드 중 (~11 MB)",
+  "steam.stickers_section": "내 스티커",
+  "steam.popout_tip": "별도 창으로 열기",
+  "steam.popped_title": "별도 창에서 열림",
+  "steam.popped_caption": "그 창을 닫거나 아래 버튼을 누르면 여기로 돌아옵니다.",
+  "steam.popped_btn": "다시 가져오기",
+  "steam.close": "닫기"
 }

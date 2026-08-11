@@ -1002,5 +1002,18 @@
   "steam.loading_history": "Loading chat history",
   "steam.not_delivered": "Connection to Steam was down — your message will be sent automatically once it reconnects.",
   "steam.redelivered": "Reconnected — your queued messages were sent.",
-  "steam.no_messages": "No messages here yet"
+  "steam.no_messages": "No messages here yet",
+  "steam.idle_title": "Steam Chat is running",
+  "steam.idle_caption": "Pick a friend from the list to start chatting. Turning the module off frees all of its RAM.",
+  "steam.turn_off": "Turn off",
+  "steam.copy_image": "Copy image",
+  "steam.image_copied": "Image copied",
+  "steam.copy_failed": "Copy failed",
+  "settings.module.steam_installing_runtime": "Downloading a small Python runtime (~11 MB)",
+  "steam.stickers_section": "MY STICKERS",
+  "steam.popout_tip": "Open in its own window",
+  "steam.popped_title": "Opened in its own window",
+  "steam.popped_caption": "Close that window — or use the button below — to bring the chat back here.",
+  "steam.popped_btn": "Bring it back",
+  "steam.close": "Close"
 }

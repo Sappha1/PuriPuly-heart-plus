@@ -135,6 +135,7 @@ class Daemon:
         self.own_ingame = False
         self.own_game = ""
         self.emoticons: list[str] = []
+        self.stickers: list[str] = []
         self.signed = False
         self.active: int | None = None
         self.seen_count = 0
@@ -183,6 +184,9 @@ class Daemon:
                     await self.refresh_list()
                 with contextlib.suppress(Exception):
                     self.emoticons = await self.steam.list_emoticons()
+                    with contextlib.suppress(Exception):
+                        self.stickers = await self.steam.list_stickers()
+                        _diag(f"STICKERS {len(self.stickers)}")
                 # warm recent chats in the background so opening is instant
                 asyncio.create_task(self.steam.preload_recent(20))
             self._started = True
@@ -224,7 +228,7 @@ class Daemon:
                          "name": self.own_name, "state": self.own_state,
                          "invites": self.own_invites, "invisible": self.own_invisible,
                          "ingame": self.own_ingame, "game": self.own_game,
-                         "emoticons": self.emoticons}, only)
+                         "emoticons": self.emoticons, "stickers": self.stickers}, only)
         await self.emit({"ev": "friends",
                          "items": list(self.convos.values())}, only)
         self._last_sig = self._friends_sig()
@@ -355,7 +359,7 @@ class Daemon:
                                          "invites": self.own_invites,
                                          "invisible": self.own_invisible,
                                          "ingame": self.own_ingame, "game": self.own_game,
-                                         "emoticons": self.emoticons})
+                                         "emoticons": self.emoticons, "stickers": self.stickers})
             if not self.active:
                 continue
             # keep the chat warm/foreground every ~4s (helps typing + mark-read).
@@ -486,7 +490,7 @@ class Daemon:
                         await self.emit({"ev": "own", "acct": self.own, "avatar": self.own_avatar,
                                          "name": self.own_name, "state": self.own_state,
                                          "invites": self.own_invites, "invisible": self.own_invisible,
-                                         "emoticons": self.emoticons})
+                                         "emoticons": self.emoticons, "stickers": self.stickers})
         except (asyncio.IncompleteReadError, ConnectionResetError):
             pass
         finally:

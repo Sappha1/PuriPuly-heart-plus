@@ -491,6 +491,31 @@ class SteamPage:
         except Exception:
             return []
 
+    async def list_stickers(self) -> list[str]:
+        """Owned sticker names (rendered from the economy CDN; sent as
+        [sticker type="name"] BBCode — the same shape incoming stickers use)."""
+        try:
+            return await self._page.evaluate(
+                r"""async () => {
+                  const a = window.g_FriendsUIApp;
+                  const stores = [a.m_ChatStore && a.m_ChatStore.m_StickerStore,
+                                  a.m_StickerStore];
+                  for (const st of stores) {
+                    if (!st) continue;
+                    try { if (st.RequestStickerList) await st.RequestStickerList(); } catch (e) {}
+                    try {
+                      const list = st.SearchStickers ? st.SearchStickers('')
+                                 : (st.m_rgStickers || []);
+                      const arr = Array.isArray(list) ? list : [...(list || [])];
+                      const names = arr.map(x => x && (x.name || x.strName)).filter(Boolean);
+                      if (names.length) return names;
+                    } catch (e) {}
+                  }
+                  return [];
+                }""") or []
+        except Exception:
+            return []
+
     async def set_favorite(self, acct: int, on: bool) -> bool:
         try:
             return bool(await self._page.evaluate(

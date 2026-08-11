@@ -110,10 +110,16 @@ _BRIDGE_ROOT = _resolve_bridge_root()
 _DAEMON_PY = _BRIDGE_ROOT / "steam_bridge" / "daemon.py"
 _CACHE_FILE = _BRIDGE_ROOT / "steam_bridge" / "tr_cache.json"
 _PREFS_FILE = _BRIDGE_ROOT / "steam_bridge" / "view_prefs.json"
-_VENV_SCRIPTS = _BRIDGE_ROOT / "steamprobe-venv" / "Scripts"
-_DAEMON_PYTHON = (
-    _VENV_SCRIPTS / "pythonw.exe" if (_VENV_SCRIPTS / "pythonw.exe").exists()
-    else _VENV_SCRIPTS / "python.exe")
+def _find_daemon_python() -> Path:
+    venv = _BRIDGE_ROOT / "steamprobe-venv"
+    for cand in (venv / "Scripts" / "pythonw.exe", venv / "pythonw.exe",
+                 venv / "Scripts" / "python.exe", venv / "python.exe"):
+        if cand.exists():
+            return cand
+    return venv / "Scripts" / "pythonw.exe"
+
+
+_DAEMON_PYTHON = _find_daemon_python()
 _CREATE_NO_WINDOW = 0x08000000
 
 
@@ -220,6 +226,10 @@ class SteamBridgeView(ft.Container):
         self.translator_is_paid = None
         self.translator_value = None   # injected: resolved model value (cache key)
         self._resend_queue: list = []  # sends attempted while the helper was down
+        self.on_module_state = None    # dashboard: grey the Steam chip when off
+        self.on_popout = None          # app: open the tab in its own window
+        self.on_popout_restore = None  # app: close the pop-out window
+        self._stickers: list = []
         self._chat_cache: dict = {}    # acct -> last-rendered history blocks
         self._module_on = True         # module toggle: off = helper not running, no RAM
         self._pend: dict | None = None   # short buffer: rapid same-sender lines → ONE block
@@ -291,8 +301,13 @@ class SteamBridgeView(ft.Container):
             tooltip="Steam chat settings",
             on_click=lambda e: self._toggle_settings(),
             style=ft.ButtonStyle(overlay_color=ft.Colors.TRANSPARENT))
+        popout_btn = ft.IconButton(
+            ft.Icons.OPEN_IN_NEW, icon_size=16, icon_color=_TEXT_FAINT,
+            tooltip=_T("steam.popout_tip", default="Open in its own window"),
+            on_click=lambda e: (self.on_popout() if callable(self.on_popout) else None),
+            style=ft.ButtonStyle(overlay_color=ft.Colors.TRANSPARENT))
         top_bar = ft.Container(
-            content=ft.Row([self._tab_strip, settings_btn], spacing=8,
+            content=ft.Row([self._tab_strip, popout_btn, settings_btn], spacing=8,
                            vertical_alignment=ft.CrossAxisAlignment.CENTER),
             padding=ft.padding.only(left=8, right=12, top=6, bottom=4), bgcolor=_BG_MAIN)
         self._tab_bar = ft.Container(visible=False)   # kept: _rebuild_tabs toggles it
@@ -440,11 +455,13 @@ class SteamBridgeView(ft.Container):
                                ft.Container(height=6), self._state_btn],
                               spacing=10, tight=True,
                               horizontal_alignment=ft.CrossAxisAlignment.CENTER))
+        self._viewer = ft.Container(visible=False, expand=True)
         self.content = ft.Stack([main_row, self._loading,
                                   self._emoji_backdrop, self._emoji_panel,
                                   self._ctx_backdrop, self._ctx_menu,
                                   self._settings_backdrop, self._settings_panel,
-                                  self._input_menu, self._state_overlay], expand=True)
+                                  self._input_menu, self._state_overlay,
+                                  self._viewer], expand=True)
         self._load_cache()
         self._load_prefs()
         self._update_own_header()
@@ -544,6 +561,11 @@ class SteamBridgeView(ft.Container):
             self._show_state_overlay("off")
             return
         if self._started:
+            # Re-entering the tab with nothing open: show the running/idle
+            # screen instead of an empty pane (same as after closing all tabs).
+            if (self._active is None and self._got_friends
+                    and not self._state_overlay.visible):
+                self._show_state_overlay("idle")
             return
         self._started = True
         self._paint_snapshot()
@@ -552,8 +574,28 @@ class SteamBridgeView(ft.Container):
 
     def _show_state_overlay(self, mode: str) -> None:
         self._state_mode = mode
-        if mode == "off":
+        if mode == "popped":
+            self._state_icon.name = ft.Icons.OPEN_IN_NEW
+            self._state_icon.color = _TOGGLE_ON
+            self._state_title.value = _T("steam.popped_title",
+                                         default="Opened in its own window")
+            self._state_caption.value = _T(
+                "steam.popped_caption",
+                default="Close that window — or use the button below — to bring "
+                        "the chat back here.")
+            self._state_btn_text.value = _T("steam.popped_btn", default="Bring it back")
+        elif mode == "idle":
             self._state_icon.name = ft.Icons.POWER_SETTINGS_NEW
+            self._state_icon.color = _TOGGLE_ON
+            self._state_title.value = _T("steam.idle_title", default="Steam Chat is running")
+            self._state_caption.value = _T(
+                "steam.idle_caption",
+                default="Pick a friend from the list to start chatting. Turning "
+                        "the module off frees all of its RAM.")
+            self._state_btn_text.value = _T("steam.turn_off", default="Turn off")
+        elif mode == "off":
+            self._state_icon.name = ft.Icons.POWER_SETTINGS_NEW
+            self._state_icon.color = _TEXT_FAINT
             self._state_title.value = _T("steam.off_title", default="Steam Chat is turned off")
             self._state_caption.value = _T(
                 "steam.off_caption",
@@ -579,9 +621,19 @@ class SteamBridgeView(ft.Container):
                     self.page.update()
 
     def _state_action(self) -> None:
+        if self._state_mode == "popped":
+            if callable(self.on_popout_restore):
+                self.on_popout_restore()
+            return
+        if self._state_mode == "idle":
+            self._module_off()
+            return
         if self._state_mode == "off":
             self._module_on = True
             self._save_prefs()
+            if callable(self.on_module_state):
+                with contextlib.suppress(Exception):
+                    self.on_module_state(True)
             self._hide_state_overlay()
             self._started = False
             self._prewarmed = False
@@ -622,6 +674,9 @@ class SteamBridgeView(ft.Container):
     def _module_off(self) -> None:
         self._module_on = False
         self._save_prefs()
+        if callable(self.on_module_state):
+            with contextlib.suppress(Exception):
+                self.on_module_state(False)
         self._toggle_settings(False)
 
         async def _shutdown() -> None:
@@ -643,6 +698,29 @@ class SteamBridgeView(ft.Container):
         self._entry.value = (self._entry.value or "") + em
         if self.page:
             self._entry.update()
+
+    def _sticker_url(self, name: str) -> str:
+        return ("https://community.fastly.steamstatic.com/economy/sticker/"
+                f"{name}/sticker.png")
+
+    def _send_sticker(self, name: str) -> None:
+        # Stickers send immediately on click, like real Steam.
+        if not self._active:
+            return
+        self._toggle_emoji(False)
+        acct = self._active
+        url = self._sticker_url(name)
+
+        async def _go() -> None:
+            await self._render_live({
+                "from_me": True, "name": self._own_name, "avatar": self._own_avatar,
+                "text": "", "images": [], "stickers": [url],
+                "ts": int(time.time())})
+            await self._cmd({"cmd": "send", "acct": acct,
+                             "text": f'[sticker type="{name}"]'})
+
+        if self.page:
+            self.page.run_task(_go)
 
     def _insert_emoticon(self, name: str) -> None:
         # Steam emoticons are sent as :name: and render on both ends.
@@ -673,6 +751,17 @@ class SteamBridgeView(ft.Container):
         else:
             sections.append(ft.Text("Your Steam emoticons load with your account…",
                                     size=11, color=_TEXT_FAINT))
+        if self._stickers:
+            sections.append(ft.Text(_T("steam.stickers_section", default="MY STICKERS"),
+                                    size=11, weight=ft.FontWeight.BOLD, color=_SECTION))
+            sections.append(ft.Row([
+                ft.Container(
+                    content=ft.Image(src=self._sticker_url(n), width=52, height=52,
+                                     fit=ft.ImageFit.CONTAIN),
+                    on_click=(lambda ev, nm=n: self._send_sticker(nm)),
+                    ink=True, border_radius=6, padding=3, width=60, height=60,
+                    tooltip=n, alignment=ft.alignment.center)
+                for n in self._stickers], wrap=True, spacing=2, run_spacing=2))
         self._emoji_panel.content = ft.Column(sections, spacing=6, tight=True,
                                               scroll=ft.ScrollMode.AUTO)
 
@@ -1617,6 +1706,8 @@ class SteamBridgeView(ft.Container):
             self._active = None
             self._set_chat_head(None)
             self._entry.disabled = True
+            if self._module_on:
+                self._show_state_overlay("idle")
         self._rebuild_tabs()
         if self.page:
             self.page.update()
@@ -1980,23 +2071,80 @@ class SteamBridgeView(ft.Container):
             padding=ft.padding.only(top=2))
 
     def _show_image_viewer(self, url: str) -> None:
-        # Pop-out viewer like real Steam (click an image to enlarge).
-        actions = []
+        # Lightbox, not a dialog: an AlertDialog's (invisible) surface swallows
+        # clicks in a large rectangle around the image, which made closing feel
+        # broken. Here ONLY the image and its toolbar capture clicks — a tap
+        # anywhere else closes — and the buttons are visible pills.
+        def pill(icon, label, on_click, accent=False):
+            return ft.Container(
+                content=ft.Row([
+                    ft.Icon(icon, size=15,
+                            color=_TOGGLE_ON if accent else _TEXT_PRIMARY),
+                    ft.Text(label, size=12.5,
+                            color=_TOGGLE_ON if accent else _TEXT_PRIMARY),
+                ], spacing=6, tight=True),
+                bgcolor="#2b2c30", border=ft.border.all(1, "#4b4c4f"),
+                border_radius=8, padding=ft.padding.symmetric(horizontal=12, vertical=8),
+                ink=True, on_click=on_click)
+
+        pills = [pill(ft.Icons.COPY, _T("steam.copy_image", default="Copy image"),
+                      lambda e, u=url: self.page.run_task(self._copy_image, u))]
         if url.startswith("http"):
-            actions = [ft.TextButton(_T("steam.open_browser", default="Open in browser"),
-                                     on_click=lambda e, u=url: self.page.launch_url(u)),
-                       ft.TextButton(_T("steam.copy_link", default="Copy link"),
-                                     on_click=lambda e, u=url: self._copy_link(u))]
-        dlg = ft.AlertDialog(
-            # Frameless like real Steam: the image floats on the dim backdrop
-            # (no surface box), so everywhere outside the picture closes it.
-            modal=False, bgcolor=ft.Colors.TRANSPARENT, elevation=0,
-            content_padding=0, inset_padding=ft.padding.all(12),
-            actions_padding=ft.padding.only(top=2, bottom=4),
-            actions=actions,
-            content=ft.Image(src=url, width=820, height=560, fit=ft.ImageFit.CONTAIN))
-        with contextlib.suppress(Exception):
-            self.page.open(dlg)
+            pills += [pill(ft.Icons.OPEN_IN_BROWSER,
+                           _T("steam.open_browser", default="Open in browser"),
+                           lambda e, u=url: self.page.launch_url(u)),
+                      pill(ft.Icons.LINK, _T("steam.copy_link", default="Copy link"),
+                           lambda e, u=url: self._copy_link(u))]
+        pills.append(pill(ft.Icons.CLOSE, _T("steam.close", default="Close"),
+                          lambda e: self._close_viewer(), accent=True))
+        inner = ft.GestureDetector(
+            on_tap=lambda e: None,          # clicks on the image don't close
+            content=ft.Column([
+                ft.Image(src=url, width=820, height=520, fit=ft.ImageFit.CONTAIN),
+                ft.Row(pills, spacing=8, alignment=ft.MainAxisAlignment.CENTER),
+            ], spacing=10, tight=True,
+               horizontal_alignment=ft.CrossAxisAlignment.CENTER))
+        self._viewer.content = ft.GestureDetector(
+            on_tap=lambda e: self._close_viewer(),
+            content=ft.Container(bgcolor="#77000000", expand=True,
+                                 alignment=ft.alignment.center, content=inner))
+        self._viewer.visible = True
+        if self.page:
+            with contextlib.suppress(Exception):
+                self.page.update()
+
+    def _close_viewer(self) -> None:
+        self._viewer.visible = False
+        if self.page:
+            with contextlib.suppress(Exception):
+                self.page.update()
+
+    async def _copy_image(self, url: str) -> None:
+        """Put the actual image on the Windows clipboard (not just its link)."""
+        import subprocess as _sp
+        import tempfile
+        try:
+            path = url
+            if url.startswith("http"):
+                import httpx
+                async with httpx.AsyncClient(timeout=20.0, follow_redirects=True) as c:
+                    r = await c.get(url)
+                    r.raise_for_status()
+                path = str(Path(tempfile.gettempdir()) / "pp_copied_image.png")
+                Path(path).write_bytes(r.content)
+            ps = ("Add-Type -AssemblyName System.Windows.Forms; "
+                  "Add-Type -AssemblyName System.Drawing; "
+                  f"$img=[System.Drawing.Image]::FromFile('{path}'); "
+                  "[System.Windows.Forms.Clipboard]::SetImage($img); $img.Dispose()")
+            r2 = await asyncio.to_thread(
+                _sp.run, ["powershell", "-STA", "-NoProfile", "-Command", ps],
+                capture_output=True, timeout=30, creationflags=_CREATE_NO_WINDOW)
+            if r2.returncode == 0:
+                self._notice(_T("steam.image_copied", default="Image copied"))
+            else:
+                self._notice(_T("steam.copy_failed", default="Copy failed"))
+        except Exception:
+            self._notice(_T("steam.copy_failed", default="Copy failed"))
 
     def _copy_link(self, url: str) -> None:
         if not self.page:
@@ -2205,6 +2353,8 @@ class SteamBridgeView(ft.Container):
         # visible read as "wrong chat shown". Cached chats paint instantly and
         # the fresh fetch replaces them silently; uncached ones show a loading
         # state (never a blank wall, and never someone else's messages).
+        if self._state_mode == "idle":
+            self._hide_state_overlay()
         self._pend = None
         self._last_block = None
         self._messages.controls.clear()
@@ -2327,6 +2477,8 @@ class SteamBridgeView(ft.Container):
             if ev.get("emoticons"):
                 self._emoticons = list(ev.get("emoticons"))
                 self._purge_emote_cache()
+            if ev.get("stickers") is not None:
+                self._stickers = list(ev.get("stickers") or [])
             self._update_own_header()
             self._save_snapshot()
         elif kind == "login_progress":
@@ -2362,6 +2514,8 @@ class SteamBridgeView(ft.Container):
                 self._state_btn.update()
             if ev.get("signed_in"):
                 self._hide_state_overlay()
+                if self._active is None and self._module_on:
+                    self._show_state_overlay("idle")
             elif self._module_on and ev.get("mode") != "login":
                 self._show_state_overlay("signedout")
         elif kind == "friends":

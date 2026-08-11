@@ -53,7 +53,12 @@ def helper_root() -> Path:
 
 
 def _venv_python(root: Path) -> Path:
-    return root / "steamprobe-venv" / "Scripts" / "pythonw.exe"
+    venv = root / "steamprobe-venv"
+    for cand in (venv / "Scripts" / "pythonw.exe", venv / "pythonw.exe",
+                 venv / "Scripts" / "python.exe", venv / "python.exe"):
+        if cand.exists():
+            return cand
+    return venv / "Scripts" / "pythonw.exe"
 
 
 def module_ready() -> bool:
@@ -127,6 +132,56 @@ def find_system_python() -> list[str] | None:
     return None
 
 
+_EMBED_URLS = (
+    "https://www.python.org/ftp/python/3.11.9/python-3.11.9-embed-amd64.zip",
+    "https://mirrors.huaweicloud.com/python/3.11.9/python-3.11.9-embed-amd64.zip",
+)
+_GETPIP_URLS = (
+    "https://bootstrap.pypa.io/pip/get-pip.py",
+    "https://mirrors.aliyun.com/pypi/get-pip.py",
+)
+
+
+def _download_first(urls, dest: Path) -> None:
+    import urllib.request
+    last = None
+    for url in urls:
+        try:
+            with urllib.request.urlopen(url, timeout=60) as resp:
+                dest.write_bytes(resp.read())
+            return
+        except Exception as exc:
+            last = exc
+    raise RuntimeError(f"download: {last}")
+
+
+def _provision_embedded_runtime(venv_dir: Path) -> Path:
+    """Extract the official embeddable Python into venv_dir and give it pip.
+    Returns its python.exe. Raises RuntimeError on failure."""
+    import zipfile
+
+    venv_dir.mkdir(parents=True, exist_ok=True)
+    zip_path = venv_dir / "_embed.zip"
+    _download_first(_EMBED_URLS, zip_path)
+    with zipfile.ZipFile(zip_path) as zf:
+        zf.extractall(venv_dir)
+    zip_path.unlink(missing_ok=True)
+    # enable site-packages (the embeddable ships with site disabled)
+    for pth in venv_dir.glob("python*._pth"):
+        pth.write_text("python311.zip\n.\nLib\nLib\\site-packages\nimport site\n",
+                       encoding="utf-8")
+    getpip = venv_dir / "get-pip.py"
+    _download_first(_GETPIP_URLS, getpip)
+    vpy = venv_dir / "python.exe"
+    r = subprocess.run([str(vpy), str(getpip), "--no-warn-script-location"],
+                       capture_output=True, timeout=600,
+                       creationflags=_CREATE_NO_WINDOW)
+    getpip.unlink(missing_ok=True)
+    if r.returncode != 0:
+        raise RuntimeError("get-pip: " + (r.stderr or b"").decode(errors="replace")[:200])
+    return vpy
+
+
 def _bundled_bridge_src() -> Path:
     return Path(__file__).resolve().parent.parent / "data" / "steam_bridge_src"
 
@@ -142,9 +197,6 @@ def install(progress: Callable[[str], None] | None = None) -> Path:
             except Exception:
                 pass
 
-    py = find_system_python()
-    if py is None:
-        raise RuntimeError("no-python")
     src = _bundled_bridge_src()
     if not (src / "daemon.py").exists():
         raise RuntimeError("no-sources")
@@ -153,19 +205,33 @@ def install(progress: Callable[[str], None] | None = None) -> Path:
     root.mkdir(parents=True, exist_ok=True)
     venv_dir = root / "steamprobe-venv"
 
-    _p("env")
-    r = subprocess.run(py + ["-m", "venv", str(venv_dir)],
-                       capture_output=True, timeout=180,
-                       creationflags=_CREATE_NO_WINDOW)
-    if r.returncode != 0:
-        raise RuntimeError("venv: " + (r.stderr or b"").decode(errors="replace")[:200])
+    py = find_system_python()
+    if py is not None:
+        _p("env")
+        r = subprocess.run(py + ["-m", "venv", str(venv_dir)],
+                           capture_output=True, timeout=180,
+                           creationflags=_CREATE_NO_WINDOW)
+        if r.returncode != 0:
+            raise RuntimeError("venv: " + (r.stderr or b"").decode(errors="replace")[:200])
+        vpy = venv_dir / "Scripts" / "python.exe"
+    else:
+        # No Python on this PC: provision the official embeddable runtime
+        # (~11 MB, no admin, no installer) — mirrors first for regions where
+        # python.org is slow or blocked.
+        _p("runtime")
+        vpy = _provision_embedded_runtime(venv_dir)
 
     _p("deps")
-    vpy = venv_dir / "Scripts" / "python.exe"
-    r = subprocess.run([str(vpy), "-m", "pip", "install", "--quiet", "playwright"],
-                       capture_output=True, timeout=900,
-                       creationflags=_CREATE_NO_WINDOW)
-    if r.returncode != 0:
+    ok = False
+    for extra in ([], ["-i", "https://pypi.tuna.tsinghua.edu.cn/simple"]):
+        r = subprocess.run([str(vpy), "-m", "pip", "install", "--quiet",
+                            "playwright"] + extra,
+                           capture_output=True, timeout=900,
+                           creationflags=_CREATE_NO_WINDOW)
+        if r.returncode == 0:
+            ok = True
+            break
+    if not ok:
         raise RuntimeError("pip: " + (r.stderr or b"").decode(errors="replace")[:200])
 
     _p("files")

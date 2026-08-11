@@ -50,6 +50,7 @@ _LINK = "#6dc0e8"
 _C_INGAME = "#a1cd5e"
 _C_ONLINE = "#6dc0e8"
 _C_OFFLINE = "#7a7c80"
+_C_AWAY = "#54748a"      # Steam's faded away-blue (name + icons all dim together)
 _SECTION = "#8a8c90"
 
 _FLAG_MOBILE = 0x200
@@ -111,6 +112,8 @@ def _avatar(url: str, size: int = 30) -> ft.Control:
 def _name_color(state: int, ingame: bool) -> str:
     if ingame:
         return _C_INGAME
+    if state in (3, 4):        # away / snooze — faded like real Steam
+        return _C_AWAY
     return _C_ONLINE if state else _C_OFFLINE
 
 
@@ -685,7 +688,9 @@ class SteamBridgeView(ft.Container):
                 if not path:
                     return False
             else:                          # raw bitmap from the clipboard
-                path = str(outbox / f"paste_{int(time.time())}.png")
+                sub = outbox / str(int(time.time()))
+                sub.mkdir(parents=True, exist_ok=True)
+                path = str(sub / "image.png")   # Steam names pasted uploads image.png
                 grab.save(path, "PNG")
         except Exception:
             return False
@@ -705,27 +710,38 @@ class SteamBridgeView(ft.Container):
                 self._attach_image(e.files[0].path)
 
     def _attach_image(self, path: str) -> None:
-        self._pending_img = path
+        # Steam-style upload dialog: preview, filename, Upload, Tag as Spoiler.
         name = Path(path).name
-        self._attach_chip.content = ft.Row([
-            ft.Image(src=path, width=44, height=44, fit=ft.ImageFit.COVER, border_radius=6),
-            ft.Text(name, size=12, color=_TEXT_PRIMARY, max_lines=1,
-                    overflow=ft.TextOverflow.ELLIPSIS, expand=True),
-            ft.Text("will be sent with ➤", size=11, color=_TEXT_FAINT),
-            ft.IconButton(ft.Icons.CLOSE, icon_size=14, icon_color=_TEXT_FAINT,
-                          tooltip="Remove", on_click=lambda e: self._clear_attach()),
-        ], spacing=8, vertical_alignment=ft.CrossAxisAlignment.CENTER)
-        self._attach_chip.visible = True
-        if self.page:
-            with contextlib.suppress(Exception):
-                self.page.update()
+        spoiler = ft.Checkbox(label="Tag as Spoiler", value=False,
+                              label_style=ft.TextStyle(size=13, color=_TEXT_FAINT))
+        dlg = ft.AlertDialog(
+            modal=False, bgcolor=_BG_MENU,
+            content=ft.Column([
+                ft.Image(src=path, width=380, height=280, fit=ft.ImageFit.CONTAIN,
+                         border_radius=6),
+                ft.Text(f"'{name}'", size=13, color=_TEXT_FAINT,
+                        text_align=ft.TextAlign.CENTER),
+                ft.ElevatedButton(
+                    "Upload", bgcolor="#3d6dcc", color="#ffffff", width=380,
+                    on_click=lambda e: self.page.run_task(
+                        self._do_upload, path, bool(spoiler.value), dlg)),
+                spoiler,
+            ], tight=True, spacing=10,
+               horizontal_alignment=ft.CrossAxisAlignment.CENTER),
+        )
+        with contextlib.suppress(Exception):
+            self.page.open(dlg)
 
-    def _clear_attach(self) -> None:
-        self._pending_img = None
-        self._attach_chip.visible = False
-        if self.page:
-            with contextlib.suppress(Exception):
-                self.page.update()
+    async def _do_upload(self, path: str, spoiler: bool, dlg) -> None:
+        with contextlib.suppress(Exception):
+            self.page.close(dlg)
+        if not self._active:
+            return
+        await self._render_live({"from_me": True, "name": self._own_name,
+                                 "avatar": self._own_avatar, "text": "",
+                                 "images": [path], "stickers": []})
+        await self._cmd({"cmd": "send_image", "acct": self._active,
+                         "path": path, "spoiler": bool(spoiler)})
 
     def _not_yet(self, label: str) -> None:
         with contextlib.suppress(Exception):
@@ -807,17 +823,21 @@ class SteamBridgeView(ft.Container):
 
     # ── friends list ─────────────────────────────────────────────────────────
     def _status_badges(self, f: dict) -> list:
+        # every badge matches the name's status color, like real Steam (green
+        # in-game, blue online, FADED blue away/snooze)
         out = []
         flags = int(f.get("flags", 0))
-        if int(f.get("state", 0)) in (3, 4):     # away / snooze — Steam's zZZ
-            out.append(ft.Text("zᶻᶻ", size=10, weight=ft.FontWeight.BOLD, color=_C_INGAME))
-        if flags & _FLAG_VR:                      # small green VR pill like real Steam
+        state, ingame = int(f.get("state", 0)), bool(f.get("ingame"))
+        col = _name_color(state, ingame)
+        if state in (3, 4):                      # away / snooze — Steam's zZZ
+            out.append(ft.Text("zᶻᶻ", size=10, weight=ft.FontWeight.BOLD, color=col))
+        if flags & _FLAG_VR:                      # small VR pill like real Steam
             out.append(ft.Container(
                 content=ft.Text("VR", size=7.5, weight=ft.FontWeight.BOLD, color="#1b1c1e"),
-                bgcolor=_C_INGAME, border_radius=2,
+                bgcolor=col, border_radius=2,
                 padding=ft.padding.only(left=2, right=2, top=0, bottom=0)))
         if flags & _FLAG_MOBILE:
-            out.append(ft.Icon(ft.Icons.SMARTPHONE, size=12, color=_C_INGAME))
+            out.append(ft.Icon(ft.Icons.SMARTPHONE, size=12, color=col))
         return out
 
     def _unread_badge(self, count: int) -> ft.Control:
@@ -932,6 +952,7 @@ class SteamBridgeView(ft.Container):
         # permanent highlight on the open chat's friend.
         return ft.Container(
             content=gd, padding=ft.padding.symmetric(horizontal=8, vertical=4),
+            tooltip=f.get("name") or "",   # full name for rows that ellipsize
             border_radius=6, bgcolor=ft.Colors.TRANSPARENT, on_hover=self._row_hover)
 
     def _row_hover(self, e) -> None:
@@ -1406,9 +1427,23 @@ class SteamBridgeView(ft.Container):
         return ft.Container(
             content=ft.GestureDetector(
                 content=img, mouse_cursor=ft.MouseCursor.CLICK,
-                on_tap=lambda e, u=url: self.page and self.page.launch_url(u),
+                on_tap=lambda e, u=url: self._show_image_viewer(u),
                 on_secondary_tap_down=lambda e, u=url: self._copy_link(u)),
             padding=ft.padding.only(top=2))
+
+    def _show_image_viewer(self, url: str) -> None:
+        # Pop-out viewer like real Steam (click an image to enlarge).
+        actions = []
+        if url.startswith("http"):
+            actions = [ft.TextButton("Open in browser",
+                                     on_click=lambda e, u=url: self.page.launch_url(u)),
+                       ft.TextButton("Copy link",
+                                     on_click=lambda e, u=url: self._copy_link(u))]
+        dlg = ft.AlertDialog(
+            modal=False, bgcolor=_BG_MENU, actions=actions,
+            content=ft.Image(src=url, width=820, height=560, fit=ft.ImageFit.CONTAIN))
+        with contextlib.suppress(Exception):
+            self.page.open(dlg)
 
     def _copy_link(self, url: str) -> None:
         if not self.page:
@@ -1598,17 +1633,7 @@ class SteamBridgeView(ft.Container):
 
     async def _send(self) -> None:
         text = (self._entry.value or "").strip()
-        if not self._active:
-            return
-        # queued image goes first (uploaded by the helper; commit delivers it)
-        if self._pending_img:
-            img = self._pending_img
-            self._clear_attach()
-            await self._render_live({"from_me": True, "name": self._own_name,
-                                     "avatar": self._own_avatar, "text": "",
-                                     "images": [img], "stickers": []})
-            await self._cmd({"cmd": "send_image", "acct": self._active, "path": img})
-        if not text:
+        if not self._active or not text:
             return
         self._entry.value = ""
         if self.page:

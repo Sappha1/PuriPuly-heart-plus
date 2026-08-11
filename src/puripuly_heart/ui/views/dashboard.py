@@ -19,7 +19,7 @@ from puripuly_heart.ui.fonts import font_for_language
 from puripuly_heart.ui.i18n import get_locale, language_name, t
 from puripuly_heart.ui.overlay_peer_contract import OverlayPeerConsumerContract
 
-_BUILD_TAG = "r417-steam-beta"  #increment each build so user can confirm version
+_BUILD_TAG = "r418-steam-beta"  #increment each build so user can confirm version
 
 # ── VRCT-style dark palette ──────────────────────────────────────────────────
 _BG_MAIN = "#2e2f32"
@@ -1790,10 +1790,6 @@ class DashboardView(ft.Row):
             self._steam_view = SteamBridgeView()
         except Exception:
             self._steam_view = ft.Container()
-        # Hoist the Steam view's language selector up into the tab bar (far right).
-        with contextlib.suppress(Exception):
-            if getattr(self._steam_view, "lang_bar", None) is not None:
-                self._steam_lang_slot.content = self._steam_view.lang_bar
         self._chat_body = ft.Container(content=self._vrc_chat_body, expand=True)
         right_panel = ft.Container(
             content=ft.Column(
@@ -1871,8 +1867,6 @@ class DashboardView(ft.Row):
             self._app_sidebar.visible = (which != "steam")
         with contextlib.suppress(Exception):
             self._steam_side.visible = (which == "steam")
-        with contextlib.suppress(Exception):
-            self._steam_lang_slot.visible = (which == "steam")
         # Update FIRST so the Steam view is mounted (its .page is set) BEFORE
         # activate() runs — otherwise activate can't schedule the connect and it
         # sits on "connecting" forever.

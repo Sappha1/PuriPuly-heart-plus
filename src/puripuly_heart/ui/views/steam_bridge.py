@@ -354,8 +354,8 @@ class SteamBridgeView(ft.Container):
         # Steam-tab settings panel (gear in the top bar) + input right-click menu.
         self._settings_panel = ft.Container(
             visible=False, bgcolor=_BG_MENU, border_radius=10,
-            border=ft.border.all(1, "#4b4c4f"), width=330,
-            right=8, top=44, padding=10,
+            border=ft.border.all(1, "#4b4c4f"), width=320,
+            right=8, top=44, padding=8,
             shadow=ft.BoxShadow(blur_radius=16, color="#99000000", offset=ft.Offset(0, 4)))
         self._settings_backdrop = ft.GestureDetector(
             visible=False, on_tap=lambda e: self._toggle_settings(False),
@@ -520,40 +520,69 @@ class SteamBridgeView(ft.Container):
             self.page.update()
 
     def _build_settings_panel(self) -> None:
-        def row(label, value, cb):
-            return ft.Row([
-                ft.Text(label, size=13, color=_TEXT_PRIMARY, expand=True),
-                ft.Switch(value=value, active_color=_TOGGLE_ON, scale=0.8,
-                          on_change=cb),
-            ], vertical_alignment=ft.CrossAxisAlignment.CENTER)
-
-        def btn(label, cb, tip=None):
+        # Chat-tab "Output Format" style: radio list for the send format (always
+        # expanded, pill showing the current pick), checkbox rows for display
+        # toggles, compact 28-30px rows throughout.
+        def sect(label):
             return ft.Container(
-                content=ft.Text(label, size=13, color=_TEXT_PRIMARY),
-                padding=ft.padding.symmetric(horizontal=8, vertical=7),
-                border_radius=6, ink=True, on_click=cb, tooltip=tip)
+                content=ft.Text(label, size=10, weight=ft.FontWeight.BOLD, color=_SECTION),
+                padding=ft.padding.only(left=6, top=2))
 
         def lang_row(label, which, code):
-            return ft.Row([
-                ft.Text(label, size=13, color=_TEXT_PRIMARY, expand=True),
-                ft.PopupMenuButton(
-                    content=ft.Row([
-                        ft.Text(self._lang_name(code), size=13, color=_TOGGLE_ON,
-                                weight=ft.FontWeight.W_500),
-                        ft.Icon(ft.Icons.ARROW_DROP_DOWN, size=14, color=_TEXT_FAINT),
-                    ], spacing=0, tight=True),
-                    items=[ft.PopupMenuItem(
-                        text=self._lang_name(c), on_click=(lambda e, c=c, w=which: self._pick_lang(w, c)))
-                        for c, l in _LANGS]),
-            ], vertical_alignment=ft.CrossAxisAlignment.CENTER)
+            return ft.Container(
+                height=30, padding=ft.padding.symmetric(horizontal=6),
+                content=ft.Row([
+                    ft.Text(label, size=13, color=_TEXT_PRIMARY, expand=True),
+                    ft.PopupMenuButton(
+                        content=ft.Row([
+                            ft.Text(self._lang_name(code), size=13, color=_TOGGLE_ON,
+                                    weight=ft.FontWeight.W_500),
+                            ft.Icon(ft.Icons.ARROW_DROP_DOWN, size=14, color=_TEXT_FAINT),
+                        ], spacing=0, tight=True),
+                        items=[ft.PopupMenuItem(
+                            text=self._lang_name(c),
+                            on_click=(lambda e, c=c, w=which: self._pick_lang(w, c)))
+                            for c, _l in _LANGS]),
+                ], vertical_alignment=ft.CrossAxisAlignment.CENTER))
 
-        self._settings_panel.content = ft.Column([
-            ft.Text("STEAM CHAT SETTINGS", size=11, weight=ft.FontWeight.BOLD,
-                    color=_SECTION),
-            # Applies to FUTURE messages right away; history only via Retranslate.
-            lang_row("My language", "from", self._src_lang),
-            lang_row("Their language", "to", self._tgt_lang),
-            ft.Row([
+        def check_row(label, val, cb):
+            return ft.Container(
+                content=ft.Row([
+                    ft.Icon(ft.Icons.CHECK_BOX if val else ft.Icons.CHECK_BOX_OUTLINE_BLANK,
+                            size=17, color=_TOGGLE_ON if val else _TEXT_FAINT),
+                    ft.Text(label, size=13, color=_TEXT_PRIMARY),
+                ], spacing=8, vertical_alignment=ft.CrossAxisAlignment.CENTER),
+                height=28, border_radius=6, ink=True,
+                padding=ft.padding.symmetric(horizontal=6),
+                on_click=lambda e, v=not val: cb(v))
+
+        def radio_row(label, selected, on_pick):
+            return ft.Container(
+                content=ft.Row([
+                    ft.Icon(ft.Icons.RADIO_BUTTON_CHECKED if selected
+                            else ft.Icons.RADIO_BUTTON_UNCHECKED,
+                            size=16, color=_TOGGLE_ON if selected else _TEXT_FAINT),
+                    ft.Text(label, size=13, color=_TEXT_PRIMARY),
+                ], spacing=8, vertical_alignment=ft.CrossAxisAlignment.CENTER),
+                height=28, border_radius=6, ink=True,
+                padding=ft.padding.only(left=14, right=6),
+                on_click=on_pick)
+
+        def btn(label, on_click, tip=None):
+            return ft.Container(
+                content=ft.Text(label, size=13, color=_TEXT_PRIMARY),
+                height=30, border_radius=6, ink=True, tooltip=tip,
+                padding=ft.padding.only(left=6, top=6), on_click=on_click)
+
+        pill = ft.Container(
+            content=ft.Text(_SEND_FMT_LABEL[self._send_fmt], size=12,
+                            color=_TOGGLE_ON, weight=ft.FontWeight.W_500),
+            border=ft.border.all(1, _TOGGLE_ON), border_radius=14,
+            padding=ft.padding.symmetric(horizontal=10, vertical=3))
+
+        prov_row = ft.Container(
+            height=30, padding=ft.padding.symmetric(horizontal=6),
+            content=ft.Row([
                 ft.Text("Translator", size=13, color=_TEXT_PRIMARY, expand=True),
                 ft.PopupMenuButton(
                     content=ft.Row([
@@ -568,44 +597,55 @@ class SteamBridgeView(ft.Container):
                            ft.PopupMenuItem(
                                text="Free (Bing) — no key, no cost",
                                on_click=lambda e: self._set_tr_provider("bing"))]),
-            ], vertical_alignment=ft.CrossAxisAlignment.CENTER),
+            ], vertical_alignment=ft.CrossAxisAlignment.CENTER))
+
+        self._settings_panel.content = ft.Column([
+            ft.Text("STEAM CHAT SETTINGS", size=11, weight=ft.FontWeight.BOLD,
+                    color=_SECTION),
+            lang_row("My language", "from", self._src_lang),
+            lang_row("Their language", "to", self._tgt_lang),
+            prov_row,
             ft.Divider(height=1, color="#4b4c4f"),
-            ft.Text("SENT TO THEIR CHAT", size=10, weight=ft.FontWeight.BOLD, color=_SECTION),
-            ft.Row([
-                ft.Text("Send as", size=13, color=_TEXT_PRIMARY, expand=True),
-                ft.PopupMenuButton(
-                    content=ft.Row([
-                        ft.Text(_SEND_FMT_LABEL[self._send_fmt],
-                                size=13, color=_TOGGLE_ON, weight=ft.FontWeight.W_500),
-                        ft.Icon(ft.Icons.ARROW_DROP_DOWN, size=14, color=_TEXT_FAINT),
-                    ], spacing=0, tight=True),
-                    items=[ft.PopupMenuItem(text=lbl,
-                                            on_click=(lambda e, m=m: self._set_send_fmt(m)))
-                           for m, lbl in _SEND_FMT_LABEL.items()]),
-            ], vertical_alignment=ft.CrossAxisAlignment.CENTER),
+            ft.Container(
+                height=30, padding=ft.padding.symmetric(horizontal=6),
+                content=ft.Row([
+                    ft.Text("Send as", size=13, color=_TEXT_PRIMARY, expand=True),
+                    pill,
+                ], vertical_alignment=ft.CrossAxisAlignment.CENTER)),
+            *[radio_row(lbl, m == self._send_fmt,
+                        (lambda e, m=m: self._set_send_fmt(m)))
+              for m, lbl in _SEND_FMT_LABEL.items()],
             ft.Divider(height=1, color="#4b4c4f"),
-            ft.Text("SHOWN ON MY END", size=10, weight=ft.FontWeight.BOLD, color=_SECTION),
-            row("Show pinyin / romaji", self._show_pinyin, self._set_pinyin),
-            row("Show original text", self._show_original, self._set_show_original),
-            row("Translate their messages", self._tr_incoming, self._set_tr_incoming),
+            sect("SHOWN ON MY END"),
+            check_row("Show pinyin / romaji", self._show_pinyin, self._set_pinyin),
+            check_row("Show original text", self._show_original, self._set_show_original),
+            check_row("Translate their messages", self._tr_incoming, self._set_tr_incoming),
             ft.Divider(height=1, color="#4b4c4f"),
             btn("Clean up / re-render chat", lambda e: self._reload_chat(),
                 tip="Re-group and re-render this chat's history"),
             btn("Retranslate history", lambda e: self._retranslate_prompt(),
                 tip="Redo translations (e.g. after changing language)"),
-        ], spacing=8, tight=True)
+        ], spacing=2, tight=True)
 
-    def _set_pinyin(self, e) -> None:
-        self._show_pinyin = bool(e.control.value)
+    def _set_pinyin(self, v) -> None:
+        self._show_pinyin = bool(v)
         self._pinyin_from_prefs = True
         self._save_prefs()
         self._rerender_chat()
 
-    def _set_show_original(self, e) -> None:
-        self._show_original = bool(e.control.value)
+        if self._settings_panel.visible:
+            self._build_settings_panel()
+            with contextlib.suppress(Exception):
+                self._settings_panel.update()
+    def _set_show_original(self, v) -> None:
+        self._show_original = bool(v)
         self._save_prefs()
         self._rerender_chat()
 
+        if self._settings_panel.visible:
+            self._build_settings_panel()
+            with contextlib.suppress(Exception):
+                self._settings_panel.update()
     def _set_tr_provider(self, prov: str) -> None:
         self._tr_provider = prov
         self._save_prefs()
@@ -622,11 +662,15 @@ class SteamBridgeView(ft.Container):
             with contextlib.suppress(Exception):
                 self._settings_panel.update()
 
-    def _set_tr_incoming(self, e) -> None:
-        self._tr_incoming = bool(e.control.value)
+    def _set_tr_incoming(self, v) -> None:
+        self._tr_incoming = bool(v)
         self._save_prefs()
         self._rerender_chat()
 
+        if self._settings_panel.visible:
+            self._build_settings_panel()
+            with contextlib.suppress(Exception):
+                self._settings_panel.update()
     def _set_tr_outgoing(self, e) -> None:
         self._tr_outgoing = bool(e.control.value)
         self._save_prefs()
@@ -650,9 +694,9 @@ class SteamBridgeView(ft.Container):
                 self.page.update()
             if was_following:
                 # the rebuild fires on_scroll events that can flip _following off
-                # mid-flight (the fast-toggle bug) — restore and re-anchor
-                self._following = True
-                self._scroll_to_end(0)
+                # mid-flight (the fast-toggle bug) — restore and re-anchor AFTER
+                # the client re-lays-out the changed content
+                self.page.run_task(self._anchor_end)
             self.page.run_task(self._fill_translations, blocks, self._open_seq)
 
     async def _fill_translations(self, blocks: list, seq: int) -> None:
@@ -1320,7 +1364,17 @@ class SteamBridgeView(ft.Container):
 
     def _scroll_to_end(self, duration: int = 80) -> None:
         with contextlib.suppress(Exception):
-            self._messages.scroll_to(offset=-1, duration=duration)
+            self._messages.scroll_to(offset=-1, duration=max(1, duration))
+
+    async def _anchor_end(self) -> None:
+        # After a rebuild the client needs a beat to lay out the new content —
+        # scrolling immediately lands on stale geometry (the toggle-pushes-view-
+        # off-the-end bug). Anchor twice across a short delay to be sure.
+        for delay in (0.06, 0.25):
+            await asyncio.sleep(delay)
+            self._following = True
+            with contextlib.suppress(Exception):
+                self._messages.scroll_to(offset=-1, duration=40)
 
     def _jump_to_latest(self) -> None:
         with contextlib.suppress(Exception):
@@ -1624,8 +1678,8 @@ class SteamBridgeView(ft.Container):
                 self._seen_chat_ts.get(self._active or 0, 0),
                 max(int(b.get("_ts") or 0) for b in blocks))
         self._rebuild_tabs()               # clears this tab's unread dot
-        self._following = True
-        self._scroll_to_end(0)
+        if self.page:
+            self.page.run_task(self._anchor_end)
         if self.page:
             self.page.update()
         # translate all blocks at once (cached ones are instant) instead of

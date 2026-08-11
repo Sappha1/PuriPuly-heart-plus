@@ -1015,5 +1015,6 @@
   "steam.popped_title": "別ウィンドウで開いています",
   "steam.popped_caption": "そのウィンドウを閉じるか、下のボタンでここに戻せます。",
   "steam.popped_btn": "ここに戻す",
-  "steam.close": "閉じる"
+  "steam.close": "閉じる",
+  "steam.power_tip": "Steamモジュールのオン/オフ"
 }

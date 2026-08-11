@@ -19,7 +19,7 @@ from puripuly_heart.ui.fonts import font_for_language
 from puripuly_heart.ui.i18n import get_locale, language_name, t
 from puripuly_heart.ui.overlay_peer_contract import OverlayPeerConsumerContract
 
-_BUILD_TAG = "r439"  #increment each build so user can confirm version
+_BUILD_TAG = "r440"  #increment each build so user can confirm version
 
 # ── VRCT-style dark palette ──────────────────────────────────────────────────
 _BG_MAIN = "#2e2f32"
@@ -1556,6 +1556,16 @@ class DashboardView(ft.Row):
         # friends column itself occupies the SIDEBAR SLOT (see _select_chat_tab),
         # so the tab strip is identical on both tabs — nothing extra in this row.
         self._steam_lang_slot = ft.Container(visible=False)
+        self._steam_header_actions = ft.Row([
+            ft.IconButton(ft.Icons.SETTINGS_OUTLINED, icon_size=17,
+                          icon_color=_TEXT_FAINT,
+                          tooltip=t("steam.settings_title"),
+                          on_click=lambda e: self._steam_header_gear()),
+            ft.IconButton(ft.Icons.POWER_SETTINGS_NEW, icon_size=17,
+                          icon_color=_TEXT_FAINT,
+                          tooltip=t("steam.power_tip"),
+                          on_click=lambda e: self._steam_header_power()),
+        ], spacing=0, visible=False)
         chat_header = ft.Row(
             [
                 self._tab_vrc,
@@ -1564,6 +1574,7 @@ class DashboardView(ft.Row):
                 ft.Container(expand=True),
                 self._vrc_header_actions,
                 self._steam_lang_slot,
+                self._steam_header_actions,
             ],
             vertical_alignment=ft.CrossAxisAlignment.CENTER,
             spacing=0,
@@ -1829,6 +1840,17 @@ class DashboardView(ft.Row):
                     self._set_steam_chip_active(bool(self._steam_view._module_on))
         self.controls = [sidebar, right_panel]
 
+    def _steam_header_gear(self) -> None:
+        with contextlib.suppress(Exception):
+            self._steam_view._toggle_settings()
+
+    def _steam_header_power(self) -> None:
+        """Power button: jump to the module page (Turn off while running, the
+        Turn on screen while off)."""
+        with contextlib.suppress(Exception):
+            sv = self._steam_view
+            sv._show_state_overlay("idle" if sv._module_on else "off")
+
     def _set_steam_chip_active(self, active: bool) -> None:
         """Grey the Steam tab chip while the module is off — it stays clickable
         (that's where the Turn on screen lives), it just reads inactive."""
@@ -1856,6 +1878,8 @@ class DashboardView(ft.Row):
         # VRChat-only header actions don't apply to the Steam tab.
         with contextlib.suppress(Exception):
             self._vrc_header_actions.visible = (which != "steam")
+        with contextlib.suppress(Exception):
+            self._steam_header_actions.visible = (which == "steam")
         # The Steam friends column occupies the SIDEBAR SLOT — a full-height column
         # in the app sidebar's exact place (same 220px width, brand header at the
         # very top, divider, then the friends list) — true Chat-tab parity: nothing

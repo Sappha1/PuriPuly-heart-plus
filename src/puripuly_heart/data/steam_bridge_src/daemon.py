@@ -253,7 +253,8 @@ class Daemon:
         await self.push_state()
 
     def _name(self, acct: int) -> str:
-        return self.convos.get(acct, {}).get("name", "") or "Them"
+        c = self.convos.get(acct, {})
+        return c.get("nick") or c.get("name", "") or "Them"
 
     def _avatar(self, acct: int) -> str:
         return self.convos.get(acct, {}).get("avatar", "")

@@ -187,9 +187,12 @@ async () => {
     let game = "";
     if (ingame) game = appName(appid) || (p.m_strGameExtraInfo || "") || "In-Game";
     let fav = false; try { fav = !!fs.m_FavoritesStore.BIsFavorited(acct); } catch (e) {}
+    let nick = "";
+    try { nick = f.m_strNickname || (p && p.m_strNickname) || ""; } catch (e) {}
     out.push({ acct, name: nameOf(f), avatar: avatarOf(f), state, ingame, game,
                appid, icon: ingame ? appIcon(appid) : "",
                flags: p ? (p.m_unPersonaStateFlags || 0) : 0,
+               nick, real: (p && p.m_strPlayerName) || "",
                fav, groups: groupOf[acct] || [], last_chat: lastChat[acct] || 0,
                unread: unread[acct] || 0 });
   }

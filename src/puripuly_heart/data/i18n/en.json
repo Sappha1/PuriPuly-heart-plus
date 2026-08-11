@@ -1015,5 +1015,6 @@
   "steam.popped_title": "Opened in its own window",
   "steam.popped_caption": "Close that window — or use the button below — to bring the chat back here.",
   "steam.popped_btn": "Bring it back",
-  "steam.close": "Close"
+  "steam.close": "Close",
+  "steam.power_tip": "Turn the Steam module on or off"
 }

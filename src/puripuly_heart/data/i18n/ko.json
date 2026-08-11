@@ -1015,5 +1015,6 @@
   "steam.popped_title": "별도 창에서 열림",
   "steam.popped_caption": "그 창을 닫거나 아래 버튼을 누르면 여기로 돌아옵니다.",
   "steam.popped_btn": "다시 가져오기",
-  "steam.close": "닫기"
+  "steam.close": "닫기",
+  "steam.power_tip": "Steam 모듈 켜기/끄기"
 }

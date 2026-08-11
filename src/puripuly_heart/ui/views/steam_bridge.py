@@ -77,6 +77,17 @@ def _send_fmt_labels() -> dict:
 _EMOTE_RE = re.compile(r"[:ː]([a-zA-Z][a-zA-Z0-9_]{1,})[:ː]")
 
 
+def _disp_name(f: dict) -> str:
+    """Steam behavior: the nickname (when set) is the shown name."""
+    return f.get("nick") or f.get("name") or ""
+
+
+def _est_text_w(s: str, size: float = 13.0) -> int:
+    """Rough pixel width: CJK ~1em, latin ~0.55em — good enough to decide
+    whether a row's name will ellipsize (tooltips only then)."""
+    return int(sum(size if ord(ch) > 0x2E80 else size * 0.55 for ch in (s or "")))
+
+
 def _extract_emoticons(text: str) -> tuple[str, list[str]]:
     """Pull Steam emoticon tokens (:name:) out of the text so they can render as
     images; returns (text_without_tokens, [names])."""
@@ -298,7 +309,7 @@ class SteamBridgeView(ft.Container):
         self._tab_strip = ft.Row([], spacing=6, scroll=ft.ScrollMode.AUTO, expand=True)
         settings_btn = ft.IconButton(
             ft.Icons.SETTINGS_OUTLINED, icon_size=17, icon_color=_TEXT_FAINT,
-            tooltip="Steam chat settings",
+            tooltip="Steam chat settings", visible=False,   # lives in the app header now
             on_click=lambda e: self._toggle_settings(),
             style=ft.ButtonStyle(overlay_color=ft.Colors.TRANSPARENT))
         popout_btn = ft.IconButton(
@@ -307,7 +318,11 @@ class SteamBridgeView(ft.Container):
             on_click=lambda e: (self.on_popout() if callable(self.on_popout) else None),
             style=ft.ButtonStyle(overlay_color=ft.Colors.TRANSPARENT))
         top_bar = ft.Container(
-            content=ft.Row([self._tab_strip, popout_btn, settings_btn], spacing=8,
+            content=ft.Row([
+                ft.Container(content=self._tab_strip, expand=True,
+                             padding=ft.padding.only(bottom=6)),
+                popout_btn, settings_btn,
+            ], spacing=8,
                            vertical_alignment=ft.CrossAxisAlignment.CENTER),
             padding=ft.padding.only(left=8, right=12, top=6, bottom=4), bgcolor=_BG_MAIN)
         self._tab_bar = ft.Container(visible=False)   # kept: _rebuild_tabs toggles it
@@ -1427,9 +1442,12 @@ class SteamBridgeView(ft.Container):
         else:
             sub, sub_color = "Offline", _TEXT_FAINT
         name_row = ft.Row([
-            ft.Text(f.get("name") or "Steam friend", size=13, weight=ft.FontWeight.W_500,
+            ft.Text(_disp_name(f) or "Steam friend", size=13, weight=ft.FontWeight.W_500,
                     color=_name_color(state, ingame), max_lines=1,
                     overflow=ft.TextOverflow.ELLIPSIS),
+            *([ft.Text("*", size=11, color=_TEXT_FAINT,
+                       tooltip=f.get("real") or f.get("name") or "")]
+              if f.get("nick") else []),
             *self._status_badges(f),
         ], spacing=4, tight=True)
         left = []
@@ -1450,9 +1468,12 @@ class SteamBridgeView(ft.Container):
             on_secondary_tap_down=lambda e, fr=f: self._show_ctx(e, fr))
         # Highlight on HOVER (like the real Steam friends list) rather than pinning a
         # permanent highlight on the open chat's friend.
+        disp = _disp_name(f)
         return ft.Container(
             content=gd, padding=ft.padding.symmetric(horizontal=8, vertical=4),
-            tooltip=f.get("name") or "",   # full name for rows that ellipsize
+            # tooltip ONLY when the name will actually ellipsize (the always-on
+            # instant tooltips annoyed on every hover)
+            tooltip=(disp if _est_text_w(disp) > 132 else None),
             border_radius=6, bgcolor=ft.Colors.TRANSPARENT, on_hover=self._row_hover)
 
     def _row_hover(self, e) -> None:
@@ -1661,10 +1682,14 @@ class SteamBridgeView(ft.Container):
         row_items = [
             _avatar(f.get("avatar", ""), 26),
             ft.Column([
-                ft.Text(f.get("name") or "Chat", size=13,
-                        color=_TEXT_PRIMARY if active else _TEXT_FAINT,
-                        max_lines=1, overflow=ft.TextOverflow.ELLIPSIS,
-                        weight=ft.FontWeight.BOLD if active else ft.FontWeight.W_500),
+                ft.Row([
+                    ft.Text(_disp_name(f) or "Chat", size=13,
+                            color=_TEXT_PRIMARY if active else _TEXT_FAINT,
+                            max_lines=1, overflow=ft.TextOverflow.ELLIPSIS),
+                    *([ft.Text("*", size=10, color=_TEXT_FAINT,
+                               tooltip=f.get("real") or f.get("name") or "")]
+                      if f.get("nick") else []),
+                ], spacing=2, tight=True),
                 ft.Text(sub, size=10, color=_name_color(state, ingame) if active else _TEXT_FAINT,
                         max_lines=1, overflow=ft.TextOverflow.ELLIPSIS),
             ], spacing=0, tight=True),
@@ -1818,7 +1843,8 @@ class SteamBridgeView(ft.Container):
     # "friends"/"own" events replace it seamlessly when they arrive.
     def _save_snapshot(self) -> None:
         with contextlib.suppress(Exception):
-            snap = {"friends": list(self._friends.values()),
+            snap = {"seen": {str(k): v for k, v in self._seen_chat_ts.items()},
+                    "friends": list(self._friends.values()),
                     "own": {"acct": self._own, "name": self._own_name,
                             "avatar": self._own_avatar, "state": self._own_state,
                             "invites": self._own_invites,
@@ -1835,6 +1861,9 @@ class SteamBridgeView(ft.Container):
             if not f.exists():
                 return
             snap = json.loads(f.read_text(encoding="utf-8"))
+            for k, v in (snap.get("seen") or {}).items():
+                with contextlib.suppress(Exception):
+                    self._seen_chat_ts.setdefault(int(k), int(v))
             items = snap.get("friends") or []
             if items:
                 self._friends = {int(i["acct"]): i for i in items}
@@ -2174,6 +2203,9 @@ class SteamBridgeView(ft.Container):
         blocks = self._coalesce(messages)
         if seq != self._open_seq:
             return
+        # Steam's own last-chat clock can run ahead of the newest HISTORY entry
+        # (own sends, filtered items) — without marking live renders too, a
+        # background tab grew a phantom amber dot right after you talked in it.
         self._pend = None                  # drop any half-buffered live lines
         self._messages.controls.clear()
         self._following = True             # fresh chat follows the newest message
@@ -2245,7 +2277,12 @@ class SteamBridgeView(ft.Container):
             "images": [], "stickers": [], "ts": p.get("ts") or 0,
         })
 
+    def _mark_seen(self, acct: int, ts: int) -> None:
+        if acct and ts:
+            self._seen_chat_ts[acct] = max(self._seen_chat_ts.get(acct, 0), int(ts))
+
     async def _render_live(self, m: dict) -> None:
+        self._mark_seen(self._active or 0, int(m.get("ts") or 0))
         text, emos = _extract_emoticons((m.get("text", "") or "").strip())
         ts = int(m.get("ts") or 0) or int(time.time())
         b = {"from_me": bool(m.get("from_me")), "name": m.get("name", ""),

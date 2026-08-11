@@ -1015,5 +1015,6 @@
   "steam.popped_title": "已在独立窗口中打开",
   "steam.popped_caption": "关闭那个窗口，或使用下面的按钮，即可把聊天带回这里。",
   "steam.popped_btn": "带回此处",
-  "steam.close": "关闭"
+  "steam.close": "关闭",
+  "steam.power_tip": "开关 Steam 模块"
 }

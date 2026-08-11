@@ -1001,5 +1001,6 @@
   "settings.module.install_failed": "Install failed: {err}",
   "steam.loading_history": "Loading chat history",
   "steam.not_delivered": "Connection to Steam was down — your message will be sent automatically once it reconnects.",
-  "steam.redelivered": "Reconnected — your queued messages were sent."
+  "steam.redelivered": "Reconnected — your queued messages were sent.",
+  "steam.no_messages": "No messages here yet"
 }

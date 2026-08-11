@@ -1001,5 +1001,6 @@
   "settings.module.install_failed": "安装失败：{err}",
   "steam.loading_history": "正在加载聊天记录",
   "steam.not_delivered": "与 Steam 的连接已断开——重新连接后你的消息会自动发送。",
-  "steam.redelivered": "已重新连接——排队的消息已发送。"
+  "steam.redelivered": "已重新连接——排队的消息已发送。",
+  "steam.no_messages": "还没有消息"
 }

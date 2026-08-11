@@ -220,6 +220,7 @@ class SteamBridgeView(ft.Container):
         self.translator_is_paid = None
         self.translator_value = None   # injected: resolved model value (cache key)
         self._resend_queue: list = []  # sends attempted while the helper was down
+        self._chat_cache: dict = {}    # acct -> last-rendered history blocks
         self._module_on = True         # module toggle: off = helper not running, no RAM
         self._pend: dict | None = None   # short buffer: rapid same-sender lines → ONE block
         self._pend_task = None
@@ -2030,9 +2031,17 @@ class SteamBridgeView(ft.Container):
         self._following = True             # fresh chat follows the newest message
         self._last_block = None            # fresh chat — don't coalesce across it
         self._hist_blocks = blocks
+        self._chat_cache[self._active or 0] = blocks
         # OLD messages are never grouped — each gets its own avatar+name block.
         for b in blocks:
             self._messages.controls.append(self._block_control(b))
+        if not blocks:
+            self._messages.controls.append(ft.Container(
+                content=ft.Text(_T("steam.no_messages",
+                                   default="No messages here yet"),
+                                size=12.5, color=_TEXT_FAINT),
+                alignment=ft.alignment.center,
+                padding=ft.padding.only(top=40)))
         if blocks:
             self._seen_chat_ts[self._active or 0] = max(
                 self._seen_chat_ts.get(self._active or 0, 0),
@@ -2192,10 +2201,24 @@ class SteamBridgeView(ft.Container):
         # chat's history arrives (then _render_history swaps atomically), so a
         # fast switch doesn't flash blank.
         self._entry.disabled = False   # let them type right away, don't wait for load
-        if not self._messages.controls:
-            # First open with nothing on screen: show a loading state instead of
-            # a blank pane while the helper fetches this chat's history
-            # (_render_history swaps it out; an empty chat clears it too).
+        # ALWAYS swap the pane on a tab switch — keeping the previous chat
+        # visible read as "wrong chat shown". Cached chats paint instantly and
+        # the fresh fetch replaces them silently; uncached ones show a loading
+        # state (never a blank wall, and never someone else's messages).
+        self._pend = None
+        self._last_block = None
+        self._messages.controls.clear()
+        cached = self._chat_cache.get(acct)
+        if cached:
+            self._hist_blocks = cached
+            self._following = True
+            for b in cached:
+                b.pop("_ctrl", None)
+                self._messages.controls.append(self._block_control(b))
+            if self.page:
+                self.page.run_task(self._anchor_end)
+                self.page.run_task(self._fill_translations, cached, self._open_seq)
+        else:
             self._messages.controls.append(ft.Container(
                 content=ft.Row([
                     ft.ProgressRing(width=16, height=16, stroke_width=2,
@@ -2356,8 +2379,14 @@ class SteamBridgeView(ft.Container):
             if self.page:
                 self.page.update()
         elif kind == "history":
-            if int(ev.get("acct", 0)) == self._active:
+            h_acct = int(ev.get("acct", 0))
+            if h_acct == self._active:
                 await self._render_history(ev.get("messages", []), self._open_seq)
+            else:
+                # late history for a chat we already left — cache it so the next
+                # switch there paints instantly
+                with contextlib.suppress(Exception):
+                    self._chat_cache[h_acct] = self._coalesce(ev.get("messages", []))
         elif kind == "opened":
             # Do NOT set self._active here — it's already set by _open() to what the
             # user last clicked. A late "opened" from a chat they switched AWAY from

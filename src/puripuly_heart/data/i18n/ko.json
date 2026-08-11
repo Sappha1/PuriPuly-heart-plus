@@ -1001,5 +1001,6 @@
   "settings.module.install_failed": "설치 실패: {err}",
   "steam.loading_history": "채팅 기록 불러오는 중",
   "steam.not_delivered": "Steam 연결이 끊겨 있었습니다. 다시 연결되면 메시지가 자동으로 전송됩니다.",
-  "steam.redelivered": "다시 연결됨 — 대기 중이던 메시지를 보냈습니다."
+  "steam.redelivered": "다시 연결됨 — 대기 중이던 메시지를 보냈습니다.",
+  "steam.no_messages": "아직 메시지가 없습니다"
 }

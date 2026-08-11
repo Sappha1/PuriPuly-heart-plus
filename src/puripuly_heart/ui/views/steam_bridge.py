@@ -1937,7 +1937,12 @@ class SteamBridgeView(ft.Container):
                        ft.TextButton("Copy link",
                                      on_click=lambda e, u=url: self._copy_link(u))]
         dlg = ft.AlertDialog(
-            modal=False, bgcolor=_BG_MENU, actions=actions,
+            # Frameless like real Steam: the image floats on the dim backdrop
+            # (no surface box), so everywhere outside the picture closes it.
+            modal=False, bgcolor=ft.Colors.TRANSPARENT, elevation=0,
+            content_padding=0, inset_padding=ft.padding.all(12),
+            actions_padding=ft.padding.only(top=2, bottom=4),
+            actions=actions,
             content=ft.Image(src=url, width=820, height=560, fit=ft.ImageFit.CONTAIN))
         with contextlib.suppress(Exception):
             self.page.open(dlg)

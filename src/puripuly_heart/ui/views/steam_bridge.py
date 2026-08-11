@@ -144,6 +144,9 @@ class SteamBridgeView(ft.Container):
         self._own_state = 1
         self._own_invites = 0
         self._own_invisible = False
+        self._own_ingame = False
+        self._own_game = ""
+        self._pending_img: str | None = None   # queued image file to send
         self._show_pinyin = True     # seeded from the app's chat pinyin setting
         self._emoticons: list[str] = []
         self._active = None
@@ -151,6 +154,7 @@ class SteamBridgeView(ft.Container):
         self._last_block = None       # last rendered msg block, for same-sender coalescing
         self._tr_incoming = True      # translate their messages (Steam-tab setting)
         self._tr_outgoing = True      # translate my messages before sending
+        self._show_original = True    # show the original line above the translation
         self._pend: dict | None = None   # short buffer: rapid same-sender lines → ONE block
         self._pend_task = None
         self._hist_blocks: list = []  # blocks currently rendered (for retranslate)
@@ -267,14 +271,17 @@ class SteamBridgeView(ft.Container):
                                                    padding=ft.padding.all(8))),
                 emoji_btn,
                 ft.IconButton(ft.Icons.ATTACH_FILE, icon_size=18, icon_color=_TEXT_FAINT,
-                              tooltip="Attach (coming soon)",
-                              on_click=lambda e: self._not_yet("Attachments")),
+                              tooltip="Send an image",
+                              on_click=lambda e: self._pick_image()),
                 ft.IconButton(ft.Icons.MIC_NONE, icon_size=18, icon_color=_TEXT_FAINT,
                               tooltip="Voice message (coming soon)",
                               on_click=lambda e: self._not_yet("Voice messages")),
             ], spacing=4, vertical_alignment=ft.CrossAxisAlignment.CENTER),
             padding=ft.padding.symmetric(horizontal=8, vertical=6), bgcolor=_BG_MAIN)
 
+        # queued image attachment (paste or picker) — shown above the input
+        self._attach_chip = ft.Container(visible=False, bgcolor=_BG_MAIN,
+                                         padding=ft.padding.only(left=10, top=4, bottom=2))
         chat_area = ft.Column([
             top_bar,
             ft.Divider(height=1, color=_DIVIDER, thickness=1),
@@ -283,8 +290,10 @@ class SteamBridgeView(ft.Container):
             ], expand=True), expand=True),
             typing_row,
             ft.Divider(height=1, color=_DIVIDER, thickness=1),
+            self._attach_chip,
             input_row,
         ], spacing=0, expand=True)
+        self._file_picker = ft.FilePicker(on_result=self._on_pick_file)
 
         self._main_divider = ft.VerticalDivider(width=1, color=_DIVIDER, thickness=1)
         self._main_row = main_row = ft.Row([
@@ -425,6 +434,11 @@ class SteamBridgeView(ft.Container):
                 creationflags=_CREATE_NO_WINDOW)
 
     def activate(self) -> None:
+        # the FilePicker must live in page.overlay to open dialogs
+        if self.page and self._file_picker not in self.page.overlay:
+            with contextlib.suppress(Exception):
+                self.page.overlay.append(self._file_picker)
+                self.page.update()
         if self._started:
             return
         self._started = True
@@ -519,22 +533,28 @@ class SteamBridgeView(ft.Container):
             ft.Text("STEAM CHAT SETTINGS", size=11, weight=ft.FontWeight.BOLD,
                     color=_SECTION),
             # Applies to FUTURE messages right away; history only via Retranslate.
-            lang_row("My language (theirs → this)", "from", self._src_lang),
-            lang_row("Their language (mine → this)", "to", self._tgt_lang),
+            lang_row("My language", "from", self._src_lang),
+            lang_row("Their language", "to", self._tgt_lang),
             ft.Divider(height=1, color="#4b4c4f"),
             row("Show pinyin / romaji", self._show_pinyin, self._set_pinyin),
+            row("Show original text", self._show_original, self._set_show_original),
             row("Translate their messages", self._tr_incoming, self._set_tr_incoming),
             row("Translate my messages", self._tr_outgoing, self._set_tr_outgoing),
             ft.Divider(height=1, color="#4b4c4f"),
             btn("Clean up / re-render chat", lambda e: self._rerender_chat(),
                 tip="Re-group and re-render this chat's history"),
-            btn("Retranslate history…", lambda e: self._retranslate_prompt(),
+            btn("Retranslate history", lambda e: self._retranslate_prompt(),
                 tip="Redo translations (e.g. after changing language)"),
         ], spacing=8, tight=True)
 
     def _set_pinyin(self, e) -> None:
         self._show_pinyin = bool(e.control.value)
         self._pinyin_from_prefs = True
+        self._save_prefs()
+        self._rerender_chat()
+
+    def _set_show_original(self, e) -> None:
+        self._show_original = bool(e.control.value)
         self._save_prefs()
         self._rerender_chat()
 
@@ -641,6 +661,72 @@ class SteamBridgeView(ft.Container):
             if self.page:
                 self.page.update()
 
+    # ── image send: paste (Ctrl+V), file picker, attachment chip ─────────────
+    def paste_image(self) -> bool:
+        """Called on Ctrl+V (from the app's keyboard handler) while the Steam tab
+        is active. If the clipboard holds an IMAGE, queue it as an attachment and
+        return True; text clipboards return False so normal paste proceeds."""
+        try:
+            from PIL import ImageGrab
+            grab = ImageGrab.grabclipboard()
+        except Exception:
+            return False
+        path = None
+        try:
+            if grab is None:
+                return False
+            outbox = _BRIDGE_ROOT / "steam_bridge" / "outbox"
+            outbox.mkdir(parents=True, exist_ok=True)
+            if isinstance(grab, list):     # copied file(s) — take the first image
+                for p in grab:
+                    if str(p).lower().endswith((".png", ".jpg", ".jpeg", ".gif", ".webp")):
+                        path = str(p)
+                        break
+                if not path:
+                    return False
+            else:                          # raw bitmap from the clipboard
+                path = str(outbox / f"paste_{int(time.time())}.png")
+                grab.save(path, "PNG")
+        except Exception:
+            return False
+        self._attach_image(path)
+        return True
+
+    def _pick_image(self) -> None:
+        with contextlib.suppress(Exception):
+            self._file_picker.pick_files(
+                dialog_title="Send an image",
+                allow_multiple=False,
+                allowed_extensions=["png", "jpg", "jpeg", "gif", "webp"])
+
+    def _on_pick_file(self, e) -> None:
+        with contextlib.suppress(Exception):
+            if e.files:
+                self._attach_image(e.files[0].path)
+
+    def _attach_image(self, path: str) -> None:
+        self._pending_img = path
+        name = Path(path).name
+        self._attach_chip.content = ft.Row([
+            ft.Image(src=path, width=44, height=44, fit=ft.ImageFit.COVER, border_radius=6),
+            ft.Text(name, size=12, color=_TEXT_PRIMARY, max_lines=1,
+                    overflow=ft.TextOverflow.ELLIPSIS, expand=True),
+            ft.Text("will be sent with ➤", size=11, color=_TEXT_FAINT),
+            ft.IconButton(ft.Icons.CLOSE, icon_size=14, icon_color=_TEXT_FAINT,
+                          tooltip="Remove", on_click=lambda e: self._clear_attach()),
+        ], spacing=8, vertical_alignment=ft.CrossAxisAlignment.CENTER)
+        self._attach_chip.visible = True
+        if self.page:
+            with contextlib.suppress(Exception):
+                self.page.update()
+
+    def _clear_attach(self) -> None:
+        self._pending_img = None
+        self._attach_chip.visible = False
+        if self.page:
+            with contextlib.suppress(Exception):
+                self.page.update()
+
     def _not_yet(self, label: str) -> None:
         with contextlib.suppress(Exception):
             self.page.open(ft.SnackBar(ft.Text(f"{label} aren't wired up yet in the beta.")))
@@ -725,11 +811,11 @@ class SteamBridgeView(ft.Container):
         flags = int(f.get("flags", 0))
         if int(f.get("state", 0)) in (3, 4):     # away / snooze — Steam's zZZ
             out.append(ft.Text("zᶻᶻ", size=10, weight=ft.FontWeight.BOLD, color=_C_INGAME))
-        if flags & _FLAG_VR:                      # green VR pill like real Steam
+        if flags & _FLAG_VR:                      # small green VR pill like real Steam
             out.append(ft.Container(
-                content=ft.Text("VR", size=9, weight=ft.FontWeight.BOLD, color="#1b1c1e"),
-                bgcolor=_C_INGAME, border_radius=3,
-                padding=ft.padding.symmetric(horizontal=3, vertical=1)))
+                content=ft.Text("VR", size=7.5, weight=ft.FontWeight.BOLD, color="#1b1c1e"),
+                bgcolor=_C_INGAME, border_radius=2,
+                padding=ft.padding.only(left=2, right=2, top=0, bottom=0)))
         if flags & _FLAG_MOBILE:
             out.append(ft.Icon(ft.Icons.SMARTPHONE, size=12, color=_C_INGAME))
         return out
@@ -752,7 +838,9 @@ class SteamBridgeView(ft.Container):
         return ft.PopupMenuButton(
             content=ft.Row([
                 ft.Text(self._own_name or "Me", size=14, weight=ft.FontWeight.BOLD,
-                        color=_TEXT_PRIMARY, max_lines=1, overflow=ft.TextOverflow.ELLIPSIS),
+                        color=_C_INGAME if self._own_ingame
+                        else _name_color(self._own_state, False),
+                        max_lines=1, overflow=ft.TextOverflow.ELLIPSIS),
                 ft.Icon(ft.Icons.ARROW_DROP_DOWN, size=16, color=_TEXT_FAINT),
             ], spacing=0, tight=True),
             tooltip="Set status",
@@ -767,7 +855,17 @@ class SteamBridgeView(ft.Container):
                                 on_click=lambda e: self._open_profile(self._own))])
 
     def _update_own_header(self) -> None:
-        if self._own_invisible:
+        # Matches real Steam: in-game → green game name (name goes green via
+        # _status_menu using _name_color); invisible → crossed eye BEFORE the
+        # status, kept even while in-game (green name + eye + game).
+        if self._own_ingame:
+            parts = []
+            if self._own_invisible:
+                parts.append(ft.Icon(ft.Icons.VISIBILITY_OFF, size=13, color=_C_INGAME))
+            parts.append(ft.Text(self._own_game or "In-Game", size=11, color=_C_INGAME,
+                                 max_lines=1, overflow=ft.TextOverflow.ELLIPSIS))
+            status_row = ft.Row(parts, spacing=4, tight=True)
+        elif self._own_invisible:
             status_row = ft.Row([ft.Icon(ft.Icons.VISIBILITY_OFF, size=13, color=_TEXT_FAINT),
                                  ft.Text("Invisible", size=11, color=_TEXT_FAINT)],
                                 spacing=4, tight=True)
@@ -1098,7 +1196,13 @@ class SteamBridgeView(ft.Container):
             want = e.pixels < (e.max_scroll_extent or 0) - 90
             # While scrolled up, STOP following new messages (no forced jumps to the
             # end); resume following when back at the bottom or via the jump button.
-            self._messages.auto_scroll = not want
+            # MUST be committed with update() — otherwise the client-side list still
+            # has auto_scroll on and ANY page refresh (typing indicator, friends
+            # update, even a PrintScreen-triggered redraw) yanks it to the end.
+            if self._messages.auto_scroll != (not want):
+                self._messages.auto_scroll = not want
+                with contextlib.suppress(Exception):
+                    self._messages.update()
             if self._jump_btn.visible != want:
                 self._jump_btn.visible = want
                 self._jump_btn.update()
@@ -1147,6 +1251,7 @@ class SteamBridgeView(ft.Container):
                     self._pinyin_from_prefs = True   # app.py must not overwrite it
                 self._tr_incoming = bool(p.get("tr_incoming", True))
                 self._tr_outgoing = bool(p.get("tr_outgoing", True))
+                self._show_original = bool(p.get("show_original", True))
 
     def _save_prefs(self) -> None:
         with contextlib.suppress(Exception):
@@ -1154,6 +1259,7 @@ class SteamBridgeView(ft.Container):
                 "show_pinyin": self._show_pinyin,
                 "tr_incoming": self._tr_incoming,
                 "tr_outgoing": self._tr_outgoing,
+                "show_original": self._show_original,
             }), encoding="utf-8")
 
     def _save_cache(self) -> None:
@@ -1243,14 +1349,23 @@ class SteamBridgeView(ft.Container):
             # Matches the VRChat tab: pinyin/romaji (top), original in GRAY, then
             # the translation as the prominent line.
             noml = _URL_RE.sub("", orig).strip()   # don't romanize/translate the URL
-            if self._show_pinyin:
+            if self._show_original and self._show_pinyin:
                 roman = self._romanize(noml)
                 if roman:
                     out.append(ft.Text(roman, size=12.5, italic=True,
                                        color=_ACCENT, selectable=True))
-            out.append(ft.Text(spans=_spans(orig, "#9aa0a6"), size=14, selectable=True))
+            if self._show_original:
+                out.append(ft.Text(spans=_spans(orig, "#9aa0a6"), size=14, selectable=True))
+            else:
+                # translation-only mode: show the original UNTIL the translation
+                # arrives, then swap it out (handled in _translate_block)
+                pass
             tr_ctrl = ft.Text("", size=14, weight=ft.FontWeight.W_500,
                               color=_TEXT_PRIMARY, selectable=True)
+            if not self._show_original:
+                # translation-only mode: show the original (gray) as a placeholder
+                # until the translation replaces it
+                tr_ctrl.spans = _spans(orig, "#9aa0a6")
             b["_ctrl"] = tr_ctrl                    # the translation line, filled below
             out.append(tr_ctrl)
         elif orig:
@@ -1483,7 +1598,17 @@ class SteamBridgeView(ft.Container):
 
     async def _send(self) -> None:
         text = (self._entry.value or "").strip()
-        if not text or not self._active:
+        if not self._active:
+            return
+        # queued image goes first (uploaded by the helper; commit delivers it)
+        if self._pending_img:
+            img = self._pending_img
+            self._clear_attach()
+            await self._render_live({"from_me": True, "name": self._own_name,
+                                     "avatar": self._own_avatar, "text": "",
+                                     "images": [img], "stickers": []})
+            await self._cmd({"cmd": "send_image", "acct": self._active, "path": img})
+        if not text:
             return
         self._entry.value = ""
         if self.page:
@@ -1541,6 +1666,8 @@ class SteamBridgeView(ft.Container):
             self._own_state = int(ev.get("state", 1) or 1)
             self._own_invites = int(ev.get("invites", 0) or 0)
             self._own_invisible = bool(ev.get("invisible"))
+            self._own_ingame = bool(ev.get("ingame"))
+            self._own_game = ev.get("game", "") or ""
             if ev.get("emoticons"):
                 self._emoticons = list(ev.get("emoticons"))
             self._update_own_header()
@@ -1575,6 +1702,14 @@ class SteamBridgeView(ft.Container):
             if int(ev.get("acct", 0)) == self._active:
                 self._set_typing("")
                 await self._append_message(ev.get("message", {}))
+        elif kind == "image_sent":
+            if not ev.get("ok"):
+                d = ev.get("detail") or {}
+                with contextlib.suppress(Exception):
+                    self.page.open(ft.SnackBar(ft.Text(
+                        f"Image failed to send (step: {d.get('step', '?')}"
+                        f"{', ' + str(d.get('status')) if d.get('status') else ''})"),
+                        duration=4000))
 
     async def shutdown(self) -> None:
         with contextlib.suppress(Exception):

@@ -154,6 +154,7 @@ runtime_binaries += collect_vendored_openvr_runtime_binaries()
 
 # Hidden imports for dynamic imports
 hiddenimports = [
+    "PIL.ImageGrab",       # beta/steam-bridge: clipboard-image paste (lazy import)
     "kaldi_native_fbank",  # r318 speaker-ID features (imported lazily)
     "puripuly_heart.providers.stt.deepgram",
     "puripuly_heart.providers.stt.qwen_asr",

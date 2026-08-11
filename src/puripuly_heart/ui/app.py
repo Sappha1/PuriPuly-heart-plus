@@ -1752,6 +1752,18 @@ class TranslatorApp:
                 if callable(opener):
                     opener()
                 return
+        # beta/steam-bridge: Ctrl+V with an IMAGE in the clipboard queues it as an
+        # attachment in the Steam tab. Text clipboards return False so the normal
+        # text paste proceeds untouched.
+        if on_dashboard and isinstance(key, str) and key.lower() == "v":
+            if bool(getattr(event, "ctrl", False)) and not bool(
+                getattr(event, "alt", False)
+            ) and not bool(getattr(event, "meta", False)):
+                if getattr(dashboard, "_chat_tab", "") == "steam":
+                    with contextlib.suppress(Exception):
+                        _sv = getattr(dashboard, "_steam_view", None)
+                        if _sv is not None and callable(getattr(_sv, "paste_image", None)):
+                            _sv.paste_image()
         # r375: Enter steps to the next match (Shift+Enter the previous) while
         # the find bar is open. The field's own on_submit does this too; which
         # of the two actually fires is a Flet detail, so both are wired and the

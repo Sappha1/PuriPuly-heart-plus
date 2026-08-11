@@ -352,7 +352,7 @@ class TranslatorApp:
                     theirs = getattr(_sv, "_tgt_lang", None) or "zh-CN"
                     src, tgt = (mine, theirs) if to_them else (theirs, mine)
                     llm = getattr(self.controller.hub, "llm", None)
-                    if llm is None:
+                    if llm is None or getattr(_sv, "_tr_provider", "default") == "bing":
                         from puripuly_heart.providers.llm.free_web import (
                             FreeWebTranslationProvider,
                         )

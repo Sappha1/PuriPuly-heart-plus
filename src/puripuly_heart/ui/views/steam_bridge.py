@@ -98,6 +98,14 @@ _DAEMON_PYTHON = (
 _CREATE_NO_WINDOW = 0x08000000
 _HOST, _PORT = "127.0.0.1", 8791
 
+_SEND_FMT_LABEL = {
+    "orig_read_trans": "Original + pinyin + translation",
+    "orig_trans": "Original + translation",
+    "read_trans": "Pinyin + translation",
+    "trans_only": "Translation",
+    "read_only": "Pinyin",
+}
+
 _STATE_LABEL = {0: "Offline", 1: "Online", 2: "Busy", 3: "Away", 4: "Snooze",
                 5: "Looking to Trade", 6: "Looking to Play"}
 
@@ -158,7 +166,9 @@ class SteamBridgeView(ft.Container):
         self._tr_incoming = True      # translate their messages (Steam-tab setting)
         self._tr_outgoing = True      # translate my messages before sending
         self._show_original = True    # show the original line above the translation
-        self._send_mode = "tr_only"   # what the FRIEND receives: tr_only | both | orig_only
+        # what the FRIEND receives — same five formats as the Chat tab chatbox
+        self._send_fmt = "trans_only"
+        self._tr_provider = "default"  # "default" = app's translator (e.g. DeepL); "bing" = free
         self._pend: dict | None = None   # short buffer: rapid same-sender lines → ONE block
         self._pend_task = None
         self._hist_blocks: list = []  # blocks currently rendered (for retranslate)
@@ -344,8 +354,8 @@ class SteamBridgeView(ft.Container):
         # Steam-tab settings panel (gear in the top bar) + input right-click menu.
         self._settings_panel = ft.Container(
             visible=False, bgcolor=_BG_MENU, border_radius=10,
-            border=ft.border.all(1, "#4b4c4f"), width=280,
-            right=8, top=44, padding=12,
+            border=ft.border.all(1, "#4b4c4f"), width=330,
+            right=8, top=44, padding=10,
             shadow=ft.BoxShadow(blur_radius=16, color="#99000000", offset=ft.Offset(0, 4)))
         self._settings_backdrop = ft.GestureDetector(
             visible=False, on_tap=lambda e: self._toggle_settings(False),
@@ -543,22 +553,35 @@ class SteamBridgeView(ft.Container):
             # Applies to FUTURE messages right away; history only via Retranslate.
             lang_row("My language", "from", self._src_lang),
             lang_row("Their language", "to", self._tgt_lang),
+            ft.Row([
+                ft.Text("Translator", size=13, color=_TEXT_PRIMARY, expand=True),
+                ft.PopupMenuButton(
+                    content=ft.Row([
+                        ft.Text("Free (Bing)" if self._tr_provider == "bing"
+                                else "App default", size=13, color=_TOGGLE_ON,
+                                weight=ft.FontWeight.W_500),
+                        ft.Icon(ft.Icons.ARROW_DROP_DOWN, size=14, color=_TEXT_FAINT),
+                    ], spacing=0, tight=True),
+                    items=[ft.PopupMenuItem(
+                               text="App default (your API key, e.g. DeepL)",
+                               on_click=lambda e: self._set_tr_provider("default")),
+                           ft.PopupMenuItem(
+                               text="Free (Bing) — no key, no cost",
+                               on_click=lambda e: self._set_tr_provider("bing"))]),
+            ], vertical_alignment=ft.CrossAxisAlignment.CENTER),
             ft.Divider(height=1, color="#4b4c4f"),
             ft.Text("SENT TO THEIR CHAT", size=10, weight=ft.FontWeight.BOLD, color=_SECTION),
             ft.Row([
-                ft.Text("Send my messages as", size=13, color=_TEXT_PRIMARY, expand=True),
+                ft.Text("Send as", size=13, color=_TEXT_PRIMARY, expand=True),
                 ft.PopupMenuButton(
                     content=ft.Row([
-                        ft.Text({"tr_only": "Translation only",
-                                 "both": "Original + translation",
-                                 "orig_only": "Original only"}[self._send_mode],
+                        ft.Text(_SEND_FMT_LABEL[self._send_fmt],
                                 size=13, color=_TOGGLE_ON, weight=ft.FontWeight.W_500),
                         ft.Icon(ft.Icons.ARROW_DROP_DOWN, size=14, color=_TEXT_FAINT),
                     ], spacing=0, tight=True),
-                    items=[ft.PopupMenuItem(text=lbl, on_click=(lambda e, m=m: self._set_send_mode(m)))
-                           for m, lbl in (("tr_only", "Translation only"),
-                                          ("both", "Original + translation"),
-                                          ("orig_only", "Original only"))]),
+                    items=[ft.PopupMenuItem(text=lbl,
+                                            on_click=(lambda e, m=m: self._set_send_fmt(m)))
+                           for m, lbl in _SEND_FMT_LABEL.items()]),
             ], vertical_alignment=ft.CrossAxisAlignment.CENTER),
             ft.Divider(height=1, color="#4b4c4f"),
             ft.Text("SHOWN ON MY END", size=10, weight=ft.FontWeight.BOLD, color=_SECTION),
@@ -583,9 +606,16 @@ class SteamBridgeView(ft.Container):
         self._save_prefs()
         self._rerender_chat()
 
-    def _set_send_mode(self, mode: str) -> None:
-        self._send_mode = mode
-        self._tr_outgoing = mode != "orig_only"
+    def _set_tr_provider(self, prov: str) -> None:
+        self._tr_provider = prov
+        self._save_prefs()
+        if self._settings_panel.visible:
+            self._build_settings_panel()
+            with contextlib.suppress(Exception):
+                self._settings_panel.update()
+
+    def _set_send_fmt(self, fmt: str) -> None:
+        self._send_fmt = fmt
         self._save_prefs()
         if self._settings_panel.visible:
             self._build_settings_panel()
@@ -608,6 +638,7 @@ class SteamBridgeView(ft.Container):
         chat doesn't visibly unload and repost anything; order can't change."""
         if not self._active or not self._hist_blocks:
             return
+        was_following = self._following
         blocks = list(self._hist_blocks)
         self._messages.controls.clear()
         self._last_block = None
@@ -617,7 +648,10 @@ class SteamBridgeView(ft.Container):
         if self.page:
             with contextlib.suppress(Exception):
                 self.page.update()
-            if self._following:
+            if was_following:
+                # the rebuild fires on_scroll events that can flip _following off
+                # mid-flight (the fast-toggle bug) — restore and re-anchor
+                self._following = True
                 self._scroll_to_end(0)
             self.page.run_task(self._fill_translations, blocks, self._open_seq)
 
@@ -643,13 +677,20 @@ class SteamBridgeView(ft.Container):
             with contextlib.suppress(Exception):
                 self.page.open(ft.SnackBar(ft.Text("Nothing here needs retranslating.")))
             return
+        if self._tr_provider == "bing":
+            # free provider — nothing to warn about, just do it
+            with contextlib.suppress(Exception):
+                self.page.open(ft.SnackBar(ft.Text("Retranslating via free Bing…")))
+            self.page.run_task(self._retranslate_all)
+            return
         dlg = ft.AlertDialog(
             modal=True,
             title=ft.Text("Retranslate history?", size=15),
             content=ft.Text(
-                f"This will re-send ≈{chars} characters to your translator "
-                f"(DeepL bills per character), replacing the cached translations "
-                f"for this chat.", size=13),
+                f"This will re-send ≈{chars} characters to your API translator "
+                f"(e.g. DeepL bills per character), replacing the cached translations "
+                f"for this chat. Tip: switch Translator to Free (Bing) in settings "
+                f"to do this at no cost.", size=13),
             actions=[
                 ft.TextButton("Cancel", on_click=lambda e: self.page.close(dlg)),
                 ft.TextButton("Retranslate",
@@ -1269,7 +1310,7 @@ class SteamBridgeView(ft.Container):
     def _on_msg_scroll(self, e) -> None:
         with contextlib.suppress(Exception):
             self._max_scroll = e.max_scroll_extent or 0.0
-            want = e.pixels < (e.max_scroll_extent or 0) - 90
+            want = e.pixels < (e.max_scroll_extent or 0) - 40
             # While scrolled up, stop following new messages; resume at the bottom
             # or via the jump button. Scrolling only ever happens via _scroll_to_end.
             self._following = not want
@@ -1300,6 +1341,9 @@ class SteamBridgeView(ft.Container):
             if re.search(r"[㐀-鿿]", text):        # Han ideographs -> Chinese
                 from puripuly_heart.core.transliteration import to_pinyin_grouped
                 return to_pinyin_grouped(text) or ""
+            if re.search(r"[가-힣]", text):        # Hangul -> Korean romaja
+                from puripuly_heart.core.transliteration import to_romaja
+                return to_romaja(text) or ""
         return ""
 
     def _needs_tr(self, text: str) -> bool:
@@ -1346,10 +1390,17 @@ class SteamBridgeView(ft.Container):
                 self._tr_incoming = bool(p.get("tr_incoming", True))
                 self._tr_outgoing = bool(p.get("tr_outgoing", True))
                 self._show_original = bool(p.get("show_original", True))
-                self._send_mode = p.get("send_mode", "tr_only")
-                if self._send_mode not in ("tr_only", "both", "orig_only"):
-                    self._send_mode = "tr_only"
-                self._tr_outgoing = self._send_mode != "orig_only"
+                self._send_fmt = p.get("send_fmt", "")
+                if not self._send_fmt:      # migrate the short-lived r422 pref
+                    self._send_fmt = {"tr_only": "trans_only", "both": "orig_trans",
+                                      "orig_only": "orig_trans"}.get(
+                                          p.get("send_mode", ""), "trans_only")
+                if self._send_fmt not in _SEND_FMT_LABEL:
+                    self._send_fmt = "trans_only"
+                self._tr_provider = p.get("tr_provider", "default")
+                if self._tr_provider not in ("default", "bing"):
+                    self._tr_provider = "default"
+                self._tr_outgoing = True
 
     def _save_prefs(self) -> None:
         with contextlib.suppress(Exception):
@@ -1358,7 +1409,8 @@ class SteamBridgeView(ft.Container):
                 "tr_incoming": self._tr_incoming,
                 "tr_outgoing": self._tr_outgoing,
                 "show_original": self._show_original,
-                "send_mode": self._send_mode,
+                "send_fmt": self._send_fmt,
+                "tr_provider": self._tr_provider,
             }), encoding="utf-8")
 
     def _save_cache(self) -> None:
@@ -1572,6 +1624,7 @@ class SteamBridgeView(ft.Container):
                 self._seen_chat_ts.get(self._active or 0, 0),
                 max(int(b.get("_ts") or 0) for b in blocks))
         self._rebuild_tabs()               # clears this tab's unread dot
+        self._following = True
         self._scroll_to_end(0)
         if self.page:
             self.page.update()
@@ -1725,33 +1778,43 @@ class SteamBridgeView(ft.Container):
         codes = " ".join(f":{n}:" for n in emos)
         orig_out = (f"{clean} {codes}".strip() if clean else codes)
         acct = self._active
-        mode = self._send_mode if clean else "orig_only"   # emote-only: nothing to translate
-        # ALWAYS render my message instantly on my end (original + a pending line
-        # for the translation when one will be sent).
+        fmt = self._send_fmt if clean else "orig_only"   # emote-only: send as-is
+        # ALWAYS render my message instantly on my end; the pending accent line
+        # fills with what actually got sent once the composed message goes out.
         b = await self._render_live({
             "from_me": True, "name": self._own_name, "avatar": self._own_avatar,
             "text": orig_out, "images": [], "stickers": [],
             "ts": int(time.time()),
-            "_out_pending": mode in ("tr_only", "both")})
-        if mode in ("both", "orig_only"):
+            "_out_pending": fmt != "orig_only"})
+        if fmt == "orig_only":
             await self._cmd({"cmd": "send", "acct": acct, "text": orig_out})
-        if mode in ("tr_only", "both") and callable(self.translate_message):
-            zh = None
+            return
+        zh = None
+        if callable(self.translate_message):
             with contextlib.suppress(Exception):
                 zh = await self.translate_message(clean, True)
-            zh = (zh or "").strip()
-            sent_out = None
-            if zh and zh != clean:
-                self._tr_cache[self._tr_key(zh)] = clean   # echo renders instantly
-                out2 = (f"{zh} {codes}".strip() if mode == "tr_only" else zh)
-                await self._cmd({"cmd": "send", "acct": acct, "text": out2})
-                sent_out = zh
-            elif mode == "tr_only":
-                # translation failed — the message must still reach them
-                await self._cmd({"cmd": "send", "acct": acct, "text": orig_out})
-            ctrl = (b or {}).get("_out_ctrl")
-            if ctrl is not None and sent_out:
-                ctrl.value = sent_out                      # what was sent to them
+        zh = (zh or "").strip()
+        if not zh or zh == clean:
+            # translation failed — the message must still reach them
+            await self._cmd({"cmd": "send", "acct": acct, "text": orig_out})
+            return
+        self._tr_cache[self._tr_key(zh)] = clean          # echo renders instantly
+        reading = self._romanize(zh) if "read" in fmt else ""
+        lines = []
+        if fmt.startswith("orig"):
+            lines.append(orig_out)
+        if reading:
+            lines.append(reading)
+        if fmt != "read_only":
+            lines.append(zh if fmt.startswith("orig")
+                         else (zh + (" " + codes if codes else "")).strip())
+        out2 = "\n".join(l for l in lines if l).strip() or orig_out
+        await self._cmd({"cmd": "send", "acct": acct, "text": out2})
+        ctrl = (b or {}).get("_out_ctrl")
+        if ctrl is not None:
+            sent_extra = "\n".join(l for l in lines if l and l != orig_out)
+            if sent_extra:
+                ctrl.value = sent_extra                    # what was sent to them
                 with contextlib.suppress(Exception):
                     ctrl.update()
 

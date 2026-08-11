@@ -239,6 +239,10 @@ class SteamBridgeView(ft.Container):
         self._resend_queue: list = []  # sends attempted while the helper was down
         self.on_module_state = None    # dashboard: grey the Steam chip when off
         self.on_popout = None          # app: open the tab in its own window
+        self._is_popout = False        # standalone window: no module screens
+        self._pref_tabs: list = []
+        self._pref_active = 0
+        self._live_since_open: list = []   # messages rendered before history lands
         self.on_popout_restore = None  # app: close the pop-out window
         self._stickers: list = []
         self._chat_cache: dict = {}    # acct -> last-rendered history blocks
@@ -315,6 +319,7 @@ class SteamBridgeView(ft.Container):
         popout_btn = ft.IconButton(
             ft.Icons.OPEN_IN_NEW, icon_size=16, icon_color=_TEXT_FAINT,
             tooltip=_T("steam.popout_tip", default="Open in its own window"),
+            visible=False,             # lives in the app header row now
             on_click=lambda e: (self.on_popout() if callable(self.on_popout) else None),
             style=ft.ButtonStyle(overlay_color=ft.Colors.TRANSPARENT))
         top_bar = ft.Container(
@@ -426,9 +431,19 @@ class SteamBridgeView(ft.Container):
                                       shadow=ft.BoxShadow(blur_radius=14, color="#88000000",
                                                           offset=ft.Offset(0, 4)))
         # emoji / emoticon picker panel (anchored bottom-right, over the input)
+        self._picker_tab = "emotes"
+        self._picker_query = ""
+        self._recent_picks: list = []      # [kind, value] — "u" emoji / "e" emote / "s" sticker
+        self._picker_grid = ft.Container(expand=True)
+        self._picker_search = ft.TextField(
+            hint_text=_T("steam.search_hint", default="Search..."),
+            dense=True, height=36, text_size=12.5, border_radius=8,
+            border_color="#4b4c4f", focused_border_color=_TOGGLE_ON,
+            content_padding=ft.padding.symmetric(horizontal=10, vertical=6),
+            on_change=self._on_picker_search)
         self._emoji_panel = ft.Container(
             visible=False, bgcolor=_BG_MENU, border_radius=10,
-            border=ft.border.all(1, "#4b4c4f"), width=320, height=340,
+            border=ft.border.all(1, "#4b4c4f"), width=352, height=430,
             right=8, bottom=64, padding=8,
             shadow=ft.BoxShadow(blur_radius=16, color="#99000000", offset=ft.Offset(0, 4)))
         self._emoji_backdrop = ft.GestureDetector(
@@ -588,6 +603,8 @@ class SteamBridgeView(ft.Container):
             self.page.run_task(self._connect)
 
     def _show_state_overlay(self, mode: str) -> None:
+        if self._is_popout and mode in ("idle", "off", "popped"):
+            return                      # module control lives in the main app
         self._state_mode = mode
         if mode == "popped":
             self._state_icon.name = ft.Icons.OPEN_IN_NEW
@@ -710,6 +727,7 @@ class SteamBridgeView(ft.Container):
         self._show_state_overlay("off")
 
     def _insert_emoji(self, em: str) -> None:
+        self._push_recent("u", em)
         self._entry.value = (self._entry.value or "") + em
         if self.page:
             self._entry.update()
@@ -722,6 +740,7 @@ class SteamBridgeView(ft.Container):
         # Stickers send immediately on click, like real Steam.
         if not self._active:
             return
+        self._push_recent("s", name)
         self._toggle_emoji(False)
         acct = self._active
         url = self._sticker_url(name)
@@ -738,6 +757,7 @@ class SteamBridgeView(ft.Container):
             self.page.run_task(_go)
 
     def _insert_emoticon(self, name: str) -> None:
+        self._push_recent("e", name)
         # Steam emoticons are sent as :name: and render on both ends.
         self._entry.value = (self._entry.value or "") + f":{name}: "
         if self.page:
@@ -747,38 +767,108 @@ class SteamBridgeView(ft.Container):
     def _emoticon_url(self, name: str) -> str:
         return f"https://community.fastly.steamstatic.com/economy/emoticon/{name}"
 
-    def _build_emoji_panel(self) -> None:
-        def cell(control, on_click, tip=None):
-            return ft.Container(content=control, on_click=on_click, ink=True, border_radius=6,
-                                padding=3, width=36, height=36, tooltip=tip,
-                                alignment=ft.alignment.center)
-        sections = [ft.Text("EMOJI", size=11, weight=ft.FontWeight.BOLD, color=_SECTION),
-                    ft.Row([cell(ft.Text(e, size=20), (lambda ev, em=e: self._insert_emoji(em)))
-                            for e in _EMOJIS], wrap=True, spacing=2, run_spacing=2)]
-        if self._emoticons:
-            sections.append(ft.Text("MY EMOTICONS", size=11, weight=ft.FontWeight.BOLD,
-                                    color=_SECTION))
-            sections.append(ft.Row([
-                cell(ft.Image(src=self._emoticon_url(n), width=26, height=26,
-                              fit=ft.ImageFit.CONTAIN),
-                     (lambda ev, nm=n: self._insert_emoticon(nm)), tip=f":{n}:")
-                for n in self._emoticons], wrap=True, spacing=2, run_spacing=2))
+    def _push_recent(self, kind: str, value: str) -> None:
+        item = [kind, value]
+        self._recent_picks = ([item] +
+                              [x for x in self._recent_picks if x != item])[:24]
+        self._save_prefs()
+
+    def _on_picker_search(self, e) -> None:
+        self._picker_query = (e.control.value or "").strip().lower()
+        self._fill_picker_grid()
+        with contextlib.suppress(Exception):
+            self._picker_grid.update()
+
+    def _set_picker_tab(self, tab: str) -> None:
+        self._picker_tab = tab
+        self._build_emoji_panel()
+        with contextlib.suppress(Exception):
+            self._emoji_panel.update()
+
+    def _picker_cell(self, control, on_click, tip=None, big=False):
+        side = 60 if big else 36
+        return ft.Container(content=control, on_click=on_click, ink=True,
+                            border_radius=6, padding=3, width=side, height=side,
+                            tooltip=tip, alignment=ft.alignment.center)
+
+    def _fill_picker_grid(self) -> None:
+        q = self._picker_query
+        tab = self._picker_tab
+        cells = []
+        if tab == "recent":
+            for kind, val in self._recent_picks:
+                if kind == "u":
+                    cells.append(self._picker_cell(
+                        ft.Text(val, size=20),
+                        (lambda ev, em=val: self._insert_emoji(em))))
+                elif kind == "e":
+                    cells.append(self._picker_cell(
+                        ft.Image(src=self._emoticon_url(val), width=26, height=26,
+                                 fit=ft.ImageFit.CONTAIN),
+                        (lambda ev, nm=val: self._insert_emoticon(nm)), tip=f":{val}:"))
+                elif kind == "s":
+                    cells.append(self._picker_cell(
+                        ft.Image(src=self._sticker_url(val), width=52, height=52,
+                                 fit=ft.ImageFit.CONTAIN),
+                        (lambda ev, nm=val: self._send_sticker(nm)), tip=val, big=True))
+            if not cells:
+                self._picker_grid.content = ft.Container(
+                    content=ft.Text(_T("steam.no_recent",
+                                       default="Things you use appear here"),
+                                    size=12, color=_TEXT_FAINT),
+                    alignment=ft.alignment.center, padding=20)
+                return
+        elif tab == "emoji":
+            cells = [self._picker_cell(ft.Text(e, size=20),
+                                       (lambda ev, em=e: self._insert_emoji(em)))
+                     for e in _EMOJIS]
+        elif tab == "emotes":
+            names = [n for n in self._emoticons if q in n.lower()] if q else self._emoticons
+            cells = [self._picker_cell(
+                ft.Image(src=self._emoticon_url(n), width=26, height=26,
+                         fit=ft.ImageFit.CONTAIN),
+                (lambda ev, nm=n: self._insert_emoticon(nm)), tip=f":{n}:")
+                for n in names]
         else:
-            sections.append(ft.Text("Your Steam emoticons load with your account…",
-                                    size=11, color=_TEXT_FAINT))
-        if self._stickers:
-            sections.append(ft.Text(_T("steam.stickers_section", default="MY STICKERS"),
-                                    size=11, weight=ft.FontWeight.BOLD, color=_SECTION))
-            sections.append(ft.Row([
-                ft.Container(
-                    content=ft.Image(src=self._sticker_url(n), width=52, height=52,
-                                     fit=ft.ImageFit.CONTAIN),
-                    on_click=(lambda ev, nm=n: self._send_sticker(nm)),
-                    ink=True, border_radius=6, padding=3, width=60, height=60,
-                    tooltip=n, alignment=ft.alignment.center)
-                for n in self._stickers], wrap=True, spacing=2, run_spacing=2))
-        self._emoji_panel.content = ft.Column(sections, spacing=6, tight=True,
-                                              scroll=ft.ScrollMode.AUTO)
+            names = [n for n in self._stickers if q in n.lower()] if q else self._stickers
+            cells = [self._picker_cell(
+                ft.Image(src=self._sticker_url(n), width=52, height=52,
+                         fit=ft.ImageFit.CONTAIN),
+                (lambda ev, nm=n: self._send_sticker(nm)), tip=n, big=True)
+                for n in names]
+        self._picker_grid.content = ft.Column(
+            [ft.Row(cells, wrap=True, spacing=2, run_spacing=2)],
+            scroll=ft.ScrollMode.AUTO, expand=True)
+
+    def _build_emoji_panel(self) -> None:
+        def tab_btn(tab, icon, tip):
+            active = self._picker_tab == tab
+            return ft.Container(
+                content=ft.Icon(icon, size=19,
+                                color=_TOGGLE_ON if active else _TEXT_FAINT),
+                border=ft.border.only(bottom=ft.BorderSide(
+                    2, _TOGGLE_ON if active else ft.Colors.TRANSPARENT)),
+                padding=ft.padding.symmetric(horizontal=14, vertical=6),
+                ink=True, tooltip=tip,
+                on_click=lambda e, t=tab: self._set_picker_tab(t))
+
+        tabs = ft.Row([
+            tab_btn("recent", ft.Icons.SCHEDULE,
+                    _T("steam.tab_recent", default="Recent")),
+            tab_btn("emoji", ft.Icons.EMOJI_EMOTIONS_OUTLINED,
+                    _T("steam.tab_emoji", default="Emoji")),
+            tab_btn("emotes", ft.Icons.SENTIMENT_SATISFIED_ALT,
+                    _T("steam.tab_emoticons", default="Emoticons")),
+            tab_btn("stickers", ft.Icons.NOTE_OUTLINED,
+                    _T("steam.tab_stickers", default="Stickers")),
+        ], spacing=0, alignment=ft.MainAxisAlignment.CENTER)
+        self._fill_picker_grid()
+        show_search = self._picker_tab in ("emotes", "stickers")
+        self._picker_search.visible = show_search
+        self._emoji_panel.content = ft.Column(
+            [tabs, ft.Divider(height=1, color="#4b4c4f"),
+             self._picker_grid, self._picker_search],
+            spacing=6, tight=True)
 
     def _toggle_emoji(self, show=None) -> None:
         show = (not self._emoji_panel.visible) if show is None else show
@@ -1734,6 +1824,7 @@ class SteamBridgeView(ft.Container):
             if self._module_on:
                 self._show_state_overlay("idle")
         self._rebuild_tabs()
+        self._save_prefs()
         if self.page:
             self.page.update()
 
@@ -1910,6 +2001,11 @@ class SteamBridgeView(ft.Container):
                 self._read_latin = bool(p.get("read_latin", True))
                 self._pinyin_grouped = bool(p.get("pinyin_grouped", True))
                 self._module_on = bool(p.get("module_on", True))
+                rp = p.get("recent_picks") or []
+                self._recent_picks = [list(x) for x in rp if isinstance(x, (list, tuple))
+                                      and len(x) == 2][:24]
+                self._pref_tabs = [int(a) for a in (p.get("open_tabs") or [])][:8]
+                self._pref_active = int(p.get("active_tab") or 0)
                 self._tr_outgoing = True
 
     def _save_prefs(self) -> None:
@@ -1925,6 +2021,9 @@ class SteamBridgeView(ft.Container):
                 "read_ko": self._read_ko, "read_latin": self._read_latin,
                 "pinyin_grouped": self._pinyin_grouped,
                 "module_on": self._module_on,
+                "recent_picks": self._recent_picks[:24],
+                "open_tabs": list(self._tabs),
+                "active_tab": self._active or 0,
             }), encoding="utf-8")
 
     def _save_cache(self) -> None:
@@ -2206,6 +2305,16 @@ class SteamBridgeView(ft.Container):
         # Steam's own last-chat clock can run ahead of the newest HISTORY entry
         # (own sends, filtered items) — without marking live renders too, a
         # background tab grew a phantom amber dot right after you talked in it.
+        # Messages sent/received WHILE the history was still loading are not in
+        # the server snapshot yet — merge them so the render can't wipe them
+        # (an empty snapshot used to replace a just-sent message with
+        # "No messages here yet").
+        if self._live_since_open:
+            have = {(int(b.get("_ts") or 0), b.get("text") or "") for b in blocks}
+            extra = [m for m in self._live_since_open
+                     if (int(m.get("ts") or 0), m.get("text") or "") not in have]
+            if extra:
+                blocks = blocks + self._coalesce(extra)
         self._pend = None                  # drop any half-buffered live lines
         self._messages.controls.clear()
         self._following = True             # fresh chat follows the newest message
@@ -2283,6 +2392,7 @@ class SteamBridgeView(ft.Container):
 
     async def _render_live(self, m: dict) -> None:
         self._mark_seen(self._active or 0, int(m.get("ts") or 0))
+        self._live_since_open = (self._live_since_open + [dict(m)])[-30:]
         text, emos = _extract_emoticons((m.get("text", "") or "").strip())
         ts = int(m.get("ts") or 0) or int(time.time())
         b = {"from_me": bool(m.get("from_me")), "name": m.get("name", ""),
@@ -2375,6 +2485,7 @@ class SteamBridgeView(ft.Container):
     async def _open(self, acct: int) -> None:
         self._hide_ctx()
         self._open_seq += 1
+        self._live_since_open = []
         self._active = acct
         if acct not in self._tabs:
             self._tabs.append(acct)
@@ -2417,6 +2528,7 @@ class SteamBridgeView(ft.Container):
                 padding=ft.padding.only(top=40)))
         if self.page:
             self.page.update()
+        self._save_prefs()
         await self._cmd({"cmd": "open", "acct": acct})
 
     async def _send(self) -> None:
@@ -2551,7 +2663,14 @@ class SteamBridgeView(ft.Container):
                 self._state_btn.update()
             if ev.get("signed_in"):
                 self._hide_state_overlay()
-                if self._active is None and self._module_on:
+                if not self._tabs and self._pref_tabs:
+                    # restore the workspace (pop-out windows + app restarts)
+                    self._tabs = [a for a in self._pref_tabs]
+                    act = (self._pref_active
+                           if self._pref_active in self._tabs else self._tabs[-1])
+                    self._rebuild_tabs()
+                    self.page.run_task(self._open, act)
+                elif self._active is None and self._module_on:
                     self._show_state_overlay("idle")
             elif self._module_on and ev.get("mode") != "login":
                 self._show_state_overlay("signedout")

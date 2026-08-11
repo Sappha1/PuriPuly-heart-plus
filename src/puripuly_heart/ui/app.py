@@ -476,8 +476,7 @@ class TranslatorApp:
                     import sys as _sys
                     proc = getattr(self, "_steam_popout_proc", None)
                     if proc is not None and proc.poll() is None:
-                        _sv._show_state_overlay("popped")
-                        return
+                        return                      # already open
                     if getattr(_sys, "frozen", False):
                         args = [_sys.executable, "--steam-window"]
                     else:
@@ -487,31 +486,14 @@ class TranslatorApp:
                         self._steam_popout_proc = _sp.Popen(args, close_fds=True)
                     except Exception:
                         return
-                    _sv._show_state_overlay("popped")
-
-                    async def _watch() -> None:
-                        import asyncio as _aio
-                        while True:
-                            p = getattr(self, "_steam_popout_proc", None)
-                            if p is None or p.poll() is not None:
-                                break
-                            await _aio.sleep(1.0)
-                        if _sv._state_mode == "popped":
-                            _sv._hide_state_overlay()
-                            if _sv._active is None and _sv._module_on:
-                                _sv._show_state_overlay("idle")
-
-                    self.page.run_task(_watch)
-
-                def _steam_popout_restore() -> None:
-                    p = getattr(self, "_steam_popout_proc", None)
-                    if p is not None and p.poll() is None:
-                        with contextlib.suppress(Exception):
-                            p.terminate()
-                    # the watcher hides the overlay when the process exits
+                    # Like any app pop-out: no placeholder screen — the main
+                    # window just returns to the Chat tab (the Steam tab keeps
+                    # working in parallel; closing the window is just closing
+                    # a window).
+                    with contextlib.suppress(Exception):
+                        self.view_dashboard._select_chat_tab("vrc")
 
                 _sv.on_popout = _steam_popout
-                _sv.on_popout_restore = _steam_popout_restore
                 # Seed the Steam tab's language pickers from the app settings.
                 with contextlib.suppress(Exception):
                     _langs = self.controller.settings.languages

@@ -1016,5 +1016,11 @@
   "steam.popped_caption": "そのウィンドウを閉じるか、下のボタンでここに戻せます。",
   "steam.popped_btn": "ここに戻す",
   "steam.close": "閉じる",
-  "steam.power_tip": "Steamモジュールのオン/オフ"
+  "steam.power_tip": "Steamモジュールのオン/オフ",
+  "steam.tab_recent": "最近",
+  "steam.tab_emoji": "絵文字",
+  "steam.tab_emoticons": "エモート",
+  "steam.tab_stickers": "ステッカー",
+  "steam.search_hint": "検索...",
+  "steam.no_recent": "使ったものがここに表示されます"
 }

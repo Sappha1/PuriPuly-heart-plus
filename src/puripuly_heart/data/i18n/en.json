@@ -1016,5 +1016,11 @@
   "steam.popped_caption": "Close that window — or use the button below — to bring the chat back here.",
   "steam.popped_btn": "Bring it back",
   "steam.close": "Close",
-  "steam.power_tip": "Turn the Steam module on or off"
+  "steam.power_tip": "Turn the Steam module on or off",
+  "steam.tab_recent": "Recent",
+  "steam.tab_emoji": "Emoji",
+  "steam.tab_emoticons": "Emoticons",
+  "steam.tab_stickers": "Stickers",
+  "steam.search_hint": "Search...",
+  "steam.no_recent": "Things you use appear here"
 }

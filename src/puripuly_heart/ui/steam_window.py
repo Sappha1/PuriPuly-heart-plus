@@ -29,6 +29,7 @@ def run_steam_window() -> int:
         view = SteamBridgeView()
         view.expand = True
         view.on_popout = None          # no pop-out button inside the pop-out
+        view._is_popout = True         # full tab, no module screens in here
 
         # Translator: honor the tab's picked model, built from the saved app
         # settings (same clone pattern as the main app / OCR bridge).

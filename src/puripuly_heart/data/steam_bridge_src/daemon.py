@@ -327,6 +327,27 @@ class Daemon:
             # Refresh the friends list (status changes) every ~12s, but only
             # push when something actually changed, so the list doesn't rebuild
             # (and scroll-jump) needlessly.
+            if self._started and self.signed and ticks % 46 == 23:
+                # emote/sticker stores fill late and grow with purchases —
+                # re-list occasionally and re-push own info when they change
+                try:
+                    em = await self.steam.list_emoticons()
+                    st = await self.steam.list_stickers()
+                    if ((em and em != self.emoticons)
+                            or (st and st != self.stickers)):
+                        self.emoticons = em or self.emoticons
+                        self.stickers = st or self.stickers
+                        _diag(f"RELIST emotes={len(self.emoticons)} stickers={len(self.stickers)}")
+                        await self.emit({"ev": "own", "acct": self.own,
+                                         "avatar": self.own_avatar,
+                                         "name": self.own_name, "state": self.own_state,
+                                         "invites": self.own_invites,
+                                         "invisible": self.own_invisible,
+                                         "ingame": self.own_ingame, "game": self.own_game,
+                                         "emoticons": self.emoticons,
+                                         "stickers": self.stickers})
+                except Exception:
+                    pass
             if self._started and self.signed and ticks % 9 == 0:
                 try:
                     await self.refresh_list()

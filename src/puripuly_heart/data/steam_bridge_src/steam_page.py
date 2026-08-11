@@ -479,17 +479,23 @@ class SteamPage:
     async def list_emoticons(self) -> list[str]:
         """The user's owned emoticon names (rendered as economy images by the app)."""
         try:
-            await self._page.evaluate(
-                "async () => { try { const es = window.g_FriendsUIApp.m_ChatStore.m_EmoticonStore;"
-                " if (es.RequestEmoticonList) await es.RequestEmoticonList(); } catch(e){} }")
             return await self._page.evaluate(
-                r"""() => {
-                  try {
-                    const es = window.g_FriendsUIApp.m_ChatStore.m_EmoticonStore;
-                    const list = es.SearchEmoticons ? es.SearchEmoticons('') : [];
-                    const arr = Array.isArray(list) ? list : [...(list || [])];
-                    return arr.map(e => e.name).filter(Boolean);
-                  } catch (e) { return []; }
+                r"""async () => {
+                  const es = window.g_FriendsUIApp.m_ChatStore.m_EmoticonStore;
+                  try { if (es.RequestEmoticonList) await es.RequestEmoticonList(); } catch (e) {}
+                  // The list fills asynchronously AFTER the request resolves —
+                  // poll until it stops growing so the picker gets EVERYTHING.
+                  let prev = -1, arr = [];
+                  for (let i = 0; i < 10; i++) {
+                    try {
+                      const l = es.SearchEmoticons ? es.SearchEmoticons('') : [];
+                      arr = Array.isArray(l) ? l : [...(l || [])];
+                    } catch (e) {}
+                    if (arr.length > 0 && arr.length === prev) break;
+                    prev = arr.length;
+                    await new Promise(r => setTimeout(r, 400));
+                  }
+                  return arr.map(e => e.name).filter(Boolean);
                 }""") or []
         except Exception:
             return []
@@ -506,13 +512,19 @@ class SteamPage:
                   for (const st of stores) {
                     if (!st) continue;
                     try { if (st.RequestStickerList) await st.RequestStickerList(); } catch (e) {}
-                    try {
-                      const list = st.SearchStickers ? st.SearchStickers('')
-                                 : (st.m_rgStickers || []);
-                      const arr = Array.isArray(list) ? list : [...(list || [])];
-                      const names = arr.map(x => x && (x.name || x.strName)).filter(Boolean);
-                      if (names.length) return names;
-                    } catch (e) {}
+                    let prev = -1, names = [];
+                    for (let i = 0; i < 10; i++) {
+                      try {
+                        const list = st.SearchStickers ? st.SearchStickers('')
+                                   : (st.m_rgStickers || []);
+                        const arr = Array.isArray(list) ? list : [...(list || [])];
+                        names = arr.map(x => x && (x.name || x.strName)).filter(Boolean);
+                      } catch (e) {}
+                      if (names.length > 0 && names.length === prev) break;
+                      prev = names.length;
+                      await new Promise(r => setTimeout(r, 400));
+                    }
+                    if (names.length) return names;
                   }
                   return [];
                 }""") or []

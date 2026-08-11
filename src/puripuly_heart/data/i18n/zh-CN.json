@@ -1016,5 +1016,11 @@
   "steam.popped_caption": "关闭那个窗口，或使用下面的按钮，即可把聊天带回这里。",
   "steam.popped_btn": "带回此处",
   "steam.close": "关闭",
-  "steam.power_tip": "开关 Steam 模块"
+  "steam.power_tip": "开关 Steam 模块",
+  "steam.tab_recent": "最近",
+  "steam.tab_emoji": "表情符号",
+  "steam.tab_emoticons": "表情",
+  "steam.tab_stickers": "贴纸",
+  "steam.search_hint": "搜索...",
+  "steam.no_recent": "你用过的会显示在这里"
 }

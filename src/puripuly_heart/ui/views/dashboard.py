@@ -19,7 +19,7 @@ from puripuly_heart.ui.fonts import font_for_language
 from puripuly_heart.ui.i18n import get_locale, language_name, t
 from puripuly_heart.ui.overlay_peer_contract import OverlayPeerConsumerContract
 
-_BUILD_TAG = "r440"  #increment each build so user can confirm version
+_BUILD_TAG = "r442"  #increment each build so user can confirm version
 
 # ── VRCT-style dark palette ──────────────────────────────────────────────────
 _BG_MAIN = "#2e2f32"
@@ -1557,6 +1557,10 @@ class DashboardView(ft.Row):
         # so the tab strip is identical on both tabs — nothing extra in this row.
         self._steam_lang_slot = ft.Container(visible=False)
         self._steam_header_actions = ft.Row([
+            ft.IconButton(ft.Icons.OPEN_IN_NEW, icon_size=16,
+                          icon_color=_TEXT_FAINT,
+                          tooltip=t("steam.popout_tip"),
+                          on_click=lambda e: self._steam_header_popout()),
             ft.IconButton(ft.Icons.SETTINGS_OUTLINED, icon_size=17,
                           icon_color=_TEXT_FAINT,
                           tooltip=t("steam.settings_title"),
@@ -1839,6 +1843,12 @@ class DashboardView(ft.Row):
                 with contextlib.suppress(Exception):
                     self._set_steam_chip_active(bool(self._steam_view._module_on))
         self.controls = [sidebar, right_panel]
+
+    def _steam_header_popout(self) -> None:
+        with contextlib.suppress(Exception):
+            sv = self._steam_view
+            if callable(sv.on_popout):
+                sv.on_popout()
 
     def _steam_header_gear(self) -> None:
         with contextlib.suppress(Exception):

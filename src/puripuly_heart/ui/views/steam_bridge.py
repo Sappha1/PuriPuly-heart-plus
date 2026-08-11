@@ -96,6 +96,15 @@ _DAEMON_PYTHON = (
     _VENV_SCRIPTS / "pythonw.exe" if (_VENV_SCRIPTS / "pythonw.exe").exists()
     else _VENV_SCRIPTS / "python.exe")
 _CREATE_NO_WINDOW = 0x08000000
+
+
+def steam_module_installed() -> bool:
+    """The Steam bridge is an optional module (like OCR): the tab only exists
+    when the helper (daemon + its Playwright venv) is present on disk."""
+    try:
+        return _DAEMON_PY.exists() and _DAEMON_PYTHON.exists()
+    except Exception:
+        return False
 _HOST, _PORT = "127.0.0.1", 8791
 
 _SEND_FMT_LABEL = {
@@ -181,6 +190,7 @@ class SteamBridgeView(ft.Container):
         self.translator_label = None
         self.translator_is_paid = None
         self.translator_value = None   # injected: resolved model value (cache key)
+        self._module_on = True         # module toggle: off = helper not running, no RAM
         self._pend: dict | None = None   # short buffer: rapid same-sender lines → ONE block
         self._pend_task = None
         self._hist_blocks: list = []  # blocks currently rendered (for retranslate)
@@ -377,11 +387,31 @@ class SteamBridgeView(ft.Container):
             border=ft.border.all(1, "#4b4c4f"), padding=4, width=170,
             left=300, bottom=70,
             shadow=ft.BoxShadow(blur_radius=14, color="#88000000", offset=ft.Offset(0, 4)))
+        self._state_mode = ""
+        self._state_icon = ft.Icon(ft.Icons.POWER_SETTINGS_NEW, size=42, color=_TEXT_FAINT)
+        self._state_title = ft.Text("", size=16, weight=ft.FontWeight.W_600,
+                                    color=_TEXT_PRIMARY)
+        self._state_caption = ft.Text("", size=12.5, color=_TEXT_FAINT, width=400,
+                                      text_align=ft.TextAlign.CENTER)
+        self._state_btn_text = ft.Text("", size=13, weight=ft.FontWeight.W_600,
+                                       color="#ffffff")
+        self._state_btn = ft.Container(
+            content=self._state_btn_text, bgcolor="#2f89bd", border_radius=6,
+            padding=ft.padding.symmetric(horizontal=18, vertical=9), ink=True,
+            on_click=lambda e: self._state_action())
+        self._state_overlay = ft.Container(
+            visible=False, expand=True, bgcolor=_BG_MAIN,
+            alignment=ft.alignment.center,
+            content=ft.Column([self._state_icon, self._state_title,
+                               self._state_caption, ft.Container(height=6),
+                               self._state_btn],
+                              spacing=10, tight=True,
+                              horizontal_alignment=ft.CrossAxisAlignment.CENTER))
         self.content = ft.Stack([main_row, self._loading,
                                   self._emoji_backdrop, self._emoji_panel,
                                   self._ctx_backdrop, self._ctx_menu,
                                   self._settings_backdrop, self._settings_panel,
-                                  self._input_menu], expand=True)
+                                  self._input_menu, self._state_overlay], expand=True)
         self._load_cache()
         self._load_prefs()
         self._update_own_header()
@@ -453,6 +483,8 @@ class SteamBridgeView(ft.Container):
 
     # ── lifecycle ────────────────────────────────────────────────────────────
     def prewarm(self) -> None:
+        if not getattr(self, "_module_on", True):
+            return                      # module off: keep RAM free, spawn nothing
         if self._prewarmed:
             return
         self._prewarmed = True
@@ -475,11 +507,98 @@ class SteamBridgeView(ft.Container):
             with contextlib.suppress(Exception):
                 self.page.overlay.append(self._file_picker)
                 self.page.update()
+        if not self._module_on:
+            self._show_state_overlay("off")
+            return
         if self._started:
             return
         self._started = True
         if self.page:
             self.page.run_task(self._connect)
+
+    def _show_state_overlay(self, mode: str) -> None:
+        self._state_mode = mode
+        if mode == "off":
+            self._state_icon.name = ft.Icons.POWER_SETTINGS_NEW
+            self._state_title.value = "Steam Chat is turned off"
+            self._state_caption.value = (
+                "The Steam helper and its hidden browser are not running, so "
+                "this module uses no RAM.")
+            self._state_btn_text.value = "Turn on"
+        else:
+            self._state_icon.name = ft.Icons.LOGIN
+            self._state_title.value = "Not signed in to Steam"
+            self._state_caption.value = (
+                "Signing in opens a Steam window — log in there and it closes "
+                "by itself when Steam finishes loading.")
+            self._state_btn_text.value = "Sign in to Steam"
+        self._state_overlay.visible = True
+        if self.page:
+            with contextlib.suppress(Exception):
+                self.page.update()
+
+    def _hide_state_overlay(self) -> None:
+        if self._state_overlay.visible:
+            self._state_overlay.visible = False
+            if self.page:
+                with contextlib.suppress(Exception):
+                    self.page.update()
+
+    def _state_action(self) -> None:
+        if self._state_mode == "off":
+            self._module_on = True
+            self._save_prefs()
+            self._hide_state_overlay()
+            self._started = False
+            self._prewarmed = False
+            self._writer = None
+            self._reader = None
+            self.activate()
+        else:
+            self._state_caption.value = ("A Steam sign-in window is opening — "
+                                         "log in there. This can take a moment…")
+            with contextlib.suppress(Exception):
+                self._state_caption.update()
+            if self.page:
+                self.page.run_task(self._cmd, {"cmd": "login"})
+
+    def _signout_prompt(self) -> None:
+        dlg = ft.AlertDialog(
+            modal=True,
+            title=ft.Text("Sign out of Steam?", size=15),
+            content=ft.Text(
+                "This disconnects the Steam tab and clears the saved login. "
+                "Signing back in opens a Steam window.", size=13),
+            actions=[
+                ft.TextButton("Cancel", on_click=lambda e: self.page.close(dlg)),
+                ft.TextButton("Sign out", on_click=lambda e: (
+                    self.page.close(dlg),
+                    self._toggle_settings(False),
+                    self.page.run_task(self._cmd, {"cmd": "signout"}),
+                    self._show_state_overlay("signedout"))),
+            ])
+        with contextlib.suppress(Exception):
+            self.page.open(dlg)
+
+    def _module_off(self) -> None:
+        self._module_on = False
+        self._save_prefs()
+        self._toggle_settings(False)
+
+        async def _shutdown() -> None:
+            with contextlib.suppress(Exception):
+                await self._cmd({"cmd": "quit"})
+            with contextlib.suppress(Exception):
+                if self._writer is not None:
+                    self._writer.close()
+            self._writer = None
+            self._reader = None
+            self._started = False
+            self._prewarmed = False
+
+        if self.page:
+            self.page.run_task(_shutdown)
+        self._show_state_overlay("off")
 
     def _insert_emoji(self, em: str) -> None:
         self._entry.value = (self._entry.value or "") + em
@@ -674,6 +793,12 @@ class SteamBridgeView(ft.Container):
                     "settings. Cached translations are reused — nothing is re-billed."),
             btn("Retranslate history", lambda e: self._retranslate_prompt(),
                 tip="Redo translations (e.g. after changing language)"),
+            ft.Divider(height=1, color="#4b4c4f"),
+            btn("Sign out of Steam", lambda e: self._signout_prompt(),
+                tip="Disconnects this tab and clears the saved Steam login"),
+            btn("Turn off Steam module", lambda e: self._module_off(),
+                tip="Stops the Steam helper and its hidden browser so they use "
+                    "no RAM. Turn it back on any time from this tab."),
         ], spacing=1, tight=True)
 
 
@@ -1571,6 +1696,7 @@ class SteamBridgeView(ft.Container):
                 self._read_ko = bool(p.get("read_ko", True))
                 self._read_latin = bool(p.get("read_latin", True))
                 self._pinyin_grouped = bool(p.get("pinyin_grouped", True))
+                self._module_on = bool(p.get("module_on", True))
                 self._tr_outgoing = True
 
     def _save_prefs(self) -> None:
@@ -1585,6 +1711,7 @@ class SteamBridgeView(ft.Container):
                 "read_zh": self._read_zh, "read_ja": self._read_ja,
                 "read_ko": self._read_ko, "read_latin": self._read_latin,
                 "pinyin_grouped": self._pinyin_grouped,
+                "module_on": self._module_on,
             }), encoding="utf-8")
 
     def _save_cache(self) -> None:
@@ -2050,6 +2177,11 @@ class SteamBridgeView(ft.Container):
                 self._emoticons = list(ev.get("emoticons"))
                 self._purge_emote_cache()
             self._update_own_header()
+        elif kind == "status":
+            if ev.get("signed_in"):
+                self._hide_state_overlay()
+            elif self._module_on and ev.get("mode") != "login":
+                self._show_state_overlay("signedout")
         elif kind == "friends":
             self._friends = {int(i["acct"]): i for i in ev.get("items", [])}
             self._got_friends = True

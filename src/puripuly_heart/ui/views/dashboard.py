@@ -19,7 +19,7 @@ from puripuly_heart.ui.fonts import font_for_language
 from puripuly_heart.ui.i18n import get_locale, language_name, t
 from puripuly_heart.ui.overlay_peer_contract import OverlayPeerConsumerContract
 
-_BUILD_TAG = "r428-steam-beta"  #increment each build so user can confirm version
+_BUILD_TAG = "r429-steam-beta"  #increment each build so user can confirm version
 
 # ── VRCT-style dark palette ──────────────────────────────────────────────────
 _BG_MAIN = "#2e2f32"
@@ -1786,10 +1786,17 @@ class DashboardView(ft.Row):
             horizontal_alignment=ft.CrossAxisAlignment.STRETCH,
         )
         try:
-            from puripuly_heart.ui.views.steam_bridge import SteamBridgeView
-            self._steam_view = SteamBridgeView()
+            from puripuly_heart.ui.views.steam_bridge import (
+                SteamBridgeView, steam_module_installed)
+            if steam_module_installed():
+                self._steam_view = SteamBridgeView()
+            else:
+                # Optional module (like OCR): no helper on disk -> no Steam tab
+                self._steam_view = ft.Container()
+                self._tab_steam.visible = False
         except Exception:
             self._steam_view = ft.Container()
+            self._tab_steam.visible = False
         self._chat_body = ft.Container(content=self._vrc_chat_body, expand=True)
         right_panel = ft.Container(
             content=ft.Column(

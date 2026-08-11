@@ -233,8 +233,12 @@ class SteamBridgeView(ft.Container):
             padding=ft.padding.only(left=8, right=12, top=6, bottom=4), bgcolor=_BG_MAIN)
         self._tab_bar = ft.Container(visible=False)   # kept: _rebuild_tabs toggles it
 
-        self._messages = ft.ListView(expand=True, spacing=10, padding=14, auto_scroll=True,
+        # auto_scroll is deliberately OFF forever: Flutter re-applies it on ANY
+        # repaint (window redraws, PrintScreen, etc.), yanking the list to the end.
+        # Following is done by explicit scroll_to commands instead (_scroll_to_end).
+        self._messages = ft.ListView(expand=True, spacing=10, padding=14, auto_scroll=False,
                                      on_scroll=self._on_msg_scroll)
+        self._following = True
         self._max_scroll = 0.0
         # Centered horizontally at the bottom, matching the VRChat chat tab.
         self._jump_btn = ft.Container(
@@ -596,6 +600,8 @@ class SteamBridgeView(ft.Container):
         if self.page:
             with contextlib.suppress(Exception):
                 self.page.update()
+            if self._following:
+                self._scroll_to_end(0)
             self.page.run_task(self._fill_translations, blocks, self._open_seq)
 
     async def _fill_translations(self, blocks: list, seq: int) -> None:
@@ -1247,23 +1253,21 @@ class SteamBridgeView(ft.Container):
         with contextlib.suppress(Exception):
             self._max_scroll = e.max_scroll_extent or 0.0
             want = e.pixels < (e.max_scroll_extent or 0) - 90
-            # While scrolled up, STOP following new messages (no forced jumps to the
-            # end); resume following when back at the bottom or via the jump button.
-            # MUST be committed with update() — otherwise the client-side list still
-            # has auto_scroll on and ANY page refresh (typing indicator, friends
-            # update, even a PrintScreen-triggered redraw) yanks it to the end.
-            if self._messages.auto_scroll != (not want):
-                self._messages.auto_scroll = not want
-                with contextlib.suppress(Exception):
-                    self._messages.update()
+            # While scrolled up, stop following new messages; resume at the bottom
+            # or via the jump button. Scrolling only ever happens via _scroll_to_end.
+            self._following = not want
             if self._jump_btn.visible != want:
                 self._jump_btn.visible = want
                 self._jump_btn.update()
 
+    def _scroll_to_end(self, duration: int = 80) -> None:
+        with contextlib.suppress(Exception):
+            self._messages.scroll_to(offset=-1, duration=duration)
+
     def _jump_to_latest(self) -> None:
         with contextlib.suppress(Exception):
-            self._messages.auto_scroll = True
-            self._messages.scroll_to(offset=self._max_scroll or 1000000, duration=200)
+            self._following = True
+            self._scroll_to_end(200)
             self._jump_btn.visible = False
             self._jump_btn.update()
 
@@ -1507,7 +1511,7 @@ class SteamBridgeView(ft.Container):
             return
         self._pend = None                  # drop any half-buffered live lines
         self._messages.controls.clear()
-        self._messages.auto_scroll = True  # fresh chat follows the newest message
+        self._following = True             # fresh chat follows the newest message
         self._last_block = None            # fresh chat — don't coalesce across it
         self._hist_blocks = blocks
         for b in blocks:
@@ -1528,6 +1532,7 @@ class SteamBridgeView(ft.Container):
                 self._seen_chat_ts.get(self._active or 0, 0),
                 max(int(b.get("_ts") or 0) for b in blocks))
         self._rebuild_tabs()               # clears this tab's unread dot
+        self._scroll_to_end(0)
         if self.page:
             self.page.update()
         # translate all blocks at once (cached ones are instant) instead of
@@ -1598,6 +1603,8 @@ class SteamBridgeView(ft.Container):
             self._seen_chat_ts.get(self._active or 0, 0), ts)
         if self.page:
             self.page.update()
+            if self._following:
+                self._scroll_to_end()
         await self._translate_block(b, self._open_seq)
 
     # ── helper process + socket ──────────────────────────────────────────────

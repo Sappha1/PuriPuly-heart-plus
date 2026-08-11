@@ -61,7 +61,7 @@ _URL_RE = re.compile(r"(https?://[^\s]+)")
 # in a different script than the reader (so we don't translate English->English).
 _CJK_RE = re.compile(r"[㐀-鿿぀-ヿ가-힣]")
 _CJK_LANGS = {"zh-CN", "zh-TW", "ja", "ko"}
-_EMOTE_RE = re.compile(r":([a-zA-Z][a-zA-Z0-9_]{1,}):")
+_EMOTE_RE = re.compile(r"[:ː]([a-zA-Z][a-zA-Z0-9_]{1,})[:ː]")
 
 
 def _extract_emoticons(text: str) -> tuple[str, list[str]]:
@@ -544,7 +544,7 @@ class SteamBridgeView(ft.Container):
             row("Translate their messages", self._tr_incoming, self._set_tr_incoming),
             row("Translate my messages", self._tr_outgoing, self._set_tr_outgoing),
             ft.Divider(height=1, color="#4b4c4f"),
-            btn("Clean up / re-render chat", lambda e: self._rerender_chat(),
+            btn("Clean up / re-render chat", lambda e: self._reload_chat(),
                 tip="Re-group and re-render this chat's history"),
             btn("Retranslate history", lambda e: self._retranslate_prompt(),
                 tip="Redo translations (e.g. after changing language)"),
@@ -572,8 +572,40 @@ class SteamBridgeView(ft.Container):
         self._rerender_chat()   # so already-shown own messages reflect the toggle
 
     def _rerender_chat(self) -> None:
-        # Re-request history from the helper — re-groups (time-gap coalesce) and
-        # re-renders; translations come from cache, so no DeepL is burned.
+        """Restyle IN PLACE from the blocks already in memory — used by the display
+        toggles (pinyin / originals / translations). No helper round-trip, so the
+        chat doesn't visibly unload and repost anything; order can't change."""
+        if not self._active or not self._hist_blocks:
+            return
+        blocks = list(self._hist_blocks)
+        self._messages.controls.clear()
+        self._last_block = None
+        for b in blocks:
+            b.pop("_ctrl", None)               # rebuilt by the body builder below
+            ts = int(b.get("_ts") or 0)
+            lb = self._last_block
+            if (lb and lb["from_me"] == b["from_me"]
+                    and lb["name"] == (b.get("name") or "")
+                    and ts and lb.get("ts")
+                    and ts - lb["ts"] <= self._GROUP_GAP_S):
+                with contextlib.suppress(Exception):
+                    lb["col"].controls.extend(self._message_body_controls(b))
+                lb["ts"] = ts
+            else:
+                self._messages.controls.append(self._block_control(b))
+        if self.page:
+            with contextlib.suppress(Exception):
+                self.page.update()
+            self.page.run_task(self._fill_translations, blocks, self._open_seq)
+
+    async def _fill_translations(self, blocks: list, seq: int) -> None:
+        # cache hits are instant; only genuinely new text would call the API
+        await asyncio.gather(*(self._translate_block(b, seq) for b in blocks))
+        self._save_cache()
+
+    def _reload_chat(self) -> None:
+        # Full reload from the helper (re-reads + re-groups server history) —
+        # only the explicit "Clean up / re-render chat" button does this.
         if self._active:
             with contextlib.suppress(Exception):
                 self.page.run_task(self._cmd, {"cmd": "open", "acct": self._active})

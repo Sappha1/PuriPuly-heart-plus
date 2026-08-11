@@ -418,6 +418,8 @@ class SteamBridgeView(ft.Container):
                                       text_align=ft.TextAlign.CENTER)
         self._state_btn_text = ft.Text("", size=13, weight=ft.FontWeight.W_600,
                                        color="#ffffff")
+        self._state_prog = ft.ProgressRing(width=18, height=18, stroke_width=2,
+                                           color=_TOGGLE_ON, visible=False)
         self._state_btn = ft.Container(
             content=self._state_btn_text, bgcolor="#2f89bd", border_radius=6,
             padding=ft.padding.symmetric(horizontal=18, vertical=9), ink=True,
@@ -426,8 +428,8 @@ class SteamBridgeView(ft.Container):
             visible=False, expand=True, bgcolor=_BG_MAIN,
             alignment=ft.alignment.center,
             content=ft.Column([self._state_icon, self._state_title,
-                               self._state_caption, ft.Container(height=6),
-                               self._state_btn],
+                               self._state_caption, self._state_prog,
+                               ft.Container(height=6), self._state_btn],
                               spacing=10, tight=True,
                               horizontal_alignment=ft.CrossAxisAlignment.CENTER))
         self.content = ft.Stack([main_row, self._loading,
@@ -579,11 +581,15 @@ class SteamBridgeView(ft.Container):
             self._reader = None
             self.activate()
         else:
+            if self._state_btn.disabled:
+                return                      # a sign-in is already running
+            self._state_btn.disabled = True
             self._state_caption.value = _T(
                 "steam.signin_wait",
                 default="A Steam sign-in window is opening — log in there. This can take a moment…")
             with contextlib.suppress(Exception):
                 self._state_caption.update()
+                self._state_btn.update()
             if self.page:
                 self.page.run_task(self._cmd, {"cmd": "login"})
 
@@ -823,15 +829,18 @@ class SteamBridgeView(ft.Container):
             btn(_T("steam.module_off", default="Turn off Steam module"), lambda e: self._module_off(),
                 tip=_T("steam.tip_module_off", default="Stops the Steam helper and its hidden browser so they use no RAM.")),
         ], spacing=1, tight=True)
-        # Never taller than the window: cap + scroll (the user's "menu is cut
-        # off" bug — small windows or many visible rows overflowed).
-        rows = len(self._settings_panel.content.controls)
-        est = rows * 33 + 28
+        # Never taller than the window: cap + scroll (the "menu is cut off"
+        # bug). Sum the REAL control heights — a rough rows*33 estimate set a
+        # too-tall fixed height and left blank padding at the bottom.
+        controls = self._settings_panel.content.controls
+        est = sum((getattr(c, "height", None) or 22) for c in controls)
+        est += max(0, len(controls) - 1) * 1 + 20   # column spacing + padding
         avail = int(getattr(self.page, "height", 0) or 760) - 110
         if avail > 220 and est > avail:
             self._settings_panel.content.scroll = ft.ScrollMode.AUTO
             self._settings_panel.height = avail
         else:
+            self._settings_panel.content.scroll = None
             self._settings_panel.height = None
 
 
@@ -2260,7 +2269,29 @@ class SteamBridgeView(ft.Container):
                 self._purge_emote_cache()
             self._update_own_header()
             self._save_snapshot()
+        elif kind == "login_progress":
+            stage = ev.get("stage", "")
+            cap = {
+                "opening": _T("steam.login_opening",
+                              default="Opening the Steam sign-in window"),
+                "waiting": _T("steam.login_waiting",
+                              default="Waiting for you to log in in the Steam window"),
+                "finishing": _T("steam.login_finishing",
+                                default="Signed in — loading your friends"),
+            }.get(stage)
+            if cap and self._state_overlay.visible:
+                self._state_prog.visible = True
+                self._state_caption.value = cap
+                with contextlib.suppress(Exception):
+                    self._state_caption.update()
+                    self._state_prog.update()
         elif kind == "status":
+            self._state_prog.visible = False
+            with contextlib.suppress(Exception):
+                self._state_prog.update()
+            self._state_btn.disabled = False
+            with contextlib.suppress(Exception):
+                self._state_btn.update()
             if ev.get("signed_in"):
                 self._hide_state_overlay()
             elif self._module_on and ev.get("mode") != "login":

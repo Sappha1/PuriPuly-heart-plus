@@ -956,7 +956,7 @@
   "steam.signin_title": "Steamにサインインしていません",
   "steam.signin_caption": "サインインするとSteamウィンドウが開きます。そこでログインすると、読み込み完了後に自動で閉じます。",
   "steam.signin_btn": "Steamにサインイン",
-  "steam.signin_wait": "Steamのサインインウィンドウを開いています。そこでログインしてください。少し時間がかかることがあります…",
+  "steam.signin_wait": "Steamのサインインウィンドウを開いています",
   "steam.signout_q": "Steamからサインアウトしますか？",
   "steam.signout_body": "Steamタブを切断し、保存されたログインを消去します。再サインイン時はSteamウィンドウが開きます。",
   "steam.cancel": "キャンセル",
@@ -977,5 +977,8 @@
   "steam.state_offline": "オフライン",
   "steam.state_away": "退席中",
   "steam.state_snooze": "スヌーズ",
-  "steam.state_invisible": "非表示"
+  "steam.state_invisible": "非表示",
+  "steam.login_opening": "Steamのサインインウィンドウを開いています",
+  "steam.login_waiting": "Steamウィンドウでのログインを待っています",
+  "steam.login_finishing": "サインインしました。フレンドを読み込み中"
 }

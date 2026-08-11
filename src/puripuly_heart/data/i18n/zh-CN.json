@@ -956,7 +956,7 @@
   "steam.signin_title": "未登录 Steam",
   "steam.signin_caption": "登录时会打开一个 Steam 窗口——在那里登录，加载完成后会自动关闭。",
   "steam.signin_btn": "登录 Steam",
-  "steam.signin_wait": "正在打开 Steam 登录窗口——请在那里登录。可能需要一点时间…",
+  "steam.signin_wait": "正在打开 Steam 登录窗口",
   "steam.signout_q": "退出 Steam 登录？",
   "steam.signout_body": "这会断开 Steam 标签页并清除已保存的登录。重新登录时会打开 Steam 窗口。",
   "steam.cancel": "取消",
@@ -977,5 +977,8 @@
   "steam.state_offline": "离线",
   "steam.state_away": "离开",
   "steam.state_snooze": "打盹",
-  "steam.state_invisible": "隐身"
+  "steam.state_invisible": "隐身",
+  "steam.login_opening": "正在打开 Steam 登录窗口",
+  "steam.login_waiting": "等待你在 Steam 窗口中登录",
+  "steam.login_finishing": "已登录——正在加载好友列表"
 }

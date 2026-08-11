@@ -956,7 +956,7 @@
   "steam.signin_title": "Steam에 로그인되어 있지 않습니다",
   "steam.signin_caption": "로그인하면 Steam 창이 열립니다. 거기서 로그인하면 로딩 완료 후 자동으로 닫힙니다.",
   "steam.signin_btn": "Steam 로그인",
-  "steam.signin_wait": "Steam 로그인 창을 여는 중입니다. 거기서 로그인하세요. 잠시 걸릴 수 있습니다…",
+  "steam.signin_wait": "Steam 로그인 창을 여는 중",
   "steam.signout_q": "Steam에서 로그아웃할까요?",
   "steam.signout_body": "Steam 탭 연결을 끊고 저장된 로그인을 지웁니다. 다시 로그인하면 Steam 창이 열립니다.",
   "steam.cancel": "취소",
@@ -977,5 +977,8 @@
   "steam.state_offline": "오프라인",
   "steam.state_away": "자리 비움",
   "steam.state_snooze": "수면 모드",
-  "steam.state_invisible": "투명 모드"
+  "steam.state_invisible": "투명 모드",
+  "steam.login_opening": "Steam 로그인 창을 여는 중",
+  "steam.login_waiting": "Steam 창에서 로그인하기를 기다리는 중",
+  "steam.login_finishing": "로그인됨 — 친구 목록 불러오는 중"
 }

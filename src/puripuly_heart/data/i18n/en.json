@@ -956,7 +956,7 @@
   "steam.signin_title": "Not signed in to Steam",
   "steam.signin_caption": "Signing in opens a Steam window — log in there and it closes by itself when Steam finishes loading.",
   "steam.signin_btn": "Sign in to Steam",
-  "steam.signin_wait": "A Steam sign-in window is opening — log in there. This can take a moment…",
+  "steam.signin_wait": "Opening the Steam sign-in window",
   "steam.signout_q": "Sign out of Steam?",
   "steam.signout_body": "This disconnects the Steam tab and clears the saved login. Signing back in opens a Steam window.",
   "steam.cancel": "Cancel",
@@ -977,5 +977,8 @@
   "steam.state_offline": "Offline",
   "steam.state_away": "Away",
   "steam.state_snooze": "Snooze",
-  "steam.state_invisible": "Invisible"
+  "steam.state_invisible": "Invisible",
+  "steam.login_opening": "Opening the Steam sign-in window",
+  "steam.login_waiting": "Waiting for you to log in in the Steam window",
+  "steam.login_finishing": "Signed in — loading your friends"
 }

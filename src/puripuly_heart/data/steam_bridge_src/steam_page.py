@@ -671,12 +671,27 @@ class SteamPage:
                       (raw1.match(/"ugcid"\s*:\s*"?(\d+)"?/) || [])[1] || String(res.ugcid));
                   fd2.append('timestamp',
                       (raw1.match(/"timestamp"\s*:\s*"?(\d+)"?/) || [])[1] || String(res.timestamp));
+                  // The begin response signs the upload: its hmac MUST be echoed
+                  // in the commit or Steam rejects it as a bad request.
+                  const hmac = (raw1.match(/"hmac"\s*:\s*"([^"]+)"/) || [])[1] || res.hmac || '';
+                  if (hmac) fd2.append('hmac', String(hmac));
                   try { c.PopulateCommitFileUploadFormData(fd2, {bSpoiler: !!spoiler}, {}); } catch(e){}
+                  // Populate derives friend_steamid from this.accountid_partner,
+                  // which our store-plucked chat object may not carry -> a base/
+                  // garbage steamid -> commit 400. Set it ourselves from acct.
+                  fd2.set('friend_steamid', (76561197960265728n + BigInt(acct)).toString());
+                  if (fd2.get('spoiler') === null) fd2.append('spoiler', spoiler ? '1' : '0');
+                  const dbg = { partner: String(c.accountid_partner),
+                                beginKeys: Object.keys(res).join(',') };
+                  try { for (const [k, v] of fd2.entries())
+                          dbg[k] = (typeof v === 'string') ? String(v).slice(0, 60) : '<file>'; } catch (e) {}
                   const r3 = await fetch(c.GetCommitFileUploadURL(),
                                          {method:'POST', body: fd2, credentials:'include'});
                   let j3 = null; try { j3 = await r3.json(); } catch(e){}
                   if (!j3 || j3.success !== 1)
-                    return { step:'commit', status: r3.status, resp: JSON.stringify(j3).slice(0,300) };
+                    return { step:'commit', status: r3.status,
+                             resp: JSON.stringify(j3).slice(0,300),
+                             sent: dbg };
                   return { ok: true, ugcid: String(res.ugcid) };
                 }""",
                 [acct, b64, fname, mime, bool(spoiler)],

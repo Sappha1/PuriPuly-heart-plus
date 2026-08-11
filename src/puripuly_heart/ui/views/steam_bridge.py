@@ -88,6 +88,7 @@ _EMOJIS = ["😀", "😂", "🥰", "😊", "😎", "😉", "😢", "😭", "😡
 _BRIDGE_ROOT = Path(r"C:\Users\Owner\Desktop\PuriPuly-heart-2.1.2\steam-helper")
 _DAEMON_PY = _BRIDGE_ROOT / "steam_bridge" / "daemon.py"
 _CACHE_FILE = _BRIDGE_ROOT / "steam_bridge" / "tr_cache.json"
+_PREFS_FILE = _BRIDGE_ROOT / "steam_bridge" / "view_prefs.json"
 _VENV_SCRIPTS = _BRIDGE_ROOT / "steamprobe-venv" / "Scripts"
 _DAEMON_PYTHON = (
     _VENV_SCRIPTS / "pythonw.exe" if (_VENV_SCRIPTS / "pythonw.exe").exists()
@@ -147,6 +148,11 @@ class SteamBridgeView(ft.Container):
         self._active = None
         self._open_seq = 0
         self._last_block = None       # last rendered msg block, for same-sender coalescing
+        self._tr_incoming = True      # translate their messages (Steam-tab setting)
+        self._tr_outgoing = True      # translate my messages before sending
+        self._pend: dict | None = None   # short buffer: rapid same-sender lines → ONE block
+        self._pend_task = None
+        self._hist_blocks: list = []  # blocks currently rendered (for retranslate)
         self._friends: dict[int, dict] = {}
         self._search_index: dict[int, str] = {}
         self._tabs: list[int] = []
@@ -207,8 +213,13 @@ class SteamBridgeView(ft.Container):
         # The tabs ARE the header — each tab shows the friend's name + status, the
         # active one highlighted. No separate (redundant) person header.
         self._tab_strip = ft.Row([], spacing=6, scroll=ft.ScrollMode.AUTO, expand=True)
+        settings_btn = ft.IconButton(
+            ft.Icons.SETTINGS_OUTLINED, icon_size=17, icon_color=_TEXT_FAINT,
+            tooltip="Steam chat settings",
+            on_click=lambda e: self._toggle_settings(),
+            style=ft.ButtonStyle(overlay_color=ft.Colors.TRANSPARENT))
         top_bar = ft.Container(
-            content=ft.Row([self._tab_strip], spacing=8,
+            content=ft.Row([self._tab_strip, settings_btn], spacing=8,
                            vertical_alignment=ft.CrossAxisAlignment.CENTER),
             padding=ft.padding.only(left=8, right=12, top=6, bottom=4), bgcolor=_BG_MAIN)
         self._tab_bar = ft.Container(visible=False)   # kept: _rebuild_tabs toggles it
@@ -241,7 +252,9 @@ class SteamBridgeView(ft.Container):
             style=ft.ButtonStyle(overlay_color=ft.Colors.TRANSPARENT))
         input_row = ft.Container(
             content=ft.Row([
-                self._entry,
+                ft.GestureDetector(
+                    content=self._entry, expand=True,
+                    on_secondary_tap_down=lambda e: self._show_input_menu(e)),
                 ft.IconButton(ft.Icons.SEND_ROUNDED, icon_size=18, icon_color=_TOGGLE_ON,
                               tooltip="Send", on_click=lambda e: self.page.run_task(self._send),
                               style=ft.ButtonStyle(overlay_color=ft.Colors.TRANSPARENT,
@@ -303,10 +316,27 @@ class SteamBridgeView(ft.Container):
         self._emoji_backdrop = ft.GestureDetector(
             visible=False, on_tap=lambda e: self._toggle_emoji(False),
             content=ft.Container(expand=True, bgcolor=ft.Colors.TRANSPARENT))
+        # Steam-tab settings panel (gear in the top bar) + input right-click menu.
+        self._settings_panel = ft.Container(
+            visible=False, bgcolor=_BG_MENU, border_radius=10,
+            border=ft.border.all(1, "#4b4c4f"), width=280,
+            right=8, top=44, padding=12,
+            shadow=ft.BoxShadow(blur_radius=16, color="#99000000", offset=ft.Offset(0, 4)))
+        self._settings_backdrop = ft.GestureDetector(
+            visible=False, on_tap=lambda e: self._toggle_settings(False),
+            content=ft.Container(expand=True, bgcolor=ft.Colors.TRANSPARENT))
+        self._input_menu = ft.Container(
+            visible=False, bgcolor=_BG_MENU, border_radius=8,
+            border=ft.border.all(1, "#4b4c4f"), padding=4, width=170,
+            left=300, bottom=70,
+            shadow=ft.BoxShadow(blur_radius=14, color="#88000000", offset=ft.Offset(0, 4)))
         self.content = ft.Stack([main_row, self._loading,
                                   self._emoji_backdrop, self._emoji_panel,
-                                  self._ctx_backdrop, self._ctx_menu], expand=True)
+                                  self._ctx_backdrop, self._ctx_menu,
+                                  self._settings_backdrop, self._settings_panel,
+                                  self._input_menu], expand=True)
         self._load_cache()
+        self._load_prefs()
         self._update_own_header()
 
     def _lang_button(self, which: str) -> ft.Control:
@@ -408,6 +438,151 @@ class SteamBridgeView(ft.Container):
         if self.page:
             self.page.update()
 
+    # ── Steam-tab settings (gear) ────────────────────────────────────────────
+    def _toggle_settings(self, show=None) -> None:
+        show = (not self._settings_panel.visible) if show is None else show
+        if show:
+            self._build_settings_panel()
+        self._settings_panel.visible = show
+        self._settings_backdrop.visible = show
+        if self.page:
+            self.page.update()
+
+    def _build_settings_panel(self) -> None:
+        def row(label, value, cb):
+            return ft.Row([
+                ft.Text(label, size=13, color=_TEXT_PRIMARY, expand=True),
+                ft.Switch(value=value, active_color=_TOGGLE_ON, scale=0.8,
+                          on_change=cb),
+            ], vertical_alignment=ft.CrossAxisAlignment.CENTER)
+
+        def btn(label, cb, tip=None):
+            return ft.Container(
+                content=ft.Text(label, size=13, color=_TEXT_PRIMARY),
+                padding=ft.padding.symmetric(horizontal=8, vertical=7),
+                border_radius=6, ink=True, on_click=cb, tooltip=tip)
+
+        self._settings_panel.content = ft.Column([
+            ft.Text("STEAM CHAT SETTINGS", size=11, weight=ft.FontWeight.BOLD,
+                    color=_SECTION),
+            row("Show pinyin / romaji", self._show_pinyin, self._set_pinyin),
+            row("Translate their messages", self._tr_incoming, self._set_tr_incoming),
+            row("Translate my messages", self._tr_outgoing, self._set_tr_outgoing),
+            ft.Divider(height=1, color="#4b4c4f"),
+            btn("Clean up / re-render chat", lambda e: self._rerender_chat(),
+                tip="Re-group and re-render this chat's history"),
+            btn("Retranslate history…", lambda e: self._retranslate_prompt(),
+                tip="Redo translations (e.g. after changing language)"),
+        ], spacing=8, tight=True)
+
+    def _set_pinyin(self, e) -> None:
+        self._show_pinyin = bool(e.control.value)
+        self._pinyin_from_prefs = True
+        self._save_prefs()
+        self._rerender_chat()
+
+    def _set_tr_incoming(self, e) -> None:
+        self._tr_incoming = bool(e.control.value)
+        self._save_prefs()
+        self._rerender_chat()
+
+    def _set_tr_outgoing(self, e) -> None:
+        self._tr_outgoing = bool(e.control.value)
+        self._save_prefs()
+
+    def _rerender_chat(self) -> None:
+        # Re-request history from the helper — re-groups (time-gap coalesce) and
+        # re-renders; translations come from cache, so no DeepL is burned.
+        if self._active:
+            with contextlib.suppress(Exception):
+                self.page.run_task(self._cmd, {"cmd": "open", "acct": self._active})
+
+    def _retranslate_prompt(self) -> None:
+        chars = 0
+        for b in self._hist_blocks:
+            t = _URL_RE.sub("", b.get("text", "") or "").strip()
+            if t and self._needs_tr(t):
+                chars += len(t)
+        if not chars:
+            with contextlib.suppress(Exception):
+                self.page.open(ft.SnackBar(ft.Text("Nothing here needs retranslating.")))
+            return
+        dlg = ft.AlertDialog(
+            modal=True,
+            title=ft.Text("Retranslate history?", size=15),
+            content=ft.Text(
+                f"This will re-send ≈{chars} characters to your translator "
+                f"(DeepL bills per character), replacing the cached translations "
+                f"for this chat.", size=13),
+            actions=[
+                ft.TextButton("Cancel", on_click=lambda e: self.page.close(dlg)),
+                ft.TextButton("Retranslate",
+                              on_click=lambda e: (self.page.close(dlg),
+                                                  self.page.run_task(self._retranslate_all))),
+            ])
+        with contextlib.suppress(Exception):
+            self.page.open(dlg)
+
+    async def _retranslate_all(self) -> None:
+        seq = self._open_seq
+        await asyncio.gather(*(self._translate_block(b, seq, force=True)
+                               for b in list(self._hist_blocks)))
+        self._save_cache()
+        with contextlib.suppress(Exception):
+            self.page.open(ft.SnackBar(ft.Text("History retranslated."), duration=1600))
+
+    # ── input right-click menu (paste/copy/cut/clear) ────────────────────────
+    def _show_input_menu(self, e) -> None:
+        def item(label, cb):
+            def handler(ev):
+                self._hide_input_menu()
+                cb()
+            return ft.Container(content=ft.Text(label, size=13, color=_TEXT_PRIMARY),
+                                padding=ft.padding.symmetric(horizontal=10, vertical=7),
+                                border_radius=6, ink=True, on_click=handler)
+
+        def paste():
+            with contextlib.suppress(Exception):
+                clip = self.page.get_clipboard()
+                if clip:
+                    self._entry.value = (self._entry.value or "") + clip
+                    self._entry.update()
+
+        def copy_all():
+            with contextlib.suppress(Exception):
+                self.page.set_clipboard(self._entry.value or "")
+
+        def cut_all():
+            copy_all()
+            self._entry.value = ""
+            with contextlib.suppress(Exception):
+                self._entry.update()
+
+        def clear():
+            self._entry.value = ""
+            with contextlib.suppress(Exception):
+                self._entry.update()
+
+        self._input_menu.content = ft.Column([
+            item("Paste", paste),
+            item("Copy all", copy_all),
+            item("Cut all", cut_all),
+            item("Clear", clear),
+        ], spacing=1, tight=True)
+        gx = float(getattr(e, "global_x", 0) or 300)
+        self._input_menu.left = max(240.0, gx - 8)
+        self._input_menu.visible = True
+        self._ctx_backdrop.visible = True    # reuse the chat-area backdrop to dismiss
+        if self.page:
+            self.page.update()
+
+    def _hide_input_menu(self) -> None:
+        if self._input_menu.visible:
+            self._input_menu.visible = False
+            self._ctx_backdrop.visible = False
+            if self.page:
+                self.page.update()
+
     def _not_yet(self, label: str) -> None:
         with contextlib.suppress(Exception):
             self.page.open(ft.SnackBar(ft.Text(f"{label} aren't wired up yet in the beta.")))
@@ -479,9 +654,10 @@ class SteamBridgeView(ft.Container):
             self.page.update()
 
     def _hide_ctx(self) -> None:
-        if self._ctx_menu.visible or self._ctx_backdrop.visible:
+        if self._ctx_menu.visible or self._ctx_backdrop.visible or self._input_menu.visible:
             self._ctx_menu.visible = False
             self._ctx_backdrop.visible = False
+            self._input_menu.visible = False
             if self.page:
                 self.page.update()
 
@@ -829,12 +1005,16 @@ class SteamBridgeView(ft.Container):
         if acct in self._tabs:
             self._tabs.remove(acct)
         if acct == self._active:
+            # Clear the closed chat's content IMMEDIATELY — don't leave it on screen
+            # while the next chat's history loads.
+            self._messages.controls.clear()
+            self._last_block = None
+            self._hist_blocks = []
             if self._tabs:
                 self.page.run_task(self._open, self._tabs[-1])
                 return
             self._active = None
             self._set_chat_head(None)
-            self._messages.controls.clear()
             self._entry.disabled = True
         self._rebuild_tabs()
         if self.page:
@@ -845,12 +1025,16 @@ class SteamBridgeView(ft.Container):
         with contextlib.suppress(Exception):
             self._max_scroll = e.max_scroll_extent or 0.0
             want = e.pixels < (e.max_scroll_extent or 0) - 90
+            # While scrolled up, STOP following new messages (no forced jumps to the
+            # end); resume following when back at the bottom or via the jump button.
+            self._messages.auto_scroll = not want
             if self._jump_btn.visible != want:
                 self._jump_btn.visible = want
                 self._jump_btn.update()
 
     def _jump_to_latest(self) -> None:
         with contextlib.suppress(Exception):
+            self._messages.auto_scroll = True
             self._messages.scroll_to(offset=self._max_scroll or 1000000, duration=200)
             self._jump_btn.visible = False
             self._jump_btn.update()
@@ -882,6 +1066,25 @@ class SteamBridgeView(ft.Container):
             if _CACHE_FILE.exists():
                 self._tr_cache = json.loads(_CACHE_FILE.read_text(encoding="utf-8"))
 
+    # Steam-tab-only preferences (independent of the app's translation settings).
+    def _load_prefs(self) -> None:
+        with contextlib.suppress(Exception):
+            if _PREFS_FILE.exists():
+                p = json.loads(_PREFS_FILE.read_text(encoding="utf-8"))
+                if "show_pinyin" in p:
+                    self._show_pinyin = bool(p["show_pinyin"])
+                    self._pinyin_from_prefs = True   # app.py must not overwrite it
+                self._tr_incoming = bool(p.get("tr_incoming", True))
+                self._tr_outgoing = bool(p.get("tr_outgoing", True))
+
+    def _save_prefs(self) -> None:
+        with contextlib.suppress(Exception):
+            _PREFS_FILE.write_text(json.dumps({
+                "show_pinyin": self._show_pinyin,
+                "tr_incoming": self._tr_incoming,
+                "tr_outgoing": self._tr_outgoing,
+            }), encoding="utf-8")
+
     def _save_cache(self) -> None:
         with contextlib.suppress(Exception):
             if len(self._tr_cache) > 8000:
@@ -889,39 +1092,65 @@ class SteamBridgeView(ft.Container):
             _CACHE_FILE.write_text(json.dumps(self._tr_cache, ensure_ascii=False),
                                    encoding="utf-8")
 
-    async def _tr(self, text: str) -> str:
+    def _tr_key(self, text: str) -> str:
+        # Cache is keyed by TARGET language, else switching languages would serve
+        # stale translations (and "retranslate" could never work).
+        return f"{self._src_lang}|{text}"
+
+    async def _tr(self, text: str, *, force: bool = False) -> str:
         if not text or not self._needs_tr(text):
             return text                       # already in my language — no DeepL
-        if text in self._tr_cache:
-            return self._tr_cache[text]       # cached from this or a past session
+        key = self._tr_key(text)
+        if not force and key in self._tr_cache:
+            return self._tr_cache[key]        # cached from this or a past session
+        if not force and text in self._tr_cache:   # legacy un-keyed entry
+            return self._tr_cache[text]
         out = text
         if callable(self.translate_message):
             with contextlib.suppress(Exception):
                 r = await self.translate_message(text, False)
                 if r:
                     out = r
-        self._tr_cache[text] = out
+        self._tr_cache[key] = out
         self._tr_dirty += 1
         if self._tr_dirty >= 8:               # persist so restarts don't re-burn DeepL
             self._tr_dirty = 0
             self._save_cache()
         return out
 
+    # Merge only rapid-fire lines: same sender AND within this many seconds AND the
+    # merged text stays modest. Steam-style grouping — messages minutes apart must
+    # NOT collapse into one mega-block (they'd also translate as one blob).
+    _MERGE_GAP_S = 120
+    _MERGE_MAX_CHARS = 280
+
     def _coalesce(self, messages: list) -> list:
         blocks = []
         for m in messages:
             fm = bool(m.get("from_me"))
-            if blocks and blocks[-1]["from_me"] == fm and not blocks[-1]["stickers"] \
-                    and not blocks[-1]["images"]:
+            ts = int(m.get("ts") or 0)
+            joinable = (
+                blocks
+                and blocks[-1]["from_me"] == fm
+                and not blocks[-1]["stickers"] and not blocks[-1]["images"]
+                and not m.get("images") and not m.get("stickers")
+                and (not ts or not blocks[-1]["_ts"]
+                     or ts - blocks[-1]["_ts"] <= self._MERGE_GAP_S)
+                and sum(len(t) for t in blocks[-1]["texts"]) + len(m.get("text") or "")
+                    <= self._MERGE_MAX_CHARS
+            )
+            if joinable:
                 b = blocks[-1]
             else:
                 b = {"from_me": fm, "name": m.get("name", ""), "avatar": m.get("avatar", ""),
-                     "texts": [], "images": [], "stickers": []}
+                     "texts": [], "images": [], "stickers": [], "_ts": ts}
                 blocks.append(b)
             if m.get("text"):
                 b["texts"].append(m["text"])
             b["images"] += m.get("images", [])
             b["stickers"] += m.get("stickers", [])
+            if ts:
+                b["_ts"] = ts
         for b in blocks:
             joined = " ".join(t.strip() for t in b["texts"] if t.strip())
             b["text"], b["emoticons"] = _extract_emoticons(joined)
@@ -933,7 +1162,7 @@ class SteamBridgeView(ft.Container):
         block and by same-sender messages coalesced into it."""
         out: list = []
         orig = b.get("text", "")
-        translated = self._needs_tr(orig)
+        translated = self._needs_tr(orig) and (b.get("from_me") or self._tr_incoming)
         if orig and translated:
             # Matches the VRChat tab: pinyin/romaji (top), original in GRAY, then
             # the translation as the prominent line.
@@ -995,13 +1224,15 @@ class SteamBridgeView(ft.Container):
             self.page.set_clipboard(url)
             self.page.open(ft.SnackBar(ft.Text("Link copied"), duration=1400))
 
-    async def _translate_block(self, b: dict, seq: int) -> None:
+    async def _translate_block(self, b: dict, seq: int, *, force: bool = False) -> None:
         orig = b.get("text", "")
         tc = b.get("_ctrl")
         if not orig or tc is None:
             return
+        if not b.get("from_me") and not self._tr_incoming:
+            return                                  # incoming translation turned off
         noml = _URL_RE.sub("", orig).strip()       # translate the text, not the URL
-        tr = await self._tr(noml)
+        tr = await self._tr(noml, force=force)
         if seq != self._open_seq or not tr or tr == noml:
             return
         tc.spans = _spans(tr)
@@ -1012,8 +1243,11 @@ class SteamBridgeView(ft.Container):
         blocks = self._coalesce(messages)
         if seq != self._open_seq:
             return
+        self._pend = None                  # drop any half-buffered live lines
         self._messages.controls.clear()
+        self._messages.auto_scroll = True  # fresh chat follows the newest message
         self._last_block = None            # fresh chat — don't coalesce across it
+        self._hist_blocks = blocks
         for b in blocks:
             self._messages.controls.append(self._block_control(b))
         if self.page:
@@ -1024,6 +1258,44 @@ class SteamBridgeView(ft.Container):
         self._save_cache()
 
     async def _append_message(self, m: dict) -> None:
+        # Buffer rapid same-sender TEXT lines for ~1s so a burst renders (and
+        # translates) as ONE combined message instead of one block per line.
+        # Media messages render immediately (never combined).
+        if m.get("images") or m.get("stickers"):
+            await self._flush_pend()
+            await self._render_live(m)
+            return
+        key = (bool(m.get("from_me")), m.get("name", "") or "")
+        if self._pend and self._pend["key"] == key \
+                and sum(len(t) for t in self._pend["texts"]) < self._MERGE_MAX_CHARS:
+            self._pend["texts"].append(m.get("text", "") or "")
+        else:
+            await self._flush_pend()
+            self._pend = {"key": key, "name": m.get("name", ""),
+                          "avatar": m.get("avatar", ""), "texts": [m.get("text", "") or ""]}
+        if self._pend_task:
+            with contextlib.suppress(Exception):
+                self._pend_task.cancel()
+        self._pend_task = asyncio.create_task(self._pend_flush_later())
+
+    async def _pend_flush_later(self) -> None:
+        with contextlib.suppress(asyncio.CancelledError):
+            await asyncio.sleep(1.0)
+            await self._flush_pend()
+
+    async def _flush_pend(self) -> None:
+        p, self._pend = self._pend, None
+        if self._pend_task:
+            self._pend_task = None
+        if not p:
+            return
+        await self._render_live({
+            "from_me": p["key"][0], "name": p["name"], "avatar": p["avatar"],
+            "text": " ".join(t for t in p["texts"] if t),
+            "images": [], "stickers": [],
+        })
+
+    async def _render_live(self, m: dict) -> None:
         text, emos = _extract_emoticons((m.get("text", "") or "").strip())
         b = {"from_me": bool(m.get("from_me")), "name": m.get("name", ""),
              "avatar": m.get("avatar", ""), "text": text, "emoticons": emos,
@@ -1036,6 +1308,7 @@ class SteamBridgeView(ft.Container):
                 lb["col"].controls.extend(self._message_body_controls(b))
         else:
             self._messages.controls.append(self._block_control(b))
+        self._hist_blocks.append(b)
         if self.page:
             self.page.update()
         await self._translate_block(b, self._open_seq)
@@ -1114,15 +1387,15 @@ class SteamBridgeView(ft.Container):
         # both ends, but a translator would mangle ":cyanheart:" into "cyanheart".
         clean, emos = _extract_emoticons(text)
         zh = clean
-        if clean and callable(self.translate_message):
+        if clean and self._tr_outgoing and callable(self.translate_message):
             with contextlib.suppress(Exception):
                 r = await self.translate_message(clean, True)
                 if r:
                     zh = r
         codes = " ".join(f":{n}:" for n in emos)
         out = (f"{zh} {codes}".strip() if zh else codes)
-        if clean:
-            self._tr_cache[zh] = clean
+        if clean and zh != clean:
+            self._tr_cache[self._tr_key(zh)] = clean   # own echo renders instantly
         await self._append_message({"from_me": True, "name": self._own_name,
                                     "avatar": self._own_avatar, "text": out})
         await self._cmd({"cmd": "send", "acct": self._active, "text": out})

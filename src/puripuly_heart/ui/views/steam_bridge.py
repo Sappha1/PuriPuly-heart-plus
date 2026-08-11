@@ -180,6 +180,7 @@ class SteamBridgeView(ft.Container):
         self.open_translator_picker = None
         self.translator_label = None
         self.translator_is_paid = None
+        self.translator_value = None   # injected: resolved model value (cache key)
         self._pend: dict | None = None   # short buffer: rapid same-sender lines → ONE block
         self._pend_task = None
         self._hist_blocks: list = []  # blocks currently rendered (for retranslate)
@@ -426,6 +427,12 @@ class SteamBridgeView(ft.Container):
             self._build_settings_panel()
             with contextlib.suppress(Exception):
                 self._settings_panel.update()
+        self._notice("Applies to new messages — Retranslate history converts this chat.")
+
+    def _notice(self, msg: str) -> None:
+        if self.page:
+            with contextlib.suppress(Exception):
+                self.page.open(ft.SnackBar(ft.Text(msg)))
 
     def _lang_button(self, which: str) -> ft.Control:
         lbl = self._from_lbl if which == "from" else self._to_lbl
@@ -662,8 +669,9 @@ class SteamBridgeView(ft.Container):
             toggle_row("Translate their messages", "Off shows their originals only",
                        self._tr_incoming, self._set_tr_incoming),
             ft.Divider(height=1, color="#4b4c4f"),
-            btn("Clean up / re-render chat", lambda e: self._reload_chat(),
-                tip="Re-group and re-render this chat's history"),
+            btn("Reload chat history", lambda e: self._reload_chat(),
+                tip="Re-fetch this chat from Steam and redraw it with the current "
+                    "settings. Cached translations are reused — nothing is re-billed."),
             btn("Retranslate history", lambda e: self._retranslate_prompt(),
                 tip="Redo translations (e.g. after changing language)"),
         ], spacing=1, tight=True)
@@ -698,6 +706,7 @@ class SteamBridgeView(ft.Container):
     def _set_tr_provider(self, prov: str) -> None:
         self._tr_provider = prov
         self._save_prefs()
+        self._notice("Applies to new messages — Retranslate history converts this chat.")
         if self._settings_panel.visible:
             self._build_settings_panel()
             with contextlib.suppress(Exception):
@@ -1585,10 +1594,18 @@ class SteamBridgeView(ft.Container):
             _CACHE_FILE.write_text(json.dumps(self._tr_cache, ensure_ascii=False),
                                    encoding="utf-8")
 
+    def _tr_model_value(self) -> str:
+        cb = getattr(self, "translator_value", None)
+        if callable(cb):
+            with contextlib.suppress(Exception):
+                return str(cb() or "app")
+        return self._tr_provider or "app"
+
     def _tr_key(self, text: str) -> str:
-        # Cache is keyed by TARGET language, else switching languages would serve
-        # stale translations (and "retranslate" could never work).
-        return f"{self._src_lang}|{text}"
+        # Keyed by translator model AND target language: paid results (DeepL
+        # etc.) live in their own namespace, so trying Bing then switching back
+        # re-uses every cached DeepL line instead of re-billing it.
+        return f"{self._tr_model_value()}|{self._src_lang}|{text}"
 
     async def _tr(self, text: str, *, force: bool = False) -> str:
         if not text or not self._needs_tr(text):
@@ -1596,6 +1613,14 @@ class SteamBridgeView(ft.Container):
         key = self._tr_key(text)
         if not force and key in self._tr_cache:
             return self._tr_cache[key]        # cached from this or a past session
+        if not force and not self._tr_provider:
+            # pre-r428 entries had no model prefix; they belong to the app's
+            # default translator — migrate them forward on first hit
+            legacy = f"{self._src_lang}|{text}"
+            if legacy in self._tr_cache:
+                out = self._tr_cache[legacy]
+                self._tr_cache[key] = out
+                return out
         # NOTE: legacy un-keyed cache entries are deliberately NOT read — they date
         # from before emote codes were stripped pre-translation, so many contain
         # mangled emote names ("meatytears") baked into the text.

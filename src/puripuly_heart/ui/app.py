@@ -443,6 +443,7 @@ class TranslatorApp:
                     _steam_tr_current())
                 _sv.translator_is_paid = lambda: any(
                     m.value == _steam_tr_current() for m in _STR_NEEDS_KEY)
+                _sv.translator_value = _steam_tr_current
 
                 def _on_steam_tr_pick(value: str) -> None:
                     _sv._set_tr_provider(value or "")

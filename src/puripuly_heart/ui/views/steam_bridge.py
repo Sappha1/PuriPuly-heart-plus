@@ -513,6 +513,7 @@ class SteamBridgeView(ft.Container):
         if self._started:
             return
         self._started = True
+        self._paint_snapshot()
         if self.page:
             self.page.run_task(self._connect)
 
@@ -1670,6 +1671,47 @@ class SteamBridgeView(ft.Container):
             if _CACHE_FILE.exists():
                 self._tr_cache = json.loads(_CACHE_FILE.read_text(encoding="utf-8"))
 
+    # UI snapshot: last-known friends list + own header, painted INSTANTLY on
+    # activate while the helper (headless browser) is still booting — the live
+    # "friends"/"own" events replace it seamlessly when they arrive.
+    def _save_snapshot(self) -> None:
+        with contextlib.suppress(Exception):
+            snap = {"friends": list(self._friends.values()),
+                    "own": {"acct": self._own, "name": self._own_name,
+                            "avatar": self._own_avatar, "state": self._own_state,
+                            "invites": self._own_invites,
+                            "invisible": self._own_invisible,
+                            "ingame": self._own_ingame, "game": self._own_game}}
+            _CACHE_FILE.with_name("ui_snapshot.json").write_text(
+                json.dumps(snap, ensure_ascii=False), encoding="utf-8")
+
+    def _paint_snapshot(self) -> None:
+        if self._got_friends or self._friends:
+            return
+        with contextlib.suppress(Exception):
+            f = _CACHE_FILE.with_name("ui_snapshot.json")
+            if not f.exists():
+                return
+            snap = json.loads(f.read_text(encoding="utf-8"))
+            items = snap.get("friends") or []
+            if items:
+                self._friends = {int(i["acct"]): i for i in items}
+                for a, i in self._friends.items():
+                    if a not in self._search_index:
+                        self._search_index[a] = _search_key(i.get("name", ""))
+                self._rebuild_friends()
+            own = snap.get("own") or {}
+            if own.get("acct"):
+                self._own = int(own.get("acct", 0))
+                self._own_name = own.get("name") or "You"
+                self._own_avatar = own.get("avatar", "") or ""
+                self._own_state = int(own.get("state", 1) or 1)
+                self._own_invites = int(own.get("invites", 0) or 0)
+                self._own_invisible = bool(own.get("invisible"))
+                self._own_ingame = bool(own.get("ingame"))
+                self._own_game = own.get("game", "") or ""
+                self._update_own_header()
+
     # Steam-tab-only preferences (independent of the app's translation settings).
     def _load_prefs(self) -> None:
         with contextlib.suppress(Exception):
@@ -2177,6 +2219,7 @@ class SteamBridgeView(ft.Container):
                 self._emoticons = list(ev.get("emoticons"))
                 self._purge_emote_cache()
             self._update_own_header()
+            self._save_snapshot()
         elif kind == "status":
             if ev.get("signed_in"):
                 self._hide_state_overlay()
@@ -2191,6 +2234,7 @@ class SteamBridgeView(ft.Container):
             self._hide_loading()
             self._rebuild_friends()
             self._rebuild_tabs()
+            self._save_snapshot()
             if self._active in self._friends:
                 self._set_chat_head(self._friends[self._active])
             if self.page:

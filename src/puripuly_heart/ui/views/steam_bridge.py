@@ -99,11 +99,11 @@ _CREATE_NO_WINDOW = 0x08000000
 _HOST, _PORT = "127.0.0.1", 8791
 
 _SEND_FMT_LABEL = {
-    "orig_read_trans": "Original + pinyin + translation",
-    "orig_trans": "Original + translation",
-    "read_trans": "Pinyin + translation",
-    "trans_only": "Translation",
-    "read_only": "Pinyin",
+    "orig_trans": "Original + Translation",
+    "orig_read_trans": "Original + Pinyin + Translation",
+    "read_trans": "Pinyin + Translation",
+    "read_only": "Pinyin Only",
+    "trans_only": "Translation Only",
 }
 
 _STATE_LABEL = {0: "Offline", 1: "Online", 2: "Busy", 3: "Away", 4: "Snooze",
@@ -169,6 +169,11 @@ class SteamBridgeView(ft.Container):
         # what the FRIEND receives — same five formats as the Chat tab chatbox
         self._send_fmt = "trans_only"
         self._tr_provider = "default"  # "default" = app's translator (e.g. DeepL); "bing" = free
+        self._fmt_expanded = False    # "Send as" pill expands/collapses its radio list
+        self._read_zh = True          # per-language reading lines (like the Chat tab)
+        self._read_ja = True
+        self._read_ko = True
+        self._read_latin = True
         self._pend: dict | None = None   # short buffer: rapid same-sender lines → ONE block
         self._pend_task = None
         self._hist_blocks: list = []  # blocks currently rendered (for retranslate)
@@ -577,8 +582,9 @@ class SteamBridgeView(ft.Container):
         pill = ft.Container(
             content=ft.Text(_SEND_FMT_LABEL[self._send_fmt], size=12,
                             color=_TOGGLE_ON, weight=ft.FontWeight.W_500),
-            border=ft.border.all(1, _TOGGLE_ON), border_radius=14,
-            padding=ft.padding.symmetric(horizontal=10, vertical=3))
+            border=ft.border.all(1, _TOGGLE_ON), border_radius=14, ink=True,
+            padding=ft.padding.symmetric(horizontal=10, vertical=3),
+            on_click=lambda e: self._toggle_fmt_expanded())
 
         prov_row = ft.Container(
             height=30, padding=ft.padding.symmetric(horizontal=6),
@@ -612,12 +618,20 @@ class SteamBridgeView(ft.Container):
                     ft.Text("Send as", size=13, color=_TEXT_PRIMARY, expand=True),
                     pill,
                 ], vertical_alignment=ft.CrossAxisAlignment.CENTER)),
-            *[radio_row(lbl, m == self._send_fmt,
-                        (lambda e, m=m: self._set_send_fmt(m)))
-              for m, lbl in _SEND_FMT_LABEL.items()],
+            *([radio_row(lbl, m == self._send_fmt,
+                         (lambda e, m=m: self._set_send_fmt(m)))
+               for m, lbl in _SEND_FMT_LABEL.items()] if self._fmt_expanded else []),
             ft.Divider(height=1, color="#4b4c4f"),
             sect("SHOWN ON MY END"),
             check_row("Show pinyin / romaji", self._show_pinyin, self._set_pinyin),
+            *([ft.Container(content=check_row(lbl, val, cb),
+                            padding=ft.padding.only(left=14))
+               for lbl, val, cb in (
+                   ("Chinese pinyin", self._read_zh, self._set_read_zh),
+                   ("Japanese romaji", self._read_ja, self._set_read_ja),
+                   ("Korean romaja", self._read_ko, self._set_read_ko),
+                   ("Other languages (Latin)", self._read_latin, self._set_read_latin),
+               )] if self._show_pinyin else []),
             check_row("Show original text", self._show_original, self._set_show_original),
             check_row("Translate their messages", self._tr_incoming, self._set_tr_incoming),
             ft.Divider(height=1, color="#4b4c4f"),
@@ -653,6 +667,34 @@ class SteamBridgeView(ft.Container):
             self._build_settings_panel()
             with contextlib.suppress(Exception):
                 self._settings_panel.update()
+
+    def _toggle_fmt_expanded(self) -> None:
+        self._fmt_expanded = not self._fmt_expanded
+        if self._settings_panel.visible:
+            self._build_settings_panel()
+            with contextlib.suppress(Exception):
+                self._settings_panel.update()
+
+    def _set_read_flag(self, name: str, v) -> None:
+        setattr(self, name, bool(v))
+        self._save_prefs()
+        self._rerender_chat()
+        if self._settings_panel.visible:
+            self._build_settings_panel()
+            with contextlib.suppress(Exception):
+                self._settings_panel.update()
+
+    def _set_read_zh(self, v) -> None:
+        self._set_read_flag("_read_zh", v)
+
+    def _set_read_ja(self, v) -> None:
+        self._set_read_flag("_read_ja", v)
+
+    def _set_read_ko(self, v) -> None:
+        self._set_read_flag("_read_ko", v)
+
+    def _set_read_latin(self, v) -> None:
+        self._set_read_flag("_read_latin", v)
 
     def _set_send_fmt(self, fmt: str) -> None:
         self._send_fmt = fmt
@@ -1390,14 +1432,29 @@ class SteamBridgeView(ft.Container):
             return ""
         with contextlib.suppress(Exception):
             if re.search(r"[぀-ヿ]", text):        # kana -> Japanese
+                if not self._read_ja:
+                    return ""
                 from puripuly_heart.core.transliteration import to_romaji
                 return to_romaji(text) or ""
             if re.search(r"[㐀-鿿]", text):        # Han ideographs -> Chinese
+                if not self._read_zh:
+                    return ""
                 from puripuly_heart.core.transliteration import to_pinyin_grouped
                 return to_pinyin_grouped(text) or ""
             if re.search(r"[가-힣]", text):        # Hangul -> Korean romaja
+                if not self._read_ko:
+                    return ""
                 from puripuly_heart.core.transliteration import to_romaja
                 return to_romaja(text) or ""
+            if self._read_latin:                   # other scripts -> Latin
+                from puripuly_heart.core import transliteration as _tl
+                for pat, fn in ((r"[а-яА-Я]", "to_latin_cyrillic"),
+                                (r"[α-ωΑ-Ω]", "to_latin_greek"),
+                                (r"[؀-ۿ]", "to_latin_arabic"),
+                                (r"[ऀ-ॿ]", "to_latin_hindi"),
+                                (r"[฀-๿]", "to_latin_thai")):
+                    if re.search(pat, text) and hasattr(_tl, fn):
+                        return getattr(_tl, fn)(text) or ""
         return ""
 
     def _needs_tr(self, text: str) -> bool:
@@ -1454,6 +1511,10 @@ class SteamBridgeView(ft.Container):
                 self._tr_provider = p.get("tr_provider", "default")
                 if self._tr_provider not in ("default", "bing"):
                     self._tr_provider = "default"
+                self._read_zh = bool(p.get("read_zh", True))
+                self._read_ja = bool(p.get("read_ja", True))
+                self._read_ko = bool(p.get("read_ko", True))
+                self._read_latin = bool(p.get("read_latin", True))
                 self._tr_outgoing = True
 
     def _save_prefs(self) -> None:
@@ -1465,6 +1526,8 @@ class SteamBridgeView(ft.Container):
                 "show_original": self._show_original,
                 "send_fmt": self._send_fmt,
                 "tr_provider": self._tr_provider,
+                "read_zh": self._read_zh, "read_ja": self._read_ja,
+                "read_ko": self._read_ko, "read_latin": self._read_latin,
             }), encoding="utf-8")
 
     def _save_cache(self) -> None:
@@ -1561,15 +1624,15 @@ class SteamBridgeView(ft.Container):
                 roman = self._romanize(noml)
                 if roman:
                     out.append(ft.Text(roman, size=12.5, italic=True,
-                                       color=_ACCENT, selectable=True))
+                                       color=_ACCENT))
             if self._show_original:
-                out.append(ft.Text(spans=_spans(orig, "#9aa0a6"), size=14, selectable=True))
+                out.append(ft.Text(spans=_spans(orig, "#9aa0a6"), size=14))
             else:
                 # translation-only mode: show the original UNTIL the translation
                 # arrives, then swap it out (handled in _translate_block)
                 pass
             tr_ctrl = ft.Text("", size=14, weight=ft.FontWeight.W_500,
-                              color=_TEXT_PRIMARY, selectable=True)
+                              color=_TEXT_PRIMARY)
             if not self._show_original:
                 # translation-only mode: show the original (gray) as a placeholder
                 # until the translation replaces it
@@ -1577,10 +1640,10 @@ class SteamBridgeView(ft.Container):
             b["_ctrl"] = tr_ctrl                    # the translation line, filled below
             out.append(tr_ctrl)
         elif orig:
-            out.append(ft.Text(spans=_spans(orig), size=14, selectable=True))
+            out.append(ft.Text(spans=_spans(orig), size=14))
         if b.get("_out_pending"):
             # own message: the translation that will be SENT shows here once ready
-            out_ctrl = ft.Text("", size=13, color=_ACCENT, selectable=True)
+            out_ctrl = ft.Text("", size=13, color=_ACCENT)
             b["_out_ctrl"] = out_ctrl
             out.append(out_ctrl)
         if b.get("emoticons"):

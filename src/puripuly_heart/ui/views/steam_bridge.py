@@ -1427,6 +1427,11 @@ class SteamBridgeView(ft.Container):
             out.append(tr_ctrl)
         elif orig:
             out.append(ft.Text(spans=_spans(orig), size=14, selectable=True))
+        if b.get("_out_pending"):
+            # own message: the translation that will be SENT shows here once ready
+            out_ctrl = ft.Text("", size=13, color=_ACCENT, selectable=True)
+            b["_out_ctrl"] = out_ctrl
+            out.append(out_ctrl)
         if b.get("emoticons"):
             out.append(ft.Row(
                 [ft.Image(src=self._emoticon_url(n), width=28, height=28, fit=ft.ImageFit.CONTAIN)
@@ -1606,6 +1611,7 @@ class SteamBridgeView(ft.Container):
             if self._following:
                 self._scroll_to_end()
         await self._translate_block(b, self._open_seq)
+        return b
 
     # ── helper process + socket ──────────────────────────────────────────────
     async def _connect(self) -> None:
@@ -1677,22 +1683,32 @@ class SteamBridgeView(ft.Container):
         self._entry.value = ""
         if self.page:
             self._entry.update()
-        # Pull out :emoticon: shortcodes BEFORE translating — Steam renders them on
-        # both ends, but a translator would mangle ":cyanheart:" into "cyanheart".
+        # Same behavior as the main chat tab: the ORIGINAL goes out (and renders)
+        # IMMEDIATELY — never gated on DeepL latency — and the translation follows
+        # as its own message the moment it's ready, shown under the original.
         clean, emos = _extract_emoticons(text)
-        zh = clean
-        if clean and self._tr_outgoing and callable(self.translate_message):
-            with contextlib.suppress(Exception):
-                r = await self.translate_message(clean, True)
-                if r:
-                    zh = r
         codes = " ".join(f":{n}:" for n in emos)
-        out = (f"{zh} {codes}".strip() if zh else codes)
-        if clean and zh != clean:
-            self._tr_cache[self._tr_key(zh)] = clean   # own echo renders instantly
-        await self._append_message({"from_me": True, "name": self._own_name,
-                                    "avatar": self._own_avatar, "text": out})
-        await self._cmd({"cmd": "send", "acct": self._active, "text": out})
+        orig_out = (f"{clean} {codes}".strip() if clean else codes)
+        acct = self._active
+        b = await self._render_live({
+            "from_me": True, "name": self._own_name, "avatar": self._own_avatar,
+            "text": orig_out, "images": [], "stickers": [],
+            "ts": int(time.time()),
+            "_out_pending": bool(clean and self._tr_outgoing)})
+        await self._cmd({"cmd": "send", "acct": acct, "text": orig_out})
+        if clean and self._tr_outgoing and callable(self.translate_message):
+            zh = None
+            with contextlib.suppress(Exception):
+                zh = await self.translate_message(clean, True)
+            zh = (zh or "").strip()
+            if zh and zh != clean and acct == self._active:
+                self._tr_cache[self._tr_key(zh)] = clean   # echo renders instantly
+                await self._cmd({"cmd": "send", "acct": acct, "text": zh})
+                ctrl = (b or {}).get("_out_ctrl")
+                if ctrl is not None:
+                    ctrl.value = zh                        # the Chinese that was sent
+                    with contextlib.suppress(Exception):
+                        ctrl.update()
 
     async def _read_loop(self) -> None:
         try:

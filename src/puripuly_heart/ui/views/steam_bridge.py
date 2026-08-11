@@ -158,6 +158,7 @@ class SteamBridgeView(ft.Container):
         self._tr_incoming = True      # translate their messages (Steam-tab setting)
         self._tr_outgoing = True      # translate my messages before sending
         self._show_original = True    # show the original line above the translation
+        self._send_mode = "tr_only"   # what the FRIEND receives: tr_only | both | orig_only
         self._pend: dict | None = None   # short buffer: rapid same-sender lines → ONE block
         self._pend_task = None
         self._hist_blocks: list = []  # blocks currently rendered (for retranslate)
@@ -543,10 +544,27 @@ class SteamBridgeView(ft.Container):
             lang_row("My language", "from", self._src_lang),
             lang_row("Their language", "to", self._tgt_lang),
             ft.Divider(height=1, color="#4b4c4f"),
+            ft.Text("SENT TO THEIR CHAT", size=10, weight=ft.FontWeight.BOLD, color=_SECTION),
+            ft.Row([
+                ft.Text("Send my messages as", size=13, color=_TEXT_PRIMARY, expand=True),
+                ft.PopupMenuButton(
+                    content=ft.Row([
+                        ft.Text({"tr_only": "Translation only",
+                                 "both": "Original + translation",
+                                 "orig_only": "Original only"}[self._send_mode],
+                                size=13, color=_TOGGLE_ON, weight=ft.FontWeight.W_500),
+                        ft.Icon(ft.Icons.ARROW_DROP_DOWN, size=14, color=_TEXT_FAINT),
+                    ], spacing=0, tight=True),
+                    items=[ft.PopupMenuItem(text=lbl, on_click=(lambda e, m=m: self._set_send_mode(m)))
+                           for m, lbl in (("tr_only", "Translation only"),
+                                          ("both", "Original + translation"),
+                                          ("orig_only", "Original only"))]),
+            ], vertical_alignment=ft.CrossAxisAlignment.CENTER),
+            ft.Divider(height=1, color="#4b4c4f"),
+            ft.Text("SHOWN ON MY END", size=10, weight=ft.FontWeight.BOLD, color=_SECTION),
             row("Show pinyin / romaji", self._show_pinyin, self._set_pinyin),
             row("Show original text", self._show_original, self._set_show_original),
             row("Translate their messages", self._tr_incoming, self._set_tr_incoming),
-            row("Translate my messages", self._tr_outgoing, self._set_tr_outgoing),
             ft.Divider(height=1, color="#4b4c4f"),
             btn("Clean up / re-render chat", lambda e: self._reload_chat(),
                 tip="Re-group and re-render this chat's history"),
@@ -564,6 +582,15 @@ class SteamBridgeView(ft.Container):
         self._show_original = bool(e.control.value)
         self._save_prefs()
         self._rerender_chat()
+
+    def _set_send_mode(self, mode: str) -> None:
+        self._send_mode = mode
+        self._tr_outgoing = mode != "orig_only"
+        self._save_prefs()
+        if self._settings_panel.visible:
+            self._build_settings_panel()
+            with contextlib.suppress(Exception):
+                self._settings_panel.update()
 
     def _set_tr_incoming(self, e) -> None:
         self._tr_incoming = bool(e.control.value)
@@ -586,17 +613,7 @@ class SteamBridgeView(ft.Container):
         self._last_block = None
         for b in blocks:
             b.pop("_ctrl", None)               # rebuilt by the body builder below
-            ts = int(b.get("_ts") or 0)
-            lb = self._last_block
-            if (lb and lb["from_me"] == b["from_me"]
-                    and lb["name"] == (b.get("name") or "")
-                    and ts and lb.get("ts")
-                    and ts - lb["ts"] <= self._GROUP_GAP_S):
-                with contextlib.suppress(Exception):
-                    lb["col"].controls.extend(self._message_body_controls(b))
-                lb["ts"] = ts
-            else:
-                self._messages.controls.append(self._block_control(b))
+            self._messages.controls.append(self._block_control(b))
         if self.page:
             with contextlib.suppress(Exception):
                 self.page.update()
@@ -1293,6 +1310,26 @@ class SteamBridgeView(ft.Container):
         has_cjk = bool(_CJK_RE.search(text))
         return (not has_cjk) if self._src_lang in _CJK_LANGS else has_cjk
 
+    def _purge_emote_cache(self) -> None:
+        """Drop cache entries polluted with emote artifacts (bare emote names from
+        pre-fix translations, or Steam's U+02D0 colon) so old ghosts stop
+        resurfacing in history."""
+        if not self._emoticons:
+            return
+        names = {n.lower() for n in self._emoticons}
+        def bad(txt: str) -> bool:
+            t = (txt or "").lower()
+            if "ː" in t or "ː" in t:
+                return True
+            return any(re.search(rf"(?<![a-z0-9_]){re.escape(n)}(?![a-z0-9_])", t)
+                       for n in names)
+        dirty = [k for k, v in self._tr_cache.items() if bad(k) or bad(str(v))]
+        for k in dirty:
+            self._tr_cache.pop(k, None)
+        if dirty:
+            self._tr_dirty = 999           # force save
+            self._save_cache()
+
     def _load_cache(self) -> None:
         with contextlib.suppress(Exception):
             if _CACHE_FILE.exists():
@@ -1309,6 +1346,10 @@ class SteamBridgeView(ft.Container):
                 self._tr_incoming = bool(p.get("tr_incoming", True))
                 self._tr_outgoing = bool(p.get("tr_outgoing", True))
                 self._show_original = bool(p.get("show_original", True))
+                self._send_mode = p.get("send_mode", "tr_only")
+                if self._send_mode not in ("tr_only", "both", "orig_only"):
+                    self._send_mode = "tr_only"
+                self._tr_outgoing = self._send_mode != "orig_only"
 
     def _save_prefs(self) -> None:
         with contextlib.suppress(Exception):
@@ -1317,6 +1358,7 @@ class SteamBridgeView(ft.Container):
                 "tr_incoming": self._tr_incoming,
                 "tr_outgoing": self._tr_outgoing,
                 "show_original": self._show_original,
+                "send_mode": self._send_mode,
             }), encoding="utf-8")
 
     def _save_cache(self) -> None:
@@ -1358,8 +1400,11 @@ class SteamBridgeView(ft.Container):
     # GROUP (share one name/avatar header, but keep each message's own lines) up
     # to _GROUP_GAP_S — matches how the live view renders, so switching tabs does
     # NOT reshape what was already on screen into paragraphs.
-    _MERGE_GAP_S = 20
-    _MERGE_MAX_CHARS = 280
+    # NO text fusion, ever (user: separate messages must stay separate) — each
+    # message keeps its own pinyin/original/translation lines and translates on
+    # its own. Grouping only shares the name/avatar header within _GROUP_GAP_S.
+    _MERGE_GAP_S = 0
+    _MERGE_MAX_CHARS = 0
     _GROUP_GAP_S = 120
 
     def _coalesce(self, messages: list) -> list:
@@ -1519,19 +1564,9 @@ class SteamBridgeView(ft.Container):
         self._following = True             # fresh chat follows the newest message
         self._last_block = None            # fresh chat — don't coalesce across it
         self._hist_blocks = blocks
+        # OLD messages are never grouped — each gets its own avatar+name block.
         for b in blocks:
-            ts = int(b.get("_ts") or 0)
-            lb = self._last_block
-            if (lb and lb["from_me"] == b["from_me"]
-                    and lb["name"] == (b.get("name") or "")
-                    and ts and lb.get("ts")
-                    and ts - lb["ts"] <= self._GROUP_GAP_S):
-                # share the name header; keep the message's own lines
-                with contextlib.suppress(Exception):
-                    lb["col"].controls.extend(self._message_body_controls(b))
-                lb["ts"] = ts
-            else:
-                self._messages.controls.append(self._block_control(b))
+            self._messages.controls.append(self._block_control(b))
         if blocks:
             self._seen_chat_ts[self._active or 0] = max(
                 self._seen_chat_ts.get(self._active or 0, 0),
@@ -1592,7 +1627,7 @@ class SteamBridgeView(ft.Container):
         b = {"from_me": bool(m.get("from_me")), "name": m.get("name", ""),
              "avatar": m.get("avatar", ""), "text": text, "emoticons": emos,
              "images": m.get("images", []), "stickers": m.get("stickers", []),
-             "_ts": ts}
+             "_ts": ts, "_out_pending": bool(m.get("_out_pending"))}
         lb = self._last_block
         if (lb and lb["from_me"] == b["from_me"] and lb["name"] == (b.get("name") or "")
                 and (not lb.get("ts") or ts - lb["ts"] <= self._GROUP_GAP_S)):
@@ -1690,25 +1725,35 @@ class SteamBridgeView(ft.Container):
         codes = " ".join(f":{n}:" for n in emos)
         orig_out = (f"{clean} {codes}".strip() if clean else codes)
         acct = self._active
+        mode = self._send_mode if clean else "orig_only"   # emote-only: nothing to translate
+        # ALWAYS render my message instantly on my end (original + a pending line
+        # for the translation when one will be sent).
         b = await self._render_live({
             "from_me": True, "name": self._own_name, "avatar": self._own_avatar,
             "text": orig_out, "images": [], "stickers": [],
             "ts": int(time.time()),
-            "_out_pending": bool(clean and self._tr_outgoing)})
-        await self._cmd({"cmd": "send", "acct": acct, "text": orig_out})
-        if clean and self._tr_outgoing and callable(self.translate_message):
+            "_out_pending": mode in ("tr_only", "both")})
+        if mode in ("both", "orig_only"):
+            await self._cmd({"cmd": "send", "acct": acct, "text": orig_out})
+        if mode in ("tr_only", "both") and callable(self.translate_message):
             zh = None
             with contextlib.suppress(Exception):
                 zh = await self.translate_message(clean, True)
             zh = (zh or "").strip()
-            if zh and zh != clean and acct == self._active:
+            sent_out = None
+            if zh and zh != clean:
                 self._tr_cache[self._tr_key(zh)] = clean   # echo renders instantly
-                await self._cmd({"cmd": "send", "acct": acct, "text": zh})
-                ctrl = (b or {}).get("_out_ctrl")
-                if ctrl is not None:
-                    ctrl.value = zh                        # the Chinese that was sent
-                    with contextlib.suppress(Exception):
-                        ctrl.update()
+                out2 = (f"{zh} {codes}".strip() if mode == "tr_only" else zh)
+                await self._cmd({"cmd": "send", "acct": acct, "text": out2})
+                sent_out = zh
+            elif mode == "tr_only":
+                # translation failed — the message must still reach them
+                await self._cmd({"cmd": "send", "acct": acct, "text": orig_out})
+            ctrl = (b or {}).get("_out_ctrl")
+            if ctrl is not None and sent_out:
+                ctrl.value = sent_out                      # what was sent to them
+                with contextlib.suppress(Exception):
+                    ctrl.update()
 
     async def _read_loop(self) -> None:
         try:
@@ -1750,6 +1795,7 @@ class SteamBridgeView(ft.Container):
             self._own_game = ev.get("game", "") or ""
             if ev.get("emoticons"):
                 self._emoticons = list(ev.get("emoticons"))
+                self._purge_emote_cache()
             self._update_own_header()
         elif kind == "friends":
             self._friends = {int(i["acct"]): i for i in ev.get("items", [])}

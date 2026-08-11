@@ -219,6 +219,7 @@ class SteamBridgeView(ft.Container):
         self.translator_label = None
         self.translator_is_paid = None
         self.translator_value = None   # injected: resolved model value (cache key)
+        self._resend_queue: list = []  # sends attempted while the helper was down
         self._module_on = True         # module toggle: off = helper not running, no RAM
         self._pend: dict | None = None   # short buffer: rapid same-sender lines → ONE block
         self._pend_task = None
@@ -2146,12 +2147,29 @@ class SteamBridgeView(ft.Container):
         except Exception:
             return False
 
-    async def _cmd(self, obj: dict) -> None:
+    async def _cmd(self, obj: dict) -> bool:
         if self._writer is None:
-            return
-        with contextlib.suppress(Exception):
+            self._queue_if_send(obj)
+            return False
+        try:
             self._writer.write((json.dumps(obj, ensure_ascii=False) + "\n").encode("utf-8"))
             await self._writer.drain()
+            return True
+        except Exception:
+            self._writer = None
+            self._queue_if_send(obj)
+            return False
+
+    def _queue_if_send(self, obj: dict) -> None:
+        """A send hit a dead helper socket (deploy/crash mid-session). Queue it
+        for automatic redelivery after the read-loop's self-heal reconnects —
+        the write provably never reached Steam, so a resend cannot duplicate."""
+        if obj.get("cmd") not in ("send", "send_image"):
+            return
+        self._resend_queue.append(obj)
+        self._notice(_T("steam.not_delivered",
+                        default="Connection to Steam was down — your message "
+                                "will be sent automatically once it reconnects."))
 
     def _set_typing(self, name: str) -> None:
         self._typing_text.value = (
@@ -2305,6 +2323,14 @@ class SteamBridgeView(ft.Container):
                     self._state_caption.update()
                     self._state_prog.update()
         elif kind == "status":
+            if ev.get("signed_in") and self._resend_queue:
+                q, self._resend_queue = self._resend_queue, []
+                ok_all = True
+                for obj in q:
+                    ok_all = await self._cmd(obj) and ok_all
+                if ok_all:
+                    self._notice(_T("steam.redelivered",
+                                    default="Reconnected — your queued messages were sent."))
             self._state_prog.visible = False
             with contextlib.suppress(Exception):
                 self._state_prog.update()

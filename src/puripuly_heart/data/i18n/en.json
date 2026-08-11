@@ -999,5 +999,7 @@
   "settings.module.steam_installed_restart": "Installed. Restart PuriPulyHeart+ to enable the Steam tab, then sign in from it.",
   "settings.module.steam_needs_python": "Installing this module needs Python installed on this PC (python.org or the Microsoft Store), because it creates its own isolated environment.",
   "settings.module.install_failed": "Install failed: {err}",
-  "steam.loading_history": "Loading chat history"
+  "steam.loading_history": "Loading chat history",
+  "steam.not_delivered": "Connection to Steam was down — your message will be sent automatically once it reconnects.",
+  "steam.redelivered": "Reconnected — your queued messages were sent."
 }

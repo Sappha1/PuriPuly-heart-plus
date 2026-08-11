@@ -351,8 +351,18 @@ class TranslatorApp:
                     mine = getattr(_sv, "_src_lang", None) or "en"
                     theirs = getattr(_sv, "_tgt_lang", None) or "zh-CN"
                     src, tgt = (mine, theirs) if to_them else (theirs, mine)
-                    llm = getattr(self.controller.hub, "llm", None)
-                    if llm is None or getattr(_sv, "_tr_provider", "default") == "bing":
+                    mv = getattr(_sv, "_tr_provider", "") or ""
+                    cur = ""
+                    with contextlib.suppress(Exception):
+                        cur = self.controller.settings.translation.model.value
+                    llm = None
+                    if mv and mv != cur:
+                        # Steam-tab override: build (and cache) that model directly
+                        with contextlib.suppress(Exception):
+                            llm = _steam_provider_for(mv)
+                    if llm is None:
+                        llm = getattr(self.controller.hub, "llm", None)
+                    if llm is None:
                         from puripuly_heart.providers.llm.free_web import (
                             FreeWebTranslationProvider,
                         )
@@ -363,6 +373,101 @@ class TranslatorApp:
                     return getattr(res, "text", text) or text
 
                 _sv.translate_message = _steam_translate
+
+                # ── Steam-tab translator picker: the same SettingsModal card
+                # system as the dashboard, plain model names, greyed only when a
+                # personal API key is required and missing. A picked model is
+                # built directly (settings clone, same pattern as the OCR
+                # bridge) so any non-greyed card genuinely works.
+                from puripuly_heart.config.settings import TranslationModel as _STM
+                _STR_LABELS = {
+                    _STM.GEMMA4: "Gemma 4 26B",
+                    _STM.DEEPSEEK_V4_FLASH: "DeepSeek V4 Flash",
+                    _STM.DEEPSEEK_V4_PRO: "DeepSeek V4 Pro",
+                    _STM.GEMINI_3_FLASH: "Gemini 3 Flash",
+                    _STM.GEMINI_31_FLASH_LITE: "Gemini 3.1 Flash-Lite",
+                    _STM.QWEN_35_PLUS: "Qwen 3.5 Plus",
+                    _STM.DEEPL: "DeepL",
+                    _STM.GOOGLE_TRANSLATE: "Google Translate",
+                    _STM.BING: "Bing",
+                    _STM.PAPAGO: "Papago",
+                    _STM.LOCAL_LLM: "Local LLMs",
+                }
+                _STR_NEEDS_KEY = {_STM.DEEPSEEK_V4_PRO, _STM.GEMINI_3_FLASH,
+                                  _STM.GEMINI_31_FLASH_LITE, _STM.QWEN_35_PLUS,
+                                  _STM.DEEPL}
+                _steam_tr_cache: dict[str, object] = {}
+
+                def _steam_provider_for(model_value: str):
+                    prov = _steam_tr_cache.get(model_value)
+                    if prov is not None:
+                        return prov
+                    import copy as _copy
+                    from puripuly_heart.app.wiring import (create_llm_provider,
+                                                           create_secret_store)
+                    from puripuly_heart.config.settings import (
+                        materialize_translation_settings)
+                    matched = next((m for m in _STM
+                                    if m.value == model_value), None)
+                    if matched is None:
+                        raise ValueError(f"unknown translator {model_value!r}")
+                    settings = _copy.deepcopy(self.controller.settings)
+                    settings.translation.model = matched
+                    settings = materialize_translation_settings(settings)
+                    secrets = create_secret_store(
+                        settings.secrets, config_path=self.controller.config_path)
+                    prov = create_llm_provider(
+                        settings, secrets=secrets,
+                        managed_release_service=getattr(
+                            self.controller,
+                            "_managed_openrouter_release_service", None),
+                        managed_delegate_ready=getattr(
+                            self.controller, "_on_managed_trial_delegate_ready",
+                            None),
+                        runtime_logging=None,
+                    )
+                    _steam_tr_cache[model_value] = prov
+                    return prov
+
+                def _steam_tr_current() -> str:
+                    mv = getattr(_sv, "_tr_provider", "") or ""
+                    if mv:
+                        return mv
+                    with contextlib.suppress(Exception):
+                        return self.controller.settings.translation.model.value
+                    return _STM.BING.value
+
+                _sv.translator_label = lambda: _STR_LABELS.get(
+                    next((m for m in _STM if m.value == _steam_tr_current()),
+                         None),
+                    _steam_tr_current())
+                _sv.translator_is_paid = lambda: any(
+                    m.value == _steam_tr_current() for m in _STR_NEEDS_KEY)
+
+                def _on_steam_tr_pick(value: str) -> None:
+                    _sv._set_tr_provider(value or "")
+
+                def _open_steam_tr_picker() -> None:
+                    from puripuly_heart.ui.components.settings import (
+                        OptionItem, SettingsModal)
+                    from puripuly_heart.ui.i18n import t as _t
+                    has_key = getattr(self.view_dashboard,
+                                      "_translator_model_has_key", {}) or {}
+                    options = []
+                    for m in _STR_LABELS:
+                        needs = (m in _STR_NEEDS_KEY
+                                 and not has_key.get(m.value, False))
+                        desc = _t("settings_modal.requires_api_key") if needs else ""
+                        options.append(OptionItem(value=m.value,
+                                                  label=_STR_LABELS[m],
+                                                  description=desc,
+                                                  disabled=needs))
+                    options.sort(key=lambda o: o.disabled)
+                    SettingsModal(_sv.page, _t("dashboard.modal.translator"),
+                                  options, _on_steam_tr_pick,
+                                  show_description=True).open(_steam_tr_current())
+
+                _sv.open_translator_picker = _open_steam_tr_picker
                 # Seed the Steam tab's language pickers from the app settings.
                 with contextlib.suppress(Exception):
                     _langs = self.controller.settings.languages

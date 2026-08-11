@@ -174,6 +174,12 @@ class SteamBridgeView(ft.Container):
         self._read_ja = True
         self._read_ko = True
         self._read_latin = True
+        self._pinyin_grouped = True   # grouped words vs per-syllable (Chat-tab option)
+        # Injected by app.py: SettingsModal card picker + current-model label +
+        # whether the picked model bills a personal API key.
+        self.open_translator_picker = None
+        self.translator_label = None
+        self.translator_is_paid = None
         self._pend: dict | None = None   # short buffer: rapid same-sender lines → ONE block
         self._pend_task = None
         self._hist_blocks: list = []  # blocks currently rendered (for retranslate)
@@ -525,30 +531,64 @@ class SteamBridgeView(ft.Container):
             self.page.update()
 
     def _build_settings_panel(self) -> None:
-        # Chat-tab "Output Format" style: radio list for the send format (always
-        # expanded, pill showing the current pick), checkbox rows for display
-        # toggles, compact 28-30px rows throughout.
-        def sect(label):
-            return ft.Container(
-                content=ft.Text(label, size=10, weight=ft.FontWeight.BOLD, color=_SECTION),
-                padding=ft.padding.only(left=6, top=2))
+        # Mirrors the Chat tab's Output Format controls exactly: label + info
+        # icon + bordered On/Off pill on the right for booleans, clickable format
+        # pill that expands a radio list, teal checkboxes for the reading
+        # languages, dense 30-32px rows.
+        def info(tip):
+            return ft.Icon(ft.Icons.INFO_OUTLINE, size=13, color=_TEXT_FAINT,
+                           tooltip=tip)
 
-        def lang_row(label, which, code):
+        def onoff(val, cb):
             return ft.Container(
-                height=30, padding=ft.padding.symmetric(horizontal=6),
+                content=ft.Text("On" if val else "Off", size=12,
+                                weight=ft.FontWeight.W_600,
+                                color=_TOGGLE_ON if val else _TEXT_FAINT),
+                border=ft.border.all(1, _TOGGLE_ON if val else "#55565a"),
+                border_radius=8, width=46, height=28, ink=True,
+                alignment=ft.alignment.center,
+                on_click=lambda e, v=not val: cb(v))
+
+        def toggle_row(label, tip, val, cb):
+            return ft.Container(
+                height=34, padding=ft.padding.symmetric(horizontal=6),
                 content=ft.Row([
-                    ft.Text(label, size=13, color=_TEXT_PRIMARY, expand=True),
+                    ft.Text(label, size=13, color=_TEXT_PRIMARY),
+                    info(tip),
+                    ft.Container(expand=True),
+                    onoff(val, cb),
+                ], spacing=4, vertical_alignment=ft.CrossAxisAlignment.CENTER))
+
+        def pill_row(label, tip, text, on_click):
+            return ft.Container(
+                height=34, padding=ft.padding.symmetric(horizontal=6),
+                content=ft.Row([
+                    ft.Text(label, size=13, color=_TEXT_PRIMARY),
+                    info(tip),
+                    ft.Container(expand=True),
+                    ft.Container(
+                        content=ft.Text(text, size=12.5, color=_TOGGLE_ON,
+                                        weight=ft.FontWeight.W_600),
+                        border=ft.border.all(1, _TOGGLE_ON), border_radius=8,
+                        ink=True, padding=ft.padding.symmetric(horizontal=10, vertical=4),
+                        on_click=on_click),
+                ], spacing=4, vertical_alignment=ft.CrossAxisAlignment.CENTER))
+
+        def menu_row(label, tip, current, items):
+            return ft.Container(
+                height=32, padding=ft.padding.symmetric(horizontal=6),
+                content=ft.Row([
+                    ft.Text(label, size=13, color=_TEXT_PRIMARY),
+                    info(tip),
+                    ft.Container(expand=True),
                     ft.PopupMenuButton(
                         content=ft.Row([
-                            ft.Text(self._lang_name(code), size=13, color=_TOGGLE_ON,
+                            ft.Text(current, size=13, color=_TOGGLE_ON,
                                     weight=ft.FontWeight.W_500),
                             ft.Icon(ft.Icons.ARROW_DROP_DOWN, size=14, color=_TEXT_FAINT),
                         ], spacing=0, tight=True),
-                        items=[ft.PopupMenuItem(
-                            text=self._lang_name(c),
-                            on_click=(lambda e, c=c, w=which: self._pick_lang(w, c)))
-                            for c, _l in _LANGS]),
-                ], vertical_alignment=ft.CrossAxisAlignment.CENTER))
+                        items=items),
+                ], spacing=4, vertical_alignment=ft.CrossAxisAlignment.CENTER))
 
         def check_row(label, val, cb):
             return ft.Container(
@@ -557,8 +597,8 @@ class SteamBridgeView(ft.Container):
                             size=17, color=_TOGGLE_ON if val else _TEXT_FAINT),
                     ft.Text(label, size=13, color=_TEXT_PRIMARY),
                 ], spacing=8, vertical_alignment=ft.CrossAxisAlignment.CENTER),
-                height=28, border_radius=6, ink=True,
-                padding=ft.padding.symmetric(horizontal=6),
+                height=27, border_radius=6, ink=True,
+                padding=ft.padding.only(left=20, right=6),
                 on_click=lambda e, v=not val: cb(v))
 
         def radio_row(label, selected, on_pick):
@@ -579,67 +619,55 @@ class SteamBridgeView(ft.Container):
                 height=30, border_radius=6, ink=True, tooltip=tip,
                 padding=ft.padding.only(left=6, top=6), on_click=on_click)
 
-        pill = ft.Container(
-            content=ft.Text(_SEND_FMT_LABEL[self._send_fmt], size=12,
-                            color=_TOGGLE_ON, weight=ft.FontWeight.W_500),
-            border=ft.border.all(1, _TOGGLE_ON), border_radius=14, ink=True,
-            padding=ft.padding.symmetric(horizontal=10, vertical=3),
-            on_click=lambda e: self._toggle_fmt_expanded())
-
-        prov_row = ft.Container(
-            height=30, padding=ft.padding.symmetric(horizontal=6),
-            content=ft.Row([
-                ft.Text("Translator", size=13, color=_TEXT_PRIMARY, expand=True),
-                ft.PopupMenuButton(
-                    content=ft.Row([
-                        ft.Text("Free (Bing)" if self._tr_provider == "bing"
-                                else "App default", size=13, color=_TOGGLE_ON,
-                                weight=ft.FontWeight.W_500),
-                        ft.Icon(ft.Icons.ARROW_DROP_DOWN, size=14, color=_TEXT_FAINT),
-                    ], spacing=0, tight=True),
-                    items=[ft.PopupMenuItem(
-                               text="App default (your API key, e.g. DeepL)",
-                               on_click=lambda e: self._set_tr_provider("default")),
-                           ft.PopupMenuItem(
-                               text="Free (Bing) — no key, no cost",
-                               on_click=lambda e: self._set_tr_provider("bing"))]),
-            ], vertical_alignment=ft.CrossAxisAlignment.CENTER))
+        lang_items = lambda which: [ft.PopupMenuItem(
+            text=self._lang_name(c),
+            on_click=(lambda e, c=c, w=which: self._pick_lang(w, c)))
+            for c, _l in _LANGS]
 
         self._settings_panel.content = ft.Column([
-            ft.Text("STEAM CHAT SETTINGS", size=11, weight=ft.FontWeight.BOLD,
-                    color=_SECTION),
-            lang_row("My language", "from", self._src_lang),
-            lang_row("Their language", "to", self._tgt_lang),
-            prov_row,
+            ft.Row([
+                ft.Icon(ft.Icons.TUNE, size=17, color=_TEXT_FAINT),
+                ft.Text("Steam Chat Settings", size=14, weight=ft.FontWeight.W_600,
+                        color=_TEXT_PRIMARY),
+            ], spacing=8, vertical_alignment=ft.CrossAxisAlignment.CENTER),
+            menu_row("My language", "Their messages are translated into this",
+                     self._lang_name(self._src_lang), lang_items("from")),
+            menu_row("Their language", "Your messages are translated into this",
+                     self._lang_name(self._tgt_lang), lang_items("to")),
+            pill_row("Translator", "Which model translates this chat",
+                     self._translator_pill_label(),
+                     lambda e: (self.open_translator_picker()
+                                if callable(self.open_translator_picker) else None)),
             ft.Divider(height=1, color="#4b4c4f"),
-            ft.Container(
-                height=30, padding=ft.padding.symmetric(horizontal=6),
-                content=ft.Row([
-                    ft.Text("Send as", size=13, color=_TEXT_PRIMARY, expand=True),
-                    pill,
-                ], vertical_alignment=ft.CrossAxisAlignment.CENTER)),
+            pill_row("Send to them", "What your friend receives on Steam",
+                     _SEND_FMT_LABEL[self._send_fmt],
+                     lambda e: self._toggle_fmt_expanded()),
             *([radio_row(lbl, m == self._send_fmt,
                          (lambda e, m=m: self._set_send_fmt(m)))
                for m, lbl in _SEND_FMT_LABEL.items()] if self._fmt_expanded else []),
             ft.Divider(height=1, color="#4b4c4f"),
-            sect("SHOWN ON MY END"),
-            check_row("Show pinyin / romaji", self._show_pinyin, self._set_pinyin),
-            *([ft.Container(content=check_row(lbl, val, cb),
-                            padding=ft.padding.only(left=14))
+            toggle_row("Show Pinyin", "Reading line above originals in this chat",
+                       self._show_pinyin, self._set_pinyin),
+            *([check_row(lbl, val, cb)
                for lbl, val, cb in (
                    ("Chinese pinyin", self._read_zh, self._set_read_zh),
                    ("Japanese romaji", self._read_ja, self._set_read_ja),
                    ("Korean romaja", self._read_ko, self._set_read_ko),
                    ("Other languages (Latin)", self._read_latin, self._set_read_latin),
                )] if self._show_pinyin else []),
-            check_row("Show original text", self._show_original, self._set_show_original),
-            check_row("Translate their messages", self._tr_incoming, self._set_tr_incoming),
+            toggle_row("Grouped Pinyin", "Whole words instead of per-syllable",
+                       self._pinyin_grouped, self._set_pinyin_grouped),
+            toggle_row("Show original text", "The untranslated line above the translation",
+                       self._show_original, self._set_show_original),
+            toggle_row("Translate their messages", "Off shows their originals only",
+                       self._tr_incoming, self._set_tr_incoming),
             ft.Divider(height=1, color="#4b4c4f"),
             btn("Clean up / re-render chat", lambda e: self._reload_chat(),
                 tip="Re-group and re-render this chat's history"),
             btn("Retranslate history", lambda e: self._retranslate_prompt(),
                 tip="Redo translations (e.g. after changing language)"),
-        ], spacing=2, tight=True)
+        ], spacing=1, tight=True)
+
 
     def _set_pinyin(self, v) -> None:
         self._show_pinyin = bool(v)
@@ -660,6 +688,13 @@ class SteamBridgeView(ft.Container):
             self._build_settings_panel()
             with contextlib.suppress(Exception):
                 self._settings_panel.update()
+    def _translator_pill_label(self) -> str:
+        cb = self.translator_label
+        if callable(cb):
+            with contextlib.suppress(Exception):
+                return str(cb())
+        return self._tr_provider or "Bing"
+
     def _set_tr_provider(self, prov: str) -> None:
         self._tr_provider = prov
         self._save_prefs()
@@ -683,6 +718,9 @@ class SteamBridgeView(ft.Container):
             self._build_settings_panel()
             with contextlib.suppress(Exception):
                 self._settings_panel.update()
+
+    def _set_pinyin_grouped(self, v) -> None:
+        self._set_read_flag("_pinyin_grouped", v)
 
     def _set_read_zh(self, v) -> None:
         self._set_read_flag("_read_zh", v)
@@ -763,10 +801,15 @@ class SteamBridgeView(ft.Container):
             with contextlib.suppress(Exception):
                 self.page.open(ft.SnackBar(ft.Text("Nothing here needs retranslating.")))
             return
-        if self._tr_provider == "bing":
-            # free provider — nothing to warn about, just do it
+        paid = True
+        cb = getattr(self, "translator_is_paid", None)
+        if callable(cb):
             with contextlib.suppress(Exception):
-                self.page.open(ft.SnackBar(ft.Text("Retranslating via free Bing…")))
+                paid = bool(cb())
+        if not paid:
+            # free model — nothing to warn about, just do it
+            with contextlib.suppress(Exception):
+                self.page.open(ft.SnackBar(ft.Text("Retranslating…")))
             self.page.run_task(self._retranslate_all)
             return
         dlg = ft.AlertDialog(
@@ -775,8 +818,8 @@ class SteamBridgeView(ft.Container):
             content=ft.Text(
                 f"This will re-send ≈{chars} characters to your API translator "
                 f"(e.g. DeepL bills per character), replacing the cached translations "
-                f"for this chat. Tip: switch Translator to Free (Bing) in settings "
-                f"to do this at no cost.", size=13),
+                f"for this chat. Tip: pick a free model (e.g. Bing) under "
+                f"Translator to do this at no cost.", size=13),
             actions=[
                 ft.TextButton("Cancel", on_click=lambda e: self.page.close(dlg)),
                 ft.TextButton("Retranslate",
@@ -1439,8 +1482,11 @@ class SteamBridgeView(ft.Container):
             if re.search(r"[㐀-鿿]", text):        # Han ideographs -> Chinese
                 if not self._read_zh:
                     return ""
-                from puripuly_heart.core.transliteration import to_pinyin_grouped
-                return to_pinyin_grouped(text) or ""
+                if self._pinyin_grouped:
+                    from puripuly_heart.core.transliteration import to_pinyin_grouped
+                    return to_pinyin_grouped(text) or ""
+                from puripuly_heart.core.transliteration import to_pinyin
+                return to_pinyin(text) or ""
             if re.search(r"[가-힣]", text):        # Hangul -> Korean romaja
                 if not self._read_ko:
                     return ""
@@ -1508,13 +1554,14 @@ class SteamBridgeView(ft.Container):
                                           p.get("send_mode", ""), "trans_only")
                 if self._send_fmt not in _SEND_FMT_LABEL:
                     self._send_fmt = "trans_only"
-                self._tr_provider = p.get("tr_provider", "default")
-                if self._tr_provider not in ("default", "bing"):
-                    self._tr_provider = "default"
+                self._tr_provider = p.get("tr_provider", "") or ""
+                if self._tr_provider == "default":
+                    self._tr_provider = ""   # follow the app's configured model
                 self._read_zh = bool(p.get("read_zh", True))
                 self._read_ja = bool(p.get("read_ja", True))
                 self._read_ko = bool(p.get("read_ko", True))
                 self._read_latin = bool(p.get("read_latin", True))
+                self._pinyin_grouped = bool(p.get("pinyin_grouped", True))
                 self._tr_outgoing = True
 
     def _save_prefs(self) -> None:
@@ -1528,6 +1575,7 @@ class SteamBridgeView(ft.Container):
                 "tr_provider": self._tr_provider,
                 "read_zh": self._read_zh, "read_ja": self._read_ja,
                 "read_ko": self._read_ko, "read_latin": self._read_latin,
+                "pinyin_grouped": self._pinyin_grouped,
             }), encoding="utf-8")
 
     def _save_cache(self) -> None:

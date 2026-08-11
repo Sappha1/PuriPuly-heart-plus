@@ -2,6 +2,10 @@
 
 User-facing changes per build. The latest build's highlights also appear in-app when an update is ready.
 
+## r437 — 2026-08-11
+
+- Steam Chat module fixes: sending images works now, and a message typed while the connection is briefly down is held with a notice and sent automatically once it reconnects, instead of being lost
+
 ## r436 — 2026-08-11
 
 - **New optional module: Steam Chat.** Chat with your Steam friends in their language from a new Steam tab — incoming messages are translated for you and yours are translated for them. Install or remove it any time under Settings → General → Modules. It's brand new, so there may be some bugs

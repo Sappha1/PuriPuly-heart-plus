@@ -998,5 +998,6 @@
   "settings.module.steam_installing_files": "正在写入模块文件",
   "settings.module.steam_installed_restart": "已安装。重启 PuriPulyHeart+ 以启用 Steam 标签页，然后在其中登录。",
   "settings.module.steam_needs_python": "安装此模块需要本机已安装 Python（python.org 或 Microsoft Store），因为它要创建自己的隔离环境。",
-  "settings.module.install_failed": "安装失败：{err}"
+  "settings.module.install_failed": "安装失败：{err}",
+  "steam.loading_history": "正在加载聊天记录"
 }

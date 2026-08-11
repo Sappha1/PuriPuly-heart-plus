@@ -998,5 +998,6 @@
   "settings.module.steam_installing_files": "モジュールファイルを書き込み中",
   "settings.module.steam_installed_restart": "インストールしました。PuriPulyHeart+を再起動するとSteamタブが有効になります。タブからサインインしてください。",
   "settings.module.steam_needs_python": "このモジュールのインストールには、このPCにPython（python.orgまたはMicrosoft Store）が必要です。独立した環境を作成するためです。",
-  "settings.module.install_failed": "インストールに失敗しました: {err}"
+  "settings.module.install_failed": "インストールに失敗しました: {err}",
+  "steam.loading_history": "チャット履歴を読み込み中"
 }

@@ -2179,6 +2179,19 @@ class SteamBridgeView(ft.Container):
         # chat's history arrives (then _render_history swaps atomically), so a
         # fast switch doesn't flash blank.
         self._entry.disabled = False   # let them type right away, don't wait for load
+        if not self._messages.controls:
+            # First open with nothing on screen: show a loading state instead of
+            # a blank pane while the helper fetches this chat's history
+            # (_render_history swaps it out; an empty chat clears it too).
+            self._messages.controls.append(ft.Container(
+                content=ft.Row([
+                    ft.ProgressRing(width=16, height=16, stroke_width=2,
+                                    color=_ACCENT),
+                    ft.Text(_T("steam.loading_history",
+                               default="Loading chat history"),
+                            size=12.5, color=_TEXT_FAINT),
+                ], spacing=10, alignment=ft.MainAxisAlignment.CENTER),
+                padding=ft.padding.only(top=40)))
         if self.page:
             self.page.update()
         await self._cmd({"cmd": "open", "acct": acct})

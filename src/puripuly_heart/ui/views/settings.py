@@ -6188,6 +6188,15 @@ class SettingsView(ft.Column):
         self._trans_title.value = t("settings.section.translation")
         self._api_title.value = t("settings.section.api_keys")
         self._managed_key_title.value = t("settings.managed_key.title")
+        # Modules card: re-label on live UI-language change (statuses + buttons
+        # re-read t() inside refresh_modules_status).
+        with contextlib.suppress(Exception):
+            self._modules_title.value = t("settings.section.modules")
+            self._ocr_mod_name.value = t("settings.module.ocr")
+            self._ocr_mod_desc.value = t("settings.module.ocr_desc")
+            self._steam_mod_name.value = t("settings.module.steam")
+            self._steam_mod_desc.value = t("settings.module.steam_desc")
+            self.refresh_modules_status()
         self._managed_key_referral_id_label.value = t("settings.managed_key.referral_id.label")
         self._managed_key_invite_progress_label.value = t(
             "settings.managed_key.invite_progress.label"

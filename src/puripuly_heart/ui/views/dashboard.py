@@ -19,7 +19,7 @@ from puripuly_heart.ui.fonts import font_for_language
 from puripuly_heart.ui.i18n import get_locale, language_name, t
 from puripuly_heart.ui.overlay_peer_contract import OverlayPeerConsumerContract
 
-_BUILD_TAG = "r413-steam-beta"  #increment each build so user can confirm version
+_BUILD_TAG = "r415-steam-beta"  #increment each build so user can confirm version
 
 # ── VRCT-style dark palette ──────────────────────────────────────────────────
 _BG_MAIN = "#2e2f32"
@@ -1551,28 +1551,13 @@ class DashboardView(ft.Row):
             vertical_alignment=ft.CrossAxisAlignment.CENTER,
             spacing=0,
         )
-        # Steam tab hides the app sidebar for room. This 230px brand cell sits above
-        # the friends list (matching the sidebar header: 20px inset = its 16px pad +
-        # the title button's 4px), so the logo lands at the same spot as on the Chat
-        # tab and the Chat/Steam tabs keep the identical X. Shown only on Steam.
-        self._steam_brand = ft.Container(
-            width=230, visible=False, bgcolor="#26272a",
-            padding=ft.padding.only(left=20),
-            alignment=ft.alignment.center_left,
-            content=ft.Row(
-                [
-                    ft.Text("PuriPulyHeart+", size=14, weight=ft.FontWeight.BOLD, color=_TOGGLE_ON),
-                    ft.Text(_BUILD_TAG, size=10, color=_TEXT_FAINT),
-                ],
-                spacing=6, tight=True, vertical_alignment=ft.CrossAxisAlignment.CENTER,
-            ),
-        )
         # The Steam language selector (English → 中文) lives up here in the tab bar,
-        # far right, filled in after the Steam view is built (below).
+        # far right, filled in after the Steam view is built (below). The Steam
+        # friends column itself occupies the SIDEBAR SLOT (see _select_chat_tab),
+        # so the tab strip is identical on both tabs — nothing extra in this row.
         self._steam_lang_slot = ft.Container(visible=False)
         chat_header = ft.Row(
             [
-                self._steam_brand,
                 self._tab_vrc,
                 ft.Container(width=4),
                 self._tab_steam,
@@ -1838,17 +1823,10 @@ class DashboardView(ft.Row):
         self.controls = [sidebar, right_panel]
 
     def _toggle_app_sidebar(self) -> None:
-        """Collapse/restore the app's left sidebar to give the Steam tab room."""
+        """Show/hide the app's left sidebar (the Steam friends column lives in its
+        own slot now, so this simply toggles the MIC/PEER/TRANS sidebar)."""
         with contextlib.suppress(Exception):
             self._app_sidebar.visible = not self._app_sidebar.visible
-            # Brand + flush-left friends list only apply when the sidebar is actually
-            # hidden on the Steam tab — otherwise we'd double the logo, push the tabs
-            # over, and jam the friends list against the sidebar.
-            steam_flush = (self._chat_tab == "steam" and not self._app_sidebar.visible)
-            self._steam_brand.visible = steam_flush
-            self._right_panel.padding = (
-                ft.padding.only(left=0, top=8, right=10, bottom=8) if steam_flush
-                else ft.padding.symmetric(horizontal=10, vertical=8))
             self.update()
 
     # ── beta/steam-bridge: chat tab strip (VRChat | Steam) ───────────────────
@@ -1864,21 +1842,37 @@ class DashboardView(ft.Row):
         # VRChat-only header actions don't apply to the Steam tab.
         with contextlib.suppress(Exception):
             self._vrc_header_actions.visible = (which != "steam")
-        # The Steam tab wants the whole width — auto-hide the app sidebar there,
-        # restore it on VRChat. The brand block stands in for the sidebar so the
-        # tabs don't shift (and it's the logo header above the friends list).
+        # The Steam friends column occupies the SIDEBAR SLOT — a full-height column
+        # in the app sidebar's exact place (same 220px width, brand header at the
+        # very top, divider, then the friends list) — true Chat-tab parity: nothing
+        # shifts, no floating strip, no grey bands.
+        if not hasattr(self, "_steam_side"):
+            with contextlib.suppress(Exception):
+                lp = self._steam_view.detach_left_panel()
+                brand = ft.Container(
+                    content=ft.Row([
+                        ft.Text("PuriPulyHeart+", size=14, weight=ft.FontWeight.BOLD,
+                                color=_TOGGLE_ON),
+                        ft.Text(_BUILD_TAG, size=10, color=_TEXT_FAINT),
+                    ], spacing=6, tight=True,
+                       vertical_alignment=ft.CrossAxisAlignment.CENTER),
+                    padding=ft.padding.symmetric(horizontal=16, vertical=10))
+                self._steam_side = ft.Container(
+                    width=220, visible=False, bgcolor="#26272a",
+                    content=ft.Column(
+                        [brand,
+                         ft.Divider(height=1, color=_DIVIDER, thickness=1),
+                         lp],
+                        spacing=0, expand=True,
+                        horizontal_alignment=ft.CrossAxisAlignment.STRETCH))
+                self.controls.insert(self.controls.index(self._app_sidebar) + 1,
+                                     self._steam_side)
         with contextlib.suppress(Exception):
             self._app_sidebar.visible = (which != "steam")
         with contextlib.suppress(Exception):
-            self._steam_brand.visible = (which == "steam")
+            self._steam_side.visible = (which == "steam")
         with contextlib.suppress(Exception):
             self._steam_lang_slot.visible = (which == "steam")
-        # On Steam, drop the right panel's LEFT padding so the friends list is flush
-        # to the window edge like the sidebar is; restore normal padding on VRChat.
-        with contextlib.suppress(Exception):
-            self._right_panel.padding = (
-                ft.padding.only(left=0, top=8, right=10, bottom=8) if which == "steam"
-                else ft.padding.symmetric(horizontal=10, vertical=8))
         # Update FIRST so the Steam view is mounted (its .page is set) BEFORE
         # activate() runs — otherwise activate can't schedule the connect and it
         # sits on "connecting" forever.

@@ -116,6 +116,10 @@ def parse_bbcode(raw: str) -> tuple[str, list[str], list[str]]:
     text = _LOBBY_RE.sub(" 🎮 game invite ", text)
     text = _URLTAG_RE.sub(lambda m: (m.group(2).strip() or m.group(1).strip()), text)
     text = _EMOTICON_RE.sub(" ", text)
+    text = re.sub(r"\[quote\]", "\x11q\x12", text, flags=re.I)
+    text = re.sub(r"\[/quote\]", "\x11/q\x12", text, flags=re.I)
+    text = re.sub(r"\[code\]", "\x11c\x12", text, flags=re.I)
+    text = re.sub(r"\[/code\]", "\x11/c\x12", text, flags=re.I)
     text = _TAG_RE.sub("", text)
     # Pasted-image messages carry the raw URL as text too — fold it into images
     # (dedup) and drop it from the text so only the picture renders.
@@ -124,8 +128,9 @@ def parse_bbcode(raw: str) -> tuple[str, list[str], list[str]]:
         if u not in images:
             images.append(u)
     text = _IMGHOST_RE.sub(" ", text)
-    text = re.sub(r"[ \t]*\n[ \t]*", " ", text)
-    text = re.sub(r"\s{2,}", " ", text).strip()
+    text = re.sub(r"[ \t]{2,}", " ", text)
+    text = re.sub(r" ?\n ?", "\n", text)
+    text = re.sub(r"\n{3,}", "\n\n", text).strip()
     return text, images, stickers
 
 

@@ -1054,5 +1054,12 @@
   "steam.react": "React",
   "steam.copy": "Copy",
   "steam.copy_translation": "Copy translation",
-  "steam.copied": "Copied"
+  "steam.copied": "Copied",
+  "steam.day_0": "Monday",
+  "steam.day_1": "Tuesday",
+  "steam.day_2": "Wednesday",
+  "steam.day_3": "Thursday",
+  "steam.day_4": "Friday",
+  "steam.day_5": "Saturday",
+  "steam.day_6": "Sunday"
 }

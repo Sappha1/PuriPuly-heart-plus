@@ -1054,5 +1054,12 @@
   "steam.react": "リアクション",
   "steam.copy": "コピー",
   "steam.copy_translation": "訳文をコピー",
-  "steam.copied": "コピーしました"
+  "steam.copied": "コピーしました",
+  "steam.day_0": "月曜日",
+  "steam.day_1": "火曜日",
+  "steam.day_2": "水曜日",
+  "steam.day_3": "木曜日",
+  "steam.day_4": "金曜日",
+  "steam.day_5": "土曜日",
+  "steam.day_6": "日曜日"
 }

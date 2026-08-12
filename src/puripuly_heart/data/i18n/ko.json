@@ -1054,5 +1054,12 @@
   "steam.react": "반응",
   "steam.copy": "복사",
   "steam.copy_translation": "번역 복사",
-  "steam.copied": "복사됨"
+  "steam.copied": "복사됨",
+  "steam.day_0": "월요일",
+  "steam.day_1": "화요일",
+  "steam.day_2": "수요일",
+  "steam.day_3": "목요일",
+  "steam.day_4": "금요일",
+  "steam.day_5": "토요일",
+  "steam.day_6": "일요일"
 }

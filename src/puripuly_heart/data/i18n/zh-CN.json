@@ -1054,5 +1054,12 @@
   "steam.react": "回应",
   "steam.copy": "复制",
   "steam.copy_translation": "复制译文",
-  "steam.copied": "已复制"
+  "steam.copied": "已复制",
+  "steam.day_0": "星期一",
+  "steam.day_1": "星期二",
+  "steam.day_2": "星期三",
+  "steam.day_3": "星期四",
+  "steam.day_4": "星期五",
+  "steam.day_5": "星期六",
+  "steam.day_6": "星期日"
 }

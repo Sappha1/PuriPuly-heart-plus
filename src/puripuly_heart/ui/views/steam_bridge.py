@@ -222,6 +222,27 @@ def _spans(text: str, base_color: str = _TEXT_PRIMARY) -> list:
     return out or [ft.TextSpan("", ft.TextStyle(color=base_color))]
 
 
+_SEG_RE = re.compile("\x11([qc])\x12(.*?)\x11/\\1\x12", re.S)
+
+
+def _segments(text: str):
+    """Yield ("t"|"q"|"c", segment_text) preserving order."""
+    pos = 0
+    for m in _SEG_RE.finditer(text or ""):
+        if m.start() > pos:
+            yield ("t", text[pos:m.start()])
+        yield (m.group(1), m.group(2))
+        pos = m.end()
+    if pos < len(text or ""):
+        yield ("t", text[pos:])
+
+
+def _plain_for_tr(text: str) -> str:
+    """Translation/reading input: drop code blocks, unwrap quotes."""
+    t = _SEG_RE.sub(lambda m: "" if m.group(1) == "c" else m.group(2), text or "")
+    return t.replace("\x11", "").replace("\x12", "")
+
+
 class SteamBridgeView(ft.Container):
     def __init__(self) -> None:
         super().__init__(expand=True, bgcolor=_BG_MAIN, padding=0)
@@ -1406,8 +1427,15 @@ class SteamBridgeView(ft.Container):
         blocks = list(self._hist_blocks)
         self._messages.controls.clear()
         self._last_block = None
+        _prev_day = None
         for b in blocks:
             b.pop("_ctrl", None)               # rebuilt by the body builder below
+            _bts = int(b.get("_ts") or 0)
+            if _bts:
+                _day = time.localtime(_bts)[:3]
+                if _day != _prev_day:
+                    self._messages.controls.append(self._day_sep(_bts))
+                    _prev_day = _day
             self._messages.controls.append(self._block_control(b))
         if self.page:
             with contextlib.suppress(Exception):
@@ -2601,14 +2629,14 @@ class SteamBridgeView(ft.Container):
         if orig and translated:
             # Matches the VRChat tab: pinyin/romaji (top), original in GRAY, then
             # the translation as the prominent line.
-            noml = _URL_RE.sub("", orig).strip()   # don't romanize/translate the URL
+            noml = _URL_RE.sub("", _plain_for_tr(orig)).strip()   # no URLs/code
             if self._show_original and self._show_pinyin:
                 roman = self._romanize(noml)
                 if roman:
                     out.append(ft.Text(roman, size=12.5, italic=True,
                                        color=_ACCENT))
             if self._show_original:
-                out.append(ft.Text(spans=_spans(orig, "#9aa0a6"), size=14))
+                out.extend(self._text_blocks(orig, "#9aa0a6"))
             else:
                 # translation-only mode: show the original UNTIL the translation
                 # arrives, then swap it out (handled in _translate_block)
@@ -2622,7 +2650,7 @@ class SteamBridgeView(ft.Container):
             b["_ctrl"] = tr_ctrl                    # the translation line, filled below
             out.append(tr_ctrl)
         elif orig:
-            out.append(ft.Text(spans=_spans(orig), size=14))
+            out.extend(self._text_blocks(orig, _TEXT_PRIMARY))
         if b.get("_out_pending") or b.get("_out_sent"):
             # own message: the translation that was (or will be) SENT — the
             # value lives in the block so re-renders can't lose it
@@ -2684,6 +2712,53 @@ class SteamBridgeView(ft.Container):
                     spacing=4, tight=True, wrap=True)))
         return out
 
+    def _text_blocks(self, text: str, color: str) -> list:
+        outs: list = []
+        for kind, seg in _segments(text):
+            seg = seg.strip("\n")
+            if not seg.strip():
+                continue
+            if kind == "q":
+                outs.append(ft.Container(
+                    content=ft.Text(spans=_spans(seg, "#b9bbbe"), size=13.5),
+                    border=ft.border.only(left=ft.BorderSide(3, "#4b4c4f")),
+                    bgcolor="#232428", border_radius=4,
+                    padding=ft.padding.symmetric(horizontal=10, vertical=6),
+                    margin=ft.margin.symmetric(vertical=2)))
+            elif kind == "c":
+                outs.append(ft.Container(
+                    content=ft.Text(seg, size=13, font_family="Consolas",
+                                    color="#c9d1c8"),
+                    border=ft.border.only(left=ft.BorderSide(3, "#4b8a6f")),
+                    bgcolor="#141518", border_radius=4,
+                    padding=10, margin=ft.margin.symmetric(vertical=2)))
+            else:
+                outs.append(ft.Text(spans=_spans(seg, color), size=14))
+        return outs or [ft.Text(spans=_spans(text, color), size=14)]
+
+    def _fmt_ts(self, ts: int) -> str:
+        if not ts:
+            return ""
+        import datetime as _dt
+        d = _dt.datetime.fromtimestamp(ts)
+        hm = d.strftime("%I:%M %p").lstrip("0")
+        if d.date() == _dt.datetime.now().date():
+            return hm
+        return f"{d.month}/{d.day}/{d.year}, {hm}"
+
+    def _day_sep(self, ts: int) -> ft.Control:
+        import datetime as _dt
+        d = _dt.datetime.fromtimestamp(ts)
+        label = (f"{_T(f'steam.day_{d.weekday()}', default=d.strftime('%A'))}, "
+                 f"{d.month}/{d.day}/{d.year}")
+        return ft.Container(
+            data="daysep", padding=ft.padding.symmetric(vertical=8),
+            content=ft.Row([
+                ft.Container(height=1, bgcolor="#3a3b3e", expand=True),
+                ft.Text(label, size=11, color=_TEXT_FAINT),
+                ft.Container(height=1, bgcolor="#3a3b3e", expand=True),
+            ], spacing=10, vertical_alignment=ft.CrossAxisAlignment.CENTER))
+
     def _block_control(self, b: dict) -> ft.Control:
         if b["from_me"]:
             name_color = _name_color(self._own_state, False)
@@ -2693,7 +2768,12 @@ class SteamBridgeView(ft.Container):
             name_color = _name_color(int(f.get("state", 1)), bool(f.get("ingame")))
             name = b.get("name") or "Them"
         col = ft.Column(spacing=1, tight=True, expand=True)
-        col.controls.append(ft.Text(name, size=12, weight=ft.FontWeight.BOLD, color=name_color))
+        _tsl = self._fmt_ts(int(b.get("_ts") or 0))
+        col.controls.append(ft.Row([
+            ft.Text(name, size=12, weight=ft.FontWeight.BOLD, color=name_color),
+            *([ft.Text(_tsl, size=10.5, color=_TEXT_FAINT)] if _tsl else []),
+        ], spacing=6, tight=True,
+           vertical_alignment=ft.CrossAxisAlignment.CENTER))
         col.controls.extend(self._message_body_controls(b))
         # remember this block so the next same-sender message can append to it
         # (ts gates the grouping — messages long apart get their own header)
@@ -2964,7 +3044,7 @@ class SteamBridgeView(ft.Container):
             return                                  # incoming translation turned off
         if b.get("from_me") and not self._tr_outgoing:
             return                                  # own-message translation turned off
-        noml = _URL_RE.sub("", orig).strip()       # translate the text, not the URL
+        noml = _URL_RE.sub("", _plain_for_tr(orig)).strip()   # no URLs/code
         tr = await self._tr(noml, force=force)
         if seq != self._open_seq or not tr or tr == noml:
             return
@@ -2996,7 +3076,7 @@ class SteamBridgeView(ft.Container):
                 continue
             if not (self._tr_outgoing if b.get("from_me") else self._tr_incoming):
                 continue
-            noml = _URL_RE.sub("", orig).strip()
+            noml = _URL_RE.sub("", _plain_for_tr(orig)).strip()
             if not noml or not self._needs_tr(noml):
                 continue
             tr = self._tr_cache.get(self._tr_key(noml))
@@ -3048,7 +3128,14 @@ class SteamBridgeView(ft.Container):
         self._hist_blocks = blocks
         self._chat_cache[self._active or 0] = blocks
         # OLD messages are never grouped — each gets its own avatar+name block.
+        _prev_day = None
         for b in blocks:
+            _bts = int(b.get("_ts") or 0)
+            if _bts:
+                _day = time.localtime(_bts)[:3]
+                if _day != _prev_day:
+                    self._messages.controls.append(self._day_sep(_bts))
+                    _prev_day = _day
             self._messages.controls.append(self._block_control(b))
         if not blocks:
             self._messages.controls.append(ft.Container(
@@ -3134,6 +3221,10 @@ class SteamBridgeView(ft.Container):
              "_ts": ts, "_ord": int(m.get("ord") or 0),
              "_out_pending": bool(m.get("_out_pending"))}
         lb = self._last_block
+        if (lb and lb.get("ts") and ts
+                and time.localtime(lb["ts"])[:3] != time.localtime(ts)[:3]):
+            self._messages.controls.append(self._day_sep(ts))
+            lb = self._last_block = None
         if (lb and lb["from_me"] == b["from_me"] and lb["name"] == (b.get("name") or "")
                 and (not lb.get("ts") or ts - lb["ts"] <= self._GROUP_GAP_S)):
             # Same sender, recent → share the name header; the message KEEPS its own
@@ -3256,8 +3347,15 @@ class SteamBridgeView(ft.Container):
                          else self._scroll_pos.get(acct))
             self._following = _keep_pos is None
             self._messages.opacity = 0     # hidden until anchored
+            _prev_day = None
             for b in cached:
                 b.pop("_ctrl", None)
+                _bts = int(b.get("_ts") or 0)
+                if _bts:
+                    _day = time.localtime(_bts)[:3]
+                    if _day != _prev_day:
+                        self._messages.controls.append(self._day_sep(_bts))
+                        _prev_day = _day
                 self._messages.controls.append(self._block_control(b))
             self._prefill_translations(cached)
             if self.page:

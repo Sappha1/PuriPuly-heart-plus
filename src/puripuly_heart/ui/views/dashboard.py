@@ -19,7 +19,7 @@ from puripuly_heart.ui.fonts import font_for_language
 from puripuly_heart.ui.i18n import get_locale, language_name, t
 from puripuly_heart.ui.overlay_peer_contract import OverlayPeerConsumerContract
 
-_BUILD_TAG = "r462"  #increment each build so user can confirm version
+_BUILD_TAG = "r463"  #increment each build so user can confirm version
 
 # ── VRCT-style dark palette ──────────────────────────────────────────────────
 _BG_MAIN = "#2e2f32"
@@ -1909,16 +1909,22 @@ class DashboardView(ft.Row):
                         mouse_cursor=ft.MouseCursor.CLICK),
                     tooltip=t("dashboard.tooltip.title_menu"), ink=True,
                     padding=ft.padding.symmetric(horizontal=16, vertical=10))
+                self._steam_side_capture = ft.Container(
+                    visible=False, left=0, top=0, right=0, bottom=0,
+                    on_click=lambda e: self._steam_side_capture_tap())
                 self._steam_side = ft.Container(
                     width=220, visible=False, bgcolor="#26272a",
-                    content=ft.Column(
-                        [brand,
-                         ft.Divider(height=1, color=_DIVIDER, thickness=1),
-                         lp],
-                        spacing=0, expand=True,
-                        horizontal_alignment=ft.CrossAxisAlignment.STRETCH))
+                    content=ft.Stack(
+                        [ft.Column(
+                            [brand,
+                             ft.Divider(height=1, color=_DIVIDER, thickness=1),
+                             lp],
+                            spacing=0, expand=True,
+                            horizontal_alignment=ft.CrossAxisAlignment.STRETCH),
+                         self._steam_side_capture], expand=True))
                 self.controls.insert(self.controls.index(self._app_sidebar) + 1,
                                      self._steam_side)
+                self._steam_view.on_modal_change = self._set_steam_modal
         with contextlib.suppress(Exception):
             self._app_sidebar.visible = (which != "steam")
         with contextlib.suppress(Exception):
@@ -1931,6 +1937,19 @@ class DashboardView(ft.Row):
         if which == "steam":
             with contextlib.suppress(Exception):
                 self._steam_view.activate()
+
+    def _steam_side_capture_tap(self) -> None:
+        # a tap on the friends column while the image viewer is open closes it
+        with contextlib.suppress(Exception):
+            self._steam_view._close_viewer()
+
+    def _set_steam_modal(self, on: bool) -> None:
+        cap = getattr(self, "_steam_side_capture", None)
+        if cap is None:
+            return
+        cap.visible = bool(on)
+        with contextlib.suppress(Exception):
+            cap.update()
 
     # ── Sidebar nav ──────────────────────────────────────────────────────────
 

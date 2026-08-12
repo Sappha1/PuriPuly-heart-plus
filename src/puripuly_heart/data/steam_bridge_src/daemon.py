@@ -77,7 +77,7 @@ _TAG_RE = re.compile(r"\[/?[a-z][^\]]*\]", re.I)
 # Bare image-host URLs in the TEXT (Steam includes the URL alongside the [img]
 # tag when an image is pasted) — show only the picture, never the raw URL.
 _IMGHOST_RE = re.compile(
-    r"https?://(?:images\.steamusercontent\.com|steamuserimages-a\.akamaihd\.net)/\S+",
+    r"https?://(?:images\.steamusercontent\.com|cdn\.steamusercontent\.com|steamuserimages-a\.akamaihd\.net)/\S+",
     re.I)
 _STICKER_URL = "https://community.fastly.steamstatic.com/economy/sticker/{}/sticker.png"
 

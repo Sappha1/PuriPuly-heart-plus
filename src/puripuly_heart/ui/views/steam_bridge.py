@@ -225,6 +225,7 @@ class SteamBridgeView(ft.Container):
         super().__init__(expand=True, bgcolor=_BG_MAIN, padding=0)
         self.translate_message = None
         self.on_toggle_sidebar = None
+        self.on_modal_change = None    # dashboard arms the side-column catcher
         self._src_lang = "en"
         self._tgt_lang = "zh-CN"
         self._proc = None
@@ -2703,24 +2704,31 @@ class SteamBridgeView(ft.Container):
                            lambda e, u=url: self._copy_link(u))]
         pills.append(pill(ft.Icons.CLOSE, _T("steam.close", default="Close"),
                           lambda e: self._close_viewer(), accent=True))
-        inner = ft.GestureDetector(
-            on_tap=lambda e: None,          # clicks on the image don't close
-            content=ft.Column([
-                ft.Image(src=url, width=820, height=520, fit=ft.ImageFit.CONTAIN),
-                ft.Row(pills, spacing=8, alignment=ft.MainAxisAlignment.CENTER),
-            ], spacing=10, tight=True,
-               horizontal_alignment=ft.CrossAxisAlignment.CENTER))
+        inner = ft.Column([
+            ft.GestureDetector(
+                on_tap=lambda e: None,      # clicks on the image don't close
+                content=ft.Image(src=url, width=820, height=520,
+                                 fit=ft.ImageFit.CONTAIN)),
+            ft.Row(pills, spacing=8, alignment=ft.MainAxisAlignment.CENTER),
+        ], spacing=10, tight=True,
+           horizontal_alignment=ft.CrossAxisAlignment.CENTER)
         self._viewer.content = ft.GestureDetector(
             on_tap=lambda e: self._close_viewer(),
             content=ft.Container(bgcolor="#77000000", expand=True,
                                  alignment=ft.alignment.center, content=inner))
         self._viewer.visible = True
+        if callable(getattr(self, "on_modal_change", None)):
+            with contextlib.suppress(Exception):
+                self.on_modal_change(True)
         if self.page:
             with contextlib.suppress(Exception):
                 self.page.update()
 
     def _close_viewer(self) -> None:
         self._viewer.visible = False
+        if callable(getattr(self, "on_modal_change", None)):
+            with contextlib.suppress(Exception):
+                self.on_modal_change(False)
         if self.page:
             with contextlib.suppress(Exception):
                 self.page.update()
@@ -3114,16 +3122,28 @@ class SteamBridgeView(ft.Container):
         if fmt == "orig_only":
             await self._cmd({"cmd": "send", "acct": acct, "text": orig_out})
             return
+        tr_src = _URL_RE.sub("", clean).strip()
+        urls = " ".join(_URL_RE.findall(clean))
+        if not tr_src:
+            # nothing but links — one message only, no near-identical
+            # "translation" duplicate (_needs_tr judges INCOMING direction,
+            # so it must not gate outgoing text)
+            if b is not None:
+                b.pop("_out_pending", None)
+            await self._cmd({"cmd": "send", "acct": acct, "text": orig_out})
+            return
         zh = None
         if callable(self.translate_message):
             with contextlib.suppress(Exception):
-                zh = await self.translate_message(clean, True)
+                zh = await self.translate_message(tr_src, True)
         zh = (zh or "").strip()
-        if not zh or zh == clean:
-            # translation failed — the message must still reach them
+        if not zh or zh.lower() == tr_src.lower():
+            # translation failed or came back unchanged — send once, as-is
+            if b is not None:
+                b.pop("_out_pending", None)
             await self._cmd({"cmd": "send", "acct": acct, "text": orig_out})
             return
-        self._tr_cache[self._tr_key(zh)] = clean          # echo renders instantly
+        self._tr_cache[self._tr_key(zh)] = tr_src         # echo renders instantly
         reading = self._romanize(zh) if "read" in fmt else ""
         lines = []
         if fmt.startswith("orig"):
@@ -3134,6 +3154,8 @@ class SteamBridgeView(ft.Container):
             lines.append(zh if fmt.startswith("orig")
                          else (zh + (" " + codes if codes else "")).strip())
         out2 = "\n".join(l for l in lines if l).strip() or orig_out
+        if urls and not fmt.startswith("orig") and urls not in out2:
+            out2 = f"{out2}\n{urls}".strip()   # links ride along untranslated
         await self._cmd({"cmd": "send", "acct": acct, "text": out2})
         sent_extra = "\n".join(l for l in lines if l and l != orig_out)
         if b is not None and sent_extra:

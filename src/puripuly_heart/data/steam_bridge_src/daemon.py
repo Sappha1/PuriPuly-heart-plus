@@ -443,6 +443,9 @@ class Daemon:
                                     if s.strip().replace("ː", ":") == raw), None)
                     if matched is not None:
                         self._sent_pending.remove(matched)
+                        with contextlib.suppress(Exception):
+                            await self.emit({"ev": "seen", "acct": self.active,
+                                             "ts": int(m.get("ts") or 0)})
                         continue
                 _diag(f"INBOUND(fetch) from={m.get('from')} own={self.own} {(m.get('text') or '')[:30]!r}")
                 if "[sticker" in (m.get("text") or ""):
@@ -469,7 +472,7 @@ class Daemon:
                 except Exception:
                     continue
                 cmd = obj.get("cmd")
-                if cmd == "status":
+                if cmd == "status" and "state" not in obj:
                     await self.push_state(only=writer)
                 elif cmd == "list":
                     await self.refresh_list()
@@ -544,7 +547,8 @@ class Daemon:
                         await self.emit({"ev": "friends", "items": list(self.convos.values())})
                 elif cmd == "status":
                     with contextlib.suppress(Exception):
-                        await self.steam.set_status(int(obj.get("state", 1)))
+                        res = await self.steam.set_status(int(obj.get("state", 1)))
+                        _diag(f"STATUS state={obj.get('state')} -> {res}")
                         await self._load_own()
                         await self.emit({"ev": "own", "acct": self.own, "avatar": self.own_avatar,
                                          "name": self.own_name, "state": self.own_state,

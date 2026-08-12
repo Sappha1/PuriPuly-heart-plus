@@ -1038,5 +1038,16 @@
   "steam.close_all_tabs": "关闭全部标签页",
   "steam.close_tabs_right": "关闭右侧标签页",
   "steam.translate_mine": "翻译我的消息",
-  "steam.tip_translate_mine": "关闭后仅显示你的原文 — 不显示拼音和翻译行"
+  "steam.tip_translate_mine": "关闭后仅显示你的原文 — 不显示拼音和翻译行",
+  "steam.set_status": "设置状态",
+  "steam.status_online": "在线",
+  "steam.status_away": "离开",
+  "steam.status_invisible": "隐身",
+  "steam.status_invisible_desc": "显示为离线，但仍可聊天",
+  "steam.status_offline": "离线",
+  "steam.status_offline_desc": "退出好友和聊天",
+  "steam.dnd": "请勿打扰",
+  "steam.dnd_desc": "禁用所有聊天通知",
+  "steam.edit_profile": "编辑个人资料名称",
+  "steam.view_profile": "查看我的 Steam 个人资料"
 }

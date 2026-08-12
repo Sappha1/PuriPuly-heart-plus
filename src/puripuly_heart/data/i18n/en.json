@@ -1038,5 +1038,16 @@
   "steam.close_all_tabs": "Close all tabs",
   "steam.close_tabs_right": "Close tabs to the right",
   "steam.translate_mine": "Translate my messages",
-  "steam.tip_translate_mine": "Off shows your originals only — no pinyin or translation lines"
+  "steam.tip_translate_mine": "Off shows your originals only — no pinyin or translation lines",
+  "steam.set_status": "Set status",
+  "steam.status_online": "Online",
+  "steam.status_away": "Away",
+  "steam.status_invisible": "Invisible",
+  "steam.status_invisible_desc": "Appear offline, but you can still chat",
+  "steam.status_offline": "Offline",
+  "steam.status_offline_desc": "Sign out of Friends & Chat",
+  "steam.dnd": "Do Not Disturb",
+  "steam.dnd_desc": "Disables all chat notifications",
+  "steam.edit_profile": "Edit Profile Name",
+  "steam.view_profile": "View my Steam profile"
 }

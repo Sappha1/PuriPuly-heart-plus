@@ -1038,5 +1038,16 @@
   "steam.close_all_tabs": "모든 탭 닫기",
   "steam.close_tabs_right": "오른쪽 탭 닫기",
   "steam.translate_mine": "내 메시지 번역",
-  "steam.tip_translate_mine": "끄면 내 원문만 표시됩니다(병음·번역 줄 없음)"
+  "steam.tip_translate_mine": "끄면 내 원문만 표시됩니다(병음·번역 줄 없음)",
+  "steam.set_status": "상태 설정",
+  "steam.status_online": "온라인",
+  "steam.status_away": "자리 비움",
+  "steam.status_invisible": "오프라인으로 표시",
+  "steam.status_invisible_desc": "오프라인으로 보이지만 채팅은 가능합니다",
+  "steam.status_offline": "오프라인",
+  "steam.status_offline_desc": "친구 및 채팅에서 로그아웃",
+  "steam.dnd": "방해 금지",
+  "steam.dnd_desc": "모든 채팅 알림을 끕니다",
+  "steam.edit_profile": "프로필 이름 편집",
+  "steam.view_profile": "내 Steam 프로필 보기"
 }

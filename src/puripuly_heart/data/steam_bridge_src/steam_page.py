@@ -707,19 +707,48 @@ class SteamPage:
         except Exception:
             return False
 
-    async def set_status(self, state: int) -> bool:
+    async def set_status(self, state: int) -> str:
         try:
-            return bool(await self._page.evaluate(
+            res = await self._page.evaluate(
                 r"""async (state) => {
-                  const fs = window.g_FriendsUIApp.m_FriendStore;
-                  for (const fn of ['SetUserPersonaState', 'ChangeUserPersonaState',
-                                    'SetPersonaState', 'ChangeStatus']) {
-                    try { if (typeof fs[fn] === 'function') { await fs[fn](state); return true; } } catch (e) {}
+                  const app = window.g_FriendsUIApp;
+                  const targets = [app.m_FriendStore, app, app.m_ChatStore];
+                  const names = ['SetUserPersonaState', 'ChangeUserPersonaState',
+                                 'SetPersonaState', 'SetPersonaOnlineState',
+                                 'ChangeStatus', 'SetOnlineStatus'];
+                  for (const t of targets) {
+                    if (!t) continue;
+                    for (const fn of names) {
+                      try {
+                        if (typeof t[fn] === 'function') {
+                          await t[fn](state);
+                          return 'ok:' + fn;
+                        }
+                      } catch (e) {}
+                    }
                   }
-                  return false;
-                }""", state))
-        except Exception:
-            return False
+                  // nothing matched — report every persona/state-ish method so
+                  // the diag log shows what the real call is
+                  const found = [];
+                  for (const t of targets) {
+                    if (!t) continue;
+                    let o = t;
+                    while (o && o !== Object.prototype) {
+                      for (const k of Object.getOwnPropertyNames(o)) {
+                        try {
+                          if (typeof t[k] === 'function' &&
+                              /persona|online|status|state/i.test(k) &&
+                              !found.includes(k)) found.push(k);
+                        } catch (e) {}
+                      }
+                      o = Object.getPrototypeOf(o);
+                    }
+                  }
+                  return 'none:' + found.slice(0, 40).join(',');
+                }""", state)
+            return str(res)
+        except Exception as exc:
+            return f"err:{exc}"
 
     async def reactivate(self, acct: int) -> None:
         """Nudge Steam to keep pushing live messages for the open chat to this

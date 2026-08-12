@@ -1038,5 +1038,16 @@
   "steam.close_all_tabs": "すべてのタブを閉じる",
   "steam.close_tabs_right": "右側のタブを閉じる",
   "steam.translate_mine": "自分のメッセージを翻訳",
-  "steam.tip_translate_mine": "オフにすると自分の原文のみ表示（ピンイン・翻訳行なし）"
+  "steam.tip_translate_mine": "オフにすると自分の原文のみ表示（ピンイン・翻訳行なし）",
+  "steam.set_status": "ステータスを設定",
+  "steam.status_online": "オンライン",
+  "steam.status_away": "退席中",
+  "steam.status_invisible": "オフライン表示",
+  "steam.status_invisible_desc": "オフラインに見えますが、チャットは可能です",
+  "steam.status_offline": "オフライン",
+  "steam.status_offline_desc": "フレンド＆チャットからサインアウト",
+  "steam.dnd": "応答不可",
+  "steam.dnd_desc": "すべてのチャット通知を無効にします",
+  "steam.edit_profile": "プロフィール名を編集",
+  "steam.view_profile": "自分のSteamプロフィールを表示"
 }

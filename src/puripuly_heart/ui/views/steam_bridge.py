@@ -268,6 +268,7 @@ class SteamBridgeView(ft.Container):
         self._is_popout = False        # standalone window: no module screens
         self._popped_out = False       # main window: the tab lives in a pop-out
         self._pref_tabs: list = []
+        self._dnd = False              # Do Not Disturb: no unread dots
         self._pref_active = 0
         self._live_since_open: list = []   # messages rendered before history lands
         self.on_popout_restore = None  # app: close the pop-out window
@@ -1690,8 +1691,26 @@ class SteamBridgeView(ft.Container):
         return ft.Container(width=size, height=size, border_radius=4, bgcolor="#3a3b3e")
 
     def _status_menu(self) -> ft.Control:
-        # name + caret; opens a Steam-style status menu
-        opts = [("Online", 1), ("Away", 3), ("Invisible", 7), ("Offline", 0)]
+        # name + caret; opens the Steam status menu (labels/descriptions match
+        # the real client, localized)
+        def item(label, desc, cb, checked=None):
+            lines = [ft.Row([
+                *([ft.Icon(ft.Icons.CHECK_BOX if checked
+                           else ft.Icons.CHECK_BOX_OUTLINE_BLANK,
+                           size=15, color=_TOGGLE_ON if checked else _TEXT_FAINT)]
+                  if checked is not None else []),
+                ft.Text(label, size=13, color=_TEXT_PRIMARY),
+            ], spacing=6, tight=True)]
+            if desc:
+                lines.append(ft.Text(desc, size=10.5, color=_TEXT_FAINT))
+            return ft.PopupMenuItem(
+                height=46 if desc else 32,
+                content=ft.Column(lines, spacing=1, tight=True),
+                on_click=cb)
+
+        def st(s):
+            return lambda e: self.page.run_task(self._set_status, s)
+
         return ft.PopupMenuButton(
             content=ft.Row([
                 ft.Text(self._own_name or "Me", size=14, weight=ft.FontWeight.BOLD,
@@ -1700,16 +1719,40 @@ class SteamBridgeView(ft.Container):
                         max_lines=1, overflow=ft.TextOverflow.ELLIPSIS),
                 ft.Icon(ft.Icons.ARROW_DROP_DOWN, size=16, color=_TEXT_FAINT),
             ], spacing=0, tight=True),
-            tooltip="Set status",
-            items=[ft.PopupMenuItem(
-                       height=32,
-                       content=ft.Text(label, size=13, color=_TEXT_PRIMARY),
-                       on_click=lambda e, s=st: self.page.run_task(self._set_status, s))
-                   for label, st in opts]
-            + [ft.PopupMenuItem(height=1),
-               ft.PopupMenuItem(height=32,
-                                content=ft.Text("View my Steam profile", size=13, color=_TEXT_PRIMARY),
-                                on_click=lambda e: self._open_profile(self._own))])
+            tooltip=_T("steam.set_status", default="Set status"),
+            items=[
+                item(_T("steam.status_online", default="Online"), "", st(1)),
+                item(_T("steam.status_away", default="Away"), "", st(3)),
+                item(_T("steam.status_invisible", default="Invisible"),
+                     _T("steam.status_invisible_desc",
+                        default="Appear offline, but you can still chat"), st(7)),
+                item(_T("steam.status_offline", default="Offline"),
+                     _T("steam.status_offline_desc",
+                        default="Sign out of Friends & Chat"), st(0)),
+                ft.PopupMenuItem(height=1),
+                item(_T("steam.dnd", default="Do Not Disturb"),
+                     _T("steam.dnd_desc", default="Disables all chat notifications"),
+                     lambda e: self._toggle_dnd(), checked=self._dnd),
+                ft.PopupMenuItem(height=1),
+                item(_T("steam.edit_profile", default="Edit Profile Name"), "",
+                     lambda e: self._open_profile_edit()),
+                item(_T("steam.view_profile", default="View my Steam profile"), "",
+                     lambda e: self._open_profile(self._own)),
+            ])
+
+    def _toggle_dnd(self) -> None:
+        self._dnd = not self._dnd
+        self._save_prefs()
+        self._rebuild_tabs()          # DND suppresses the unread dots
+        self._update_own_header()
+        if self.page:
+            with contextlib.suppress(Exception):
+                self.page.update()
+
+    def _open_profile_edit(self) -> None:
+        if self._own:
+            self._launch("https://steamcommunity.com/profiles/"
+                         f"{self._own + _STEAMID64_BASE}/edit/info")
 
     def _update_own_header(self) -> None:
         # Matches real Steam: in-game → green game name (name goes green via
@@ -2024,7 +2067,7 @@ class SteamBridgeView(ft.Container):
         sub = (f.get("game") or "In-Game") if ingame else _state_labels().get(state, "Offline")
         # Unread dot: a background tab whose chat has a newer message than we've
         # shown gets Steam's amber dot (cleared by opening the tab).
-        unread = (not active
+        unread = (not active and not self._dnd
                   and int(f.get("last_chat") or 0) > self._seen_chat_ts.get(acct, 1 << 62))
         row_items = [
             _avatar(f.get("avatar", ""), 26),
@@ -2384,6 +2427,7 @@ class SteamBridgeView(ft.Container):
                 self._pref_tabs = list(dict.fromkeys(
                     int(a) for a in (p.get("open_tabs") or [])))[:8]
                 self._pref_active = int(p.get("active_tab") or 0)
+                self._dnd = bool(p.get("dnd", False))
                 self._tr_outgoing = bool(p.get("tr_mine", True))
 
     def _save_prefs(self) -> None:
@@ -2392,6 +2436,7 @@ class SteamBridgeView(ft.Container):
                 "show_pinyin": self._show_pinyin,
                 "tr_incoming": self._tr_incoming,
                 "tr_mine": self._tr_outgoing,
+                "dnd": self._dnd,
                 "tr_outgoing": self._tr_outgoing,
                 "show_original": self._show_original,
                 "send_fmt": self._send_fmt,
@@ -2765,6 +2810,7 @@ class SteamBridgeView(ft.Container):
             self._messages.controls.append(self._block_control(b))
         if not blocks:
             self._messages.controls.append(ft.Container(
+                data="empty",
                 content=ft.Text(_T("steam.no_messages",
                                    default="No messages here yet"),
                                 size=12.5, color=_TEXT_FAINT),
@@ -2830,6 +2876,11 @@ class SteamBridgeView(ft.Container):
             self._seen_chat_ts[acct] = max(self._seen_chat_ts.get(acct, 0), int(ts))
 
     async def _render_live(self, m: dict) -> None:
+        # the first live message replaces the "No messages here yet" note
+        if any(getattr(c, "data", None) == "empty" for c in self._messages.controls):
+            self._messages.controls = [
+                c for c in self._messages.controls
+                if getattr(c, "data", None) != "empty"]
         self._mark_seen(self._active or 0, int(m.get("ts") or 0))
         self._live_since_open = (self._live_since_open + [dict(m)])[-30:]
         text, emos = _extract_emoticons((m.get("text", "") or "").strip())
@@ -3140,6 +3191,14 @@ class SteamBridgeView(ft.Container):
                     self._show_state_overlay("idle")
             elif self._module_on and ev.get("mode") != "login":
                 self._show_state_overlay("signedout")
+        elif kind == "seen":
+            _sa, _sts = int(ev.get("acct") or 0), int(ev.get("ts") or 0)
+            if _sa and _sts and _sts > self._seen_chat_ts.get(_sa, 0):
+                self._seen_chat_ts[_sa] = _sts
+                self._rebuild_tabs()
+                if self.page:
+                    with contextlib.suppress(Exception):
+                        self.page.update()
         elif kind == "friends":
             if not (ev.get("items") or []) and not self._got_friends:
                 return          # pre-signin empty push — keep Connecting up

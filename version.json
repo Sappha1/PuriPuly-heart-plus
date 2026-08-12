@@ -1,10 +1,9 @@
 {
-  "build": 469,
-  "tag": "r469",
+  "build": 473,
+  "tag": "r473",
   "date": "2026-08-12",
   "notes": [
-    "Steam Chat: Steam-style image viewer — the frame fits the picture exactly, with a corner ✕; images from Steam's newer CDN render inline",
-    "Steam Chat: links and filenames no longer send a near-identical 'translation' duplicate",
-    "Steam Chat: tidier module power screen (Turn off / Sign out side by side)"
+    "Fixed: sending an emoticon or image no longer shows a duplicate in the app (the friend always received just one)",
+    "Fixed: emoticon names starting with a digit (like 8bitheart) render as emoticons"
   ]
 }

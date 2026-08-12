@@ -2,6 +2,11 @@
 
 User-facing changes per build. The latest build's highlights also appear in-app when an update is ready.
 
+## r473 — 2026-08-12
+
+- Fixed: sending an emoticon or image showed a duplicate in the app a moment later (the friend always received just one) — the server's echo is now recognized and absorbed
+- Fixed: emoticon names that start with a digit (like 8bitheart) now render as emoticons instead of text
+
 ## r469 — 2026-08-12
 
 - Steam Chat: the image viewer now matches Steam — the frame fits the picture exactly (no more empty bands), with a clear ✕ in the corner; clicking anywhere outside also closes it

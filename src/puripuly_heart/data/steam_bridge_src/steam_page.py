@@ -483,32 +483,28 @@ class SteamPage:
                 r"""async () => {
                   const es = window.g_FriendsUIApp.m_ChatStore.m_EmoticonStore;
                   try { if (es.RequestEmoticonList) await es.RequestEmoticonList(); } catch (e) {}
-                  const names = x => {
-                    try {
-                      let arr = x;
-                      if (!arr) return [];
-                      if (arr instanceof Map) arr = [...arr.values()];
-                      if (!Array.isArray(arr)) arr = [...(arr || [])];
-                      return arr.map(e => e && (e.name || e.strName || e))
-                                .filter(v => typeof v === 'string' && v);
-                    } catch (e) { return []; }
+                  const ai = window.g_FriendsUIApp.m_AppInfoStore;
+                  const appName = id => {
+                    try { const ov = ai.GetAppInfo(id);
+                          return (ov && (ov.m_strName || ov.name)) || ""; }
+                    catch (e) { return ""; }
                   };
-                  // SearchEmoticons caps its result list — harvest EVERY
-                  // candidate collection and keep the largest.
-                  let best = [];
+                  // m_rgEmoticons is the full owned list (501 observed); the
+                  // search API caps at ~25. Items carry name + appid.
+                  let arr = [];
                   for (let i = 0; i < 10; i++) {
-                    const cands = [];
-                    try { cands.push(names(es.SearchEmoticons && es.SearchEmoticons('', 10000))); } catch (e) {}
-                    try { cands.push(names(es.SearchEmoticons && es.SearchEmoticons(''))); } catch (e) {}
-                    for (const k of Object.keys(es)) {
-                      if (!/emoticon/i.test(k)) continue;
-                      cands.push(names(es[k]));
-                    }
-                    for (const c of cands) if (c.length > best.length) best = c;
-                    if (best.length > 25) break;   // clearly past the search cap
+                    arr = es.m_rgEmoticons || [];
+                    if (arr.length > 25) break;
                     await new Promise(r => setTimeout(r, 400));
                   }
-                  return [...new Set(best)];
+                  const seen = new Set(), out = [];
+                  for (const e of arr) {
+                    const n = e && (e.name || e.strName);
+                    if (!n || seen.has(n)) continue;
+                    seen.add(n);
+                    out.push({ name: n, app: appName(e.appid || 0) });
+                  }
+                  return out;
                 }""") or []
         except Exception:
             return []
@@ -520,12 +516,24 @@ class SteamPage:
             return await self._page.evaluate(
                 r"""() => {
                   // PICKER-RECON: stickers live ON the EmoticonStore as
-                  // m_rgStickers (67 observed) — items carry a name field.
+                  // m_rgStickers — items carry name + appid.
                   try {
                     const es = window.g_FriendsUIApp.m_ChatStore.m_EmoticonStore;
+                    const ai = window.g_FriendsUIApp.m_AppInfoStore;
+                    const appName = id => {
+                      try { const ov = ai.GetAppInfo(id);
+                            return (ov && (ov.m_strName || ov.name)) || ""; }
+                      catch (e) { return ""; }
+                    };
                     const arr = es.m_rgStickers || [];
-                    return arr.map(x => x && (x.name || x.strName || (x.sticker && x.sticker.name)))
-                              .filter(Boolean);
+                    const seen = new Set(), out = [];
+                    for (const x of arr) {
+                      const n = x && (x.name || x.strName);
+                      if (!n || seen.has(n)) continue;
+                      seen.add(n);
+                      out.push({ name: n, app: appName(x.appid || 0) });
+                    }
+                    return out;
                   } catch (e) { return []; }
                 }""") or []
         except Exception:
@@ -568,11 +576,11 @@ class SteamPage:
                       } catch (e) {}
                     }
                   }
-                  // 2) wire-text fallback
+                  // 2) wire-text fallback (effects: /roomeffect <name>)
                   try {
                     const text = kind === 'sticker'
                         ? '[sticker type="' + name + '"][/sticker]'
-                        : '/' + name;
+                        : '/roomeffect ' + name;
                     if (c.SendChatMessage) { c.SendChatMessage(text); return { ok: true, how: 'text' }; }
                   } catch (e) {}
                   return { ok: false, how: 'none' };

@@ -439,6 +439,8 @@ class Daemon:
                         self._sent_pending.remove(matched)
                         continue
                 _diag(f"INBOUND(fetch) from={m.get('from')} own={self.own} {(m.get('text') or '')[:30]!r}")
+                if "[sticker" in (m.get("text") or ""):
+                    _diag("RAWSTICKER " + repr((m.get("text") or "")[:400]))
                 await self.emit({"ev": "inbound", "acct": self.active,
                                  "message": self._shape(m)})
                 # The view clears its typing indicator when a message lands; if the

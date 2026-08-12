@@ -84,6 +84,21 @@ _ROOM_EFFECTS = [("balloons", "🎈"), ("confetti", "🎉"),
 # (instance attr self._effects overrides with the store's real names)
 
 
+def _norm_named(raw) -> tuple[list, dict]:
+    """Helper lists arrive as ["name"] (old) or [{"name","app"}] (r446) —
+    normalize to (names, {name: game})."""
+    names, meta = [], {}
+    for it in raw or []:
+        if isinstance(it, dict):
+            n, app = it.get("name"), it.get("app") or ""
+        else:
+            n, app = str(it), ""
+        if n and n not in meta:
+            names.append(n)
+            meta[n] = app
+    return names, meta
+
+
 def _disp_name(f: dict) -> str:
     """Steam behavior: the nickname (when set) is the shown name."""
     return f.get("nick") or f.get("name") or ""
@@ -253,6 +268,8 @@ class SteamBridgeView(ft.Container):
         self._live_since_open: list = []   # messages rendered before history lands
         self.on_popout_restore = None  # app: close the pop-out window
         self._stickers: list = []
+        self._emote_meta: dict = {}    # emote name -> source game name
+        self._sticker_meta: dict = {}
         self._chat_cache: dict = {}    # acct -> last-rendered history blocks
         self._module_on = True         # module toggle: off = helper not running, no RAM
         self._pend: dict | None = None   # short buffer: rapid same-sender lines → ONE block
@@ -499,13 +516,18 @@ class SteamBridgeView(ft.Container):
                                ft.Container(height=6), self._state_btn],
                               spacing=10, tight=True,
                               horizontal_alignment=ft.CrossAxisAlignment.CENTER))
+        self._hover_card = ft.Container(
+            visible=False, left=12, bottom=76, bgcolor="#1e1f22",
+            border=ft.border.all(1, "#4b4c4f"), border_radius=8, padding=10,
+            shadow=ft.BoxShadow(blur_radius=14, color="#88000000",
+                                offset=ft.Offset(0, 4)))
         self._viewer = ft.Container(visible=False, expand=True)
         self.content = ft.Stack([main_row, self._loading,
                                   self._emoji_backdrop, self._emoji_panel,
                                   self._ctx_backdrop, self._ctx_menu,
                                   self._settings_backdrop, self._settings_panel,
-                                  self._input_menu, self._state_overlay,
-                                  self._viewer], expand=True)
+                                  self._input_menu, self._hover_card,
+                                  self._state_overlay, self._viewer], expand=True)
         self._load_cache()
         self._load_prefs()
         self._update_own_header()
@@ -801,6 +823,36 @@ class SteamBridgeView(ft.Container):
         if self.page:
             self._entry.update()
 
+    def _show_emote_card(self, kind: str, name: str) -> None:
+        # Steam-style hover card: big art + shortcode + the game it came from.
+        url = self._emoticon_url(name) if kind == "e" else self._sticker_url(name)
+        game = (self._emote_meta if kind == "e" else self._sticker_meta).get(name, "")
+        size = 64 if kind == "e" else 96
+        self._hover_card.content = ft.Row([
+            ft.Image(src=url, width=size, height=size, fit=ft.ImageFit.CONTAIN),
+            ft.Column([
+                ft.Text(f":{name}:" if kind == "e" else name, size=14,
+                        weight=ft.FontWeight.W_600, color=_TEXT_PRIMARY),
+                *([ft.Text(game, size=12, color=_TEXT_FAINT)] if game else []),
+            ], spacing=2, tight=True, alignment=ft.MainAxisAlignment.CENTER),
+        ], spacing=10, tight=True)
+        self._hover_card.visible = True
+        with contextlib.suppress(Exception):
+            self._hover_card.update()
+
+    def _hide_emote_card(self, _e=None) -> None:
+        if self._hover_card.visible:
+            self._hover_card.visible = False
+            with contextlib.suppress(Exception):
+                self._hover_card.update()
+
+    def _emote_hoverable(self, control, kind: str, name: str) -> ft.Control:
+        return ft.Container(
+            content=control,
+            on_hover=lambda e, k=kind, n=name: (
+                self._show_emote_card(k, n) if e.data == "true"
+                else self._hide_emote_card()))
+
     def _emoticon_url(self, name: str) -> str:
         return f"https://community.fastly.steamstatic.com/economy/emoticon/{name}"
 
@@ -862,9 +914,10 @@ class SteamBridgeView(ft.Container):
         elif tab == "emotes":
             names = [n for n in self._emoticons if q in n.lower()] if q else self._emoticons
             cells = [self._picker_cell(
-                ft.Image(src=self._emoticon_url(n), width=26, height=26,
-                         fit=ft.ImageFit.CONTAIN),
-                (lambda ev, nm=n: self._insert_emoticon(nm)), tip=f":{n}:")
+                self._emote_hoverable(
+                    ft.Image(src=self._emoticon_url(n), width=26, height=26,
+                             fit=ft.ImageFit.CONTAIN), "e", n),
+                (lambda ev, nm=n: self._insert_emoticon(nm)))
                 for n in names]
         elif tab == "effects":
             effects = getattr(self, "_effects", None) or _ROOM_EFFECTS
@@ -876,9 +929,10 @@ class SteamBridgeView(ft.Container):
         else:
             names = [n for n in self._stickers if q in n.lower()] if q else self._stickers
             cells = [self._picker_cell(
-                ft.Image(src=self._sticker_url(n), width=52, height=52,
-                         fit=ft.ImageFit.CONTAIN),
-                (lambda ev, nm=n: self._send_sticker(nm)), tip=n, big=True)
+                self._emote_hoverable(
+                    ft.Image(src=self._sticker_url(n), width=52, height=52,
+                             fit=ft.ImageFit.CONTAIN), "s", n),
+                (lambda ev, nm=n: self._send_sticker(nm)), big=True)
                 for n in names]
         hdr_key = {"recent": "steam.hdr_recent", "emoji": "steam.hdr_emoji",
                    "emotes": "steam.hdr_emoticons", "stickers": "steam.hdr_stickers",
@@ -2214,7 +2268,9 @@ class SteamBridgeView(ft.Container):
             out.append(out_ctrl)
         if b.get("emoticons"):
             out.append(ft.Row(
-                [ft.Image(src=self._emoticon_url(n), width=28, height=28, fit=ft.ImageFit.CONTAIN)
+                [self._emote_hoverable(
+                    ft.Image(src=self._emoticon_url(n), width=28, height=28,
+                             fit=ft.ImageFit.CONTAIN), "e", n)
                  for n in b["emoticons"]], spacing=3, wrap=True))
         for url in b.get("stickers", []):
             out.append(ft.Image(src=url, width=120, height=120, fit=ft.ImageFit.CONTAIN))
@@ -2687,10 +2743,10 @@ class SteamBridgeView(ft.Container):
             self._own_ingame = bool(ev.get("ingame"))
             self._own_game = ev.get("game", "") or ""
             if ev.get("emoticons"):
-                self._emoticons = list(ev.get("emoticons"))
+                self._emoticons, self._emote_meta = _norm_named(ev.get("emoticons"))
                 self._purge_emote_cache()
             if ev.get("stickers") is not None:
-                self._stickers = list(ev.get("stickers") or [])
+                self._stickers, self._sticker_meta = _norm_named(ev.get("stickers"))
             if ev.get("effects"):
                 names = [str(n) for n in ev.get("effects")]
                 icons = {"balloons": "🎈", "confetti": "🎉",

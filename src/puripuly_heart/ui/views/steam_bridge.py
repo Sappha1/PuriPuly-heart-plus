@@ -896,8 +896,8 @@ class SteamBridgeView(ft.Container):
         # page-global -> view-stack coords (the stack sits right of the app
         # sidebar and below the header in the main window; near 0,0 popped out)
         dx, dy = (10, 44) if self._is_popout else (232, 92)
-        self._hover_card.left = max(6, gx - dx + 28)
-        self._hover_card.top = max(6, gy - dy - 34)
+        self._hover_card.left = max(6, gx - dx + 34)
+        self._hover_card.top = max(6, gy - dy - 38)
         self._hover_card.on_click = lambda e: self._hide_emote_card()
         self._hover_card.visible = True
         with contextlib.suppress(Exception):
@@ -916,32 +916,37 @@ class SteamBridgeView(ft.Container):
 
     def _hide_emote_card(self, _e=None) -> None:
         self._hover_token = None
+        self._hover_armed = None
         if self._hover_card.visible:
             self._hover_card.visible = False
             with contextlib.suppress(Exception):
                 self._hover_card.update()
 
     def _on_emote_hover(self, e, kind: str, name: str) -> None:
-        if getattr(e, "data", "") != "true":
-            self._hide_emote_card()
-            return
-        # Steam-like delay: the card appears only after lingering ~0.5s
-        self._hover_token = tok = object()
         gx = float(getattr(e, "global_x", 0) or 0)
         gy = float(getattr(e, "global_y", 0) or 0)
+        # GestureDetector streams hover events; remember the freshest position
+        # but only arm ONE delayed show per entry
+        self._hover_pos = (gx, gy)
+        if getattr(self, "_hover_armed", None) == (kind, name):
+            return
+        self._hover_armed = (kind, name)
+        self._hover_token = tok = object()
 
         async def _delayed() -> None:
             await asyncio.sleep(0.5)
             if self._hover_token is tok:
-                self._show_emote_card(kind, name, gx, gy)
+                px, py = getattr(self, "_hover_pos", (gx, gy))
+                self._show_emote_card(kind, name, px, py)
 
         if self.page:
             self.page.run_task(_delayed)
 
     def _emote_hoverable(self, control, kind: str, name: str) -> ft.Control:
-        return ft.Container(
+        return ft.GestureDetector(
             content=control,
-            on_hover=lambda e, k=kind, n=name: self._on_emote_hover(e, k, n))
+            on_hover=lambda e, k=kind, n=name: self._on_emote_hover(e, k, n),
+            on_exit=lambda e: self._hide_emote_card())
 
     def _emoticon_url(self, name: str) -> str:
         return f"https://community.fastly.steamstatic.com/economy/emoticon/{name}"
@@ -2410,8 +2415,17 @@ class SteamBridgeView(ft.Container):
         # (ts gates the grouping — messages long apart get their own header)
         self._last_block = {"from_me": b["from_me"], "name": b.get("name") or "",
                             "col": col, "ts": int(b.get("_ts") or 0)}
-        return ft.Row([_avatar(b["avatar"]), col], spacing=8,
-                      vertical_alignment=ft.CrossAxisAlignment.START)
+        return ft.Container(
+            content=ft.Row([_avatar(b["avatar"]), col], spacing=8,
+                           vertical_alignment=ft.CrossAxisAlignment.START),
+            border_radius=6, bgcolor=ft.Colors.TRANSPARENT,
+            padding=ft.padding.symmetric(horizontal=6, vertical=3),
+            on_hover=self._msg_hover)
+
+    def _msg_hover(self, e) -> None:
+        e.control.bgcolor = "#2c2e33" if e.data == "true" else ft.Colors.TRANSPARENT
+        with contextlib.suppress(Exception):
+            e.control.update()
 
     def _image_control(self, url: str) -> ft.Control:
         # Show ONLY the image (never the raw steamusercontent URL as text). Left-
@@ -2925,6 +2939,8 @@ class SteamBridgeView(ft.Container):
             elif self._module_on and ev.get("mode") != "login":
                 self._show_state_overlay("signedout")
         elif kind == "friends":
+            if not (ev.get("items") or []) and not self._got_friends:
+                return          # pre-signin empty push — keep Connecting up
             if self._state_mode == "connecting":
                 self._hide_state_overlay()
                 if self._active is None and self._module_on:

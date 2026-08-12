@@ -19,7 +19,7 @@ from puripuly_heart.ui.fonts import font_for_language
 from puripuly_heart.ui.i18n import get_locale, language_name, t
 from puripuly_heart.ui.overlay_peer_contract import OverlayPeerConsumerContract
 
-_BUILD_TAG = "r450"  #increment each build so user can confirm version
+_BUILD_TAG = "r452"  #increment each build so user can confirm version
 
 # ── VRCT-style dark palette ──────────────────────────────────────────────────
 _BG_MAIN = "#2e2f32"
@@ -5229,12 +5229,7 @@ class DashboardView(ft.Row):
         if index == self._active_preset:
             return
         # Save current state back to preset data
-        self._preset_data[self._active_preset] = {
-            "source": self._source_lang_code,
-            "targets": [self._target_lang_code] + list(self._extra_target_lang_codes),
-            "peer_source": self._peer_source_lang_code,
-            "peer_target": self._peer_target_lang_code,
-        }
+        self._stash_active_preset()
         # Load new preset
         self._active_preset = index
         preset = self._preset_data[index]
@@ -6934,7 +6929,21 @@ class DashboardView(ft.Row):
         if self.on_recent_languages_change:
             self.on_recent_languages_change(self._recent_source_langs, self._recent_target_langs)
 
+    def _stash_active_preset(self) -> None:
+        # Every language mutation records the ACTIVE preset's full state
+        # immediately. Previously only the tab-switch handler stashed it, so
+        # any other path that touched the live language fields (extra-target
+        # add/remove, syncs) could smear one preset's extras onto another.
+        with contextlib.suppress(Exception):
+            self._preset_data[self._active_preset] = {
+                "source": self._source_lang_code,
+                "targets": [self._target_lang_code] + list(self._extra_target_lang_codes),
+                "peer_source": self._peer_source_lang_code,
+                "peer_target": self._peer_target_lang_code,
+            }
+
     def _notify_language_change(self):
+        self._stash_active_preset()
         # TEMP diagnostic (r251): a language flip was observed at startup with
         # no user input — log the caller chain of every notify so the next
         # occurrence identifies itself. Cheap; remove once the phantom is found.

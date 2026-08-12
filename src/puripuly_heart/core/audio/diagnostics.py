@@ -284,11 +284,24 @@ class DiagnosticAudioSource(AudioSource):
     # rate than it claims (pitch-shifted capture -> STT junk).
     log_basic: Callable[[str], object] | None = None
     pace_interval_s: float = 60.0
+    # Consumer-starvation recovery (2026-08-11): a wedged native STT decode
+    # blocked the peer pipeline for 6 minutes; the pace ratio collapsed to
+    # 0.01 and never came back on its own — the capture queue was full of
+    # stale audio nobody would ever catch up on. When the ratio stays under
+    # pace_collapse_ratio for pace_collapse_reports consecutive reports (and
+    # the capture queue is actually dropping frames, see
+    # _maybe_report_pace_collapse), on_pace_collapse fires so the owner can
+    # restart the capture session.
+    on_pace_collapse: Callable[[float], object] | None = None
+    pace_collapse_ratio: float = 0.2
+    pace_collapse_reports: int = 2
     _accumulated_audio_ms: float = field(init=False, default=0.0)
     _sequence_index: int = field(init=False, default=0)
     _open_banner_logged: bool = field(init=False, default=False)
     _pace_audio_s: float = field(init=False, default=0.0)
     _pace_wall_start_s: float = field(init=False, default=0.0)
+    _pace_low_streak: int = field(init=False, default=0)
+    _pace_last_queue_drops: int | None = field(init=False, default=None)
 
     def _current_fault_profile(self) -> AudioFaultProfile:
         if self.fault_profile_provider is not None:
@@ -341,8 +354,52 @@ class DiagnosticAudioSource(AudioSource):
                 f"queue_drops={fields.get('queue_drops')} "
                 f"callback_statuses={fields.get('callback_statuses')}"
             )
+            self._maybe_report_pace_collapse(ratio, fields)
             self._pace_audio_s = 0.0
             self._pace_wall_start_s = now
+
+    def _maybe_report_pace_collapse(self, ratio: float, fields: dict[str, object]) -> None:
+        """Fire on_pace_collapse when the pipeline is consuming far less audio
+        than the device delivers, sustained across consecutive pace reports.
+
+        A collapsed ratio alone is not proof: pace reports only fire when
+        frames arrive, so a long quiet spell (nothing playing) makes the first
+        report after it look collapsed too — wall time accrued while no audio
+        existed to consume. Real consumer starvation necessarily overflows the
+        capture queue, so when the queue_drops counter is available the streak
+        only counts intervals where it GREW. A quiet-spell interval neither
+        confirms nor refutes starvation, so it holds the streak; only a
+        healthy ratio resets it.
+        """
+        if self.on_pace_collapse is None:
+            return
+        if ratio >= self.pace_collapse_ratio:
+            self._pace_low_streak = 0
+            return
+        drops: int | None = None
+        with contextlib.suppress(TypeError, ValueError):
+            raw = fields.get("queue_drops")
+            if raw is not None:
+                drops = int(raw)  # type: ignore[arg-type]
+        if drops is not None:
+            previous = self._pace_last_queue_drops
+            self._pace_last_queue_drops = drops
+            # `previous is None`: no baseline yet. `drops < previous`: the
+            # counter reset (capture was reopened). Neither confirms drops.
+            if previous is None or drops <= previous:
+                return
+        self._pace_low_streak += 1
+        if self._pace_low_streak < max(1, int(self.pace_collapse_reports)):
+            return
+        self._pace_low_streak = 0
+        self._log_basic_safe(
+            f"[Audio][{self.channel_label}] Pace collapsed: ratio={ratio:.2f} "
+            f"(< {self.pace_collapse_ratio:.2f}) across "
+            f"{max(1, int(self.pace_collapse_reports))} consecutive reports with "
+            "growing queue drops — requesting capture restart"
+        )
+        with contextlib.suppress(Exception):
+            self.on_pace_collapse(ratio)
 
     async def frames(self) -> AsyncIterator[AudioFrameF32]:
         async for frame in self.source.frames():

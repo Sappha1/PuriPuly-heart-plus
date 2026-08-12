@@ -1,9 +1,10 @@
 {
-  "build": 459,
-  "tag": "r459",
+  "build": 462,
+  "tag": "r462",
   "date": "2026-08-11",
   "notes": [
-    "Steam Chat settings: scrollbar no longer covers the toggles; new 'Translate my messages' option (off = your originals only)",
-    "Sign out of Steam moved to the module power screen; the settings gear works there too"
+    "Steam Chat: working status menu (Online / Away / Invisible / Offline + Do Not Disturb) with instant feedback; going back online after Offline reconnects automatically",
+    "Steam Chat: reopened chats load instantly from cache, pinyin covers your own messages, no more first-open flicker",
+    "Fixed: phantom unread dot on chats you just messaged; sent-translation line can no longer vanish"
   ]
 }

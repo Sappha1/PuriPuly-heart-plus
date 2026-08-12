@@ -45,6 +45,13 @@ LOCAL_QWEN_MIN_AVG_LOGPROB = -2.3
 # bar instead of blocklisting individual phrases (r305).
 LOCAL_QWEN_QUIET_SEGMENT_RMS = 0.0075          # ~ -42 dBFS
 LOCAL_QWEN_QUIET_MIN_AVG_LOGPROB = -1.0
+# A native decode that has not returned after this long is treated as wedged,
+# not slow. Observed 2026-08-11: a DirectML inference call on a 4.2s clip sat
+# inside onnxruntime for 6+ minutes while a game saturated the GPU — the
+# utterance never produced a transcript and the whole peer pipeline starved
+# behind it. Normal decodes run well under 1x real-time even on CPU, so 30s is
+# far outside anything a healthy recognizer does.
+LOCAL_QWEN_DECODE_TIMEOUT_S = 30.0
 logger = logging.getLogger(__name__)
 
 
@@ -78,6 +85,15 @@ class LocalQwenSherpaLoadError(RuntimeError):
 
 class LocalQwenSherpaInferenceError(RuntimeError):
     """Raised when local sherpa inference fails for an utterance."""
+
+
+class LocalQwenSherpaDecodeTimeoutError(LocalQwenSherpaInferenceError):
+    """A native decode call did not return within the timeout.
+
+    The hung thread cannot be cancelled or joined — the wedge is inside a
+    native onnxruntime call. The recognizer it was decoding on is poisoned
+    (never used again) and a fresh instance is built on the next utterance.
+    """
 
 
 class LocalQwenLowMemoryError(LocalQwenSherpaLoadError):
@@ -294,9 +310,31 @@ def _available_memory_mb() -> int | None:
         return None  # diagnostics must never block the load themselves
 
 
+# Set on a recognizer whose decode timed out. An attribute (not an id() set)
+# so the mark travels with the instance itself: BOTH channels share one
+# instance, and the peer backend poisoning it must also stop the self backend
+# — which holds its own reference — from ever decoding on it again.
+_POISONED_ATTR = "_puripuly_poisoned_by_decode_timeout"
+
+
+def _recognizer_is_poisoned(recognizer: object) -> bool:
+    return bool(getattr(recognizer, _POISONED_ATTR, False))
+
+
+def _mark_recognizer_poisoned(recognizer: object) -> None:
+    with contextlib.suppress(Exception):
+        setattr(recognizer, _POISONED_ATTR, True)
+
+
 def _shared_recognizer_cached(key: tuple) -> object | None:
     with _SHARED_RECOGNIZERS_LOCK:
-        return _SHARED_RECOGNIZERS.get(key)
+        recognizer = _SHARED_RECOGNIZERS.get(key)
+        if recognizer is not None and _recognizer_is_poisoned(recognizer):
+            # A decode on this instance hung inside native code; it must never
+            # be handed out again. Evict so the next lookup rebuilds fresh.
+            del _SHARED_RECOGNIZERS[key]
+            return None
+        return recognizer
 
 
 def _reset_shared_local_qwen_recognizers() -> None:
@@ -370,6 +408,9 @@ class LocalQwenSherpaSTTBackend(STTBackend):
     # Mean per-token log-prob below which a transcript is dropped as garbage. None
     # disables the confidence filter entirely (no transcripts dropped on confidence).
     min_avg_logprob: float | None = LOCAL_QWEN_MIN_AVG_LOGPROB
+    # Abandon a native decode that has not returned after this long and poison
+    # the recognizer (see LocalQwenSherpaDecodeTimeoutError). <= 0 disables.
+    decode_timeout_s: float = LOCAL_QWEN_DECODE_TIMEOUT_S
     # Spectral noise gate for steady background noise (fans/AC). Applied to
     # each segment before decoding; opt-in (settings.stt.mic_denoise).
     denoise: bool = False
@@ -414,12 +455,26 @@ class LocalQwenSherpaSTTBackend(STTBackend):
         return self.model_dir.parent / f".stt_load_sentinel_{label}"
 
     async def _ensure_recognizer(self) -> object:
-        if self._recognizer is not None:
-            return self._recognizer
+        recognizer = self._recognizer
+        if recognizer is not None:
+            if not _recognizer_is_poisoned(recognizer):
+                return recognizer
+            # Poisoned by a timed-out decode — possibly on the OTHER channel's
+            # backend, since the instance is shared. Drop the reference and
+            # fall through to a fresh build.
+            self._recognizer = None
 
         async with self._load_lock:
-            if self._recognizer is not None:
-                return self._recognizer
+            recognizer = self._recognizer
+            if recognizer is not None:
+                if not _recognizer_is_poisoned(recognizer):
+                    return recognizer
+                self._recognizer = None
+                logger.warning(
+                    "%s discarding poisoned recognizer after a decode timeout — "
+                    "building a fresh instance",
+                    _log_prefix(self.stream_label),
+                )
 
             # r386: refuse now if the machine cannot fit the load — but only
             # when a build will actually happen; picking up the shared
@@ -525,14 +580,102 @@ class LocalQwenSherpaSTTBackend(STTBackend):
     async def decode_f32(self, samples_f32: np.ndarray) -> tuple[str, str | None]:
         recognizer = await self._ensure_recognizer()
         async with self._decode_lock:
-            try:
-                return await asyncio.to_thread(
-                    self._decode_f32_sync,
-                    recognizer,
-                    samples_f32,
+            if _recognizer_is_poisoned(recognizer):
+                # Poisoned while this call waited on the decode lock. Never
+                # touch the wedged instance; the next utterance rebuilds.
+                raise LocalQwenSherpaInferenceError(
+                    "recognizer was poisoned by a timed-out decode; a fresh "
+                    "instance will be built on the next utterance"
                 )
+            timeout_s = self.decode_timeout_s
+            try:
+                if timeout_s > 0:
+                    return await asyncio.wait_for(
+                        self._decode_in_abandonable_thread(recognizer, samples_f32),
+                        timeout=timeout_s,
+                    )
+                return await self._decode_in_abandonable_thread(recognizer, samples_f32)
+            except (asyncio.TimeoutError, TimeoutError):
+                self._poison_recognizer(recognizer)
+                audio_ms = _sample_count_duration_ms(
+                    int(np.asarray(samples_f32).size), LOCAL_QWEN_RECOGNIZER_SAMPLE_RATE_HZ
+                )
+                logger.error(
+                    "%s decode TIMED OUT after %.0fs (audio_ms=%.0f) — abandoning "
+                    "the hung inference thread and poisoning the recognizer; a "
+                    "fresh instance will be built on the next utterance",
+                    _log_prefix(self.stream_label),
+                    timeout_s,
+                    audio_ms,
+                )
+                raise LocalQwenSherpaDecodeTimeoutError(
+                    f"local speech decode did not return within {timeout_s:.0f}s "
+                    f"(audio_ms={audio_ms:.0f}) — the GPU is likely saturated by "
+                    "another program; the speech model will be rebuilt on the "
+                    "next utterance"
+                ) from None
             except Exception as exc:
                 raise LocalQwenSherpaInferenceError(str(exc)) from exc
+
+    async def _decode_in_abandonable_thread(
+        self, recognizer: object, samples_f32: np.ndarray
+    ) -> tuple[str, str | None]:
+        """Run the native decode on a dedicated daemon thread that is safe to
+        abandon.
+
+        NOT asyncio.to_thread: that borrows a worker from the loop's shared
+        executor, and a decode that never returns (the wedge is inside a native
+        DirectML call, uncancellable from Python) would hold that worker
+        forever — hang by hang starving every other to_thread user in the
+        process. A dedicated thread is disposable: on timeout the caller just
+        stops listening (the future is cancelled, so a late result is dropped
+        by the done() guard) and the thread is never joined.
+        """
+        loop = asyncio.get_running_loop()
+        future: asyncio.Future = loop.create_future()
+
+        def _deliver(result: object = None, exc: BaseException | None = None) -> None:
+            def _resolve() -> None:
+                if future.done():
+                    return  # timed out — this result belongs to an abandoned decode
+                if exc is not None:
+                    future.set_exception(exc)
+                else:
+                    future.set_result(result)
+
+            # RuntimeError: the loop already closed (app shutdown) — nobody
+            # is listening and there is nothing left to deliver to.
+            with contextlib.suppress(RuntimeError):
+                loop.call_soon_threadsafe(_resolve)
+
+        def _worker() -> None:
+            try:
+                _deliver(result=self._decode_f32_sync(recognizer, samples_f32))
+            except BaseException as exc:
+                _deliver(exc=exc)
+
+        threading.Thread(
+            target=_worker,
+            name=f"local-qwen-decode-{self.stream_label or 'self'}",
+            daemon=True,
+        ).start()
+        return await future
+
+    def _poison_recognizer(self, recognizer: object) -> None:
+        """Retire a wedged recognizer so nothing ever decodes on it again.
+
+        The mark rides on the instance (both channels share it), this
+        backend's reference is dropped, and the shared cache entry is evicted
+        — the next utterance's _ensure_recognizer builds a fresh instance.
+        The old one stays pinned by the hung thread's frame until (if ever)
+        the native call returns; that memory is the price of never joining.
+        """
+        _mark_recognizer_poisoned(recognizer)
+        self._recognizer = None
+        key = self._recognizer_cache_key()
+        with _SHARED_RECOGNIZERS_LOCK:
+            if _SHARED_RECOGNIZERS.get(key) is recognizer:
+                del _SHARED_RECOGNIZERS[key]
 
     @staticmethod
     def _normalize_detected_language(raw: object) -> str | None:

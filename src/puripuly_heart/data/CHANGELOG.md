@@ -2,6 +2,17 @@
 
 User-facing changes per build. The latest build's highlights also appear in-app when an update is ready.
 
+## r462 — 2026-08-11
+
+- Steam Chat: status changes work — set Online / Away / Invisible / Offline from the menu on your name, with instant feedback; going back online after Offline reconnects automatically
+- Steam Chat: the status menu now matches Steam, including Do Not Disturb (mutes the unread dots) and profile shortcuts
+- Steam Chat: chats reopened after closing their tab also load instantly from the local cache
+- Fixed: the unread dot no longer lights up on chats you just messaged yourself
+- Fixed: "Show pinyin / romaji" now applies to your own messages — the reading is taken from the translation
+- Fixed: the "No messages here yet" note disappears when the first message arrives
+- Fixed: your sent message's translation line could vanish if the chat refreshed at the wrong moment — it now always stays
+- Fixed: flicker when opening a chat — cached translations render together with the first paint
+
 ## r459 — 2026-08-11
 
 - Steam Chat settings: the scrollbar no longer covers the toggles, and a new "Translate my messages" option shows your own messages untranslated when off

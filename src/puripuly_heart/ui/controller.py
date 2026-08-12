@@ -4889,7 +4889,19 @@ class GuiController:
             f"actual_sample_rate_hz={getattr(raw_source, 'actual_sample_rate_hz', None)} "
             f"used_default_fallback={getattr(raw_source, 'used_default_fallback', None)}"
         )
-        wrapped_source = self._wrap_diagnostic_audio_source(raw_source, channel_label="peer")
+        wrapped_source = self._wrap_diagnostic_audio_source(
+            raw_source,
+            channel_label="peer",
+            # 2026-08-11: a wedged native STT decode starved this pipeline to
+            # ratio=0.01 and it never recovered — the capture queue stays full
+            # of stale audio. Consecutive collapsed pace reports (with growing
+            # queue drops) reopen capture via the starvation-watchdog
+            # machinery, shedding the backlog.
+            on_pace_collapse=lambda ratio: raw_source.request_reopen(
+                f"peer audio pace collapsed (ratio={ratio:.2f}) — "
+                "shedding the stale capture backlog"
+            ),
+        )
         return DesktopPeerPipeline(
             source=wrapped_source,
             auto_gain=bool(getattr(self.settings.desktop_audio, "auto_gain", True)),
@@ -5195,6 +5207,7 @@ class GuiController:
         source: AudioSource,
         *,
         channel_label: str,
+        on_pace_collapse=None,
     ) -> AudioSource:
         from puripuly_heart.core.audio.diagnostics import AudioFaultProfile, DiagnosticAudioSource
 
@@ -5222,6 +5235,7 @@ class GuiController:
                 else AudioFaultProfile.NONE.value
             ),
             extra_fields_provider=extra_fields,
+            on_pace_collapse=on_pace_collapse,
         )
 
     def _create_peer_vad_from_runtime_config(self, config: PeerRuntimeConfig, model_path: Path):

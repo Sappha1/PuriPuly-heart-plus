@@ -2592,9 +2592,10 @@ class SteamBridgeView(ft.Container):
             out.append(tr_ctrl)
         elif orig:
             out.append(ft.Text(spans=_spans(orig), size=14))
-        if b.get("_out_pending"):
-            # own message: the translation that will be SENT shows here once ready
-            out_ctrl = ft.Text("", size=13, color=_ACCENT)
+        if b.get("_out_pending") or b.get("_out_sent"):
+            # own message: the translation that was (or will be) SENT — the
+            # value lives in the block so re-renders can't lose it
+            out_ctrl = ft.Text(b.get("_out_sent") or "", size=13, color=_ACCENT)
             b["_out_ctrl"] = out_ctrl
             out.append(out_ctrl)
         fx = self._effect_of(b)
@@ -2763,6 +2764,8 @@ class SteamBridgeView(ft.Container):
         tc = b.get("_ctrl")
         if not orig or tc is None:
             return
+        if b.pop("_tr_prefilled", False):
+            return                          # already painted from the cache
         if not b.get("from_me") and not self._tr_incoming:
             return                                  # incoming translation turned off
         if b.get("from_me") and not self._tr_outgoing:
@@ -2771,6 +2774,11 @@ class SteamBridgeView(ft.Container):
         tr = await self._tr(noml, force=force)
         if seq != self._open_seq or not tr or tr == noml:
             return
+        self._apply_tr_spans(b, tc, tr)
+        with contextlib.suppress(Exception):
+            tc.update()
+
+    def _apply_tr_spans(self, b: dict, tc, tr: str) -> None:
         if b.get("from_me") and self._show_pinyin:
             # own messages: the reading belongs to the TRANSLATION (the
             # original is usually not romanizable at all)
@@ -2780,12 +2788,27 @@ class SteamBridgeView(ft.Container):
                     roman + "\n",
                     ft.TextStyle(size=12.5, italic=True, color=_ACCENT),
                 )] + _spans(tr)
-            else:
-                tc.spans = _spans(tr)
-        else:
-            tc.spans = _spans(tr)
-        with contextlib.suppress(Exception):
-            tc.update()
+                return
+        tc.spans = _spans(tr)
+
+    def _prefill_translations(self, blocks: list) -> None:
+        """Apply CACHE-HIT translations before the first paint — the
+        after-paint trickle (one control update per block) was visible as a
+        flicker on freshly opened chats."""
+        for b in blocks:
+            tc = b.get("_ctrl")
+            orig = b.get("text", "")
+            if tc is None or not orig:
+                continue
+            if not (self._tr_outgoing if b.get("from_me") else self._tr_incoming):
+                continue
+            noml = _URL_RE.sub("", orig).strip()
+            if not noml or not self._needs_tr(noml):
+                continue
+            tr = self._tr_cache.get(self._tr_key(noml))
+            if tr and tr != noml:
+                self._apply_tr_spans(b, tc, tr)
+                b["_tr_prefilled"] = True
 
     async def _render_history(self, messages: list, seq: int) -> None:
         blocks = self._coalesce(messages)
@@ -2845,6 +2868,7 @@ class SteamBridgeView(ft.Container):
             self._seen_chat_ts[self._active or 0] = max(
                 self._seen_chat_ts.get(self._active or 0, 0),
                 max(int(b.get("_ts") or 0) for b in blocks))
+        self._prefill_translations(blocks)
         self._rebuild_tabs()               # clears this tab's unread dot
         if self.page:
             self.page.run_task(self._anchor_end, _keep_pos)
@@ -3040,6 +3064,7 @@ class SteamBridgeView(ft.Container):
             for b in cached:
                 b.pop("_ctrl", None)
                 self._messages.controls.append(self._block_control(b))
+            self._prefill_translations(cached)
             if self.page:
                 self.page.run_task(self._anchor_end, _keep_pos)
                 self.page.run_task(self._fill_translations, cached, self._open_seq)
@@ -3110,13 +3135,14 @@ class SteamBridgeView(ft.Container):
                          else (zh + (" " + codes if codes else "")).strip())
         out2 = "\n".join(l for l in lines if l).strip() or orig_out
         await self._cmd({"cmd": "send", "acct": acct, "text": out2})
+        sent_extra = "\n".join(l for l in lines if l and l != orig_out)
+        if b is not None and sent_extra:
+            b["_out_sent"] = sent_extra        # survives any re-render
         ctrl = (b or {}).get("_out_ctrl")
-        if ctrl is not None:
-            sent_extra = "\n".join(l for l in lines if l and l != orig_out)
-            if sent_extra:
-                ctrl.value = sent_extra                    # what was sent to them
-                with contextlib.suppress(Exception):
-                    ctrl.update()
+        if ctrl is not None and sent_extra:
+            ctrl.value = sent_extra                        # what was sent to them
+            with contextlib.suppress(Exception):
+                ctrl.update()
 
     async def _read_loop(self) -> None:
         try:

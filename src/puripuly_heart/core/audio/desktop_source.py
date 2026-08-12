@@ -361,6 +361,7 @@ class ResilientDesktopLoopbackSource:
         init=False, default=float("-inf"), repr=False
     )
     _preferred_next_device: str = field(init=False, default="", repr=False)
+    _requested_reopen_reason: str = field(init=False, default="", repr=False)
 
     def __post_init__(self) -> None:
         self._closed_event = asyncio.Event()
@@ -415,6 +416,18 @@ class ResilientDesktopLoopbackSource:
                 return
         logger.debug(message)
 
+    def request_reopen(self, reason: str) -> None:
+        """Ask the frames() loop to close and reopen capture at the next safe
+        point (2026-08-11: the pace-collapse watchdog uses this — a starved
+        consumer leaves the capture queue wedged full of stale audio, and a
+        reopen is the only way to shed that backlog). Event-loop callers only;
+        it just sets a flag, so it is safe from inside a frames() consumer."""
+        self._requested_reopen_reason = str(reason) or "reopen requested"
+
+    def _take_requested_reopen_reason(self) -> str:
+        reason, self._requested_reopen_reason = self._requested_reopen_reason, ""
+        return reason
+
     async def frames(self) -> AsyncIterator[AudioFrameF32]:
         while not self._closed:
             inner = self._inner
@@ -438,6 +451,10 @@ class ResilientDesktopLoopbackSource:
                     if not done:
                         if self._closed:
                             return
+                        requested = self._take_requested_reopen_reason()
+                        if requested:
+                            reopen_reason = requested
+                            break
                         reopen_reason = await self._starved_health_reason(inner)
                         if reopen_reason is None:
                             if not self._idle_logged:
@@ -466,6 +483,10 @@ class ResilientDesktopLoopbackSource:
                     self._idle_logged = False
                     self._maybe_start_endpoint_survey()
                     yield frame
+                    requested = self._take_requested_reopen_reason()
+                    if requested:
+                        reopen_reason = requested
+                        break
                     if await self._saved_device_returned():
                         reopen_reason = (
                             f"saved output device '{self.device_name}' is available again"

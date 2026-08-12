@@ -514,23 +514,25 @@ class SteamBridgeView(ft.Container):
         self._state_prog = ft.ProgressRing(width=18, height=18, stroke_width=2,
                                            color=_TOGGLE_ON, visible=False)
         self._state_btn = ft.Container(
+            width=150, height=40, alignment=ft.alignment.center,
             content=self._state_btn_text, bgcolor="#2f89bd", border_radius=6,
-            padding=ft.padding.symmetric(horizontal=18, vertical=9), ink=True,
-            on_click=lambda e: self._state_action())
+            ink=True, on_click=lambda e: self._state_action())
         self._state_btn2 = ft.Container(
-            visible=False,
-            content=ft.Text(_T("steam.sign_out", default="Sign out of Steam"),
-                            size=12.5, color=_TEXT_FAINT),
+            visible=False, width=150, height=40, alignment=ft.alignment.center,
+            content=ft.Text(_T("steam.sign_out_short", default="Sign out"),
+                            size=13, weight=ft.FontWeight.W_600,
+                            color=_TEXT_PRIMARY),
             border=ft.border.all(1, "#55565a"), border_radius=6,
-            padding=ft.padding.symmetric(horizontal=14, vertical=7), ink=True,
-            on_click=lambda e: self._signout_prompt())
+            ink=True, on_click=lambda e: self._signout_prompt())
         self._state_overlay = ft.Container(
             visible=False, expand=True, bgcolor=_BG_MAIN,
             alignment=ft.alignment.center,
             content=ft.Column([self._state_icon, self._state_title,
                                self._state_caption, self._state_prog,
-                               ft.Container(height=6), self._state_btn,
-                               self._state_btn2],
+                               ft.Container(height=6),
+                               ft.Row([self._state_btn, self._state_btn2],
+                                      spacing=10, tight=True,
+                                      alignment=ft.MainAxisAlignment.CENTER)],
                               spacing=10, tight=True,
                               horizontal_alignment=ft.CrossAxisAlignment.CENTER))
         self._hover_token = None

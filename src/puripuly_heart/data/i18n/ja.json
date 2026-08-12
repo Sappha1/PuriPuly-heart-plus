@@ -1049,5 +1049,6 @@
   "steam.dnd": "応答不可",
   "steam.dnd_desc": "すべてのチャット通知を無効にします",
   "steam.edit_profile": "プロフィール名を編集",
-  "steam.view_profile": "自分のSteamプロフィールを表示"
+  "steam.view_profile": "自分のSteamプロフィールを表示",
+  "steam.sign_out_short": "サインアウト"
 }

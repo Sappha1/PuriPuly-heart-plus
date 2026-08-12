@@ -1049,5 +1049,6 @@
   "steam.dnd": "请勿打扰",
   "steam.dnd_desc": "禁用所有聊天通知",
   "steam.edit_profile": "编辑个人资料名称",
-  "steam.view_profile": "查看我的 Steam 个人资料"
+  "steam.view_profile": "查看我的 Steam 个人资料",
+  "steam.sign_out_short": "退出登录"
 }

@@ -2711,33 +2711,43 @@ class SteamBridgeView(ft.Container):
                           lambda e: self._close_viewer(), accent=True))
         # Steam-style: the image sits in a dark framed card, and a big opaque
         # ✕ is pinned to the screen's top-right — visible from anywhere.
+        # The card gets EXPLICIT dimensions sized to the window: relying on
+        # shrink-wrap here let the column stretch, which parked the buttons at
+        # the bottom edge with a huge empty field above them.
+        pw = int(getattr(self.page, "width", 0) or 1200)
+        ph = int(getattr(self.page, "height", 0) or 800)
+        iw = max(420, min(int(pw * 0.72), 980))
+        ih = max(300, min(int(ph * 0.62), 600))
+        close_x = ft.Container(
+            right=8, top=8, width=36, height=36,
+            bgcolor="#26272b", border=ft.border.all(1, "#5a5b5f"),
+            border_radius=8, ink=True, alignment=ft.alignment.center,
+            content=ft.Icon(ft.Icons.CLOSE, size=20, color="#ffffff"),
+            on_click=lambda e: self._close_viewer())
         card = ft.GestureDetector(
             on_tap=lambda e: None,          # clicks on the card don't close
             content=ft.Container(
+                width=iw + 28, height=ih + 116,
                 bgcolor="#17181b", border=ft.border.all(1, "#4b4c4f"),
-                border_radius=10, padding=14,
-                content=ft.Column([
-                    ft.Image(src=url, width=820, height=520,
-                             fit=ft.ImageFit.CONTAIN),
-                    ft.Row(pills, spacing=8,
-                           alignment=ft.MainAxisAlignment.CENTER),
-                ], spacing=12, tight=True,
-                   horizontal_alignment=ft.CrossAxisAlignment.CENTER)))
-        close_x = ft.Container(
-            right=18, top=14, width=40, height=40,
-            bgcolor="#2b2c30", border=ft.border.all(1, "#5a5b5f"),
-            border_radius=8, ink=True, alignment=ft.alignment.center,
-            content=ft.Icon(ft.Icons.CLOSE, size=22, color="#ffffff"),
-            on_click=lambda e: self._close_viewer())
+                border_radius=10,
+                content=ft.Stack([
+                    ft.Container(
+                        padding=ft.padding.only(left=14, right=14,
+                                                top=50, bottom=14),
+                        content=ft.Column([
+                            ft.Image(src=url, width=iw, height=ih,
+                                     fit=ft.ImageFit.CONTAIN),
+                            ft.Row(pills, spacing=8, tight=True,
+                                   alignment=ft.MainAxisAlignment.CENTER),
+                        ], spacing=12, tight=True,
+                           horizontal_alignment=ft.CrossAxisAlignment.CENTER)),
+                    close_x,                # inside the card, like real Steam
+                ], expand=True)))
         self._viewer_overlay.content = ft.GestureDetector(
             on_tap=lambda e: self._close_viewer(),
             content=ft.Container(
                 bgcolor="#99000000", expand=True,
-                content=ft.Stack([
-                    ft.Container(expand=True, alignment=ft.alignment.center,
-                                 content=card),
-                    close_x,
-                ], expand=True)))
+                alignment=ft.alignment.center, content=card))
         if self.page and self._viewer_overlay not in self.page.overlay:
             self.page.overlay.append(self._viewer_overlay)
         self._viewer_overlay.visible = True

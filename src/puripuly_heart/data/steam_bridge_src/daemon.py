@@ -583,7 +583,8 @@ class Daemon:
                     with contextlib.suppress(Exception):
                         res = await self.steam.react(
                             int(obj.get("acct", 0)), int(obj.get("ts", 0)),
-                            int(obj.get("ord", 0)), obj.get("name", ""))
+                            int(obj.get("ord", 0)), obj.get("name", ""),
+                            int(obj.get("rtype", 1)))
                         _diag(f"REACT ts={obj.get('ts')} "
                               f"name={obj.get('name')} -> {res}")
                         await self.emit({"ev": "reacted",

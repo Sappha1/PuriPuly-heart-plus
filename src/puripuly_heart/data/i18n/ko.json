@@ -1051,5 +1051,8 @@
   "steam.edit_profile": "프로필 이름 편집",
   "steam.view_profile": "내 Steam 프로필 보기",
   "steam.sign_out_short": "로그아웃",
-  "steam.react": "반응"
+  "steam.react": "반응",
+  "steam.copy": "복사",
+  "steam.copy_translation": "번역 복사",
+  "steam.copied": "복사됨"
 }

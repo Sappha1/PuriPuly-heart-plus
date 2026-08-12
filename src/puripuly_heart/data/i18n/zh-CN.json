@@ -1051,5 +1051,8 @@
   "steam.edit_profile": "编辑个人资料名称",
   "steam.view_profile": "查看我的 Steam 个人资料",
   "steam.sign_out_short": "退出登录",
-  "steam.react": "回应"
+  "steam.react": "回应",
+  "steam.copy": "复制",
+  "steam.copy_translation": "复制译文",
+  "steam.copied": "已复制"
 }

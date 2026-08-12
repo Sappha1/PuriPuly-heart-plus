@@ -1051,5 +1051,8 @@
   "steam.edit_profile": "プロフィール名を編集",
   "steam.view_profile": "自分のSteamプロフィールを表示",
   "steam.sign_out_short": "サインアウト",
-  "steam.react": "リアクション"
+  "steam.react": "リアクション",
+  "steam.copy": "コピー",
+  "steam.copy_translation": "訳文をコピー",
+  "steam.copied": "コピーしました"
 }

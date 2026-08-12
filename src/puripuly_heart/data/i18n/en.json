@@ -1051,5 +1051,8 @@
   "steam.edit_profile": "Edit Profile Name",
   "steam.view_profile": "View my Steam profile",
   "steam.sign_out_short": "Sign out",
-  "steam.react": "React"
+  "steam.react": "React",
+  "steam.copy": "Copy",
+  "steam.copy_translation": "Copy translation",
+  "steam.copied": "Copied"
 }

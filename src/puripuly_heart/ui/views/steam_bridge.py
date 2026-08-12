@@ -270,6 +270,7 @@ class SteamBridgeView(ft.Container):
         self._popped_out = False       # main window: the tab lives in a pop-out
         self._pref_tabs: list = []
         self._dnd = False              # Do Not Disturb: no unread dots
+        self._react_target = None      # message block being reacted to
         self._pref_active = 0
         self._live_since_open: list = []   # messages rendered before history lands
         self.on_popout_restore = None  # app: close the pop-out window
@@ -829,6 +830,8 @@ class SteamBridgeView(ft.Container):
             self._char_count.update()
 
     def _insert_emoji(self, em: str) -> None:
+        if self._react_target is not None:
+            return          # reactions take emoticons/stickers only
         self._push_recent("u", em)
         self._entry.value = (self._entry.value or "") + em
         if self.page:
@@ -839,6 +842,8 @@ class SteamBridgeView(ft.Container):
                 f"{name}/sticker.png")
 
     def _send_effect(self, name: str) -> None:
+        if self._react_target is not None:
+            return          # reactions take emoticons/stickers only
         if not self._active:
             return
         self._toggle_emoji(False)
@@ -848,6 +853,12 @@ class SteamBridgeView(ft.Container):
                                            "name": name})
 
     def _send_sticker(self, name: str) -> None:
+        if self._react_target is not None:
+            b, self._react_target = self._react_target, None
+            self._toggle_emoji(False)
+            if self.page:
+                self.page.run_task(self._send_react, b, "s:" + name, 2)
+            return
         # Stickers send immediately on click, like real Steam.
         if not self._active:
             return
@@ -867,6 +878,12 @@ class SteamBridgeView(ft.Container):
             self.page.run_task(_go)
 
     def _insert_emoticon(self, name: str) -> None:
+        if self._react_target is not None:
+            b, self._react_target = self._react_target, None
+            self._toggle_emoji(False)
+            if self.page:
+                self.page.run_task(self._send_react, b, name, 1)
+            return
         self._push_recent("e", name)
         # Steam emoticons are sent as :name: and render on both ends.
         # The panel STAYS OPEN so several can be clicked in a row (emoji parity).
@@ -1107,6 +1124,8 @@ class SteamBridgeView(ft.Container):
 
     def _toggle_emoji(self, show=None) -> None:
         show = (not self._emoji_panel.visible) if show is None else show
+        if not show:
+            self._react_target = None
         if show:
             self._build_emoji_panel()
         self._emoji_panel.visible = show
@@ -2650,9 +2669,12 @@ class SteamBridgeView(ft.Container):
                 margin=ft.margin.only(top=2),
                 content=ft.Row(
                     [ft.Container(
-                        content=ft.Image(src=self._emoticon_url(n),
-                                         width=16, height=16,
-                                         fit=ft.ImageFit.CONTAIN),
+                        content=ft.Image(
+                            src=(self._sticker_url(n[2:]) if n.startswith("s:")
+                                 else self._emoticon_url(n)),
+                            width=24 if n.startswith("s:") else 16,
+                            height=24 if n.startswith("s:") else 16,
+                            fit=ft.ImageFit.CONTAIN),
                         bgcolor="#26282c", border_radius=9,
                         border=ft.border.all(1, "#3a3b3e"),
                         padding=ft.padding.symmetric(horizontal=5, vertical=3))
@@ -2685,29 +2707,48 @@ class SteamBridgeView(ft.Container):
                 on_hover=self._msg_hover))
 
     def _show_react_menu(self, e, b: dict) -> None:
-        # quick reactions: recent emotes first, topped up with owned ones
-        names = [v for k, v in self._recent_picks if k == "e"][:6]
-        for item in (self._emoticons or []):
-            n = item["name"] if isinstance(item, dict) else str(item)
-            if n not in names:
-                names.append(n)
-            if len(names) >= 8:
-                break
-        if not names:
-            return
-        cells = [ft.Container(
-                    content=ft.Image(src=self._emoticon_url(n), width=26,
-                                     height=26, fit=ft.ImageFit.CONTAIN),
-                    padding=4, border_radius=6, ink=True, tooltip=f":{n}:",
-                    on_click=lambda ev, nn=n, bb=b: (
-                        self._hide_ctx(),
-                        self.page.run_task(self._send_react, bb, nn)))
-                 for n in names[:8]]
+        # Steam-style message menu: Copy / Copy translation / React
+        def row(label, cb):
+            def h(ev, _cb=cb):
+                self._hide_ctx()
+                _cb()
+            return ft.Container(
+                content=ft.Text(label, size=13, color=_TEXT_PRIMARY),
+                padding=ft.padding.symmetric(horizontal=10, vertical=7),
+                border_radius=6, ink=True, on_click=h)
+
+        def _copy_text():
+            if self.page:
+                with contextlib.suppress(Exception):
+                    self.page.set_clipboard(b.get("text") or "")
+                    self.page.open(ft.SnackBar(
+                        ft.Text(_T("steam.copied", default="Copied")),
+                        duration=1200))
+
+        def _copy_tr():
+            tr = ""
+            with contextlib.suppress(Exception):
+                noml = _URL_RE.sub("", b.get("text") or "").strip()
+                tr = self._tr_cache.get(self._tr_key(noml)) or ""
+            if self.page:
+                with contextlib.suppress(Exception):
+                    self.page.set_clipboard(tr or (b.get("text") or ""))
+                    self.page.open(ft.SnackBar(
+                        ft.Text(_T("steam.copied", default="Copied")),
+                        duration=1200))
+
+        def _react():
+            # React opens the FULL picker (tabs, search, recents) aimed at
+            # this message — like real Steam's React submenu
+            self._react_target = b
+            self._toggle_emoji(True)
+
         self._ctx_menu.content = ft.Column([
-            ft.Text(_T("steam.react", default="React"), size=11,
-                    weight=ft.FontWeight.BOLD, color=_SECTION),
-            ft.Row(cells, spacing=2, tight=True),
-        ], spacing=4, tight=True)
+            row(_T("steam.copy", default="Copy"), _copy_text),
+            row(_T("steam.copy_translation", default="Copy translation"),
+                _copy_tr),
+            row(_T("steam.react", default="React"), _react),
+        ], spacing=1, tight=True)
         gx = float(getattr(e, "global_x", 0) or getattr(e, "local_x", 0) or 60)
         gy = float(getattr(e, "global_y", 0) or getattr(e, "local_y", 0) or 60)
         self._ctx_menu.left = max(4.0, gx - self._ctx_offset_x - 8)
@@ -2717,10 +2758,12 @@ class SteamBridgeView(ft.Container):
         if self.page:
             self.page.update()
 
-    async def _send_react(self, b: dict, name: str) -> None:
+    async def _send_react(self, b: dict, name: str, rtype: int = 1) -> None:
+        raw = name[2:] if name.startswith("s:") else name
         ok = await self._cmd({"cmd": "react", "acct": self._active or 0,
                               "ts": int(b.get("_ts") or 0),
-                              "ord": int(b.get("_ord") or 0), "name": name})
+                              "ord": int(b.get("_ord") or 0),
+                              "name": raw, "rtype": int(rtype)})
         if ok:
             b.setdefault("_reacts", [])
             if name not in b["_reacts"]:

@@ -750,7 +750,8 @@ class SteamPage:
         except Exception as exc:
             return f"err:{exc}"
 
-    async def react(self, acct: int, ts: int, ordinal: int, name: str) -> str:
+    async def react(self, acct: int, ts: int, ordinal: int, name: str,
+                    rtype: int = 1) -> str:
         """Add an emoticon reaction to a message. Probes the reaction API and
         returns 'ok:<method>' or 'none:<recon dump>' for the daemon's diag."""
         try:
@@ -768,7 +769,7 @@ class SteamPage:
                   for (const fn of names) {
                     if (typeof c[fn] !== 'function') continue;
                     try {
-                      await c[fn](a.ts, a.ord, 1, a.name, true);
+                      await c[fn](a.ts, a.ord, a.rtype, a.name, true);
                       return 'ok:' + fn;
                     } catch (e) { errs.push(fn + ':' + e); }
                   }
@@ -790,7 +791,8 @@ class SteamPage:
                   } catch (e) {}
                   return 'none:' + found.slice(0, 30).join(',') +
                          '|errs:' + errs.join(';') + '|msg:' + mf.join(',');
-                }""", {"acct": acct, "ts": ts, "ord": ordinal, "name": name})
+                }""", {"acct": acct, "ts": ts, "ord": ordinal, "name": name,
+                       "rtype": int(rtype)})
             return str(res)
         except Exception as exc:
             return f"err:{exc}"

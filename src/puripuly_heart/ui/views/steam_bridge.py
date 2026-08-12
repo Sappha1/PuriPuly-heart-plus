@@ -516,9 +516,10 @@ class SteamBridgeView(ft.Container):
                                ft.Container(height=6), self._state_btn],
                               spacing=10, tight=True,
                               horizontal_alignment=ft.CrossAxisAlignment.CENTER))
+        self._hover_token = None
         self._hover_card = ft.Container(
-            visible=False, left=12, bottom=76, bgcolor="#1e1f22",
-            border=ft.border.all(1, "#4b4c4f"), border_radius=8, padding=10,
+            visible=False, left=12, top=76, bgcolor="#1e1f22",
+            border=ft.border.all(1, "#4b4c4f"), border_radius=8, padding=8,
             shadow=ft.BoxShadow(blur_radius=14, color="#88000000",
                                 offset=ft.Offset(0, 4)))
         self._viewer = ft.Container(visible=False, expand=True)
@@ -823,35 +824,70 @@ class SteamBridgeView(ft.Container):
         if self.page:
             self._entry.update()
 
-    def _show_emote_card(self, kind: str, name: str) -> None:
-        # Steam-style hover card: big art + shortcode + the game it came from.
+    def _show_emote_card(self, kind: str, name: str,
+                         gx: float, gy: float) -> None:
+        # Steam-style hover card: compact, next to the hovered emote.
         url = self._emoticon_url(name) if kind == "e" else self._sticker_url(name)
         game = (self._emote_meta if kind == "e" else self._sticker_meta).get(name, "")
-        size = 64 if kind == "e" else 96
+        size = 44 if kind == "e" else 72
         self._hover_card.content = ft.Row([
             ft.Image(src=url, width=size, height=size, fit=ft.ImageFit.CONTAIN),
             ft.Column([
-                ft.Text(f":{name}:" if kind == "e" else name, size=14,
+                ft.Text(f":{name}:" if kind == "e" else name, size=13,
                         weight=ft.FontWeight.W_600, color=_TEXT_PRIMARY),
-                *([ft.Text(game, size=12, color=_TEXT_FAINT)] if game else []),
-            ], spacing=2, tight=True, alignment=ft.MainAxisAlignment.CENTER),
-        ], spacing=10, tight=True)
+                *([ft.Text(game, size=11, color=_TEXT_FAINT)] if game else []),
+            ], spacing=1, tight=True, alignment=ft.MainAxisAlignment.CENTER),
+        ], spacing=8, tight=True)
+        # page-global -> view-stack coords (the stack sits right of the app
+        # sidebar and below the header in the main window; near 0,0 popped out)
+        dx, dy = (10, 44) if self._is_popout else (232, 92)
+        card_h = 76
+        self._hover_card.left = max(6, gx - dx)
+        self._hover_card.top = max(6, gy - dy - card_h)
+        self._hover_card.on_click = lambda e: self._hide_emote_card()
         self._hover_card.visible = True
         with contextlib.suppress(Exception):
             self._hover_card.update()
+        # safety net: a missed hover-exit (card overlapping the cell swallows
+        # it) must never strand the card on screen
+        self._hover_show_tok = tok = object()
+
+        async def _auto_hide() -> None:
+            await asyncio.sleep(3.5)
+            if getattr(self, "_hover_show_tok", None) is tok:
+                self._hide_emote_card()
+
+        if self.page:
+            self.page.run_task(_auto_hide)
 
     def _hide_emote_card(self, _e=None) -> None:
+        self._hover_token = None
         if self._hover_card.visible:
             self._hover_card.visible = False
             with contextlib.suppress(Exception):
                 self._hover_card.update()
 
+    def _on_emote_hover(self, e, kind: str, name: str) -> None:
+        if getattr(e, "data", "") != "true":
+            self._hide_emote_card()
+            return
+        # Steam-like delay: the card appears only after lingering ~0.5s
+        self._hover_token = tok = object()
+        gx = float(getattr(e, "global_x", 0) or 0)
+        gy = float(getattr(e, "global_y", 0) or 0)
+
+        async def _delayed() -> None:
+            await asyncio.sleep(0.5)
+            if self._hover_token is tok:
+                self._show_emote_card(kind, name, gx, gy)
+
+        if self.page:
+            self.page.run_task(_delayed)
+
     def _emote_hoverable(self, control, kind: str, name: str) -> ft.Control:
         return ft.Container(
             content=control,
-            on_hover=lambda e, k=kind, n=name: (
-                self._show_emote_card(k, n) if e.data == "true"
-                else self._hide_emote_card()))
+            on_hover=lambda e, k=kind, n=name: self._on_emote_hover(e, k, n))
 
     def _emoticon_url(self, name: str) -> str:
         return f"https://community.fastly.steamstatic.com/economy/emoticon/{name}"

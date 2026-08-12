@@ -563,18 +563,52 @@ class SteamPage:
                     }
                     return [...out];
                   };
-                  // RAWSTICKER-verified wire formats (limit="0" required):
-                  //   [sticker type="Name" limit="0"][/sticker]
-                  //   [roomeffect type="name" limit="0"][/roomeffect]
+                  // The client sends SLASH COMMANDS; the server converts
+                  // them into validated sticker/effect BBCode. Sending the
+                  // BBCode directly skips validation -> invisible line.
                   try {
-                    const tag = kind === 'sticker' ? 'sticker' : 'roomeffect';
-                    const text = '[' + tag + ' type="' + name + '" limit="0"][/' + tag + ']';
-                    if (c.SendChatMessage) { c.SendChatMessage(text); return { ok: true, how: 'bbcode' }; }
+                    const text = (kind === 'sticker' ? '/sticker ' : '/roomeffect ') + name;
+                    if (c.SendChatMessage) { c.SendChatMessage(text); return { ok: true, how: 'slash' }; }
                   } catch (e) {}
                   return { ok: false, how: 'none' };
                 }""", [acct, name, kind]) or {"ok": False, "how": "eval"}
         except Exception as exc:
             return {"ok": False, "how": str(exc)[:120]}
+
+    async def dump_sticker_send_recon(self) -> dict:
+        """Find the REAL sticker send path: every method on the chat object /
+        chat store whose SOURCE mentions sticker (name-matching found nothing;
+        the exact wire text sent as plain chat renders invisible, so the
+        client must attach sticker data via a dedicated call)."""
+        try:
+            return await self._page.evaluate(
+                r"""() => {
+                  const out = {};
+                  const a = window.g_FriendsUIApp, cs = a.m_ChatStore;
+                  const c = (cs.m_FriendChatStore.m_rgFriendChats || [])[0];
+                  const grab = (host, label) => {
+                    if (!host) return;
+                    let p = host, depth = 0;
+                    while (p && p !== Object.prototype && depth < 6) {
+                      for (const k of Object.getOwnPropertyNames(p)) {
+                        try {
+                          const v = host[k];
+                          if (typeof v !== 'function') continue;
+                          const src = String(v);
+                          if (/sticker/i.test(src) && src.length < 4000)
+                            out[label + '.' + k] = src.slice(0, 700);
+                        } catch (e) {}
+                      }
+                      p = Object.getPrototypeOf(p); depth++;
+                    }
+                  };
+                  grab(c, 'chat');
+                  grab(cs, 'chatstore');
+                  grab(cs.m_FriendChatStore, 'fcs');
+                  return out;
+                }""") or {}
+        except Exception as exc:
+            return {"err": str(exc)}
 
     async def dump_stickfx_methods(self) -> dict:
         """Recon: source of every sticker/effect-ish method on the chat object

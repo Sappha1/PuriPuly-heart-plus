@@ -512,6 +512,12 @@ class Daemon:
                                 f'[sticker type="{nm}" limit="0"][/sticker]')
                             if len(self._sent_pending) > 20:
                                 self._sent_pending.pop(0)
+                            if not getattr(self, "_stick_reconned", False):
+                                self._stick_reconned = True
+                                with contextlib.suppress(Exception):
+                                    import json as _json
+                                    _diag("STICKSEND-RECON " + _json.dumps(
+                                        await self.steam.dump_sticker_send_recon())[:3000])
                         if not (res or {}).get("ok"):
                             recon = await self.steam.dump_stickfx_methods()
                             import json as _json

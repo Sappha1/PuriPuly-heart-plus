@@ -204,6 +204,43 @@ class Daemon:
                 asyncio.create_task(self.steam.preload_recent(20))
             self._started = True
 
+    async def _emit_own(self) -> None:
+        await self.emit({"ev": "own", "acct": self.own, "avatar": self.own_avatar,
+                         "name": self.own_name, "state": self.own_state,
+                         "invites": self.own_invites, "invisible": self.own_invisible,
+                         "emoticons": self.emoticons, "stickers": self.stickers,
+                         "effects": self.effects})
+
+    async def _own_refresh_later(self) -> None:
+        for delay in (2.0, 6.0):
+            await asyncio.sleep(delay)
+            with contextlib.suppress(Exception):
+                await self._load_own()
+                await self._emit_own()
+
+    async def _revive_friends(self) -> None:
+        """Persona state 0 signs the WEB session out of the friends network,
+        and setting a state again does NOT reconnect it (verified: st_self
+        stays 0) — only a page reload re-establishes the session."""
+        with contextlib.suppress(Exception):
+            _diag("REVIVE friends session (page reload after persona 0)")
+            await self.emit({"ev": "status", "signed_in": False, "mode": "starting"})
+            await self.steam.reload()
+            for _ in range(30):
+                await asyncio.sleep(1.0)
+                if await self.steam.is_signed_in():
+                    break
+            self.signed = await self.steam.is_signed_in()
+            await self._load_own()
+            if self.signed:
+                await self.refresh_list()
+            await self.push_state()
+            await self._emit_own()
+            if self.active:
+                with contextlib.suppress(Exception):
+                    await self.do_open(self.active)
+            _diag(f"REVIVE done signed={self.signed}")
+
     async def _load_own(self) -> None:
         # Own persona (name) loads a beat after sign-in — retry briefly.
         for _ in range(8):
@@ -547,13 +584,15 @@ class Daemon:
                         await self.emit({"ev": "friends", "items": list(self.convos.values())})
                 elif cmd == "status":
                     with contextlib.suppress(Exception):
-                        res = await self.steam.set_status(int(obj.get("state", 1)))
-                        _diag(f"STATUS state={obj.get('state')} -> {res}")
-                        await self._load_own()
-                        await self.emit({"ev": "own", "acct": self.own, "avatar": self.own_avatar,
-                                         "name": self.own_name, "state": self.own_state,
-                                         "invites": self.own_invites, "invisible": self.own_invisible,
-                                         "emoticons": self.emoticons, "stickers": self.stickers, "effects": self.effects})
+                        st_req = int(obj.get("state", 1))
+                        res = await self.steam.set_status(st_req)
+                        _diag(f"STATUS state={st_req} -> {res}")
+                        if st_req == 0:
+                            self._persona_offline = True
+                        elif getattr(self, "_persona_offline", False):
+                            self._persona_offline = False
+                            asyncio.create_task(self._revive_friends())
+                        asyncio.create_task(self._own_refresh_later())
         except (asyncio.IncompleteReadError, ConnectionResetError):
             pass
         finally:

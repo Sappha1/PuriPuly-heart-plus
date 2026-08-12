@@ -1764,14 +1764,20 @@ class SteamBridgeView(ft.Container):
                 parts.append(ft.Icon(ft.Icons.VISIBILITY_OFF, size=13, color=_C_INGAME))
             parts.append(ft.Text(self._own_game or "In-Game", size=11, color=_C_INGAME,
                                  max_lines=1, overflow=ft.TextOverflow.ELLIPSIS))
+            if self._own_state in (0, 3, 4):
+                parts.append(ft.Text(_state_labels().get(self._own_state, ""),
+                                     size=11, color=_C_AWAY))
             status_row = ft.Row(parts, spacing=4, tight=True)
         elif self._own_invisible:
             status_row = ft.Row([ft.Icon(ft.Icons.VISIBILITY_OFF, size=13, color=_TEXT_FAINT),
                                  ft.Text(_T("steam.state_invisible", default="Invisible"), size=11, color=_TEXT_FAINT)],
                                 spacing=4, tight=True)
         else:
-            status_row = ft.Text(_state_labels().get(self._own_state, "Online"), size=11,
-                                 color=_name_color(self._own_state, False))
+            status_row = ft.Text(
+                _state_labels().get(self._own_state,
+                                    _state_labels()[0] if not self._own_state
+                                    else _state_labels()[1]),
+                size=11, color=_name_color(self._own_state, False))
         children = [
             ft.GestureDetector(content=_avatar(self._own_avatar, 32),
                                on_tap=lambda e: self._open_profile(self._own)),
@@ -1795,6 +1801,12 @@ class SteamBridgeView(ft.Container):
                 self._own_header.update()
 
     async def _set_status(self, state: int) -> None:
+        self._own_state = int(state)
+        self._own_invisible = (int(state) == 7)
+        self._update_own_header()
+        if self.page:
+            with contextlib.suppress(Exception):
+                self.page.update()
         await self._cmd({"cmd": "status", "state": int(state)})
 
     def _friend_row(self, f: dict, *, lead_icon: str = "") -> ft.Control:
@@ -2336,7 +2348,8 @@ class SteamBridgeView(ft.Container):
         with contextlib.suppress(Exception):
             _ok = (str, int, float, bool, list, dict, type(None))
             chats = {}
-            for _a in list(self._tabs)[:8]:
+            for _a in list(dict.fromkeys(
+                    list(self._tabs) + list(self._chat_cache.keys())))[:16]:
                 _blks = self._chat_cache.get(_a)
                 if _blks:
                     chats[str(_a)] = [
@@ -2758,7 +2771,19 @@ class SteamBridgeView(ft.Container):
         tr = await self._tr(noml, force=force)
         if seq != self._open_seq or not tr or tr == noml:
             return
-        tc.spans = _spans(tr)
+        if b.get("from_me") and self._show_pinyin:
+            # own messages: the reading belongs to the TRANSLATION (the
+            # original is usually not romanizable at all)
+            roman = self._romanize(tr)
+            if roman:
+                tc.spans = [ft.TextSpan(
+                    roman + "\n",
+                    ft.TextStyle(size=12.5, italic=True, color=_ACCENT),
+                )] + _spans(tr)
+            else:
+                tc.spans = _spans(tr)
+        else:
+            tc.spans = _spans(tr)
         with contextlib.suppress(Exception):
             tc.update()
 

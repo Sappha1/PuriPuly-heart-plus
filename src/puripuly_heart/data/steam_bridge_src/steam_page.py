@@ -990,6 +990,12 @@ class SteamPage:
         except Exception:
             pass
 
+    async def reload(self) -> None:
+        """Plain page reload, login kept — used to revive the friends session
+        after persona state 0 (Sign out of Friends & Chat)."""
+        with contextlib.suppress(Exception):
+            await self._page.reload()
+
     async def sign_out(self) -> None:
         """Clear the persistent profile's Steam login (cookies + storage) so the
         next start lands on the signed-out community page."""

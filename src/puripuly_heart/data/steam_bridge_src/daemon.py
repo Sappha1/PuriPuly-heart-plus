@@ -186,7 +186,11 @@ class Daemon:
                     self.emoticons = await self.steam.list_emoticons()
                     with contextlib.suppress(Exception):
                         self.stickers = await self.steam.list_stickers()
-                        _diag(f"STICKERS {len(self.stickers)}")
+                        _diag(f"STICKERS {len(self.stickers)} EMOTES {len(self.emoticons)}")
+                    with contextlib.suppress(Exception):
+                        import json as _json
+                        _diag("PICKER-RECON " + _json.dumps(
+                            await self.steam.dump_picker_recon())[:1800])
                 # warm recent chats in the background so opening is instant
                 asyncio.create_task(self.steam.preload_recent(20))
             self._started = True

@@ -1022,5 +1022,11 @@
   "steam.tab_emoticons": "Emoticons",
   "steam.tab_stickers": "Stickers",
   "steam.search_hint": "Search...",
-  "steam.no_recent": "Things you use appear here"
+  "steam.no_recent": "Things you use appear here",
+  "steam.tab_effects": "Room Effects",
+  "steam.hdr_recent": "RECENT",
+  "steam.hdr_emoji": "EMOJI",
+  "steam.hdr_emoticons": "EMOTICONS",
+  "steam.hdr_stickers": "STICKERS",
+  "steam.hdr_effects": "ROOM EFFECTS"
 }

@@ -77,6 +77,12 @@ def _send_fmt_labels() -> dict:
 _EMOTE_RE = re.compile(r"[:ː]([a-zA-Z][a-zA-Z0-9_]{1,})[:ː]")
 
 
+# Steam room effects are slash commands the server renders as full-chat
+# effects on both ends.
+_ROOM_EFFECTS = [("balloons", "🎈"), ("confetti", "🎉"),
+                 ("fireworks", "🎆"), ("goldfetti", "🎊")]
+
+
 def _disp_name(f: dict) -> str:
     """Steam behavior: the nickname (when set) is the shown name."""
     return f.get("nick") or f.get("name") or ""
@@ -240,6 +246,7 @@ class SteamBridgeView(ft.Container):
         self.on_module_state = None    # dashboard: grey the Steam chip when off
         self.on_popout = None          # app: open the tab in its own window
         self._is_popout = False        # standalone window: no module screens
+        self._popped_out = False       # main window: the tab lives in a pop-out
         self._pref_tabs: list = []
         self._pref_active = 0
         self._live_since_open: list = []   # messages rendered before history lands
@@ -590,6 +597,9 @@ class SteamBridgeView(ft.Container):
         if not self._module_on:
             self._show_state_overlay("off")
             return
+        if self._popped_out and not self._is_popout:
+            self._show_state_overlay("popped")
+            return
         if self._started:
             # Re-entering the tab with nothing open: show the running/idle
             # screen instead of an empty pane (same as after closing all tabs).
@@ -736,6 +746,15 @@ class SteamBridgeView(ft.Container):
         return ("https://community.fastly.steamstatic.com/economy/sticker/"
                 f"{name}/sticker.png")
 
+    def _send_effect(self, name: str) -> None:
+        if not self._active:
+            return
+        self._toggle_emoji(False)
+        acct = self._active
+        if self.page:
+            self.page.run_task(self._cmd, {"cmd": "send", "acct": acct,
+                                           "text": f"/{name}"})
+
     def _send_sticker(self, name: str) -> None:
         # Stickers send immediately on click, like real Steam.
         if not self._active:
@@ -829,6 +848,12 @@ class SteamBridgeView(ft.Container):
                          fit=ft.ImageFit.CONTAIN),
                 (lambda ev, nm=n: self._insert_emoticon(nm)), tip=f":{n}:")
                 for n in names]
+        elif tab == "effects":
+            cells = [self._picker_cell(
+                ft.Text(icon, size=24),
+                (lambda ev, nm=name: self._send_effect(nm)), tip=f"/{name}",
+                big=True)
+                for name, icon in _ROOM_EFFECTS]
         else:
             names = [n for n in self._stickers if q in n.lower()] if q else self._stickers
             cells = [self._picker_cell(
@@ -836,9 +861,17 @@ class SteamBridgeView(ft.Container):
                          fit=ft.ImageFit.CONTAIN),
                 (lambda ev, nm=n: self._send_sticker(nm)), tip=n, big=True)
                 for n in names]
+        hdr_key = {"recent": "steam.hdr_recent", "emoji": "steam.hdr_emoji",
+                   "emotes": "steam.hdr_emoticons", "stickers": "steam.hdr_stickers",
+                   "effects": "steam.hdr_effects"}[tab]
+        hdr_default = {"recent": "RECENT", "emoji": "EMOJI",
+                       "emotes": "EMOTICONS", "stickers": "STICKERS",
+                       "effects": "ROOM EFFECTS"}[tab]
         self._picker_grid.content = ft.Column(
-            [ft.Row(cells, wrap=True, spacing=2, run_spacing=2)],
-            scroll=ft.ScrollMode.AUTO, expand=True)
+            [ft.Text(_T(hdr_key, default=hdr_default), size=11,
+                     weight=ft.FontWeight.BOLD, color=_SECTION),
+             ft.Row(cells, wrap=True, spacing=2, run_spacing=2)],
+            spacing=6, scroll=ft.ScrollMode.AUTO, expand=True)
 
     def _build_emoji_panel(self) -> None:
         def tab_btn(tab, icon, tip):
@@ -861,6 +894,8 @@ class SteamBridgeView(ft.Container):
                     _T("steam.tab_emoticons", default="Emoticons")),
             tab_btn("stickers", ft.Icons.NOTE_OUTLINED,
                     _T("steam.tab_stickers", default="Stickers")),
+            tab_btn("effects", ft.Icons.AUTO_AWESOME,
+                    _T("steam.tab_effects", default="Room Effects")),
         ], spacing=0, alignment=ft.MainAxisAlignment.CENTER)
         self._fill_picker_grid()
         show_search = self._picker_tab in ("emotes", "stickers")
@@ -2483,6 +2518,9 @@ class SteamBridgeView(ft.Container):
                 self._typing_text.update()
 
     async def _open(self, acct: int) -> None:
+        if self._popped_out and not self._is_popout:
+            self._show_state_overlay("popped")
+            return
         self._hide_ctx()
         self._open_seq += 1
         self._live_since_open = []

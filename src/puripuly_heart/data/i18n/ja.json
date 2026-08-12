@@ -1022,5 +1022,11 @@
   "steam.tab_emoticons": "エモート",
   "steam.tab_stickers": "ステッカー",
   "steam.search_hint": "検索...",
-  "steam.no_recent": "使ったものがここに表示されます"
+  "steam.no_recent": "使ったものがここに表示されます",
+  "steam.tab_effects": "ルームエフェクト",
+  "steam.hdr_recent": "最近使用",
+  "steam.hdr_emoji": "絵文字",
+  "steam.hdr_emoticons": "エモート",
+  "steam.hdr_stickers": "ステッカー",
+  "steam.hdr_effects": "ルームエフェクト"
 }

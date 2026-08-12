@@ -1022,5 +1022,11 @@
   "steam.tab_emoticons": "이모티콘",
   "steam.tab_stickers": "스티커",
   "steam.search_hint": "검색...",
-  "steam.no_recent": "사용한 항목이 여기에 표시됩니다"
+  "steam.no_recent": "사용한 항목이 여기에 표시됩니다",
+  "steam.tab_effects": "룸 이펙트",
+  "steam.hdr_recent": "최근 사용",
+  "steam.hdr_emoji": "이모지",
+  "steam.hdr_emoticons": "이모티콘",
+  "steam.hdr_stickers": "스티커",
+  "steam.hdr_effects": "룸 이펙트"
 }

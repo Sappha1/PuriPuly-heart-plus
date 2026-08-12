@@ -483,19 +483,32 @@ class SteamPage:
                 r"""async () => {
                   const es = window.g_FriendsUIApp.m_ChatStore.m_EmoticonStore;
                   try { if (es.RequestEmoticonList) await es.RequestEmoticonList(); } catch (e) {}
-                  // The list fills asynchronously AFTER the request resolves —
-                  // poll until it stops growing so the picker gets EVERYTHING.
-                  let prev = -1, arr = [];
-                  for (let i = 0; i < 10; i++) {
+                  const names = x => {
                     try {
-                      const l = es.SearchEmoticons ? es.SearchEmoticons('') : [];
-                      arr = Array.isArray(l) ? l : [...(l || [])];
-                    } catch (e) {}
-                    if (arr.length > 0 && arr.length === prev) break;
-                    prev = arr.length;
+                      let arr = x;
+                      if (!arr) return [];
+                      if (arr instanceof Map) arr = [...arr.values()];
+                      if (!Array.isArray(arr)) arr = [...(arr || [])];
+                      return arr.map(e => e && (e.name || e.strName || e))
+                                .filter(v => typeof v === 'string' && v);
+                    } catch (e) { return []; }
+                  };
+                  // SearchEmoticons caps its result list — harvest EVERY
+                  // candidate collection and keep the largest.
+                  let best = [];
+                  for (let i = 0; i < 10; i++) {
+                    const cands = [];
+                    try { cands.push(names(es.SearchEmoticons && es.SearchEmoticons('', 10000))); } catch (e) {}
+                    try { cands.push(names(es.SearchEmoticons && es.SearchEmoticons(''))); } catch (e) {}
+                    for (const k of Object.keys(es)) {
+                      if (!/emoticon/i.test(k)) continue;
+                      cands.push(names(es[k]));
+                    }
+                    for (const c of cands) if (c.length > best.length) best = c;
+                    if (best.length > 25) break;   // clearly past the search cap
                     await new Promise(r => setTimeout(r, 400));
                   }
-                  return arr.map(e => e.name).filter(Boolean);
+                  return [...new Set(best)];
                 }""") or []
         except Exception:
             return []
@@ -507,29 +520,70 @@ class SteamPage:
             return await self._page.evaluate(
                 r"""async () => {
                   const a = window.g_FriendsUIApp;
-                  const stores = [a.m_ChatStore && a.m_ChatStore.m_StickerStore,
-                                  a.m_StickerStore];
-                  for (const st of stores) {
-                    if (!st) continue;
-                    try { if (st.RequestStickerList) await st.RequestStickerList(); } catch (e) {}
-                    let prev = -1, names = [];
-                    for (let i = 0; i < 10; i++) {
-                      try {
-                        const list = st.SearchStickers ? st.SearchStickers('')
-                                   : (st.m_rgStickers || []);
-                        const arr = Array.isArray(list) ? list : [...(list || [])];
-                        names = arr.map(x => x && (x.name || x.strName)).filter(Boolean);
-                      } catch (e) {}
-                      if (names.length > 0 && names.length === prev) break;
-                      prev = names.length;
-                      await new Promise(r => setTimeout(r, 400));
+                  const roots = [a, a.m_ChatStore].filter(Boolean);
+                  const names = x => {
+                    try {
+                      let arr = x;
+                      if (!arr) return [];
+                      if (arr instanceof Map) arr = [...arr.values()];
+                      if (!Array.isArray(arr)) arr = [...(arr || [])];
+                      return arr.map(e => e && (e.name || e.strName || e))
+                                .filter(v => typeof v === 'string' && v);
+                    } catch (e) { return []; }
+                  };
+                  let best = [];
+                  for (const root of roots) {
+                    for (const k of Object.keys(root)) {
+                      if (!/stick/i.test(k)) continue;
+                      const st = root[k];
+                      if (!st) continue;
+                      try { if (st.RequestStickerList) await st.RequestStickerList(); } catch (e) {}
+                      const cands = [];
+                      try { cands.push(names(st.SearchStickers && st.SearchStickers('', 10000))); } catch (e) {}
+                      try { cands.push(names(st.SearchStickers && st.SearchStickers(''))); } catch (e) {}
+                      cands.push(names(st));
+                      for (const kk of Object.keys(st || {})) {
+                        if (/stick/i.test(kk)) cands.push(names(st[kk]));
+                      }
+                      for (const c of cands) if (c.length > best.length) best = c;
                     }
-                    if (names.length) return names;
                   }
-                  return [];
+                  return [...new Set(best)];
                 }""") or []
         except Exception:
             return []
+
+    async def dump_picker_recon(self) -> dict:
+        """One-shot: emote/sticker store shapes, for data-driven fixes."""
+        try:
+            return await self._page.evaluate(
+                r"""() => {
+                  const out = {};
+                  const size = x => {
+                    try {
+                      if (!x) return null;
+                      if (x instanceof Map) return 'Map(' + x.size + ')';
+                      if (Array.isArray(x)) return 'Arr(' + x.length + ')';
+                      if (typeof x === 'object') return 'obj';
+                      return typeof x;
+                    } catch (e) { return '?'; }
+                  };
+                  try {
+                    const es = window.g_FriendsUIApp.m_ChatStore.m_EmoticonStore;
+                    out.emoticon_store = {};
+                    for (const k of Object.keys(es)) out.emoticon_store[k] = size(es[k]);
+                  } catch (e) { out.emoticon_store = String(e).slice(0, 80); }
+                  try {
+                    const cs = window.g_FriendsUIApp.m_ChatStore;
+                    out.chat_store_sticker_keys = Object.keys(cs)
+                        .filter(k => /stick|item|loyal/i.test(k));
+                    out.app_sticker_keys = Object.keys(window.g_FriendsUIApp)
+                        .filter(k => /stick|item|loyal/i.test(k));
+                  } catch (e) {}
+                  return out;
+                }""") or {}
+        except Exception as exc:
+            return {"err": str(exc)}
 
     async def set_favorite(self, acct: int, on: bool) -> bool:
         try:

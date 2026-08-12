@@ -13,6 +13,9 @@ from __future__ import annotations
 def run_steam_window() -> int:
     import flet as ft
 
+    from puripuly_heart import main as _mainmod
+    _mainmod.BOOT_HIDE_STOP = _mainmod._hide_flet_boot_window()
+
     def _main(page: ft.Page) -> None:
         page.title = "Steam Chat — PuriPulyHeart+"
         page.padding = 0
@@ -123,8 +126,14 @@ def run_steam_window() -> int:
         page.add(view)
         view.activate()
         try:
+            ev = _mainmod.BOOT_HIDE_STOP
+            if ev is not None:
+                ev.set()
+                import time as _time
+                _time.sleep(0.06)
             page.window.visible = True
             page.update()
+            _mainmod.force_show_flet_window()
         except Exception:
             pass
 

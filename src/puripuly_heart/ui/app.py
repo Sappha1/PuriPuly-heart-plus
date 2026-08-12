@@ -328,10 +328,16 @@ class TranslatorApp:
             # safety net for the hidden start: if startup dies before the
             # normal reveal, never leave the window invisible
             await asyncio.sleep(8)
-            if not self.page.window.visible:
-                self.page.window.visible = True
-                with contextlib.suppress(Exception):
-                    self.page.update()
+            with contextlib.suppress(Exception):
+                from puripuly_heart import main as _mainmod
+                ev = getattr(_mainmod, "BOOT_HIDE_STOP", None)
+                if ev is not None:
+                    ev.set()
+                    await asyncio.sleep(0.06)
+                _mainmod.force_show_flet_window()
+            self.page.window.visible = True
+            with contextlib.suppress(Exception):
+                self.page.update()
 
         with contextlib.suppress(Exception):
             self.page.run_task(_reveal_backstop)
@@ -3841,11 +3847,18 @@ async def main_gui(page: ft.Page, *, config_path, debug_ui_preview: bool = False
     except Exception:
         pass
 
-    # The window starts hidden (FLET_APP_HIDDEN in main) so users never see
-    # the default-size flet window with the wrong icon while the UI boots.
+    # The boot window is hidden at the OS level by main's watchdog (the flet
+    # client ignores FLET_APP_HIDDEN); disarm it and show the window now that
+    # size/icon/layout are final.
     try:
+        from puripuly_heart import main as _mainmod
+        _ev = getattr(_mainmod, "BOOT_HIDE_STOP", None)
+        if _ev is not None:
+            _ev.set()
+            time.sleep(0.06)           # let the watchdog loop exit first
         app.page.window.visible = True
         app.page.update()
+        _mainmod.force_show_flet_window()
     except Exception:
         pass
 

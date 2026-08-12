@@ -1033,5 +1033,7 @@
   "steam.used_effect": "{name} used {effect}!",
   "steam.replay_effect": "Replay effect",
   "steam.connecting_title": "Connecting to Steam",
-  "steam.connecting_caption": "Right after the app starts this can take a little while — your chats appear as soon as it's ready."
+  "steam.connecting_caption": "Right after the app starts this can take a little while — your chats appear as soon as it's ready.",
+  "steam.close_tab": "Close tab",
+  "steam.close_all_tabs": "Close all tabs"
 }

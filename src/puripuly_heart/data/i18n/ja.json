@@ -1033,5 +1033,7 @@
   "steam.used_effect": "{name}が{effect}を使いました！",
   "steam.replay_effect": "エフェクトを再生",
   "steam.connecting_title": "Steamに接続中",
-  "steam.connecting_caption": "アプリ起動直後は少し時間がかかることがあります。準備ができ次第チャットが表示されます。"
+  "steam.connecting_caption": "アプリ起動直後は少し時間がかかることがあります。準備ができ次第チャットが表示されます。",
+  "steam.close_tab": "タブを閉じる",
+  "steam.close_all_tabs": "すべてのタブを閉じる"
 }

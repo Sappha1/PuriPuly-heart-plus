@@ -277,6 +277,7 @@ class SteamBridgeView(ft.Container):
         self._chat_cache: dict = {}    # acct -> last-rendered history blocks
         self._scroll_pos: dict = {}    # acct -> scroll px (open tabs keep position)
         self._was_following: dict = {} # acct -> was at the bottom when last viewed
+        self._render_fp: dict = {}     # acct -> fingerprint of last rendered history
         self._module_on = True         # module toggle: off = helper not running, no RAM
         self._pend: dict | None = None   # short buffer: rapid same-sender lines → ONE block
         self._pend_task = None
@@ -1751,8 +1752,8 @@ class SteamBridgeView(ft.Container):
                     color=_name_color(state, ingame), max_lines=1,
                     overflow=ft.TextOverflow.ELLIPSIS),
             *([ft.Container(
-                    content=ft.Text("*", size=12, color=_TEXT_FAINT),
-                    margin=ft.margin.only(left=-2, bottom=4),
+                    content=ft.Text("*", size=15, color=_TEXT_FAINT),
+                    margin=ft.margin.only(left=-2, bottom=5),
                     tooltip=f.get("real") or f.get("name") or "")]
               if f.get("nick") else []),
             *self._status_badges(f),
@@ -2012,8 +2013,8 @@ class SteamBridgeView(ft.Container):
                             color=_TEXT_PRIMARY if active else _TEXT_FAINT,
                             max_lines=1, overflow=ft.TextOverflow.ELLIPSIS),
                     *([ft.Container(
-                            content=ft.Text("*", size=11, color=_TEXT_FAINT),
-                            margin=ft.margin.only(left=-1, bottom=3),
+                            content=ft.Text("*", size=13, color=_TEXT_FAINT),
+                            margin=ft.margin.only(left=-1, bottom=4),
                             tooltip=f.get("real") or f.get("name") or "")]
                       if f.get("nick") else []),
                 ], spacing=2, tight=True),
@@ -2035,13 +2036,58 @@ class SteamBridgeView(ft.Container):
             padding=ft.padding.only(left=8, right=4, top=4, bottom=4),
             border_radius=8, bgcolor=_BG_SEL if active else _BG_MENU,
             on_click=lambda e, a=acct: self.page.run_task(self._open, a))
-        # Right-click (mouse 3) anywhere on the tab closes it, like a browser tab.
+        # Right-click opens a small menu (Close tab / Close all), like Steam.
         return ft.GestureDetector(
             content=chip,
-            on_secondary_tap_down=lambda e, a=acct: self._close_tab(a))
+            on_secondary_tap_down=lambda e, a=acct: self._show_tab_menu(e, a))
 
     def _rebuild_tabs(self) -> None:
         self._tab_strip.controls = [self._tab_chip(a) for a in self._tabs]
+
+    def _show_tab_menu(self, e, acct: int) -> None:
+        rows = []
+        for label, cb in (
+            (_T("steam.close_tab", default="Close tab"),
+             lambda a=acct: self._close_tab(a)),
+            (_T("steam.close_all_tabs", default="Close all tabs"),
+             self._close_all_tabs),
+        ):
+            def make(cb):
+                def handler(ev):
+                    self._hide_ctx()
+                    cb()
+                return handler
+            rows.append(ft.Container(
+                content=ft.Text(label, size=13, color=_TEXT_PRIMARY),
+                padding=ft.padding.symmetric(horizontal=10, vertical=7),
+                border_radius=6, ink=True, on_click=make(cb)))
+        self._ctx_menu.content = ft.Column(rows, spacing=1, tight=True)
+        gx = float(getattr(e, "global_x", 0) or getattr(e, "local_x", 0) or 60)
+        gy = float(getattr(e, "global_y", 0) or getattr(e, "local_y", 0) or 60)
+        self._ctx_menu.left = max(4.0, gx - self._ctx_offset_x - 8)
+        self._ctx_menu.top = max(40.0, gy - 44)
+        self._ctx_menu.visible = True
+        self._ctx_backdrop.visible = True
+        if self.page:
+            self.page.update()
+
+    def _close_all_tabs(self) -> None:
+        self._tabs = []
+        self._scroll_pos.clear()
+        self._was_following.clear()
+        self._render_fp.clear()
+        self._messages.controls.clear()
+        self._last_block = None
+        self._hist_blocks = []
+        self._active = None
+        self._set_chat_head(None)
+        self._entry.disabled = True
+        if self._module_on:
+            self._show_state_overlay("idle")
+        self._rebuild_tabs()
+        self._save_prefs()
+        if self.page:
+            self.page.update()
 
     def _close_tab(self, acct: int) -> None:
         if acct in self._tabs:
@@ -2096,16 +2142,12 @@ class SteamBridgeView(ft.Container):
         # position (open tabs keep their spot, like real Steam). duration=1 and
         # the pre-anchor opacity=0 mean the scroll is never visible.
         try:
-            for delay in (0.06, 0.25):
+            for delay in (0.05, 0.2):
                 await asyncio.sleep(delay)
                 self._following = pos is None
                 with contextlib.suppress(Exception):
                     self._messages.scroll_to(
                         offset=(-1 if pos is None else pos), duration=1)
-                if self._messages.opacity != 1:
-                    self._messages.opacity = 1
-                    with contextlib.suppress(Exception):
-                        self._messages.update()
         finally:
             if self._messages.opacity != 1:
                 self._messages.opacity = 1
@@ -2384,6 +2426,8 @@ class SteamBridgeView(ft.Container):
         block and by same-sender messages coalesced into it."""
         out: list = []
         orig = b.get("text", "")
+        if self._effect_of(b):
+            orig = ""          # effect messages render only the banner below
         translated = self._needs_tr(orig) and (
             self._tr_outgoing if b.get("from_me") else self._tr_incoming)
         if orig and translated:
@@ -2611,8 +2655,24 @@ class SteamBridgeView(ft.Container):
                      if (int(m.get("ts") or 0), m.get("text") or "") not in have]
             if extra:
                 blocks = blocks + self._coalesce(extra)
-        self._pend = None                  # drop any half-buffered live lines
         _acct_now = self._active or 0
+        _fp = tuple((int(b.get("_ts") or 0), b.get("from"), b.get("text") or "",
+                     len(b.get("images") or []), len(b.get("stickers") or []),
+                     len(b.get("emoticons") or [])) for b in blocks)
+        if (_fp == self._render_fp.get(_acct_now)
+                and self._hist_blocks and self._messages.controls):
+            # identical to what's on screen — repainting would flicker; just
+            # refresh the bookkeeping
+            if blocks:
+                self._seen_chat_ts[_acct_now] = max(
+                    self._seen_chat_ts.get(_acct_now, 0),
+                    max(int(b.get("_ts") or 0) for b in blocks))
+            self._rebuild_tabs()
+            if self.page:
+                self.page.update()
+            return
+        self._render_fp[_acct_now] = _fp
+        self._pend = None                  # drop any half-buffered live lines
         _keep_pos = (None if self._was_following.get(_acct_now, True)
                      else self._scroll_pos.get(_acct_now))
         self._messages.opacity = 0         # hidden until anchored — no visible scroll

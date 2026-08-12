@@ -539,7 +539,12 @@ class SteamBridgeView(ft.Container):
             border=ft.border.all(1, "#4b4c4f"), border_radius=8, padding=8,
             shadow=ft.BoxShadow(blur_radius=14, color="#88000000",
                                 offset=ft.Offset(0, 4)))
-        self._viewer = ft.Container(visible=False, expand=True)
+        self._viewer = ft.Container(visible=False, left=0, top=0, right=0,
+                                    bottom=0)
+        # the image lightbox lives in page.overlay so its scrim covers the
+        # WHOLE window — sidebar, header bar and tab strip live outside this
+        # view's Stack and could never be covered from in here
+        self._viewer_overlay = ft.Container(visible=False, expand=True)
         self.content = ft.Stack([main_row, self._loading,
                                   self._emoji_backdrop, self._emoji_panel,
                                   self._ctx_backdrop, self._ctx_menu,
@@ -2712,11 +2717,13 @@ class SteamBridgeView(ft.Container):
             ft.Row(pills, spacing=8, alignment=ft.MainAxisAlignment.CENTER),
         ], spacing=10, tight=True,
            horizontal_alignment=ft.CrossAxisAlignment.CENTER)
-        self._viewer.content = ft.GestureDetector(
+        self._viewer_overlay.content = ft.GestureDetector(
             on_tap=lambda e: self._close_viewer(),
             content=ft.Container(bgcolor="#77000000", expand=True,
                                  alignment=ft.alignment.center, content=inner))
-        self._viewer.visible = True
+        if self.page and self._viewer_overlay not in self.page.overlay:
+            self.page.overlay.append(self._viewer_overlay)
+        self._viewer_overlay.visible = True
         if callable(getattr(self, "on_modal_change", None)):
             with contextlib.suppress(Exception):
                 self.on_modal_change(True)
@@ -2726,6 +2733,7 @@ class SteamBridgeView(ft.Container):
 
     def _close_viewer(self) -> None:
         self._viewer.visible = False
+        self._viewer_overlay.visible = False
         if callable(getattr(self, "on_modal_change", None)):
             with contextlib.suppress(Exception):
                 self.on_modal_change(False)

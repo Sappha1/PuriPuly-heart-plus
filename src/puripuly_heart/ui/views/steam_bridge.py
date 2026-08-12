@@ -2714,43 +2714,86 @@ class SteamBridgeView(ft.Container):
         # The card gets EXPLICIT dimensions sized to the window: relying on
         # shrink-wrap here let the column stretch, which parked the buttons at
         # the bottom edge with a huge empty field above them.
-        pw = int(getattr(self.page, "width", 0) or 1200)
-        ph = int(getattr(self.page, "height", 0) or 800)
-        iw = max(420, min(int(pw * 0.72), 980))
-        ih = max(300, min(int(ph * 0.62), 600))
-        close_x = ft.Container(
-            right=8, top=8, width=36, height=36,
-            bgcolor="#26272b", border=ft.border.all(1, "#5a5b5f"),
-            border_radius=8, ink=True, alignment=ft.alignment.center,
-            content=ft.Icon(ft.Icons.CLOSE, size=20, color="#ffffff"),
-            on_click=lambda e: self._close_viewer())
-        card = ft.GestureDetector(
-            on_tap=lambda e: None,          # clicks on the card don't close
-            content=ft.Container(
-                width=iw + 28, height=ih + 116,
-                bgcolor="#17181b", border=ft.border.all(1, "#4b4c4f"),
-                border_radius=10,
-                content=ft.Stack([
-                    ft.Container(
-                        padding=ft.padding.only(left=14, right=14,
-                                                top=50, bottom=14),
-                        content=ft.Column([
-                            ft.Image(src=url, width=iw, height=ih,
-                                     fit=ft.ImageFit.CONTAIN),
-                            ft.Row(pills, spacing=8, tight=True,
-                                   alignment=ft.MainAxisAlignment.CENTER),
-                        ], spacing=12, tight=True,
-                           horizontal_alignment=ft.CrossAxisAlignment.CENTER)),
-                    close_x,                # inside the card, like real Steam
-                ], expand=True)))
-        self._viewer_overlay.content = ft.GestureDetector(
-            on_tap=lambda e: self._close_viewer(),
-            content=ft.Container(
-                bgcolor="#99000000", expand=True,
-                alignment=ft.alignment.center, content=card))
-        if self.page and self._viewer_overlay not in self.page.overlay:
-            self.page.overlay.append(self._viewer_overlay)
-        self._viewer_overlay.visible = True
+        def _card(iw, ih, img_ctrl):
+            close_x = ft.Container(
+                right=8, top=8, width=36, height=36,
+                bgcolor="#26272b", border=ft.border.all(1, "#5a5b5f"),
+                border_radius=8, ink=True, alignment=ft.alignment.center,
+                content=ft.Icon(ft.Icons.CLOSE, size=20, color="#ffffff"),
+                on_click=lambda e: self._close_viewer())
+            return ft.GestureDetector(
+                on_tap=lambda e: None,      # clicks on the card don't close
+                content=ft.Container(
+                    width=max(iw, 320) + 28, height=ih + 116,
+                    bgcolor="#17181b", border=ft.border.all(1, "#4b4c4f"),
+                    border_radius=10,
+                    content=ft.Stack([
+                        ft.Container(
+                            padding=ft.padding.only(left=14, right=14,
+                                                    top=50, bottom=14),
+                            content=ft.Column([
+                                img_ctrl,
+                                ft.Row(pills, spacing=8, tight=True,
+                                       alignment=ft.MainAxisAlignment.CENTER),
+                            ], spacing=12, tight=True,
+                               horizontal_alignment=ft.CrossAxisAlignment.CENTER)),
+                        close_x,            # inside the card, like real Steam
+                    ], expand=True)))
+
+        def _mount(content) -> None:
+            self._viewer_overlay.content = ft.GestureDetector(
+                on_tap=lambda e: self._close_viewer(),
+                content=ft.Container(bgcolor="#99000000", expand=True,
+                                     alignment=ft.alignment.center,
+                                     content=content))
+            if self.page and self._viewer_overlay not in self.page.overlay:
+                self.page.overlay.append(self._viewer_overlay)
+            self._viewer_overlay.visible = True
+            if self.page:
+                with contextlib.suppress(Exception):
+                    self.page.update()
+
+        async def _load() -> None:
+            # Size the frame to the image's REAL proportions — a guessed box
+            # letterboxes (the "massive vertical space"). Steam hugs the image.
+            try:
+                if url.startswith("http"):
+                    import httpx
+                    async with httpx.AsyncClient(timeout=20.0,
+                                                 follow_redirects=True) as c:
+                        r = await c.get(url)
+                        r.raise_for_status()
+                        data = r.content
+                else:
+                    data = Path(url).read_bytes()
+                import base64
+                import io
+
+                from PIL import Image as _PILImage
+                w, h = _PILImage.open(io.BytesIO(data)).size
+                pw = int(getattr(self.page, "width", 0) or 1200)
+                ph = int(getattr(self.page, "height", 0) or 800)
+                scale = min((pw - 110) / w, (ph - 170) / h, 1.0)
+                iw, ih = max(1, int(w * scale)), max(1, int(h * scale))
+                img = ft.Image(src_base64=base64.b64encode(data).decode(),
+                               width=iw, height=ih, fit=ft.ImageFit.CONTAIN)
+                if self._viewer_overlay.visible:
+                    _mount(_card(iw, ih, img))
+            except Exception:
+                if self._viewer_overlay.visible:
+                    _mount(_card(720, 460,
+                                 ft.Image(src=url, width=720, height=460,
+                                          fit=ft.ImageFit.CONTAIN)))
+
+        _mount(ft.Container(width=150, height=150, border_radius=10,
+                            bgcolor="#17181b",
+                            border=ft.border.all(1, "#4b4c4f"),
+                            alignment=ft.alignment.center,
+                            content=ft.ProgressRing(width=26, height=26,
+                                                    stroke_width=3,
+                                                    color=_ACCENT)))
+        if self.page:
+            self.page.run_task(_load)
         if callable(getattr(self, "on_modal_change", None)):
             with contextlib.suppress(Exception):
                 self.on_modal_change(True)

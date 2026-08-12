@@ -2697,14 +2697,16 @@ class SteamBridgeView(ft.Container):
         # (ts gates the grouping — messages long apart get their own header)
         self._last_block = {"from_me": b["from_me"], "name": b.get("name") or "",
                             "col": col, "ts": int(b.get("_ts") or 0)}
-        return ft.GestureDetector(
-            on_secondary_tap_down=lambda e, bb=b: self._show_react_menu(e, bb),
-            content=ft.Container(
-                content=ft.Row([_avatar(b["avatar"]), col], spacing=8,
-                               vertical_alignment=ft.CrossAxisAlignment.START),
-                border_radius=6, bgcolor=ft.Colors.TRANSPARENT,
-                padding=ft.padding.symmetric(horizontal=6, vertical=3),
-                on_hover=self._msg_hover))
+        # NOTE: no right-click menu on messages — Flet can't do Steam's
+        # "Select Message" (no programmatic text selection), and a partial
+        # menu also blocked the page-wide drag-selection. Reactions keep
+        # their plumbing (_send_react / react-mode picker) but no entry point.
+        return ft.Container(
+            content=ft.Row([_avatar(b["avatar"]), col], spacing=8,
+                           vertical_alignment=ft.CrossAxisAlignment.START),
+            border_radius=6, bgcolor=ft.Colors.TRANSPARENT,
+            padding=ft.padding.symmetric(horizontal=6, vertical=3),
+            on_hover=self._msg_hover)
 
     def _show_react_menu(self, e, b: dict) -> None:
         # Steam-style message menu: Copy / Copy translation / React

@@ -136,6 +136,7 @@ class Daemon:
         self.own_game = ""
         self.emoticons: list[str] = []
         self.stickers: list[str] = []
+        self.effects: list[str] = []
         self.signed = False
         self.active: int | None = None
         self.seen_count = 0
@@ -186,7 +187,9 @@ class Daemon:
                     self.emoticons = await self.steam.list_emoticons()
                     with contextlib.suppress(Exception):
                         self.stickers = await self.steam.list_stickers()
-                        _diag(f"STICKERS {len(self.stickers)} EMOTES {len(self.emoticons)}")
+                        self.effects = await self.steam.list_effects()
+                        _diag(f"STICKERS {len(self.stickers)} EMOTES {len(self.emoticons)}"
+                              f" EFFECTS {self.effects}")
                     with contextlib.suppress(Exception):
                         import json as _json
                         _diag("PICKER-RECON " + _json.dumps(
@@ -232,7 +235,7 @@ class Daemon:
                          "name": self.own_name, "state": self.own_state,
                          "invites": self.own_invites, "invisible": self.own_invisible,
                          "ingame": self.own_ingame, "game": self.own_game,
-                         "emoticons": self.emoticons, "stickers": self.stickers}, only)
+                         "emoticons": self.emoticons, "stickers": self.stickers, "effects": self.effects}, only)
         await self.emit({"ev": "friends",
                          "items": list(self.convos.values())}, only)
         self._last_sig = self._friends_sig()
@@ -349,7 +352,7 @@ class Daemon:
                                          "invisible": self.own_invisible,
                                          "ingame": self.own_ingame, "game": self.own_game,
                                          "emoticons": self.emoticons,
-                                         "stickers": self.stickers})
+                                         "stickers": self.stickers, "effects": self.effects})
                 except Exception:
                     pass
             if self._started and self.signed and ticks % 9 == 0:
@@ -385,7 +388,7 @@ class Daemon:
                                          "invites": self.own_invites,
                                          "invisible": self.own_invisible,
                                          "ingame": self.own_ingame, "game": self.own_game,
-                                         "emoticons": self.emoticons, "stickers": self.stickers})
+                                         "emoticons": self.emoticons, "stickers": self.stickers, "effects": self.effects})
             if not self.active:
                 continue
             # keep the chat warm/foreground every ~4s (helps typing + mark-read).
@@ -516,7 +519,7 @@ class Daemon:
                         await self.emit({"ev": "own", "acct": self.own, "avatar": self.own_avatar,
                                          "name": self.own_name, "state": self.own_state,
                                          "invites": self.own_invites, "invisible": self.own_invisible,
-                                         "emoticons": self.emoticons, "stickers": self.stickers})
+                                         "emoticons": self.emoticons, "stickers": self.stickers, "effects": self.effects})
         except (asyncio.IncompleteReadError, ConnectionResetError):
             pass
         finally:

@@ -81,6 +81,7 @@ _EMOTE_RE = re.compile(r"[:ː]([a-zA-Z][a-zA-Z0-9_]{1,})[:ː]")
 # effects on both ends.
 _ROOM_EFFECTS = [("balloons", "🎈"), ("confetti", "🎉"),
                  ("fireworks", "🎆"), ("goldfetti", "🎊")]
+# (instance attr self._effects overrides with the store's real names)
 
 
 def _disp_name(f: dict) -> str:
@@ -368,7 +369,9 @@ class SteamBridgeView(ft.Container):
             expand=True, multiline=True, min_lines=2, max_lines=4, shift_enter=True,
             bgcolor=_BG_INPUT, border_radius=8,
             content_padding=ft.padding.symmetric(horizontal=12, vertical=8),
+            on_change=self._on_entry_change,
             on_submit=lambda e: self.page.run_task(self._send))
+        self._char_count = ft.Text("", size=10.5, color=_TEXT_FAINT, visible=False)
         emoji_btn = ft.IconButton(
             ft.Icons.EMOJI_EMOTIONS_OUTLINED, icon_size=20, icon_color=_TEXT_FAINT,
             tooltip="Emoji & emoticons", on_click=lambda e: self._toggle_emoji(),
@@ -378,10 +381,14 @@ class SteamBridgeView(ft.Container):
                 ft.GestureDetector(
                     content=self._entry, expand=True,
                     on_secondary_tap_down=lambda e: self._show_input_menu(e)),
-                ft.IconButton(ft.Icons.SEND_ROUNDED, icon_size=18, icon_color=_TOGGLE_ON,
-                              tooltip="Send", on_click=lambda e: self.page.run_task(self._send),
-                              style=ft.ButtonStyle(overlay_color=ft.Colors.TRANSPARENT,
-                                                   padding=ft.padding.all(8))),
+                ft.Column([
+                    self._char_count,
+                    ft.IconButton(ft.Icons.SEND_ROUNDED, icon_size=18, icon_color=_TOGGLE_ON,
+                                  tooltip="Send", on_click=lambda e: self.page.run_task(self._send),
+                                  style=ft.ButtonStyle(overlay_color=ft.Colors.TRANSPARENT,
+                                                       padding=ft.padding.all(8))),
+                ], spacing=0, tight=True,
+                   horizontal_alignment=ft.CrossAxisAlignment.END),
                 emoji_btn,
                 ft.IconButton(ft.Icons.ATTACH_FILE, icon_size=18, icon_color=_TEXT_FAINT,
                               tooltip="Send an image",
@@ -736,6 +743,18 @@ class SteamBridgeView(ft.Container):
             self.page.run_task(_shutdown)
         self._show_state_overlay("off")
 
+    _MAX_MSG = 5000   # Steam's chat message limit (approx; server truncates)
+
+    def _on_entry_change(self, e) -> None:
+        n = len(self._entry.value or "")
+        show = n > int(self._MAX_MSG * 0.8)
+        self._char_count.value = f"{n} / {self._MAX_MSG}"
+        self._char_count.color = "#d96a6a" if n > self._MAX_MSG else _TEXT_FAINT
+        if show != self._char_count.visible:
+            self._char_count.visible = show
+        with contextlib.suppress(Exception):
+            self._char_count.update()
+
     def _insert_emoji(self, em: str) -> None:
         self._push_recent("u", em)
         self._entry.value = (self._entry.value or "") + em
@@ -778,10 +797,10 @@ class SteamBridgeView(ft.Container):
     def _insert_emoticon(self, name: str) -> None:
         self._push_recent("e", name)
         # Steam emoticons are sent as :name: and render on both ends.
+        # The panel STAYS OPEN so several can be clicked in a row (emoji parity).
         self._entry.value = (self._entry.value or "") + f":{name}: "
         if self.page:
             self._entry.update()
-        self._toggle_emoji(False)
 
     def _emoticon_url(self, name: str) -> str:
         return f"https://community.fastly.steamstatic.com/economy/emoticon/{name}"
@@ -849,11 +868,12 @@ class SteamBridgeView(ft.Container):
                 (lambda ev, nm=n: self._insert_emoticon(nm)), tip=f":{n}:")
                 for n in names]
         elif tab == "effects":
+            effects = getattr(self, "_effects", None) or _ROOM_EFFECTS
             cells = [self._picker_cell(
                 ft.Text(icon, size=24),
                 (lambda ev, nm=name: self._send_effect(nm)), tip=f"/{name}",
                 big=True)
-                for name, icon in _ROOM_EFFECTS]
+                for name, icon in effects]
         else:
             names = [n for n in self._stickers if q in n.lower()] if q else self._stickers
             cells = [self._picker_cell(
@@ -2573,6 +2593,12 @@ class SteamBridgeView(ft.Container):
         text = (self._entry.value or "").strip()
         if not self._active or not text:
             return
+        if len(text) > self._MAX_MSG:
+            self._notice(_T("steam.too_long", n=str(len(text)),
+                            max=str(self._MAX_MSG),
+                            default=f"Message is too long for Steam "
+                                    f"({len(text)}/{self._MAX_MSG})"))
+            return
         self._entry.value = ""
         if self.page:
             self._entry.update()
@@ -2666,6 +2692,11 @@ class SteamBridgeView(ft.Container):
                 self._purge_emote_cache()
             if ev.get("stickers") is not None:
                 self._stickers = list(ev.get("stickers") or [])
+            if ev.get("effects"):
+                names = [str(n) for n in ev.get("effects")]
+                icons = {"balloons": "🎈", "confetti": "🎉",
+                         "fireworks": "🎆", "goldfetti": "🎊"}
+                self._effects = [(n, icons.get(n, "✨")) for n in names]
             self._update_own_header()
             self._save_snapshot()
         elif kind == "login_progress":

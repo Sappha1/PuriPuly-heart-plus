@@ -1028,5 +1028,6 @@
   "steam.hdr_emoji": "EMOJI",
   "steam.hdr_emoticons": "EMOTICONS",
   "steam.hdr_stickers": "STICKERS",
-  "steam.hdr_effects": "ROOM EFFECTS"
+  "steam.hdr_effects": "ROOM EFFECTS",
+  "steam.too_long": "Message is too long for Steam ({n}/{max})"
 }

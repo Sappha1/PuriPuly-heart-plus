@@ -17,12 +17,48 @@ def run_steam_window() -> int:
         page.title = "Steam Chat — PuriPulyHeart+"
         page.padding = 0
         page.bgcolor = "#1b1c1f"
-        for attr, val in (("window_width", 1000), ("window_height", 760),
-                          ("window_min_width", 640), ("window_min_height", 480)):
+        import json as _json
+
+        from puripuly_heart.ui.views.steam_bridge import _PREFS_FILE
+
+        geom = {}
+        try:
+            geom = (_json.loads(_PREFS_FILE.read_text(encoding="utf-8"))
+                    .get("popout_geom") or {})
+        except Exception:
+            pass
+        sizes = (("window_width", geom.get("w", 1000)),
+                 ("window_height", geom.get("h", 760)),
+                 ("window_left", geom.get("x")),
+                 ("window_top", geom.get("y")),
+                 ("window_min_width", 640), ("window_min_height", 480))
+        for attr, val in sizes:
+            if val is None:
+                continue
             try:
                 setattr(page, attr, val)
             except Exception:
                 pass
+
+        def _save_geom(_e=None) -> None:
+            try:
+                d = {}
+                try:
+                    d = _json.loads(_PREFS_FILE.read_text(encoding="utf-8"))
+                except Exception:
+                    pass
+                d["popout_geom"] = {"w": page.window_width, "h": page.window_height,
+                                    "x": page.window_left, "y": page.window_top}
+                _PREFS_FILE.write_text(_json.dumps(d, ensure_ascii=False),
+                                       encoding="utf-8")
+            except Exception:
+                pass
+
+        page.on_resize = _save_geom
+        try:
+            page.on_window_event = lambda e: _save_geom()
+        except Exception:
+            pass
 
         from puripuly_heart.ui.views.steam_bridge import SteamBridgeView
 

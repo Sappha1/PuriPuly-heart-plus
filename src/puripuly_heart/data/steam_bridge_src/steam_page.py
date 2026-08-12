@@ -518,37 +518,30 @@ class SteamPage:
         [sticker type="name"] BBCode — the same shape incoming stickers use)."""
         try:
             return await self._page.evaluate(
-                r"""async () => {
-                  const a = window.g_FriendsUIApp;
-                  const roots = [a, a.m_ChatStore].filter(Boolean);
-                  const names = x => {
-                    try {
-                      let arr = x;
-                      if (!arr) return [];
-                      if (arr instanceof Map) arr = [...arr.values()];
-                      if (!Array.isArray(arr)) arr = [...(arr || [])];
-                      return arr.map(e => e && (e.name || e.strName || e))
-                                .filter(v => typeof v === 'string' && v);
-                    } catch (e) { return []; }
-                  };
-                  let best = [];
-                  for (const root of roots) {
-                    for (const k of Object.keys(root)) {
-                      if (!/stick/i.test(k)) continue;
-                      const st = root[k];
-                      if (!st) continue;
-                      try { if (st.RequestStickerList) await st.RequestStickerList(); } catch (e) {}
-                      const cands = [];
-                      try { cands.push(names(st.SearchStickers && st.SearchStickers('', 10000))); } catch (e) {}
-                      try { cands.push(names(st.SearchStickers && st.SearchStickers(''))); } catch (e) {}
-                      cands.push(names(st));
-                      for (const kk of Object.keys(st || {})) {
-                        if (/stick/i.test(kk)) cands.push(names(st[kk]));
-                      }
-                      for (const c of cands) if (c.length > best.length) best = c;
-                    }
-                  }
-                  return [...new Set(best)];
+                r"""() => {
+                  // PICKER-RECON: stickers live ON the EmoticonStore as
+                  // m_rgStickers (67 observed) — items carry a name field.
+                  try {
+                    const es = window.g_FriendsUIApp.m_ChatStore.m_EmoticonStore;
+                    const arr = es.m_rgStickers || [];
+                    return arr.map(x => x && (x.name || x.strName || (x.sticker && x.sticker.name)))
+                              .filter(Boolean);
+                  } catch (e) { return []; }
+                }""") or []
+        except Exception:
+            return []
+
+    async def list_effects(self) -> list[str]:
+        """Room-effect names from the EmoticonStore's m_rgEffects (4 observed)."""
+        try:
+            return await self._page.evaluate(
+                r"""() => {
+                  try {
+                    const es = window.g_FriendsUIApp.m_ChatStore.m_EmoticonStore;
+                    const arr = es.m_rgEffects || [];
+                    return arr.map(x => x && (x.name || x.strName || (x.effect && x.effect.name)))
+                              .filter(Boolean);
+                  } catch (e) { return []; }
                 }""") or []
         except Exception:
             return []
@@ -574,11 +567,15 @@ class SteamPage:
                     for (const k of Object.keys(es)) out.emoticon_store[k] = size(es[k]);
                   } catch (e) { out.emoticon_store = String(e).slice(0, 80); }
                   try {
-                    const cs = window.g_FriendsUIApp.m_ChatStore;
-                    out.chat_store_sticker_keys = Object.keys(cs)
-                        .filter(k => /stick|item|loyal/i.test(k));
-                    out.app_sticker_keys = Object.keys(window.g_FriendsUIApp)
-                        .filter(k => /stick|item|loyal/i.test(k));
+                    const es = window.g_FriendsUIApp.m_ChatStore.m_EmoticonStore;
+                    const item = o => {
+                      const r = {};
+                      try { for (const k of Object.keys(o || {}))
+                              r[k] = String(o[k]).slice(0, 40); } catch (e) {}
+                      return r;
+                    };
+                    out.first_sticker = item((es.m_rgStickers || [])[0]);
+                    out.effects = (es.m_rgEffects || []).map(x => item(x));
                   } catch (e) {}
                   return out;
                 }""") or {}

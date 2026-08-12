@@ -1028,5 +1028,6 @@
   "steam.hdr_emoji": "絵文字",
   "steam.hdr_emoticons": "エモート",
   "steam.hdr_stickers": "ステッカー",
-  "steam.hdr_effects": "ルームエフェクト"
+  "steam.hdr_effects": "ルームエフェクト",
+  "steam.too_long": "メッセージが長すぎます（{n}/{max}）"
 }

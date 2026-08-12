@@ -1028,5 +1028,6 @@
   "steam.hdr_emoji": "表情符号",
   "steam.hdr_emoticons": "表情",
   "steam.hdr_stickers": "贴纸",
-  "steam.hdr_effects": "房间特效"
+  "steam.hdr_effects": "房间特效",
+  "steam.too_long": "消息太长（{n}/{max}）"
 }

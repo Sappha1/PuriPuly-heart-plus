@@ -1036,5 +1036,7 @@
   "steam.connecting_caption": "应用刚启动时可能需要一点时间——准备好后聊天会立即显示。",
   "steam.close_tab": "关闭标签页",
   "steam.close_all_tabs": "关闭全部标签页",
-  "steam.close_tabs_right": "关闭右侧标签页"
+  "steam.close_tabs_right": "关闭右侧标签页",
+  "steam.translate_mine": "翻译我的消息",
+  "steam.tip_translate_mine": "关闭后仅显示你的原文 — 不显示拼音和翻译行"
 }

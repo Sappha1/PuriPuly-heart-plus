@@ -515,12 +515,20 @@ class SteamBridgeView(ft.Container):
             content=self._state_btn_text, bgcolor="#2f89bd", border_radius=6,
             padding=ft.padding.symmetric(horizontal=18, vertical=9), ink=True,
             on_click=lambda e: self._state_action())
+        self._state_btn2 = ft.Container(
+            visible=False,
+            content=ft.Text(_T("steam.sign_out", default="Sign out of Steam"),
+                            size=12.5, color=_TEXT_FAINT),
+            border=ft.border.all(1, "#55565a"), border_radius=6,
+            padding=ft.padding.symmetric(horizontal=14, vertical=7), ink=True,
+            on_click=lambda e: self._signout_prompt())
         self._state_overlay = ft.Container(
             visible=False, expand=True, bgcolor=_BG_MAIN,
             alignment=ft.alignment.center,
             content=ft.Column([self._state_icon, self._state_title,
                                self._state_caption, self._state_prog,
-                               ft.Container(height=6), self._state_btn],
+                               ft.Container(height=6), self._state_btn,
+                               self._state_btn2],
                               spacing=10, tight=True,
                               horizontal_alignment=ft.CrossAxisAlignment.CENTER))
         self._hover_token = None
@@ -533,9 +541,10 @@ class SteamBridgeView(ft.Container):
         self.content = ft.Stack([main_row, self._loading,
                                   self._emoji_backdrop, self._emoji_panel,
                                   self._ctx_backdrop, self._ctx_menu,
-                                  self._settings_backdrop, self._settings_panel,
                                   self._input_menu, self._hover_card,
-                                  self._state_overlay, self._viewer], expand=True)
+                                  self._state_overlay,
+                                  self._settings_backdrop, self._settings_panel,
+                                  self._viewer], expand=True)
         self._load_cache()
         self._load_prefs()
         self._update_own_header()
@@ -659,6 +668,7 @@ class SteamBridgeView(ft.Container):
         if self._is_popout and mode in ("idle", "off", "popped"):
             return                      # module control lives in the main app
         self._state_mode = mode
+        self._state_btn2.visible = (mode == "idle")
         if mode == "connecting":
             self._state_icon.name = ft.Icons.CLOUD_SYNC_OUTLINED
             self._state_icon.color = _TEXT_FAINT
@@ -1234,6 +1244,8 @@ class SteamBridgeView(ft.Container):
                        self._pinyin_grouped, self._set_pinyin_grouped),
             toggle_row(_T("steam.show_original", default="Show original text"), _T("steam.tip_show_original", default="The untranslated line above the translation"),
                        self._show_original, self._set_show_original),
+            toggle_row(_T("steam.translate_mine", default="Translate my messages"), _T("steam.tip_translate_mine", default="Off shows your originals only — no pinyin or translation lines"),
+                       self._tr_outgoing, self._set_tr_outgoing),
             toggle_row(_T("steam.translate_theirs", default="Translate their messages"), _T("steam.tip_translate_theirs", default="Off shows their originals only"),
                        self._tr_incoming, self._set_tr_incoming),
             ft.Divider(height=1, color="#4b4c4f"),
@@ -1241,11 +1253,6 @@ class SteamBridgeView(ft.Container):
                 tip=_T("steam.tip_reload", default="Re-fetch this chat from Steam and redraw it with the current settings.")),
             btn(_T("steam.retranslate", default="Retranslate history"), lambda e: self._retranslate_prompt(),
                 tip=_T("steam.tip_retranslate", default="Redo translations")),
-            ft.Divider(height=1, color="#4b4c4f"),
-            btn(_T("steam.sign_out", default="Sign out of Steam"), lambda e: self._signout_prompt(),
-                tip=_T("steam.tip_sign_out", default="Disconnects this tab and clears the saved Steam login")),
-            btn(_T("steam.module_off", default="Turn off Steam module"), lambda e: self._module_off(),
-                tip=_T("steam.tip_module_off", default="Stops the Steam helper and its hidden browser so they use no RAM.")),
         ], spacing=1, tight=True)
         # Never taller than the window: cap + scroll (the "menu is cut off"
         # bug). Sum the REAL control heights — a rough rows*33 estimate set a
@@ -1257,9 +1264,12 @@ class SteamBridgeView(ft.Container):
         if avail > 220 and est > avail:
             self._settings_panel.content.scroll = ft.ScrollMode.AUTO
             self._settings_panel.height = avail
+            self._settings_panel.padding = ft.padding.only(
+                left=8, top=8, bottom=8, right=22)
         else:
             self._settings_panel.content.scroll = None
             self._settings_panel.height = None
+            self._settings_panel.padding = 8
 
 
     def _set_pinyin(self, v) -> None:
@@ -1346,9 +1356,15 @@ class SteamBridgeView(ft.Container):
             with contextlib.suppress(Exception):
                 self._settings_panel.update()
     def _set_tr_outgoing(self, e) -> None:
-        self._tr_outgoing = bool(e.control.value)
+        # accepts a plain bool (settings pill) or a switch event
+        ctrl = getattr(e, "control", None)
+        self._tr_outgoing = bool(ctrl.value) if ctrl is not None else bool(e)
         self._save_prefs()
         self._rerender_chat()   # so already-shown own messages reflect the toggle
+        if self._settings_panel.visible:
+            self._build_settings_panel()
+            with contextlib.suppress(Exception):
+                self._settings_panel.update()
 
     def _rerender_chat(self) -> None:
         """Restyle IN PLACE from the blocks already in memory — used by the display
@@ -2368,13 +2384,14 @@ class SteamBridgeView(ft.Container):
                 self._pref_tabs = list(dict.fromkeys(
                     int(a) for a in (p.get("open_tabs") or [])))[:8]
                 self._pref_active = int(p.get("active_tab") or 0)
-                self._tr_outgoing = True
+                self._tr_outgoing = bool(p.get("tr_mine", True))
 
     def _save_prefs(self) -> None:
         with contextlib.suppress(Exception):
             _PREFS_FILE.write_text(json.dumps({
                 "show_pinyin": self._show_pinyin,
                 "tr_incoming": self._tr_incoming,
+                "tr_mine": self._tr_outgoing,
                 "tr_outgoing": self._tr_outgoing,
                 "show_original": self._show_original,
                 "send_fmt": self._send_fmt,

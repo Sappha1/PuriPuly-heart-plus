@@ -1036,5 +1036,7 @@
   "steam.connecting_caption": "アプリ起動直後は少し時間がかかることがあります。準備ができ次第チャットが表示されます。",
   "steam.close_tab": "タブを閉じる",
   "steam.close_all_tabs": "すべてのタブを閉じる",
-  "steam.close_tabs_right": "右側のタブを閉じる"
+  "steam.close_tabs_right": "右側のタブを閉じる",
+  "steam.translate_mine": "自分のメッセージを翻訳",
+  "steam.tip_translate_mine": "オフにすると自分の原文のみ表示（ピンイン・翻訳行なし）"
 }

@@ -1036,5 +1036,7 @@
   "steam.connecting_caption": "Right after the app starts this can take a little while — your chats appear as soon as it's ready.",
   "steam.close_tab": "Close tab",
   "steam.close_all_tabs": "Close all tabs",
-  "steam.close_tabs_right": "Close tabs to the right"
+  "steam.close_tabs_right": "Close tabs to the right",
+  "steam.translate_mine": "Translate my messages",
+  "steam.tip_translate_mine": "Off shows your originals only — no pinyin or translation lines"
 }

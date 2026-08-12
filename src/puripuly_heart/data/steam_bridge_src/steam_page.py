@@ -531,6 +531,86 @@ class SteamPage:
         except Exception:
             return []
 
+    async def send_sticker_or_effect(self, acct: int, name: str,
+                                     kind: str) -> dict:
+        """Send a sticker or room effect the way the real client does: probe
+        the chat object and stores for a dedicated send method; fall back to
+        the wire text. Returns {ok, how} for diag."""
+        try:
+            return await self._page.evaluate(
+                r"""async (args) => {
+                  const [acct, name, kind] = args;
+                  const a = window.g_FriendsUIApp, cs = a.m_ChatStore;
+                  let c = (cs.m_FriendChatStore.m_rgFriendChats || [])
+                            .find(x => x.m_unAccountIDFriend === acct);
+                  if (!c) { try { c = cs.GetFriendChat(acct); } catch (e) {} }
+                  if (!c) return { ok: false, how: 'no chat' };
+                  const es = cs.m_EmoticonStore;
+                  const protoNames = o => {
+                    const out = new Set();
+                    let p = o;
+                    while (p && p !== Object.prototype) {
+                      for (const k of Object.getOwnPropertyNames(p)) out.add(k);
+                      p = Object.getPrototypeOf(p);
+                    }
+                    return [...out];
+                  };
+                  const rx = kind === 'sticker' ? /sticker/i : /effect/i;
+                  // 1) dedicated method on the chat object or the store
+                  for (const host of [c, es]) {
+                    for (const k of protoNames(host)) {
+                      if (!rx.test(k) || !/send|use|play/i.test(k)) continue;
+                      try {
+                        const fn = host[k];
+                        if (typeof fn !== 'function') continue;
+                        await fn.call(host, kind === 'sticker' ? name : name);
+                        return { ok: true, how: k };
+                      } catch (e) {}
+                    }
+                  }
+                  // 2) wire-text fallback
+                  try {
+                    const text = kind === 'sticker'
+                        ? '[sticker type="' + name + '"][/sticker]'
+                        : '/' + name;
+                    if (c.SendChatMessage) { c.SendChatMessage(text); return { ok: true, how: 'text' }; }
+                  } catch (e) {}
+                  return { ok: false, how: 'none' };
+                }""", [acct, name, kind]) or {"ok": False, "how": "eval"}
+        except Exception as exc:
+            return {"ok": False, "how": str(exc)[:120]}
+
+    async def dump_stickfx_methods(self) -> dict:
+        """Recon: source of every sticker/effect-ish method on the chat object
+        and EmoticonStore, so the send path can be read instead of guessed."""
+        try:
+            return await self._page.evaluate(
+                r"""() => {
+                  const out = {};
+                  const a = window.g_FriendsUIApp, cs = a.m_ChatStore;
+                  const c = (cs.m_FriendChatStore.m_rgFriendChats || [])[0];
+                  const es = cs.m_EmoticonStore;
+                  const grab = (host, label) => {
+                    if (!host) return;
+                    let p = host;
+                    while (p && p !== Object.prototype) {
+                      for (const k of Object.getOwnPropertyNames(p)) {
+                        if (!/sticker|effect/i.test(k)) continue;
+                        try {
+                          const v = host[k];
+                          if (typeof v === 'function')
+                            out[label + '.' + k] = String(v).slice(0, 300);
+                        } catch (e) {}
+                      }
+                      p = Object.getPrototypeOf(p);
+                    }
+                  };
+                  grab(c, 'chat'); grab(es, 'store');
+                  return out;
+                }""") or {}
+        except Exception as exc:
+            return {"err": str(exc)}
+
     async def list_effects(self) -> list[str]:
         """Room-effect names from the EmoticonStore's m_rgEffects (4 observed)."""
         try:

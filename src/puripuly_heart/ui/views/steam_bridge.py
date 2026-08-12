@@ -771,8 +771,8 @@ class SteamBridgeView(ft.Container):
         self._toggle_emoji(False)
         acct = self._active
         if self.page:
-            self.page.run_task(self._cmd, {"cmd": "send", "acct": acct,
-                                           "text": f"/{name}"})
+            self.page.run_task(self._cmd, {"cmd": "send_effect", "acct": acct,
+                                           "name": name})
 
     def _send_sticker(self, name: str) -> None:
         # Stickers send immediately on click, like real Steam.
@@ -788,8 +788,7 @@ class SteamBridgeView(ft.Container):
                 "from_me": True, "name": self._own_name, "avatar": self._own_avatar,
                 "text": "", "images": [], "stickers": [url],
                 "ts": int(time.time())})
-            await self._cmd({"cmd": "send", "acct": acct,
-                             "text": f'[sticker type="{name}"]'})
+            await self._cmd({"cmd": "send_sticker", "acct": acct, "name": name})
 
         if self.page:
             self.page.run_task(_go)
@@ -2695,7 +2694,7 @@ class SteamBridgeView(ft.Container):
             if ev.get("effects"):
                 names = [str(n) for n in ev.get("effects")]
                 icons = {"balloons": "🎈", "confetti": "🎉",
-                         "fireworks": "🎆", "goldfetti": "🎊"}
+                         "firework": "🎆", "fireworks": "🎆", "goldfetti": "🎊"}
                 self._effects = [(n, icons.get(n, "✨")) for n in names]
             self._update_own_header()
             self._save_snapshot()

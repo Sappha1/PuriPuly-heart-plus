@@ -492,6 +492,16 @@ class Daemon:
                     await self.emit({"ev": "image_sent", "acct": acct,
                                      "ok": bool(result.get("ok")),
                                      "detail": result})
+                elif cmd == "send_sticker" or cmd == "send_effect":
+                    kind = "sticker" if cmd == "send_sticker" else "effect"
+                    with contextlib.suppress(Exception):
+                        res = await self.steam.send_sticker_or_effect(
+                            int(obj.get("acct", 0)), str(obj.get("name", "")), kind)
+                        _diag(f"STICKFX kind={kind} name={obj.get('name')!r} -> {res}")
+                        if not (res or {}).get("ok"):
+                            recon = await self.steam.dump_stickfx_methods()
+                            import json as _json
+                            _diag("STICKFX-RECON " + _json.dumps(recon)[:1800])
                 elif cmd == "signout":
                     with contextlib.suppress(Exception):
                         await self.steam.sign_out()

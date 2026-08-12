@@ -78,7 +78,9 @@ import logging
 
 _vlog = logging.getLogger("puripuly_heart.steam_view")
 
-_EMOTE_RE = re.compile(r"[:ː]([a-zA-Z][a-zA-Z0-9_]{1,})[:ː]")
+# Emote names may START with a digit (e.g. 8bitheart) — but require at least
+# one letter somewhere so time strings ("12:34:56") never read as emotes.
+_EMOTE_RE = re.compile(r"[:ː](?=[0-9_]*[a-zA-Z])([a-zA-Z0-9][a-zA-Z0-9_]{1,})[:ː]")
 
 
 # Steam room effects are slash commands the server renders as full-chat

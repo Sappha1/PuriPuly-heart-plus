@@ -2709,18 +2709,35 @@ class SteamBridgeView(ft.Container):
                            lambda e, u=url: self._copy_link(u))]
         pills.append(pill(ft.Icons.CLOSE, _T("steam.close", default="Close"),
                           lambda e: self._close_viewer(), accent=True))
-        inner = ft.Column([
-            ft.GestureDetector(
-                on_tap=lambda e: None,      # clicks on the image don't close
-                content=ft.Image(src=url, width=820, height=520,
-                                 fit=ft.ImageFit.CONTAIN)),
-            ft.Row(pills, spacing=8, alignment=ft.MainAxisAlignment.CENTER),
-        ], spacing=10, tight=True,
-           horizontal_alignment=ft.CrossAxisAlignment.CENTER)
+        # Steam-style: the image sits in a dark framed card, and a big opaque
+        # ✕ is pinned to the screen's top-right — visible from anywhere.
+        card = ft.GestureDetector(
+            on_tap=lambda e: None,          # clicks on the card don't close
+            content=ft.Container(
+                bgcolor="#17181b", border=ft.border.all(1, "#4b4c4f"),
+                border_radius=10, padding=14,
+                content=ft.Column([
+                    ft.Image(src=url, width=820, height=520,
+                             fit=ft.ImageFit.CONTAIN),
+                    ft.Row(pills, spacing=8,
+                           alignment=ft.MainAxisAlignment.CENTER),
+                ], spacing=12, tight=True,
+                   horizontal_alignment=ft.CrossAxisAlignment.CENTER)))
+        close_x = ft.Container(
+            right=18, top=14, width=40, height=40,
+            bgcolor="#2b2c30", border=ft.border.all(1, "#5a5b5f"),
+            border_radius=8, ink=True, alignment=ft.alignment.center,
+            content=ft.Icon(ft.Icons.CLOSE, size=22, color="#ffffff"),
+            on_click=lambda e: self._close_viewer())
         self._viewer_overlay.content = ft.GestureDetector(
             on_tap=lambda e: self._close_viewer(),
-            content=ft.Container(bgcolor="#77000000", expand=True,
-                                 alignment=ft.alignment.center, content=inner))
+            content=ft.Container(
+                bgcolor="#99000000", expand=True,
+                content=ft.Stack([
+                    ft.Container(expand=True, alignment=ft.alignment.center,
+                                 content=card),
+                    close_x,
+                ], expand=True)))
         if self.page and self._viewer_overlay not in self.page.overlay:
             self.page.overlay.append(self._viewer_overlay)
         self._viewer_overlay.visible = True

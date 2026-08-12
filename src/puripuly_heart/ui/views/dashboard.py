@@ -19,7 +19,7 @@ from puripuly_heart.ui.fonts import font_for_language
 from puripuly_heart.ui.i18n import get_locale, language_name, t
 from puripuly_heart.ui.overlay_peer_contract import OverlayPeerConsumerContract
 
-_BUILD_TAG = "r452"  #increment each build so user can confirm version
+_BUILD_TAG = "r453"  #increment each build so user can confirm version
 
 # ── VRCT-style dark palette ──────────────────────────────────────────────────
 _BG_MAIN = "#2e2f32"
@@ -6929,7 +6929,15 @@ class DashboardView(ft.Row):
         if self.on_recent_languages_change:
             self.on_recent_languages_change(self._recent_source_langs, self._recent_target_langs)
 
+    def _log_presets(self, where: str) -> None:
+        with contextlib.suppress(Exception):
+            logger.info("[PresetDbg] %s active=%d data=%s extras=%s", where,
+                        self._active_preset,
+                        [p.get("targets") for p in self._preset_data],
+                        self._extra_target_lang_codes)
+
     def _stash_active_preset(self) -> None:
+        self._log_presets("stash")
         # Every language mutation records the ACTIVE preset's full state
         # immediately. Previously only the tab-switch handler stashed it, so
         # any other path that touched the live language fields (extra-target
@@ -7052,6 +7060,7 @@ class DashboardView(ft.Row):
             while len(self._preset_data) < 3:
                 self._preset_data.append({"source": "en", "targets": ["en"]})
         # Restore extra targets and peer languages from active preset
+        self._log_presets("set_languages_from_codes")
         active = self._preset_data[self._active_preset]
         targets = active.get("targets", [target_code])
         self._extra_target_lang_codes = list(targets[1:])

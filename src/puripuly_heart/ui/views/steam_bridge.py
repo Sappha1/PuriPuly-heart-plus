@@ -74,6 +74,10 @@ def _send_fmt_labels() -> dict:
     }
 
 
+import logging
+
+_vlog = logging.getLogger("puripuly_heart.steam_view")
+
 _EMOTE_RE = re.compile(r"[:ː]([a-zA-Z][a-zA-Z0-9_]{1,})[:ː]")
 
 
@@ -384,7 +388,6 @@ class SteamBridgeView(ft.Container):
             focused_border_color=_TOGGLE_ON, text_size=13, color=_TEXT_PRIMARY,
             hint_style=ft.TextStyle(color=_TEXT_FAINT, italic=True),
             expand=True, multiline=True, min_lines=2, max_lines=4, shift_enter=True,
-            max_length=5000, counter_text=" ",
             bgcolor=_BG_INPUT, border_radius=8,
             content_padding=ft.padding.symmetric(horizontal=12, vertical=8),
             on_change=self._on_entry_change,
@@ -632,22 +635,24 @@ class SteamBridgeView(ft.Container):
             self._show_state_overlay("popped")
             return
         if self._started:
-            if not self._got_friends and not self._state_overlay.visible:
+            _vlog.info("[SteamView] activate: started=1 got_friends=%s mode=%r",
+                       self._got_friends, self._state_mode)
+            if not self._got_friends:
                 self._show_state_overlay("connecting")
-            elif (self._active is None and self._got_friends
-                    and not self._state_overlay.visible):
+            elif self._active is None and not self._state_overlay.visible:
                 self._show_state_overlay("idle")
             return
         self._started = True
         self._paint_snapshot()
-        if not self._got_friends and not self._friends:
-            # cold boot with no snapshot: say what's happening instead of an
-            # empty pane (the helper takes a while on first launch)
+        _vlog.info("[SteamView] activate cold: friends=%d got=%s page=%s",
+                   len(self._friends), self._got_friends, self.page is not None)
+        if not self._got_friends:
             self._show_state_overlay("connecting")
         if self.page:
             self.page.run_task(self._connect)
 
     def _show_state_overlay(self, mode: str) -> None:
+        _vlog.info("[SteamView] overlay -> %r (page=%s)", mode, self.page is not None)
         if self._is_popout and mode in ("idle", "off", "popped"):
             return                      # module control lives in the main app
         self._state_mode = mode
@@ -787,6 +792,11 @@ class SteamBridgeView(ft.Container):
     _MAX_MSG = 5000   # Steam's chat message limit (approx; server truncates)
 
     def _on_entry_change(self, e) -> None:
+        # hard cap without max_length (its counter reserves an ugly empty line)
+        if len(self._entry.value or "") > self._MAX_MSG:
+            self._entry.value = (self._entry.value or "")[: self._MAX_MSG]
+            with contextlib.suppress(Exception):
+                self._entry.update()
         n = len(self._entry.value or "")
         show = n > int(self._MAX_MSG * 0.8)
         self._char_count.value = f"{n} / {self._MAX_MSG}"
@@ -2035,7 +2045,8 @@ class SteamBridgeView(ft.Container):
     def _on_msg_scroll(self, e) -> None:
         with contextlib.suppress(Exception):
             self._max_scroll = e.max_scroll_extent or 0.0
-            want = e.pixels < (e.max_scroll_extent or 0) - 40
+            want = ((e.max_scroll_extent or 0) > 80
+                    and e.pixels < (e.max_scroll_extent or 0) - 40)
             # While scrolled up, stop following new messages; resume at the bottom
             # or via the jump button. Scrolling only ever happens via _scroll_to_end.
             self._following = not want
@@ -2423,7 +2434,7 @@ class SteamBridgeView(ft.Container):
             on_hover=self._msg_hover)
 
     def _msg_hover(self, e) -> None:
-        e.control.bgcolor = "#2c2e33" if e.data == "true" else ft.Colors.TRANSPARENT
+        e.control.bgcolor = "#363a41" if e.data == "true" else ft.Colors.TRANSPARENT
         with contextlib.suppress(Exception):
             e.control.update()
 

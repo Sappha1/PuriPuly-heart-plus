@@ -560,7 +560,22 @@ class Daemon:
                 pass
 
     async def run(self) -> None:
-        server = await asyncio.start_server(self.handle, HOST, PORT)
+        # HARD singleton: on Windows, SO_REUSEADDR semantics let several
+        # processes bind the same port — six daemons once coexisted, stealing
+        # each other's connections (the app reconnect-looped forever). An
+        # SO_EXCLUSIVEADDRUSE bind makes the second daemon exit immediately.
+        import socket as _socket
+        lsock = _socket.socket(_socket.AF_INET, _socket.SOCK_STREAM)
+        with contextlib.suppress(Exception):
+            lsock.setsockopt(_socket.SOL_SOCKET,
+                             getattr(_socket, "SO_EXCLUSIVEADDRUSE", -1), 1)
+        try:
+            lsock.bind((HOST, PORT))
+            lsock.listen(64)
+        except OSError:
+            _diag("SINGLETON exit: another daemon owns the port")
+            return
+        server = await asyncio.start_server(self.handle, sock=lsock)
         # Pre-warm: load Steam now so the first tab open is instant.
         asyncio.create_task(self._prewarm())
         asyncio.create_task(self.poll_loop())

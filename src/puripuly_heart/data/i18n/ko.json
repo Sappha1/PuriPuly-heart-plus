@@ -1029,5 +1029,9 @@
   "steam.hdr_emoticons": "이모티콘",
   "steam.hdr_stickers": "스티커",
   "steam.hdr_effects": "룸 이펙트",
-  "steam.too_long": "메시지가 너무 깁니다 ({n}/{max})"
+  "steam.too_long": "메시지가 너무 깁니다 ({n}/{max})",
+  "steam.used_effect": "{name}님이 {effect}을(를) 사용했습니다!",
+  "steam.replay_effect": "이펙트 다시 보기",
+  "steam.connecting_title": "Steam에 연결 중",
+  "steam.connecting_caption": "앱 시작 직후에는 시간이 조금 걸릴 수 있습니다. 준비되는 대로 채팅이 표시됩니다."
 }

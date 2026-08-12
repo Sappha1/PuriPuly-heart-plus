@@ -384,6 +384,7 @@ class SteamBridgeView(ft.Container):
             focused_border_color=_TOGGLE_ON, text_size=13, color=_TEXT_PRIMARY,
             hint_style=ft.TextStyle(color=_TEXT_FAINT, italic=True),
             expand=True, multiline=True, min_lines=2, max_lines=4, shift_enter=True,
+            max_length=5000, counter_text=" ",
             bgcolor=_BG_INPUT, border_radius=8,
             content_padding=ft.padding.symmetric(horizontal=12, vertical=8),
             on_change=self._on_entry_change,
@@ -631,14 +632,18 @@ class SteamBridgeView(ft.Container):
             self._show_state_overlay("popped")
             return
         if self._started:
-            # Re-entering the tab with nothing open: show the running/idle
-            # screen instead of an empty pane (same as after closing all tabs).
-            if (self._active is None and self._got_friends
+            if not self._got_friends and not self._state_overlay.visible:
+                self._show_state_overlay("connecting")
+            elif (self._active is None and self._got_friends
                     and not self._state_overlay.visible):
                 self._show_state_overlay("idle")
             return
         self._started = True
         self._paint_snapshot()
+        if not self._got_friends and not self._friends:
+            # cold boot with no snapshot: say what's happening instead of an
+            # empty pane (the helper takes a while on first launch)
+            self._show_state_overlay("connecting")
         if self.page:
             self.page.run_task(self._connect)
 
@@ -646,7 +651,18 @@ class SteamBridgeView(ft.Container):
         if self._is_popout and mode in ("idle", "off", "popped"):
             return                      # module control lives in the main app
         self._state_mode = mode
-        if mode == "popped":
+        if mode == "connecting":
+            self._state_icon.name = ft.Icons.CLOUD_SYNC_OUTLINED
+            self._state_icon.color = _TEXT_FAINT
+            self._state_title.value = _T("steam.connecting_title",
+                                         default="Connecting to Steam")
+            self._state_caption.value = _T(
+                "steam.connecting_caption",
+                default="Right after the app starts this can take a little "
+                        "while — your chats appear as soon as it's ready.")
+            self._state_prog.visible = True
+            self._state_btn.visible = False
+        elif mode == "popped":
             self._state_icon.name = ft.Icons.OPEN_IN_NEW
             self._state_icon.color = _TOGGLE_ON
             self._state_title.value = _T("steam.popped_title",
@@ -686,6 +702,8 @@ class SteamBridgeView(ft.Container):
                 self.page.update()
 
     def _hide_state_overlay(self) -> None:
+        self._state_btn.visible = True
+        self._state_prog.visible = False
         if self._state_overlay.visible:
             self._state_overlay.visible = False
             if self.page:
@@ -824,6 +842,43 @@ class SteamBridgeView(ft.Container):
         if self.page:
             self._entry.update()
 
+    _FX_ICONS = {"balloons": "🎈", "confetti": "🎉", "firework": "🎆",
+                 "fireworks": "🎆", "goldfetti": "🎊"}
+
+    def _effect_of(self, b: dict):
+        """(icon, effect_name) when this message is a room-effect line the
+        helper rendered as 'icon name' — else None."""
+        t = (b.get("text") or "").strip()
+        parts = t.split()
+        if len(parts) == 2 and parts[1].lower() in self._FX_ICONS                 and parts[0] in self._FX_ICONS.values():
+            return parts[0], parts[1]
+        return None
+
+    def _play_effect_burst(self, icon: str) -> None:
+        """A light in-app approximation of Steam's fullscreen effect."""
+        row = ft.Row([ft.Text(icon, size=44) for _ in range(7)],
+                     alignment=ft.MainAxisAlignment.SPACE_AROUND)
+        burst = ft.Container(content=ft.Column([row, row], spacing=60),
+                             alignment=ft.alignment.center, expand=True,
+                             opacity=1.0, animate_opacity=900)
+        self._viewer.content = burst      # reuse the topmost overlay slot
+        self._viewer.visible = True
+
+        async def _fade() -> None:
+            await asyncio.sleep(0.35)
+            burst.opacity = 0.0
+            with contextlib.suppress(Exception):
+                burst.update()
+            await asyncio.sleep(1.0)
+            self._viewer.visible = False
+            with contextlib.suppress(Exception):
+                self.page.update()
+
+        if self.page:
+            with contextlib.suppress(Exception):
+                self.page.update()
+            self.page.run_task(_fade)
+
     def _show_emote_card(self, kind: str, name: str,
                          gx: float, gy: float) -> None:
         # Steam-style hover card: compact, next to the hovered emote.
@@ -841,9 +896,8 @@ class SteamBridgeView(ft.Container):
         # page-global -> view-stack coords (the stack sits right of the app
         # sidebar and below the header in the main window; near 0,0 popped out)
         dx, dy = (10, 44) if self._is_popout else (232, 92)
-        card_h = 76
-        self._hover_card.left = max(6, gx - dx)
-        self._hover_card.top = max(6, gy - dy - card_h)
+        self._hover_card.left = max(6, gx - dx + 28)
+        self._hover_card.top = max(6, gy - dy - 34)
         self._hover_card.on_click = lambda e: self._hide_emote_card()
         self._hover_card.visible = True
         with contextlib.suppress(Exception):
@@ -2302,6 +2356,28 @@ class SteamBridgeView(ft.Container):
             out_ctrl = ft.Text("", size=13, color=_ACCENT)
             b["_out_ctrl"] = out_ctrl
             out.append(out_ctrl)
+        fx = self._effect_of(b)
+        if fx:
+            icon, fx_name = fx
+            out.append(ft.Container(
+                content=ft.Row([
+                    ft.Text(icon, size=22),
+                    ft.Text(_T("steam.used_effect", name=b.get("name") or "",
+                               effect=fx_name,
+                               default=f"{b.get('name') or ''} used {fx_name}!"),
+                            size=13, color=_TEXT_PRIMARY, expand=True),
+                    ft.Container(
+                        content=ft.Text(_T("steam.replay_effect",
+                                           default="Replay effect"),
+                                        size=12.5, weight=ft.FontWeight.W_600,
+                                        color="#ffffff"),
+                        bgcolor="#2f6fed", border_radius=6, ink=True,
+                        padding=ft.padding.symmetric(horizontal=14, vertical=8),
+                        on_click=lambda e, i=icon: self._play_effect_burst(i)),
+                ], spacing=10, vertical_alignment=ft.CrossAxisAlignment.CENTER),
+                bgcolor="#26282c", border_radius=8, padding=12,
+                margin=ft.margin.only(top=4, bottom=2)))
+            return out
         if b.get("emoticons"):
             out.append(ft.Row(
                 [self._emote_hoverable(
@@ -2309,7 +2385,12 @@ class SteamBridgeView(ft.Container):
                              fit=ft.ImageFit.CONTAIN), "e", n)
                  for n in b["emoticons"]], spacing=3, wrap=True))
         for url in b.get("stickers", []):
-            out.append(ft.Image(src=url, width=120, height=120, fit=ft.ImageFit.CONTAIN))
+            sname = ""
+            with contextlib.suppress(Exception):
+                import urllib.parse
+                sname = urllib.parse.unquote(url.split("/sticker/")[1].split("/")[0])
+            img = ft.Image(src=url, width=120, height=120, fit=ft.ImageFit.CONTAIN)
+            out.append(self._emote_hoverable(img, "s", sname) if sname else img)
         for url in b.get("images", []):
             out.append(self._image_control(url))
         return out
@@ -2576,18 +2657,24 @@ class SteamBridgeView(ft.Container):
                 break
             await asyncio.sleep(0.5)
         if not connected:
-            import subprocess
-            with contextlib.suppress(Exception):
-                self._proc = subprocess.Popen(
-                    [str(_DAEMON_PYTHON), str(_DAEMON_PY)],
-                    stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL,
-                    creationflags=_CREATE_NO_WINDOW)
+            # Spawn guard: during a slow cold boot every retry used to spawn
+            # ANOTHER daemon (a farm of six once fought over the profile).
+            now = time.monotonic()
+            if now - getattr(self, "_last_spawn", 0.0) > 30.0:
+                self._last_spawn = now
+                import subprocess
+                with contextlib.suppress(Exception):
+                    self._proc = subprocess.Popen(
+                        [str(_DAEMON_PYTHON), str(_DAEMON_PY)],
+                        stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL,
+                        creationflags=_CREATE_NO_WINDOW)
             for _ in range(60):
                 if await self._try_open():
                     connected = True
                     break
                 await asyncio.sleep(0.5)
         if connected:
+            self._reconnect_delay = 1.0
             self.page.run_task(self._read_loop)
 
     async def _try_open(self) -> bool:
@@ -2755,9 +2842,12 @@ class SteamBridgeView(ft.Container):
         self._reader = None
         self._writer = None
         if self._started:
-            await asyncio.sleep(1.0)
+            # backoff so a flapping helper can't drive a 1s reopen storm
+            delay = getattr(self, "_reconnect_delay", 1.0)
+            self._reconnect_delay = min(delay * 2, 15.0)
+            await asyncio.sleep(delay)
             await self._connect()
-            if self._active is not None:
+            if self._writer is not None and self._active is not None:
                 await self._cmd({"cmd": "open", "acct": self._active})
 
     def _hide_loading(self) -> None:
@@ -2835,6 +2925,10 @@ class SteamBridgeView(ft.Container):
             elif self._module_on and ev.get("mode") != "login":
                 self._show_state_overlay("signedout")
         elif kind == "friends":
+            if self._state_mode == "connecting":
+                self._hide_state_overlay()
+                if self._active is None and self._module_on:
+                    self._show_state_overlay("idle")
             self._friends = {int(i["acct"]): i for i in ev.get("items", [])}
             self._got_friends = True
             for a, i in self._friends.items():

@@ -1029,5 +1029,9 @@
   "steam.hdr_emoticons": "EMOTICONS",
   "steam.hdr_stickers": "STICKERS",
   "steam.hdr_effects": "ROOM EFFECTS",
-  "steam.too_long": "Message is too long for Steam ({n}/{max})"
+  "steam.too_long": "Message is too long for Steam ({n}/{max})",
+  "steam.used_effect": "{name} used {effect}!",
+  "steam.replay_effect": "Replay effect",
+  "steam.connecting_title": "Connecting to Steam",
+  "steam.connecting_caption": "Right after the app starts this can take a little while — your chats appear as soon as it's ready."
 }

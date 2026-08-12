@@ -2707,8 +2707,7 @@ class SteamBridgeView(ft.Container):
                            lambda e, u=url: self.page.launch_url(u)),
                       pill(ft.Icons.LINK, _T("steam.copy_link", default="Copy link"),
                            lambda e, u=url: self._copy_link(u))]
-        pills.append(pill(ft.Icons.CLOSE, _T("steam.close", default="Close"),
-                          lambda e: self._close_viewer(), accent=True))
+        # (no Close pill — the ✕ in the card's top-right corner closes)
         # Steam-style: the image sits in a dark framed card, and a big opaque
         # ✕ is pinned to the screen's top-right — visible from anywhere.
         # The card gets EXPLICIT dimensions sized to the window: relying on

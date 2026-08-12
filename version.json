@@ -1,8 +1,10 @@
 {
-  "build": 438,
-  "tag": "r438",
+  "build": 458,
+  "tag": "r458",
   "date": "2026-08-11",
   "notes": [
-    "Steam Chat: instant chat switching — previously opened chats appear immediately from cache, the previous chat never lingers under a new tab, and empty chats say so instead of showing a blank pane"
+    "Steam Chat: pop-out window, full emoticon/sticker picker, sticker & room-effect sending, instant tab switching with per-tab scroll memory, tab menu (close / right / all)",
+    "New Modules section in Settings; the installer can fetch the Steam module too",
+    "Fixed: language preset tabs no longer share extra language slots; no more window flash at startup"
   ]
 }

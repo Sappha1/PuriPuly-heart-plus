@@ -3854,6 +3854,27 @@ async def main_gui(page: ft.Page, *, config_path, debug_ui_preview: bool = False
     except Exception:
         pass
 
+    # Setup checkbox hand-off: the installer leaves a one-shot marker asking
+    # the app to fetch optional modules on first launch — the in-app module
+    # installer already handles progress UI and China-friendly mirrors.
+    try:
+        import os as _os
+
+        _marker = (Path(_os.environ.get("LOCALAPPDATA", ""))
+                   / "puripuly-heart" / "pending_module_installs.json")
+        if _marker.is_file():
+            import json as _json
+            _req = {}
+            with contextlib.suppress(Exception):
+                _req = _json.loads(_marker.read_text(encoding="utf-8"))
+            with contextlib.suppress(Exception):
+                _marker.unlink()
+            from puripuly_heart.core import steam_module as _steam_mod
+            if _req.get("steam") and not _steam_mod.module_ready():
+                app._steam_module_install_prompt()
+    except Exception:
+        pass
+
     # OCR PROTOTYPE BRANCH: update checks are DISABLED. This test build runs
     # alongside the release install; an auto-download would swap release files
     # over this build and silently remove the OCR feature under test.

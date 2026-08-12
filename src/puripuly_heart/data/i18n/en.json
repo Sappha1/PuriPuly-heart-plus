@@ -1035,5 +1035,6 @@
   "steam.connecting_title": "Connecting to Steam",
   "steam.connecting_caption": "Right after the app starts this can take a little while — your chats appear as soon as it's ready.",
   "steam.close_tab": "Close tab",
-  "steam.close_all_tabs": "Close all tabs"
+  "steam.close_all_tabs": "Close all tabs",
+  "steam.close_tabs_right": "Close tabs to the right"
 }

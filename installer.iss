@@ -95,6 +95,9 @@ Name: "desktopicon"; Description: "{cm:CreateDesktopIcon}"; GroupDescription: "{
 ; the new one (e.g. a legacy language override or a half-downloaded model).
 ; API keys are NOT affected - they live in the Windows credential store.
 Name: "cleanslate"; Description: "{cm:CleanSlate}"; GroupDescription: "{cm:CleanSlateGroup}"; Flags: unchecked
+; Optional module fetch: writes a one-shot marker the app reads on first
+; launch; the in-app installer downloads with China-friendly mirror fallbacks.
+Name: "steammodule"; Description: "{cm:SteamModuleTask}"; GroupDescription: "{cm:ModulesGroup}"; Flags: unchecked
 Name: "quicklaunchicon"; Description: "{cm:CreateQuickLaunchIcon}"; GroupDescription: "{cm:AdditionalIcons}"; Flags: unchecked; OnlyBelowVersion: 6.1; Check: not IsAdminInstallMode
 
 [CustomMessages]
@@ -123,6 +126,16 @@ chinesetraditional.TypeCompact=精簡安裝（不含即時 OCR）
 chinesetraditional.TypeCustom=自訂安裝
 chinesetraditional.CompMain=PuriPulyHeart+（必需）
 chinesetraditional.CompOcr=即時 OCR 翻譯（約 150 MB）— 直接讀取螢幕上的聊天氣泡和世界文字
+english.ModulesGroup=Optional modules:
+english.SteamModuleTask=Steam Chat translation module — downloaded on first launch (~200 MB; China-friendly mirrors)
+korean.ModulesGroup=선택 모듈:
+korean.SteamModuleTask=Steam 채팅 번역 모듈 — 첫 실행 시 다운로드 (~200 MB)
+japanese.ModulesGroup=オプションモジュール:
+japanese.SteamModuleTask=Steamチャット翻訳モジュール — 初回起動時にダウンロード（約200MB）
+chinesesimplified.ModulesGroup=可选模块:
+chinesesimplified.SteamModuleTask=Steam 聊天翻译模块 — 首次启动时下载（约 200 MB；支持国内镜像）
+chinesetraditional.ModulesGroup=可選模組:
+chinesetraditional.SteamModuleTask=Steam 聊天翻譯模組 — 首次啟動時下載（約 200 MB）
 english.CleanSlateGroup=Clean install:
 english.CleanSlate=Delete ALL old settings and app data (fresh start; API keys are kept)
 korean.CleanSlateGroup=깨끗한 설치:
@@ -620,6 +633,19 @@ begin
     ExpandConstant('{cm:LocalSttDownloadDescription}'),
     @DownloadLocalSttProgress
   );
+end;
+
+procedure CurStepChanged(CurStep: TSetupStep);
+var
+  MarkerDir: String;
+begin
+  if CurStep = ssPostInstall then begin
+    if WizardIsTaskSelected('steammodule') then begin
+      MarkerDir := ExpandConstant('{localappdata}\puripuly-heart');
+      ForceDirectories(MarkerDir);
+      SaveStringToFile(MarkerDir + '\pending_module_installs.json', '{"steam": true}', False);
+    end;
+  end;
 end;
 
 function PrepareToInstall(var NeedsRestart: Boolean): String;

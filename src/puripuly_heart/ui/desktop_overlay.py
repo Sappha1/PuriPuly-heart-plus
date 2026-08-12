@@ -4293,7 +4293,10 @@ class FletDesktopRendererWindow:
         import asyncio as _aio
         while True:
             await _aio.sleep(4.0)
-            self._reassert_native_topmost()
+            try:
+                self._reassert_native_topmost()
+            except Exception:
+                pass          # never let one failed call end the guard
 
     async def _set_interaction_mode(self, mode: str, *, emit_event: bool) -> None:
         if mode not in _DESKTOP_INTERACTION_MODES:

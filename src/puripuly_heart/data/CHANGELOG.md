@@ -2,6 +2,15 @@
 
 User-facing changes per build. The latest build's highlights also appear in-app when an update is ready.
 
+## r458 — 2026-08-11
+
+- Steam Chat: chats are cached to disk and preloaded in the background — tabs and chat switches render instantly, scroll position included
+- Steam Chat: pop-out window, full emoticon/sticker picker (tabs, search, recents, hover cards), sticker and room-effect sending, per-tab scroll position, character counter, and a tab menu (close / close to the right / close all)
+- Steam Chat: pick a translator model just for this tab; translations are cached per model so switching never re-spends API credits
+- Settings: new Modules section to add or remove the Realtime OCR and Steam Chat modules; the installer now offers fetching the Steam module too
+- Fixed: extra language slots added on one preset tab no longer appear on the other preset tabs
+- Fixed: no window flash at startup — the app appears only once it is fully loaded
+
 ## r438 — 2026-08-11
 
 - Steam Chat: switching chats now swaps instantly — chats you've opened before appear immediately from cache instead of re-loading, the previous chat never lingers under the new tab, and an empty chat says so instead of showing a blank pane

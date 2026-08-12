@@ -1035,5 +1035,6 @@
   "steam.connecting_title": "Steam에 연결 중",
   "steam.connecting_caption": "앱 시작 직후에는 시간이 조금 걸릴 수 있습니다. 준비되는 대로 채팅이 표시됩니다.",
   "steam.close_tab": "탭 닫기",
-  "steam.close_all_tabs": "모든 탭 닫기"
+  "steam.close_all_tabs": "모든 탭 닫기",
+  "steam.close_tabs_right": "오른쪽 탭 닫기"
 }

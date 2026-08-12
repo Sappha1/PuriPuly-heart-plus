@@ -1998,6 +1998,11 @@ class SteamBridgeView(ft.Container):
     # ── chat tabs (act as the header) ────────────────────────────────────────
     def _tab_chip(self, acct: int) -> ft.Control:
         f = self._friends.get(acct, {})
+        if not f and acct and acct == self._own:
+            # chat with yourself (saved messages) — show your own identity
+            f = {"name": self._own_name, "avatar": self._own_avatar,
+                 "state": self._own_state, "ingame": self._own_ingame,
+                 "game": self._own_game}
         active = (acct == self._active)
         state, ingame = int(f.get("state", 0)), bool(f.get("ingame"))
         sub = (f.get("game") or "In-Game") if ingame else _state_labels().get(state, "Offline")
@@ -2049,6 +2054,8 @@ class SteamBridgeView(ft.Container):
         for label, cb in (
             (_T("steam.close_tab", default="Close tab"),
              lambda a=acct: self._close_tab(a)),
+            (_T("steam.close_tabs_right", default="Close tabs to the right"),
+             lambda a=acct: self._close_tabs_right(a)),
             (_T("steam.close_all_tabs", default="Close all tabs"),
              self._close_all_tabs),
         ):
@@ -2068,6 +2075,40 @@ class SteamBridgeView(ft.Container):
         self._ctx_menu.top = max(40.0, gy - 44)
         self._ctx_menu.visible = True
         self._ctx_backdrop.visible = True
+        if self.page:
+            self.page.update()
+
+    async def _warm_tabs(self, active_acct: int) -> None:
+        """Prefetch history for every restored background tab: the daemon
+        streams each one and non-active histories land in _chat_cache, so the
+        first click on any tab paints instantly. Ends by re-syncing the
+        active chat (its identical history skips the repaint)."""
+        await asyncio.sleep(2.0)
+        warm = [a for a in self._tabs if a != active_acct]
+        for a in warm:
+            if not self._writer:
+                return
+            await self._cmd({"cmd": "open", "acct": a})
+            await asyncio.sleep(0.8)
+        if warm and self._active is not None and self._writer:
+            await self._cmd({"cmd": "open", "acct": self._active})
+
+    def _close_tabs_right(self, acct: int) -> None:
+        if acct not in self._tabs:
+            return
+        idx = self._tabs.index(acct)
+        removed = self._tabs[idx + 1:]
+        if not removed:
+            return
+        self._tabs = self._tabs[:idx + 1]
+        for a in removed:
+            self._scroll_pos.pop(a, None)
+            self._was_following.pop(a, None)
+            self._render_fp.pop(a, None)
+        if self._active in removed and self.page:
+            self.page.run_task(self._open, acct)
+        self._rebuild_tabs()
+        self._save_prefs()
         if self.page:
             self.page.update()
 
@@ -2234,7 +2275,18 @@ class SteamBridgeView(ft.Container):
     # "friends"/"own" events replace it seamlessly when they arrive.
     def _save_snapshot(self) -> None:
         with contextlib.suppress(Exception):
+            _ok = (str, int, float, bool, list, dict, type(None))
+            chats = {}
+            for _a in list(self._tabs)[:8]:
+                _blks = self._chat_cache.get(_a)
+                if _blks:
+                    chats[str(_a)] = [
+                        {k: v for k, v in b.items()
+                         if k not in ("_ctrl", "_out_ctrl")
+                         and isinstance(v, _ok)}
+                        for b in _blks[-40:]]
             snap = {"seen": {str(k): v for k, v in self._seen_chat_ts.items()},
+                    "chats": chats,
                     "friends": list(self._friends.values()),
                     "own": {"acct": self._own, "name": self._own_name,
                             "avatar": self._own_avatar, "state": self._own_state,
@@ -2245,6 +2297,15 @@ class SteamBridgeView(ft.Container):
                 json.dumps(snap, ensure_ascii=False), encoding="utf-8")
 
     def _paint_snapshot(self) -> None:
+        if not self._chat_cache:
+            # seed the chat cache from disk so restored tabs paint instantly
+            with contextlib.suppress(Exception):
+                _f0 = _CACHE_FILE.with_name("ui_snapshot.json")
+                if _f0.exists():
+                    _snap0 = json.loads(_f0.read_text(encoding="utf-8"))
+                    for _k, _blks in (_snap0.get("chats") or {}).items():
+                        with contextlib.suppress(Exception):
+                            self._chat_cache.setdefault(int(_k), list(_blks))
         if self._got_friends or self._friends:
             return
         with contextlib.suppress(Exception):
@@ -2304,7 +2365,8 @@ class SteamBridgeView(ft.Container):
                 rp = p.get("recent_picks") or []
                 self._recent_picks = [list(x) for x in rp if isinstance(x, (list, tuple))
                                       and len(x) == 2][:24]
-                self._pref_tabs = [int(a) for a in (p.get("open_tabs") or [])][:8]
+                self._pref_tabs = list(dict.fromkeys(
+                    int(a) for a in (p.get("open_tabs") or [])))[:8]
                 self._pref_active = int(p.get("active_tab") or 0)
                 self._tr_outgoing = True
 
@@ -3051,11 +3113,12 @@ class SteamBridgeView(ft.Container):
                 self._hide_state_overlay()
                 if not self._tabs and self._pref_tabs:
                     # restore the workspace (pop-out windows + app restarts)
-                    self._tabs = [a for a in self._pref_tabs]
+                    self._tabs = list(dict.fromkeys(self._pref_tabs))
                     act = (self._pref_active
                            if self._pref_active in self._tabs else self._tabs[-1])
                     self._rebuild_tabs()
                     self.page.run_task(self._open, act)
+                    self.page.run_task(self._warm_tabs, act)
                 elif self._active is None and self._module_on:
                     self._show_state_overlay("idle")
             elif self._module_on and ev.get("mode") != "login":
@@ -3069,6 +3132,23 @@ class SteamBridgeView(ft.Container):
                     self._show_state_overlay("idle")
             self._friends = {int(i["acct"]): i for i in ev.get("items", [])}
             self._got_friends = True
+            stale = [a for a in self._tabs
+                     if a not in self._friends and a != self._own]
+            if stale:
+                self._tabs = [a for a in self._tabs if a not in stale]
+                for a in stale:
+                    self._scroll_pos.pop(a, None)
+                    self._was_following.pop(a, None)
+                    self._render_fp.pop(a, None)
+                if self._active in stale:
+                    self._active = None
+                    self._messages.controls.clear()
+                    self._hist_blocks = []
+                    if self._tabs and self.page:
+                        self.page.run_task(self._open, self._tabs[-1])
+                    elif self._module_on:
+                        self._show_state_overlay("idle")
+                self._save_prefs()
             for a, i in self._friends.items():
                 if a not in self._search_index:
                     self._search_index[a] = _search_key(i.get("name", ""))

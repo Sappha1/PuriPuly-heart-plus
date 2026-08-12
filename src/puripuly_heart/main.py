@@ -186,100 +186,6 @@ def _requires_soxr_runtime_startup_check(args: argparse.Namespace) -> bool:
     return args.command == "run-mic"
 
 
-BOOT_HIDE_STOP = None  # threading.Event set by app.py just before reveal
-
-
-def _child_flet_hwnd_pids() -> set:
-    """PIDs of flet.exe processes whose PARENT is this process — the only
-    windows the boot watchdog is allowed to touch (other running copies of
-    the app must never be affected)."""
-    import ctypes
-    import ctypes.wintypes as wt
-    import os
-
-    pids: set = set()
-    k32 = ctypes.windll.kernel32
-
-    class PROCESSENTRY32W(ctypes.Structure):
-        _fields_ = [("dwSize", wt.DWORD), ("cntUsage", wt.DWORD),
-                    ("th32ProcessID", wt.DWORD),
-                    ("th32DefaultHeapID", ctypes.POINTER(ctypes.c_ulong)),
-                    ("th32ModuleID", wt.DWORD), ("cntThreads", wt.DWORD),
-                    ("th32ParentProcessID", wt.DWORD),
-                    ("pcPriClassBase", ctypes.c_long), ("dwFlags", wt.DWORD),
-                    ("szExeFile", ctypes.c_wchar * 260)]
-
-    snap = k32.CreateToolhelp32Snapshot(0x2, 0)
-    if snap in (0, -1):
-        return pids
-    try:
-        entry = PROCESSENTRY32W()
-        entry.dwSize = ctypes.sizeof(PROCESSENTRY32W)
-        me = os.getpid()
-        ok = k32.Process32FirstW(snap, ctypes.byref(entry))
-        while ok:
-            if (entry.th32ParentProcessID == me
-                    and entry.szExeFile.lower() == "flet.exe"):
-                pids.add(int(entry.th32ProcessID))
-            ok = k32.Process32NextW(snap, ctypes.byref(entry))
-    finally:
-        k32.CloseHandle(snap)
-    return pids
-
-
-def _for_each_child_flet_window(fn) -> None:
-    import ctypes
-    import ctypes.wintypes as wt
-
-    targets = _child_flet_hwnd_pids()
-    if not targets:
-        return
-    u32 = ctypes.windll.user32
-    proto = ctypes.WINFUNCTYPE(wt.BOOL, wt.HWND, wt.LPARAM)
-
-    def _cb(hwnd, _l):
-        pid = wt.DWORD()
-        u32.GetWindowThreadProcessId(hwnd, ctypes.byref(pid))
-        if pid.value in targets:
-            fn(u32, hwnd)
-        return True
-
-    u32.EnumWindows(proto(_cb), 0)
-
-
-def force_show_flet_window() -> None:
-    """Deterministic reveal, independent of whether the flet client honors
-    page.window.visible: SW_SHOW our child flet windows."""
-    try:
-        _for_each_child_flet_window(lambda u32, hwnd: u32.ShowWindow(hwnd, 5))
-    except Exception:
-        pass
-
-
-def _hide_flet_boot_window():
-    """Poll every 10ms and SW_HIDE any visible window of OUR child flet.exe —
-    the raw boot window disappears within a frame of being created. Returns
-    the disarm event (set it, then force_show_flet_window())."""
-    import threading
-
-    stop = threading.Event()
-
-    def _watch() -> None:
-        import time as _t
-        deadline = _t.monotonic() + 45
-        while not stop.is_set() and _t.monotonic() < deadline:
-            try:
-                _for_each_child_flet_window(
-                    lambda u32, hwnd: u32.ShowWindow(hwnd, 0)
-                    if u32.IsWindowVisible(hwnd) else None)
-            except Exception:
-                pass
-            _t.sleep(0.01)
-
-    threading.Thread(target=_watch, daemon=True, name="boot-hide").start()
-    return stop
-
-
 def _run_gui(config_path: Path, *, debug_ui_preview: bool) -> int:
     import flet as ft
 
@@ -293,13 +199,14 @@ def _run_gui(config_path: Path, *, debug_ui_preview: bool) -> int:
             debug_ui_preview=debug_ui_preview,
         )
 
-    # Hidden start: the raw flet window (default size, flet icon) must never
-    # flash before the app configures itself. The bundled flet client IGNORES
-    # FLET_APP_HIDDEN (verified: its window shows ~1.4s after spawn anyway),
-    # so a watchdog hides the boot window at the OS level; app.py disarms it
-    # and shows the window once size/icon/layout are final.
-    global BOOT_HIDE_STOP
-    BOOT_HIDE_STOP = _hide_flet_boot_window()
+    # Hidden start: the flet boot window must never flash (the bundled
+    # client IGNORES FLET_APP_HIDDEN — verified live). The stealth state
+    # lives in boot_stealth (its own module) because this entry runs as
+    # __main__ when frozen: state stored HERE is invisible to
+    # `import puripuly_heart.main` (a second module instance) — which is
+    # exactly how r455 armed a watchdog nobody could disarm.
+    from puripuly_heart import boot_stealth
+    boot_stealth.start()
     ft.app(target=_target, assets_dir=str(assets_dir()),
            view=ft.AppView.FLET_APP_HIDDEN)
     return 0

@@ -329,12 +329,8 @@ class TranslatorApp:
             # normal reveal, never leave the window invisible
             await asyncio.sleep(8)
             with contextlib.suppress(Exception):
-                from puripuly_heart import main as _mainmod
-                ev = getattr(_mainmod, "BOOT_HIDE_STOP", None)
-                if ev is not None:
-                    ev.set()
-                    await asyncio.sleep(0.06)
-                _mainmod.force_show_flet_window()
+                from puripuly_heart import boot_stealth as _bs
+                _bs.finish()
             self.page.window.visible = True
             with contextlib.suppress(Exception):
                 self.page.update()
@@ -3847,18 +3843,14 @@ async def main_gui(page: ft.Page, *, config_path, debug_ui_preview: bool = False
     except Exception:
         pass
 
-    # The boot window is hidden at the OS level by main's watchdog (the flet
-    # client ignores FLET_APP_HIDDEN); disarm it and show the window now that
-    # size/icon/layout are final.
+    # The boot window is parked off-screen by boot_stealth's watchdog (the
+    # flet client ignores FLET_APP_HIDDEN); disarm it and show the window now
+    # that size/icon/layout are final.
     try:
-        from puripuly_heart import main as _mainmod
-        _ev = getattr(_mainmod, "BOOT_HIDE_STOP", None)
-        if _ev is not None:
-            _ev.set()
-            time.sleep(0.06)           # let the watchdog loop exit first
+        from puripuly_heart import boot_stealth as _bs
         app.page.window.visible = True
         app.page.update()
-        _mainmod.force_show_flet_window()
+        _bs.finish()
     except Exception:
         pass
 

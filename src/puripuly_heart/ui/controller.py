@@ -4151,6 +4151,7 @@ class GuiController:
         preset_index: int | None = None,
         extra_target_codes: list[str] | None = None,
         extra_peer_source_codes: list[str] | None = None,
+        extra_peer_target_codes: list[str] | None = None,
     ) -> None:
         if self.settings is None:
             return
@@ -4172,6 +4173,8 @@ class GuiController:
                 target_languages=targets if targets else [target_code],
                 peer_source_language=peer_source_code,
                 peer_target_language=peer_target_code,
+                extra_peer_sources=list(extra_peer_source_codes or []),
+                extra_peer_targets=list(extra_peer_target_codes or []),
             )
         # Sync language and extra targets to hub immediately so in-flight
         # translations use the new language before apply_settings completes.
@@ -6566,6 +6569,8 @@ class GuiController:
                             "targets": list(p.target_languages),
                             "peer_source": p.peer_source_language,
                             "peer_target": p.peer_target_language,
+                            "peer_src_extras": list(getattr(p, "extra_peer_sources", []) or []),
+                            "peer_tgt_extras": list(getattr(p, "extra_peer_targets", []) or []),
                         }
                         for p in settings.languages.presets
                     ],

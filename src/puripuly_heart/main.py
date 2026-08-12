@@ -199,7 +199,10 @@ def _run_gui(config_path: Path, *, debug_ui_preview: bool) -> int:
             debug_ui_preview=debug_ui_preview,
         )
 
-    ft.app(target=_target, assets_dir=str(assets_dir()))
+    # Hidden start: the raw flet window (default size, flet icon) must never
+    # flash before the app configures itself; app.py reveals it when ready.
+    ft.app(target=_target, assets_dir=str(assets_dir()),
+           view=ft.AppView.FLET_APP_HIDDEN)
     return 0
 
 

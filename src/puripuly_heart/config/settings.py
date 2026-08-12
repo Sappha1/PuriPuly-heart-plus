@@ -449,6 +449,10 @@ class LanguagePreset:
     target_languages: list[str] = field(default_factory=lambda: ["zh-CN"])
     peer_source_language: str = ""
     peer_target_language: str = ""
+    # Extra "their language" slots (the unified view's "+") — per-preset, like
+    # extra text targets. Old configs simply parse these as empty.
+    extra_peer_sources: list[str] = field(default_factory=list)
+    extra_peer_targets: list[str] = field(default_factory=list)
 
     @property
     def primary_target(self) -> str:
@@ -1673,6 +1677,8 @@ def to_dict(settings: AppSettings) -> dict[str, Any]:
                     "target_languages": p.target_languages,
                     "peer_source_language": p.peer_source_language,
                     "peer_target_language": p.peer_target_language,
+                    "extra_peer_sources": list(p.extra_peer_sources),
+                    "extra_peer_targets": list(p.extra_peer_targets),
                 }
                 for p in settings.languages.presets
             ],
@@ -3913,6 +3919,8 @@ def from_dict(data: dict[str, Any]) -> AppSettings:
                     # is how a legacy "ko" kept resurrecting after the v26
                     # migration cleared the field itself.
                     peer_target_language="",
+                    extra_peer_sources=[str(c) for c in (p.get("extra_peer_sources") or [])],
+                    extra_peer_targets=[str(c) for c in (p.get("extra_peer_targets") or [])],
                 )
                 for p in (data.get("languages", {}).get("presets") or [])
             ] or [

@@ -122,6 +122,11 @@ def run_steam_window() -> int:
         view.translate_message = _translate
         page.add(view)
         view.activate()
+        try:
+            page.window.visible = True
+            page.update()
+        except Exception:
+            pass
 
-    ft.app(target=_main)
+    ft.app(target=_main, view=ft.AppView.FLET_APP_HIDDEN)
     return 0

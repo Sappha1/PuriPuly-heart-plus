@@ -275,6 +275,8 @@ class SteamBridgeView(ft.Container):
         self._emote_meta: dict = {}    # emote name -> source game name
         self._sticker_meta: dict = {}
         self._chat_cache: dict = {}    # acct -> last-rendered history blocks
+        self._scroll_pos: dict = {}    # acct -> scroll px (open tabs keep position)
+        self._was_following: dict = {} # acct -> was at the bottom when last viewed
         self._module_on = True         # module toggle: off = helper not running, no RAM
         self._pend: dict | None = None   # short buffer: rapid same-sender lines → ONE block
         self._pend_task = None
@@ -339,7 +341,7 @@ class SteamBridgeView(ft.Container):
         ], spacing=4, tight=True)
         # The tabs ARE the header — each tab shows the friend's name + status, the
         # active one highlighted. No separate (redundant) person header.
-        self._tab_strip = ft.Row([], spacing=6, scroll=ft.ScrollMode.AUTO, expand=True)
+        self._tab_strip = ft.Row([], spacing=6, scroll=ft.ScrollMode.HIDDEN, expand=True)
         settings_btn = ft.IconButton(
             ft.Icons.SETTINGS_OUTLINED, icon_size=17, icon_color=_TEXT_FAINT,
             tooltip="Steam chat settings", visible=False,   # lives in the app header now
@@ -1748,8 +1750,10 @@ class SteamBridgeView(ft.Container):
             ft.Text(_disp_name(f) or "Steam friend", size=13, weight=ft.FontWeight.W_500,
                     color=_name_color(state, ingame), max_lines=1,
                     overflow=ft.TextOverflow.ELLIPSIS),
-            *([ft.Text("*", size=11, color=_TEXT_FAINT,
-                       tooltip=f.get("real") or f.get("name") or "")]
+            *([ft.Container(
+                    content=ft.Text("*", size=12, color=_TEXT_FAINT),
+                    margin=ft.margin.only(left=-2, bottom=4),
+                    tooltip=f.get("real") or f.get("name") or "")]
               if f.get("nick") else []),
             *self._status_badges(f),
         ], spacing=4, tight=True)
@@ -1801,14 +1805,24 @@ class SteamBridgeView(ft.Container):
 
     def _section_header(self, label: str, n: int, color: str = _SECTION,
                         collapsed: bool = False) -> ft.Control:
+        # Steam parity: the chevron only appears while hovering the header,
+        # and the member count only while the section is collapsed.
+        chev = ft.Icon(ft.Icons.CHEVRON_RIGHT if collapsed else ft.Icons.EXPAND_MORE,
+                       size=14, color=color, opacity=0, animate_opacity=120)
+
+        def _hov(e, c=chev):
+            c.opacity = 1 if e.data == "true" else 0
+            with contextlib.suppress(Exception):
+                c.update()
+
         return ft.Container(
             content=ft.Row([
-                ft.Icon(ft.Icons.CHEVRON_RIGHT if collapsed else ft.Icons.EXPAND_MORE,
-                        size=14, color=color),
-                ft.Text(f"{label}  {n}" if n else label, size=11,
+                chev,
+                ft.Text(f"{label}  {n}" if (collapsed and n) else label, size=11,
                         weight=ft.FontWeight.BOLD, color=color),
             ], spacing=1, tight=True, vertical_alignment=ft.CrossAxisAlignment.CENTER),
             padding=ft.padding.only(left=4, top=10, bottom=3), ink=True,
+            on_hover=_hov,
             on_click=lambda e, l=label: self._toggle_section(l))
 
     def _toggle_section(self, label: str) -> None:
@@ -1834,15 +1848,23 @@ class SteamBridgeView(ft.Container):
     def _game_group(self, game: str, members: list) -> ft.Control:
         icon = next((f.get("icon") for f in members if f.get("icon")), "")
         collapsed = game in self._collapsed_sections
+        _chev = ft.Icon(ft.Icons.CHEVRON_RIGHT if collapsed else ft.Icons.EXPAND_MORE,
+                        size=14, color=_C_INGAME, opacity=0, animate_opacity=120)
+
+        def _ghov(e, c=_chev):
+            c.opacity = 1 if e.data == "true" else 0
+            with contextlib.suppress(Exception):
+                c.update()
+
         header = ft.Container(
             content=ft.Row([
-                ft.Icon(ft.Icons.CHEVRON_RIGHT if collapsed else ft.Icons.EXPAND_MORE,
-                        size=14, color=_C_INGAME),
+                _chev,
                 self._game_icon(icon, 22),
                 ft.Text(f"{game}  {len(members)}", size=12, weight=ft.FontWeight.BOLD,
                         color=_C_INGAME),
             ], spacing=6, tight=True, vertical_alignment=ft.CrossAxisAlignment.CENTER),
             padding=ft.padding.only(left=4, top=10, bottom=3), ink=True,
+            on_hover=_ghov,
             on_click=lambda e, g=game: self._toggle_section(g))
         if collapsed:
             active_rows = [self._friend_row(f) for f in members if int(f["acct"]) == self._active]
@@ -1989,8 +2011,10 @@ class SteamBridgeView(ft.Container):
                     ft.Text(_disp_name(f) or "Chat", size=13,
                             color=_TEXT_PRIMARY if active else _TEXT_FAINT,
                             max_lines=1, overflow=ft.TextOverflow.ELLIPSIS),
-                    *([ft.Text("*", size=10, color=_TEXT_FAINT,
-                               tooltip=f.get("real") or f.get("name") or "")]
+                    *([ft.Container(
+                            content=ft.Text("*", size=11, color=_TEXT_FAINT),
+                            margin=ft.margin.only(left=-1, bottom=3),
+                            tooltip=f.get("real") or f.get("name") or "")]
                       if f.get("nick") else []),
                 ], spacing=2, tight=True),
                 ft.Text(sub, size=10, color=_name_color(state, ingame) if active else _TEXT_FAINT,
@@ -2022,6 +2046,9 @@ class SteamBridgeView(ft.Container):
     def _close_tab(self, acct: int) -> None:
         if acct in self._tabs:
             self._tabs.remove(acct)
+        # a closed tab forgets its position — reopening jumps to the newest
+        self._scroll_pos.pop(acct, None)
+        self._was_following.pop(acct, None)
         if acct == self._active:
             # Clear the closed chat's content IMMEDIATELY — don't leave it on screen
             # while the next chat's history loads.
@@ -2050,6 +2077,9 @@ class SteamBridgeView(ft.Container):
             # While scrolled up, stop following new messages; resume at the bottom
             # or via the jump button. Scrolling only ever happens via _scroll_to_end.
             self._following = not want
+            if self._active is not None:
+                self._scroll_pos[self._active] = float(e.pixels or 0)
+                self._was_following[self._active] = self._following
             if self._jump_btn.visible != want:
                 self._jump_btn.visible = want
                 self._jump_btn.update()
@@ -2058,15 +2088,29 @@ class SteamBridgeView(ft.Container):
         with contextlib.suppress(Exception):
             self._messages.scroll_to(offset=-1, duration=max(1, duration))
 
-    async def _anchor_end(self) -> None:
+    async def _anchor_end(self, pos: float | None = None) -> None:
         # After a rebuild the client needs a beat to lay out the new content —
         # scrolling immediately lands on stale geometry (the toggle-pushes-view-
         # off-the-end bug). Anchor twice across a short delay to be sure.
-        for delay in (0.06, 0.25):
-            await asyncio.sleep(delay)
-            self._following = True
-            with contextlib.suppress(Exception):
-                self._messages.scroll_to(offset=-1, duration=40)
+        # pos=None jumps to the end (fresh chat); a px value restores a kept
+        # position (open tabs keep their spot, like real Steam). duration=1 and
+        # the pre-anchor opacity=0 mean the scroll is never visible.
+        try:
+            for delay in (0.06, 0.25):
+                await asyncio.sleep(delay)
+                self._following = pos is None
+                with contextlib.suppress(Exception):
+                    self._messages.scroll_to(
+                        offset=(-1 if pos is None else pos), duration=1)
+                if self._messages.opacity != 1:
+                    self._messages.opacity = 1
+                    with contextlib.suppress(Exception):
+                        self._messages.update()
+        finally:
+            if self._messages.opacity != 1:
+                self._messages.opacity = 1
+                with contextlib.suppress(Exception):
+                    self._messages.update()
 
     def _jump_to_latest(self) -> None:
         with contextlib.suppress(Exception):
@@ -2568,8 +2612,12 @@ class SteamBridgeView(ft.Container):
             if extra:
                 blocks = blocks + self._coalesce(extra)
         self._pend = None                  # drop any half-buffered live lines
+        _acct_now = self._active or 0
+        _keep_pos = (None if self._was_following.get(_acct_now, True)
+                     else self._scroll_pos.get(_acct_now))
+        self._messages.opacity = 0         # hidden until anchored — no visible scroll
         self._messages.controls.clear()
-        self._following = True             # fresh chat follows the newest message
+        self._following = _keep_pos is None
         self._last_block = None            # fresh chat — don't coalesce across it
         self._hist_blocks = blocks
         self._chat_cache[self._active or 0] = blocks
@@ -2589,7 +2637,7 @@ class SteamBridgeView(ft.Container):
                 max(int(b.get("_ts") or 0) for b in blocks))
         self._rebuild_tabs()               # clears this tab's unread dot
         if self.page:
-            self.page.run_task(self._anchor_end)
+            self.page.run_task(self._anchor_end, _keep_pos)
         if self.page:
             self.page.update()
         # translate all blocks at once (cached ones are instant) instead of
@@ -2770,12 +2818,15 @@ class SteamBridgeView(ft.Container):
         cached = self._chat_cache.get(acct)
         if cached:
             self._hist_blocks = cached
-            self._following = True
+            _keep_pos = (None if self._was_following.get(acct, True)
+                         else self._scroll_pos.get(acct))
+            self._following = _keep_pos is None
+            self._messages.opacity = 0     # hidden until anchored
             for b in cached:
                 b.pop("_ctrl", None)
                 self._messages.controls.append(self._block_control(b))
             if self.page:
-                self.page.run_task(self._anchor_end)
+                self.page.run_task(self._anchor_end, _keep_pos)
                 self.page.run_task(self._fill_translations, cached, self._open_seq)
         else:
             self._messages.controls.append(ft.Container(

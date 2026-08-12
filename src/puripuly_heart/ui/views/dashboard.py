@@ -19,7 +19,7 @@ from puripuly_heart.ui.fonts import font_for_language
 from puripuly_heart.ui.i18n import get_locale, language_name, t
 from puripuly_heart.ui.overlay_peer_contract import OverlayPeerConsumerContract
 
-_BUILD_TAG = "r453"  #increment each build so user can confirm version
+_BUILD_TAG = "r454"  #increment each build so user can confirm version
 
 # ── VRCT-style dark palette ──────────────────────────────────────────────────
 _BG_MAIN = "#2e2f32"
@@ -5239,6 +5239,11 @@ class DashboardView(ft.Row):
         self._extra_target_lang_codes = list(targets[1:])
         self._peer_source_lang_code = preset.get("peer_source", "")
         self._peer_target_lang_code = preset.get("peer_target", "")
+        self._extra_peer_source_lang_codes = list(preset.get("peer_src_extras", []))
+        self._extra_peer_target_lang_codes = list(preset.get("peer_tgt_extras", []))
+        with contextlib.suppress(Exception):
+            self._rebuild_extra_peer_src_rows()
+            self._rebuild_extra_peer_tgt_rows()
         # Unified view: the (hidden) text target mirrors the partner's language.
         self._apply_unified_target_sync()
         self._update_input_font()
@@ -6931,10 +6936,12 @@ class DashboardView(ft.Row):
 
     def _log_presets(self, where: str) -> None:
         with contextlib.suppress(Exception):
-            logger.info("[PresetDbg] %s active=%d data=%s extras=%s", where,
-                        self._active_preset,
+            logger.info("[PresetDbg] %s active=%d data=%s extras=%s psrc=%s live_psrc=%s",
+                        where, self._active_preset,
                         [p.get("targets") for p in self._preset_data],
-                        self._extra_target_lang_codes)
+                        self._extra_target_lang_codes,
+                        [p.get("peer_src_extras") for p in self._preset_data],
+                        self._extra_peer_source_lang_codes)
 
     def _stash_active_preset(self) -> None:
         self._log_presets("stash")
@@ -6948,6 +6955,8 @@ class DashboardView(ft.Row):
                 "targets": [self._target_lang_code] + list(self._extra_target_lang_codes),
                 "peer_source": self._peer_source_lang_code,
                 "peer_target": self._peer_target_lang_code,
+                "peer_src_extras": list(self._extra_peer_source_lang_codes),
+                "peer_tgt_extras": list(self._extra_peer_target_lang_codes),
             }
 
     def _notify_language_change(self):
@@ -6976,6 +6985,7 @@ class DashboardView(ft.Row):
                 self._active_preset,
                 list(self._extra_target_lang_codes),
                 list(self._extra_peer_source_lang_codes),
+                list(self._extra_peer_target_lang_codes),
             )
 
     def _effective_peer_source_lang_code(self) -> str:
@@ -7054,6 +7064,8 @@ class DashboardView(ft.Row):
                     "targets": p.get("targets", ["zh-CN"]),
                     "peer_source": p.get("peer_source", ""),
                     "peer_target": p.get("peer_target", ""),
+                    "peer_src_extras": list(p.get("peer_src_extras", [])),
+                    "peer_tgt_extras": list(p.get("peer_tgt_extras", [])),
                 }
                 for p in presets[:3]
             ]
@@ -7073,11 +7085,16 @@ class DashboardView(ft.Row):
         # otherwise the hub keeps translating typed text into the stale
         # target. Converges: the second sync pass produces no diff.
         self._apply_unified_target_sync()
+        self._extra_peer_source_lang_codes = list(active.get("peer_src_extras", []))
+        self._extra_peer_target_lang_codes = list(active.get("peer_tgt_extras", []))
         if self._target_lang_code != target_code:
             self._notify_language_change()
         self._update_input_font()
         self._refresh_language_panel()
         self._refresh_language_rows()
+        with contextlib.suppress(Exception):
+            self._rebuild_extra_peer_src_rows()
+            self._rebuild_extra_peer_tgt_rows()
 
     def set_translation_enabled(self, enabled: bool) -> None:
         self.is_translation_on = bool(enabled)

@@ -324,6 +324,18 @@ class TranslatorApp:
         self.page.on_keyboard_event = self._on_keyboard_event
         self.page.on_resize = self._on_page_resize
 
+        async def _reveal_backstop() -> None:
+            # safety net for the hidden start: if startup dies before the
+            # normal reveal, never leave the window invisible
+            await asyncio.sleep(8)
+            if not self.page.window.visible:
+                self.page.window.visible = True
+                with contextlib.suppress(Exception):
+                    self.page.update()
+
+        with contextlib.suppress(Exception):
+            self.page.run_task(_reveal_backstop)
+
     def _build_layout(self):
         self.view_dashboard = DashboardView()
         self.view_settings = SettingsView()
@@ -2084,6 +2096,7 @@ class TranslatorApp:
         preset_index: int | None = None,
         extra_target_codes: list[str] | None = None,
         extra_peer_source_codes: list[str] | None = None,
+        extra_peer_target_codes: list[str] | None = None,
     ) -> None:
         if self.controller.settings is None:
             return
@@ -2138,6 +2151,7 @@ class TranslatorApp:
             preset_index=preset_index,
             extra_target_codes=extra_target_codes,
             extra_peer_source_codes=extra_peer_source_codes,
+            extra_peer_target_codes=extra_peer_target_codes,
         )
 
         async def _debounced_apply(_gen=self._language_change_gen, _p=_params):
@@ -3824,6 +3838,14 @@ async def main_gui(page: ft.Page, *, config_path, debug_ui_preview: bool = False
                 app.page.window.height = _h
             if _w >= MIN_WINDOW_WIDTH or _h >= MIN_WINDOW_HEIGHT:
                 app.page.update()
+    except Exception:
+        pass
+
+    # The window starts hidden (FLET_APP_HIDDEN in main) so users never see
+    # the default-size flet window with the wrong icon while the UI boots.
+    try:
+        app.page.window.visible = True
+        app.page.update()
     except Exception:
         pass
 

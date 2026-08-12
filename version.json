@@ -1,10 +1,9 @@
 {
-  "build": 458,
-  "tag": "r458",
+  "build": 459,
+  "tag": "r459",
   "date": "2026-08-11",
   "notes": [
-    "Steam Chat: pop-out window, full emoticon/sticker picker, sticker & room-effect sending, instant tab switching with per-tab scroll memory, tab menu (close / right / all)",
-    "New Modules section in Settings; the installer can fetch the Steam module too",
-    "Fixed: language preset tabs no longer share extra language slots; no more window flash at startup"
+    "Steam Chat settings: scrollbar no longer covers the toggles; new 'Translate my messages' option (off = your originals only)",
+    "Sign out of Steam moved to the module power screen; the settings gear works there too"
   ]
 }

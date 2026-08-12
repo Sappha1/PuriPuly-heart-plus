@@ -2,6 +2,11 @@
 
 User-facing changes per build. The latest build's highlights also appear in-app when an update is ready.
 
+## r459 — 2026-08-11
+
+- Steam Chat settings: the scrollbar no longer covers the toggles, and a new "Translate my messages" option shows your own messages untranslated when off
+- "Sign out of Steam" now lives on the module power screen (the cog menu is shorter), and the settings gear works from that screen too
+
 ## r458 — 2026-08-11
 
 - Steam Chat: chats are cached to disk and preloaded in the background — tabs and chat switches render instantly, scroll position included

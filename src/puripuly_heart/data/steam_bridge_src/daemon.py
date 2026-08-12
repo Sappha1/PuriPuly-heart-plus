@@ -150,6 +150,7 @@ class Daemon:
         self._last_ts = 0                     # newest message time seen (server-fetch poll)
         self._seen_keys: set = set()          # (ts, from, text) already emitted, for dedup
         self._sent_pending: list[str] = []   # texts we sent, for echo dedup
+        self._img_pending = 0                # app image-sends awaiting their echo
         self.convos: dict[int, dict] = {}   # acct -> friend dict (name/avatar/status)
         self._last_sig = None               # signature of last-pushed friends list
         self.clients: set[asyncio.StreamWriter] = set()
@@ -320,6 +321,7 @@ class Daemon:
             "images": images,
             "stickers": stickers,
             "ts": int(m.get("ts") or 0),
+            "ord": int(m.get("ordinal") or 0),
             "name": (self.own_name or "You") if from_me else self._name(acct),
             "avatar": self.own_avatar if from_me else self._avatar(acct),
         }
@@ -470,14 +472,27 @@ class Daemon:
                     continue
                 self._seen_keys.add(key)
                 self._last_ts = max(self._last_ts, m.get("ts") or 0)
+                if (m["from"] == self.own and self._img_pending > 0
+                        and (m.get("text") or "").lstrip().startswith("[img")):
+                    # echo of an app image-send (already rendered optimistically)
+                    self._img_pending -= 1
+                    with contextlib.suppress(Exception):
+                        await self.emit({"ev": "seen", "acct": self.active,
+                                         "ts": int(m.get("ts") or 0)})
+                    continue
                 if m["from"] == self.own:
                     # An app-send we already showed optimistically → swallow one echo.
                     # A message the user sent from ANOTHER device → show it. Steam
                     # normalizes sent emote codes :name: to ːnameː (U+02D0), so
                     # normalize both sides before comparing or emote echoes leak.
-                    raw = (m.get("text") or "").strip().replace("ː", ":").replace("ː", ":")
+                    def _canon(s: str) -> str:
+                        s = (s or "").replace("ː", ":").replace("ˑ", ":")
+                        s = re.sub(r"\[emoticon\]([A-Za-z0-9_]+)\[/emoticon\]",
+                                   r":\1:", s)
+                        return " ".join(s.split())
+                    raw = _canon(m.get("text") or "")
                     matched = next((s for s in self._sent_pending
-                                    if s.strip().replace("ː", ":") == raw), None)
+                                    if _canon(s) == raw), None)
                     if matched is not None:
                         self._sent_pending.remove(matched)
                         with contextlib.suppress(Exception):
@@ -536,6 +551,8 @@ class Daemon:
                             spoiler=bool(obj.get("spoiler")))
                     except Exception as exc:
                         result = {"step": "daemon", "err": str(exc)}
+                    if result.get("ok"):
+                        self._img_pending += 1   # swallow its echo in the poll
                     _diag(f"SEND_IMAGE acct={acct} -> {result}")
                     await self.emit({"ev": "image_sent", "acct": acct,
                                      "ok": bool(result.get("ok")),
@@ -562,6 +579,15 @@ class Daemon:
                             recon = await self.steam.dump_stickfx_methods()
                             import json as _json
                             _diag("STICKFX-RECON " + _json.dumps(recon)[:1800])
+                elif cmd == "react":
+                    with contextlib.suppress(Exception):
+                        res = await self.steam.react(
+                            int(obj.get("acct", 0)), int(obj.get("ts", 0)),
+                            int(obj.get("ord", 0)), obj.get("name", ""))
+                        _diag(f"REACT ts={obj.get('ts')} "
+                              f"name={obj.get('name')} -> {res}")
+                        await self.emit({"ev": "reacted",
+                                         "ok": str(res).startswith("ok:")})
                 elif cmd == "signout":
                     with contextlib.suppress(Exception):
                         await self.steam.sign_out()

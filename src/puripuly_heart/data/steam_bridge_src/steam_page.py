@@ -750,6 +750,51 @@ class SteamPage:
         except Exception as exc:
             return f"err:{exc}"
 
+    async def react(self, acct: int, ts: int, ordinal: int, name: str) -> str:
+        """Add an emoticon reaction to a message. Probes the reaction API and
+        returns 'ok:<method>' or 'none:<recon dump>' for the daemon's diag."""
+        try:
+            res = await self._page.evaluate(
+                r"""async (a) => {
+                  const app = window.g_FriendsUIApp, cs = app.m_ChatStore;
+                  let c = (cs.m_FriendChatStore.m_rgFriendChats || [])
+                      .find(x => x.m_unAccountIDFriend === a.acct);
+                  if (!c) { try { c = cs.GetFriendChat(a.acct); } catch (e) {} }
+                  if (!c) return 'none:no-chat';
+                  const names = ['SendMessageReaction', 'UpdateMessageReaction',
+                                 'SetMessageReaction', 'ReactToMessage',
+                                 'AddReaction'];
+                  const errs = [];
+                  for (const fn of names) {
+                    if (typeof c[fn] !== 'function') continue;
+                    try {
+                      await c[fn](a.ts, a.ord, 1, a.name, true);
+                      return 'ok:' + fn;
+                    } catch (e) { errs.push(fn + ':' + e); }
+                  }
+                  const found = [];
+                  let o = c;
+                  while (o && o !== Object.prototype) {
+                    for (const k of Object.getOwnPropertyNames(o)) {
+                      try {
+                        if (typeof c[k] === 'function' && /react/i.test(k)
+                            && !found.includes(k)) found.push(k);
+                      } catch (e) {}
+                    }
+                    o = Object.getPrototypeOf(o);
+                  }
+                  let mf = [];
+                  try {
+                    const m = (c.m_rgChatMessages || [])[0];
+                    if (m) for (const k in m) if (/react/i.test(k)) mf.push(k);
+                  } catch (e) {}
+                  return 'none:' + found.slice(0, 30).join(',') +
+                         '|errs:' + errs.join(';') + '|msg:' + mf.join(',');
+                }""", {"acct": acct, "ts": ts, "ord": ordinal, "name": name})
+            return str(res)
+        except Exception as exc:
+            return f"err:{exc}"
+
     async def reactivate(self, acct: int) -> None:
         """Nudge Steam to keep pushing live messages for the open chat to this
         (headless) page — OnActivate + a focus event."""

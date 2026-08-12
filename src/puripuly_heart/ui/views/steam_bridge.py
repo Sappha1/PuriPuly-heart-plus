@@ -2552,7 +2552,8 @@ class SteamBridgeView(ft.Container):
                 b = blocks[-1]
             else:
                 b = {"from_me": fm, "name": m.get("name", ""), "avatar": m.get("avatar", ""),
-                     "texts": [], "images": [], "stickers": [], "_ts": ts}
+                     "texts": [], "images": [], "stickers": [], "_ts": ts,
+                     "_ord": int(m.get("ord") or 0)}
                 blocks.append(b)
             if m.get("text"):
                 b["texts"].append(m["text"])
@@ -2560,6 +2561,7 @@ class SteamBridgeView(ft.Container):
             b["stickers"] += m.get("stickers", [])
             if ts:
                 b["_ts"] = ts
+                b["_ord"] = int(m.get("ord") or 0)
         for b in blocks:
             joined = " ".join(t.strip() for t in b["texts"] if t.strip())
             b["text"], b["emoticons"] = _extract_emoticons(joined)
@@ -2643,6 +2645,19 @@ class SteamBridgeView(ft.Container):
             out.append(self._emote_hoverable(img, "s", sname) if sname else img)
         for url in b.get("images", []):
             out.append(self._image_control(url))
+        if b.get("_reacts"):
+            out.append(ft.Container(
+                margin=ft.margin.only(top=2),
+                content=ft.Row(
+                    [ft.Container(
+                        content=ft.Image(src=self._emoticon_url(n),
+                                         width=16, height=16,
+                                         fit=ft.ImageFit.CONTAIN),
+                        bgcolor="#26282c", border_radius=9,
+                        border=ft.border.all(1, "#3a3b3e"),
+                        padding=ft.padding.symmetric(horizontal=5, vertical=3))
+                     for n in b["_reacts"][:12]],
+                    spacing=4, tight=True, wrap=True)))
         return out
 
     def _block_control(self, b: dict) -> ft.Control:
@@ -2660,12 +2675,57 @@ class SteamBridgeView(ft.Container):
         # (ts gates the grouping — messages long apart get their own header)
         self._last_block = {"from_me": b["from_me"], "name": b.get("name") or "",
                             "col": col, "ts": int(b.get("_ts") or 0)}
-        return ft.Container(
-            content=ft.Row([_avatar(b["avatar"]), col], spacing=8,
-                           vertical_alignment=ft.CrossAxisAlignment.START),
-            border_radius=6, bgcolor=ft.Colors.TRANSPARENT,
-            padding=ft.padding.symmetric(horizontal=6, vertical=3),
-            on_hover=self._msg_hover)
+        return ft.GestureDetector(
+            on_secondary_tap_down=lambda e, bb=b: self._show_react_menu(e, bb),
+            content=ft.Container(
+                content=ft.Row([_avatar(b["avatar"]), col], spacing=8,
+                               vertical_alignment=ft.CrossAxisAlignment.START),
+                border_radius=6, bgcolor=ft.Colors.TRANSPARENT,
+                padding=ft.padding.symmetric(horizontal=6, vertical=3),
+                on_hover=self._msg_hover))
+
+    def _show_react_menu(self, e, b: dict) -> None:
+        # quick reactions: recent emotes first, topped up with owned ones
+        names = [v for k, v in self._recent_picks if k == "e"][:6]
+        for item in (self._emoticons or []):
+            n = item["name"] if isinstance(item, dict) else str(item)
+            if n not in names:
+                names.append(n)
+            if len(names) >= 8:
+                break
+        if not names:
+            return
+        cells = [ft.Container(
+                    content=ft.Image(src=self._emoticon_url(n), width=26,
+                                     height=26, fit=ft.ImageFit.CONTAIN),
+                    padding=4, border_radius=6, ink=True, tooltip=f":{n}:",
+                    on_click=lambda ev, nn=n, bb=b: (
+                        self._hide_ctx(),
+                        self.page.run_task(self._send_react, bb, nn)))
+                 for n in names[:8]]
+        self._ctx_menu.content = ft.Column([
+            ft.Text(_T("steam.react", default="React"), size=11,
+                    weight=ft.FontWeight.BOLD, color=_SECTION),
+            ft.Row(cells, spacing=2, tight=True),
+        ], spacing=4, tight=True)
+        gx = float(getattr(e, "global_x", 0) or getattr(e, "local_x", 0) or 60)
+        gy = float(getattr(e, "global_y", 0) or getattr(e, "local_y", 0) or 60)
+        self._ctx_menu.left = max(4.0, gx - self._ctx_offset_x - 8)
+        self._ctx_menu.top = max(40.0, gy - 44)
+        self._ctx_menu.visible = True
+        self._ctx_backdrop.visible = True
+        if self.page:
+            self.page.update()
+
+    async def _send_react(self, b: dict, name: str) -> None:
+        ok = await self._cmd({"cmd": "react", "acct": self._active or 0,
+                              "ts": int(b.get("_ts") or 0),
+                              "ord": int(b.get("_ord") or 0), "name": name})
+        if ok:
+            b.setdefault("_reacts", [])
+            if name not in b["_reacts"]:
+                b["_reacts"].append(name)
+            self._rerender_chat()
 
     def _msg_hover(self, e) -> None:
         e.control.bgcolor = "#363a41" if e.data == "true" else ft.Colors.TRANSPARENT
@@ -3024,7 +3084,8 @@ class SteamBridgeView(ft.Container):
         b = {"from_me": bool(m.get("from_me")), "name": m.get("name", ""),
              "avatar": m.get("avatar", ""), "text": text, "emoticons": emos,
              "images": m.get("images", []), "stickers": m.get("stickers", []),
-             "_ts": ts, "_out_pending": bool(m.get("_out_pending"))}
+             "_ts": ts, "_ord": int(m.get("ord") or 0),
+             "_out_pending": bool(m.get("_out_pending"))}
         lb = self._last_block
         if (lb and lb["from_me"] == b["from_me"] and lb["name"] == (b.get("name") or "")
                 and (not lb.get("ts") or ts - lb["ts"] <= self._GROUP_GAP_S)):

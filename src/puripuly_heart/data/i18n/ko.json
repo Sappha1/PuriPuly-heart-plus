@@ -1050,5 +1050,6 @@
   "steam.dnd_desc": "모든 채팅 알림을 끕니다",
   "steam.edit_profile": "프로필 이름 편집",
   "steam.view_profile": "내 Steam 프로필 보기",
-  "steam.sign_out_short": "로그아웃"
+  "steam.sign_out_short": "로그아웃",
+  "steam.react": "반응"
 }

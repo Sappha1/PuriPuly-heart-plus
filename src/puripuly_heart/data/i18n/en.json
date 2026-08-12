@@ -1050,5 +1050,6 @@
   "steam.dnd_desc": "Disables all chat notifications",
   "steam.edit_profile": "Edit Profile Name",
   "steam.view_profile": "View my Steam profile",
-  "steam.sign_out_short": "Sign out"
+  "steam.sign_out_short": "Sign out",
+  "steam.react": "React"
 }

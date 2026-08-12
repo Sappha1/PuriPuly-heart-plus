@@ -2411,7 +2411,7 @@ class SteamBridgeView(ft.Container):
                 if _blks:
                     chats[str(_a)] = [
                         {k: v for k, v in b.items()
-                         if k not in ("_ctrl", "_out_ctrl")
+                         if k not in ("_ctrl", "_out_ctrl", "_seg_tr")
                          and isinstance(v, _ok)}
                         for b in _blks[-40:]]
             snap = {"seen": {str(k): v for k, v in self._seen_chat_ts.items()},
@@ -2626,7 +2626,9 @@ class SteamBridgeView(ft.Container):
             orig = ""          # effect messages render only the banner below
         translated = self._needs_tr(orig) and (
             self._tr_outgoing if b.get("from_me") else self._tr_incoming)
-        if orig and translated:
+        if orig and _SEG_RE.search(orig):
+            out.extend(self._segmented_units(b, orig, translated))
+        elif orig and translated:
             # Matches the VRChat tab: pinyin/romaji (top), original in GRAY, then
             # the translation as the prominent line.
             noml = _URL_RE.sub("", _plain_for_tr(orig)).strip()   # no URLs/code
@@ -2711,6 +2713,56 @@ class SteamBridgeView(ft.Container):
                      for n in b["_reacts"][:12]],
                     spacing=4, tight=True, wrap=True)))
         return out
+
+    def _segmented_units(self, b: dict, text: str, translated: bool) -> list:
+        """Quote/code messages: each segment renders as its own unit with the
+        reading and translation INSIDE the panel it belongs to."""
+        outs: list = []
+        segs = b["_seg_tr"] = []           # (source_text, tr_ctrl), filled async
+
+        def unit(seg: str, color: str) -> list:
+            items: list = []
+            src = _URL_RE.sub("", seg).strip()
+            do_tr = translated and bool(src) and self._needs_tr(src)
+            if do_tr and self._show_original and self._show_pinyin:
+                roman = self._romanize(src)
+                if roman:
+                    items.append(ft.Text(roman, size=12.5, italic=True,
+                                         color=_ACCENT))
+            if not do_tr or self._show_original:
+                items.append(ft.Text(spans=_spans(seg, color), size=14))
+            if do_tr:
+                tr_ctrl = ft.Text("", size=14, weight=ft.FontWeight.W_500,
+                                  color=_TEXT_PRIMARY)
+                if not self._show_original:
+                    tr_ctrl.spans = _spans(seg, "#9aa0a6")
+                segs.append((src, tr_ctrl))
+                items.append(tr_ctrl)
+            return items
+
+        for kind, seg in _segments(text):
+            seg = seg.strip("\n")
+            if not seg.strip():
+                continue
+            if kind == "q":
+                outs.append(ft.Container(
+                    content=ft.Column(unit(seg, "#b9bbbe"), spacing=1,
+                                      tight=True),
+                    border=ft.border.only(left=ft.BorderSide(3, "#4b4c4f")),
+                    bgcolor="#232428", border_radius=4,
+                    padding=ft.padding.symmetric(horizontal=10, vertical=6),
+                    margin=ft.margin.symmetric(vertical=2)))
+            elif kind == "c":
+                outs.append(ft.Container(
+                    content=ft.Text(seg, size=13, font_family="Consolas",
+                                    color="#c9d1c8"),
+                    border=ft.border.only(left=ft.BorderSide(3, "#4b8a6f")),
+                    bgcolor="#141518", border_radius=4,
+                    padding=10, margin=ft.margin.symmetric(vertical=2)))
+            else:
+                outs.extend(unit(seg, "#9aa0a6" if translated
+                                 else _TEXT_PRIMARY))
+        return outs
 
     def _text_blocks(self, text: str, color: str) -> list:
         outs: list = []
@@ -3036,6 +3088,23 @@ class SteamBridgeView(ft.Container):
     async def _translate_block(self, b: dict, seq: int, *, force: bool = False) -> None:
         orig = b.get("text", "")
         tc = b.get("_ctrl")
+        segs = b.get("_seg_tr")
+        if segs:
+            if b.pop("_tr_prefilled", False):
+                return
+            if ((not b.get("from_me") and not self._tr_incoming)
+                    or (b.get("from_me") and not self._tr_outgoing)):
+                return
+            for src, ctrl in segs:
+                tr = await self._tr(src, force=force)
+                if seq != self._open_seq:
+                    return
+                if not tr or tr == src:
+                    continue
+                self._apply_tr_spans(b, ctrl, tr)
+                with contextlib.suppress(Exception):
+                    ctrl.update()
+            return
         if not orig or tc is None:
             return
         if b.pop("_tr_prefilled", False):
@@ -3070,6 +3139,21 @@ class SteamBridgeView(ft.Container):
         after-paint trickle (one control update per block) was visible as a
         flicker on freshly opened chats."""
         for b in blocks:
+            segs = b.get("_seg_tr")
+            if segs:
+                if not (self._tr_outgoing if b.get("from_me")
+                        else self._tr_incoming):
+                    continue
+                done = True
+                for src, ctrl in segs:
+                    tr = self._tr_cache.get(self._tr_key(src))
+                    if tr and tr != src:
+                        self._apply_tr_spans(b, ctrl, tr)
+                    else:
+                        done = False
+                if done:
+                    b["_tr_prefilled"] = True
+                continue
             tc = b.get("_ctrl")
             orig = b.get("text", "")
             if tc is None or not orig:

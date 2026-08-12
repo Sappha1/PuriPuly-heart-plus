@@ -105,6 +105,7 @@ def parse_bbcode(raw: str) -> tuple[str, list[str], list[str]]:
         return (u.group(1) + " ") if u else " "
 
     text = _OG_RE.sub(_og, text)
+    text = text.replace("\\[", "\x13").replace("\\]", "\x14")
     # Server-fetched messages carry emotes as [emoticon]name[/emoticon] —
     # convert to the ː-token form the app's renderer understands (the CDN
     # serves ANY emote name; ownership belongs to the sender, not us).
@@ -116,9 +117,9 @@ def parse_bbcode(raw: str) -> tuple[str, list[str], list[str]]:
     text = _LOBBY_RE.sub(" 🎮 game invite ", text)
     text = _URLTAG_RE.sub(lambda m: (m.group(2).strip() or m.group(1).strip()), text)
     text = _EMOTICON_RE.sub(" ", text)
-    text = re.sub(r"\[quote\]", "\x11q\x12", text, flags=re.I)
+    text = re.sub(r"\[quote[^\]]*\]", "\x11q\x12", text, flags=re.I)
     text = re.sub(r"\[/quote\]", "\x11/q\x12", text, flags=re.I)
-    text = re.sub(r"\[code\]", "\x11c\x12", text, flags=re.I)
+    text = re.sub(r"\[code[^\]]*\]", "\x11c\x12", text, flags=re.I)
     text = re.sub(r"\[/code\]", "\x11/c\x12", text, flags=re.I)
     text = _TAG_RE.sub("", text)
     # Pasted-image messages carry the raw URL as text too — fold it into images
@@ -131,6 +132,7 @@ def parse_bbcode(raw: str) -> tuple[str, list[str], list[str]]:
     text = re.sub(r"[ \t]{2,}", " ", text)
     text = re.sub(r" ?\n ?", "\n", text)
     text = re.sub(r"\n{3,}", "\n\n", text).strip()
+    text = text.replace("\x13", "[").replace("\x14", "]")
     return text, images, stickers
 
 

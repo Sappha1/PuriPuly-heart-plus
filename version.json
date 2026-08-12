@@ -1,10 +1,10 @@
 {
-  "build": 462,
-  "tag": "r462",
-  "date": "2026-08-11",
+  "build": 469,
+  "tag": "r469",
+  "date": "2026-08-12",
   "notes": [
-    "Steam Chat: working status menu (Online / Away / Invisible / Offline + Do Not Disturb) with instant feedback; going back online after Offline reconnects automatically",
-    "Steam Chat: reopened chats load instantly from cache, pinyin covers your own messages, no more first-open flicker",
-    "Fixed: phantom unread dot on chats you just messaged; sent-translation line can no longer vanish"
+    "Steam Chat: Steam-style image viewer — the frame fits the picture exactly, with a corner ✕; images from Steam's newer CDN render inline",
+    "Steam Chat: links and filenames no longer send a near-identical 'translation' duplicate",
+    "Steam Chat: tidier module power screen (Turn off / Sign out side by side)"
   ]
 }

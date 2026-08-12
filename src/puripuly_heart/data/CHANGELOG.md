@@ -2,6 +2,13 @@
 
 User-facing changes per build. The latest build's highlights also appear in-app when an update is ready.
 
+## r469 — 2026-08-12
+
+- Steam Chat: the image viewer now matches Steam — the frame fits the picture exactly (no more empty bands), with a clear ✕ in the corner; clicking anywhere outside also closes it
+- Steam Chat: images from Steam's newer CDN render inline instead of appearing as bare links
+- Steam Chat: sending a link or filename no longer produces a near-identical "translation" duplicate — links in translated messages ride along untranslated
+- Steam Chat: the module power screen is tidier — Turn off and Sign out sit side by side, and Sign out moved there from the settings menu
+
 ## r462 — 2026-08-11
 
 - Steam Chat: status changes work — set Online / Away / Invisible / Offline from the menu on your name, with instant feedback; going back online after Offline reconnects automatically

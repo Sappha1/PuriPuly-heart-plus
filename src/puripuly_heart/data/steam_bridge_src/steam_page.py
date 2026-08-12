@@ -563,25 +563,13 @@ class SteamPage:
                     }
                     return [...out];
                   };
-                  const rx = kind === 'sticker' ? /sticker/i : /effect/i;
-                  // 1) dedicated method on the chat object or the store
-                  for (const host of [c, es]) {
-                    for (const k of protoNames(host)) {
-                      if (!rx.test(k) || !/send|use|play/i.test(k)) continue;
-                      try {
-                        const fn = host[k];
-                        if (typeof fn !== 'function') continue;
-                        await fn.call(host, kind === 'sticker' ? name : name);
-                        return { ok: true, how: k };
-                      } catch (e) {}
-                    }
-                  }
-                  // 2) wire-text fallback (effects: /roomeffect <name>)
+                  // RAWSTICKER-verified wire formats (limit="0" required):
+                  //   [sticker type="Name" limit="0"][/sticker]
+                  //   [roomeffect type="name" limit="0"][/roomeffect]
                   try {
-                    const text = kind === 'sticker'
-                        ? '[sticker type="' + name + '"][/sticker]'
-                        : '/roomeffect ' + name;
-                    if (c.SendChatMessage) { c.SendChatMessage(text); return { ok: true, how: 'text' }; }
+                    const tag = kind === 'sticker' ? 'sticker' : 'roomeffect';
+                    const text = '[' + tag + ' type="' + name + '" limit="0"][/' + tag + ']';
+                    if (c.SendChatMessage) { c.SendChatMessage(text); return { ok: true, how: 'bbcode' }; }
                   } catch (e) {}
                   return { ok: false, how: 'none' };
                 }""", [acct, name, kind]) or {"ok": False, "how": "eval"}

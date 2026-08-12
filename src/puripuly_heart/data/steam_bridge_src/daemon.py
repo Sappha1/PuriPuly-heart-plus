@@ -69,6 +69,9 @@ _IMGSRC_RE = re.compile(r'\[img\s+src=(?:"([^"]+)"|([^\s\]]+))[^\]]*\](?:\[/img\
 _IMG_RE = re.compile(r"\[img[^\]]*\](.*?)\[/img\]", re.I | re.S)
 _OG_RE = re.compile(r"\[og\b([^\]]*)\](?:\[/og\])?", re.I)
 _LOBBY_RE = re.compile(r"\[lobbyinvite[^\]]*\](?:\[/lobbyinvite\])?", re.I)
+_ROOMFX_RE = re.compile(r'\[roomeffect[^\]]*type="([^"]+)"[^\]]*\](?:\[/roomeffect\])?', re.I)
+_ROOMFX_ICON = {"balloons": "🎈", "confetti": "🎉",
+                "firework": "🎆", "goldfetti": "🎊"}
 _EMOTICON_RE = re.compile(r"\[emoticon[^\]]*\]", re.I)
 _TAG_RE = re.compile(r"\[/?[a-z][^\]]*\]", re.I)
 # Bare image-host URLs in the TEXT (Steam includes the URL alongside the [img]
@@ -107,6 +110,9 @@ def parse_bbcode(raw: str) -> tuple[str, list[str], list[str]]:
     # serves ANY emote name; ownership belongs to the sender, not us).
     text = re.sub(r"\[emoticon\]([A-Za-z0-9_]+)\[/emoticon\]",
                   lambda m: "ː" + m.group(1) + "ː", text, flags=re.I)
+    text = _ROOMFX_RE.sub(
+        lambda m: f" {_ROOMFX_ICON.get(m.group(1).lower(), '✨')} {m.group(1)} ",
+        text)
     text = _LOBBY_RE.sub(" 🎮 game invite ", text)
     text = _URLTAG_RE.sub(lambda m: (m.group(2).strip() or m.group(1).strip()), text)
     text = _EMOTICON_RE.sub(" ", text)
@@ -500,6 +506,12 @@ class Daemon:
                         res = await self.steam.send_sticker_or_effect(
                             int(obj.get("acct", 0)), str(obj.get("name", "")), kind)
                         _diag(f"STICKFX kind={kind} name={obj.get('name')!r} -> {res}")
+                        if (res or {}).get("ok") and kind == "sticker":
+                            nm = str(obj.get("name", ""))
+                            self._sent_pending.append(
+                                f'[sticker type="{nm}" limit="0"][/sticker]')
+                            if len(self._sent_pending) > 20:
+                                self._sent_pending.pop(0)
                         if not (res or {}).get("ok"):
                             recon = await self.steam.dump_stickfx_methods()
                             import json as _json

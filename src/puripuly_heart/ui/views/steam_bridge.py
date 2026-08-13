@@ -3307,6 +3307,24 @@ class SteamBridgeView(ft.Container):
             extra = [m for m in self._live_since_open if not _dup(m)]
             if extra:
                 blocks = blocks + self._coalesce(extra)
+        # Background-swept messages can be NEWER than the local-array snapshot
+        # (Steam withholds push while the real client is primary). The daemon
+        # now refuses to re-emit them, so carry them over from the cache or
+        # they'd vanish the moment the chat is opened.
+        _carry_acct = self._active or 0
+        _have = {(int(b.get("_ts") or 0), bool(b.get("from_me")), b.get("text") or "")
+                 for b in blocks}
+        _hist_max = max((int(b.get("_ts") or 0) for b in blocks), default=0)
+        _carry = [b for b in (self._chat_cache.get(_carry_acct) or [])
+                  if int(b.get("_ts") or 0) > _hist_max
+                  and (int(b.get("_ts") or 0), bool(b.get("from_me")),
+                       b.get("text") or "") not in _have]
+        if _carry:
+            blocks = blocks + [
+                {k: v for k, v in b.items()
+                 if k not in ("_ctrl", "_out_ctrl", "_seg_tr")}
+                for b in _carry
+            ]
         _acct_now = self._active or 0
         _fp = tuple((int(b.get("_ts") or 0), b.get("from"), b.get("text") or "",
                      len(b.get("images") or []), len(b.get("stickers") or []),

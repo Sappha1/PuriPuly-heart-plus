@@ -2,6 +2,13 @@
 
 User-facing changes per build. The latest build's highlights also appear in-app when an update is ready.
 
+## r499 — 2026-08-13
+
+- Fixed: opening an unread Steam chat no longer shows its messages twice
+- Fixed: your own sent messages no longer replay into a chat after switching tabs
+- Fixed: switching chats at the wrong moment could label a message with the wrong conversation
+- Fixed: several messages sent within the same second (bursts with stickers/images) now all arrive
+
 ## r496 — 2026-08-13
 
 - New: Steam messages now arrive for EVERY chat, not just the open one — a friend messaging you pops a background tab with an unread dot, just like real Steam

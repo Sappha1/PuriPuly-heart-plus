@@ -1,8 +1,8 @@
 {
-  "build": 496,
-  "tag": "r496",
+  "build": 499,
+  "tag": "r499",
   "date": "2026-08-13",
   "notes": [
-    "New: Steam messages arrive for every chat — background tabs appear with unread dots like real Steam"
+    "Fixed: Steam duplicates on unread open, own-message replays, wrong-chat labeling, and same-second burst drops"
   ]
 }

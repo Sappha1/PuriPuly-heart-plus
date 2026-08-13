@@ -159,6 +159,7 @@ class Daemon:
         self._last_recv: dict[int, int] = {}  # acct -> last m_rtLastMessageReceived seen
         self._recv_baselined = False          # first sweep only records, never emits
         self._seen_keys: set = set()          # (ts, from, text) already emitted, for dedup
+        self._emitted: dict = {}              # acct -> (ts, ordinal) high-water mark: never re-emit at/below
         self._sent_pending: list[str] = []   # texts we sent, for echo dedup
         self._img_pending = 0                # app image-sends awaiting their echo
         self.convos: dict[int, dict] = {}   # acct -> friend dict (name/avatar/status)
@@ -366,7 +367,13 @@ class Daemon:
         # Seed the server-fetch dedup from the loaded history so the live poll only
         # emits messages that arrive AFTER this open.
         self._last_ts = max((m.get("ts") or 0 for m in msgs), default=0)
-        self._seen_keys = {(m.get("ts"), m.get("from"), m.get("text")) for m in msgs}
+        # ADDITIVE: replacing this set wiped the sweep's dedup keys, and since
+        # Steam withholds push the swept message was absent from local history
+        # — every open re-emitted it as a duplicate
+        self._seen_keys |= {(m.get("ts"), m.get("from"), m.get("text")) for m in msgs}
+        _mark = max((int(m.get("ts") or 0) for m in msgs), default=0)
+        if _mark > self._emitted.get(acct, 0):
+            self._emitted[acct] = _mark
         _diag(f"OPEN acct={acct} ok={ok} count={len(msgs)} last_ts={self._last_ts}")
         history = [self._shape(m) for m in msgs[-40:]]
         await self.emit({"ev": "history", "acct": acct, "messages": history})
@@ -465,10 +472,34 @@ class Daemon:
                             fresh.sort(key=lambda m: (m.get("ts") or 0,
                                                       m.get("ordinal") or 0))
                             for m in fresh:
+                                mk = int(m.get("ts") or 0)
+                                if mk < self._emitted.get(acct, 0):
+                                    continue
                                 key = (m.get("ts"), m.get("from"), m.get("text"))
                                 if key in self._seen_keys:
                                     continue
                                 self._seen_keys.add(key)
+                                self._emitted[acct] = max(
+                                    self._emitted.get(acct, 0), mk)
+                                if m.get("from") == self.own:
+                                    raw_txt = (m.get("text") or "")
+                                    if (self._img_pending > 0
+                                            and raw_txt.lstrip().startswith("[img")):
+                                        self._img_pending -= 1
+                                        continue
+                                    def _canon_s(s: str) -> str:
+                                        s = (s or "").replace("ː", ":").replace("ˑ", ":")
+                                        s = re.sub(r"\[emoticon\]([A-Za-z0-9_]+)\[/emoticon\]",
+                                                   r":\1:", s)
+                                        s = re.sub(r"\[url=[^\]]*\]", "", s)
+                                        s = s.replace("[/url]", "")
+                                        return " ".join(s.split())
+                                    raw_c = _canon_s(raw_txt)
+                                    matched = next((s for s in self._sent_pending
+                                                    if _canon_s(s) == raw_c), None)
+                                    if matched is not None:
+                                        self._sent_pending.remove(matched)
+                                        continue
                                 _diag(f"INBOUND(sweep) acct={acct} "
                                       f"from={m.get('from')}")
                                 await self.emit({"ev": "inbound", "acct": acct,
@@ -503,8 +534,10 @@ class Daemon:
             # to stay light on the server) and emit any (ts,from,text) not shown yet.
             if ticks % 2 != 0:
                 continue
+            _poll_acct = self.active   # capture ONCE: an open landing mid-
+            # iteration must never re-tag this batch with another chat's acct
             try:
-                fresh = await self.steam.fetch_messages(self.active, self._last_ts - 3)
+                fresh = await self.steam.fetch_messages(_poll_acct, self._last_ts - 3)
                 self._fetch_err = None
             except Exception as exc:
                 if str(exc) != self._fetch_err:
@@ -514,12 +547,23 @@ class Daemon:
             # Emit strictly in time order — same-second messages from both sides can
             # come back interleaved, which made replies render before the message
             # they answered (and mis-grouped blocks in the app).
+            if self.active != _poll_acct:
+                continue   # chat switched while fetching — discard; the next
+                           # poll re-fetches under the new chat's own window
             fresh.sort(key=lambda m: (m.get("ts") or 0, m.get("ordinal") or 0))
             for m in fresh:
+                mk = int(m.get("ts") or 0)
+                if mk < self._emitted.get(_poll_acct, 0):
+                    continue          # STRICTLY older than the high-water mark
+                                      # — an OPEN reset the fetch window; never
+                                      # replay. Same-second bursts pass (their
+                                      # ordinals are unreliable) and dedup via
+                                      # _seen_keys instead.
                 key = (m.get("ts"), m.get("from"), m.get("text"))
                 if key in self._seen_keys:
                     continue
                 self._seen_keys.add(key)
+                self._emitted[_poll_acct] = max(self._emitted.get(_poll_acct, 0), mk)
                 self._last_ts = max(self._last_ts, m.get("ts") or 0)
                 if (m["from"] == self.own and self._img_pending > 0
                         and (m.get("text") or "").lstrip().startswith("[img")):
@@ -556,7 +600,7 @@ class Daemon:
                 _diag(f"INBOUND(fetch) from={m.get('from')} own={self.own} {(m.get('text') or '')[:30]!r}")
                 if "[sticker" in (m.get("text") or ""):
                     _diag("RAWSTICKER " + repr((m.get("text") or "")[:400]))
-                await self.emit({"ev": "inbound", "acct": self.active,
+                await self.emit({"ev": "inbound", "acct": _poll_acct,
                                  "message": self._shape(m)})
                 # The view clears its typing indicator when a message lands; if the
                 # friend is STILL composing, our cached state would suppress the

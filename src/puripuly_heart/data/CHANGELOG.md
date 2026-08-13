@@ -2,6 +2,10 @@
 
 User-facing changes per build. The latest build's highlights also appear in-app when an update is ready.
 
+## r493 — 2026-08-13
+
+- Fixed: fresh installs without the Steam module showed an empty chat panel (no tabs, no header) until the module was installed
+
 ## r492 — 2026-08-13
 
 - Fixed: Steam — sent links no longer show a phantom duplicate in the app

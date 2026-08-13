@@ -19,7 +19,7 @@ from puripuly_heart.ui.fonts import font_for_language
 from puripuly_heart.ui.i18n import get_locale, language_name, t
 from puripuly_heart.ui.overlay_peer_contract import OverlayPeerConsumerContract
 
-_BUILD_TAG = "r492"  #increment each build so user can confirm version
+_BUILD_TAG = "r493"  #increment each build so user can confirm version
 
 # ── VRCT-style dark palette ──────────────────────────────────────────────────
 _BG_MAIN = "#2e2f32"
@@ -1560,13 +1560,15 @@ class DashboardView(ft.Row):
                           tooltip=t("steam.settings_title"),
                           on_click=lambda e: self._steam_header_gear()),
         ], spacing=0, visible=False)
+        self._tab_steam_wrap = ft.GestureDetector(
+            content=self._tab_steam,
+            on_secondary_tap_down=self._on_tab_steam_right)
         chat_header = ft.Row(
             [
                 ft.GestureDetector(content=self._tab_vrc,
                                    on_secondary_tap_down=self._on_tab_vrc_right),
                 ft.Container(width=4),
-                ft.GestureDetector(content=self._tab_steam,
-                                   on_secondary_tap_down=self._on_tab_steam_right),
+                self._tab_steam_wrap,
                 ft.Container(expand=True),
                 self._vrc_header_actions,
                 self._steam_lang_slot,
@@ -1798,12 +1800,17 @@ class DashboardView(ft.Row):
             if steam_module_installed():
                 self._steam_view = SteamBridgeView()
             else:
-                # Optional module (like OCR): no helper on disk -> no Steam tab
+                # Optional module (like OCR): no helper on disk -> no Steam tab.
+                # HIDE THE WRAPPER, not just the chip — a visible
+                # GestureDetector with a hidden child blanked the whole right
+                # panel for fresh installs.
                 self._steam_view = ft.Container()
                 self._tab_steam.visible = False
+                self._tab_steam_wrap.visible = False
         except Exception:
             self._steam_view = ft.Container()
             self._tab_steam.visible = False
+            self._tab_steam_wrap.visible = False
         self._chat_body = ft.Container(content=self._vrc_chat_body, expand=True)
         right_panel = ft.Container(
             content=ft.Column(

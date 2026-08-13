@@ -1,11 +1,8 @@
 {
-  "build": 492,
-  "tag": "r492",
+  "build": 493,
+  "tag": "r493",
   "date": "2026-08-13",
   "notes": [
-    "Fixed: Steam link duplicates, message ordering, blank untranslatable lines",
-    "Fixed: chat off/on no longer leaves Translation stuck waiting",
-    "New: Steam tab right-click — module off/on and sign out",
-    "Improved: more install mirrors for restrictive networks; helpers update with the app"
+    "Fixed: fresh installs without the Steam module showed an empty chat panel"
   ]
 }

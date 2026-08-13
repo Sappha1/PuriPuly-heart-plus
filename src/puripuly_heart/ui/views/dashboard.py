@@ -19,7 +19,7 @@ from puripuly_heart.ui.fonts import font_for_language
 from puripuly_heart.ui.i18n import get_locale, language_name, t
 from puripuly_heart.ui.overlay_peer_contract import OverlayPeerConsumerContract
 
-_BUILD_TAG = "r494"  #increment each build so user can confirm version
+_BUILD_TAG = "r495"  #increment each build so user can confirm version
 
 # ── VRCT-style dark palette ──────────────────────────────────────────────────
 _BG_MAIN = "#2e2f32"
@@ -7715,6 +7715,18 @@ class DashboardView(ft.Row):
             pass
 
     def apply_locale(self) -> None:
+        # r495: the MIC/PEER model sublabels are set once via provider_label()
+        # and kept as literal strings — re-derive them so a UI language switch
+        # doesn't leave "(Local)" in the previous language.
+        with contextlib.suppress(Exception):
+            from puripuly_heart.ui.i18n import provider_label
+
+            _stt_val = getattr(self, "_current_stt_provider_value", "")
+            if _stt_val:
+                self.set_stt_provider_label(provider_label(_stt_val), _stt_val)
+            _peer_val = getattr(self, "_current_peer_stt_provider_value", "")
+            if _peer_val:
+                self.set_peer_stt_provider_label(provider_label(_peer_val), _peer_val)
         # r377: the find bar is built with the rest of the dashboard, which
         # happens BEFORE the saved locale is applied — so without this its
         # placeholder and button tooltips are English for the whole session,

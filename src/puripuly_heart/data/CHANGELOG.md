@@ -2,6 +2,10 @@
 
 User-facing changes per build. The latest build's highlights also appear in-app when an update is ready.
 
+## r495 — 2026-08-13
+
+- Fixed: the MIC/PEER model names in the sidebar now follow the UI language when you switch it
+
 ## r494 — 2026-08-13
 
 - Fixed: the overlay now repairs its OpenVR runtime file automatically if an antivirus removes it

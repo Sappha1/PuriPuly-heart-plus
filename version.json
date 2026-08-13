@@ -1,10 +1,8 @@
 {
-  "build": 494,
-  "tag": "r494",
+  "build": 495,
+  "tag": "r495",
   "date": "2026-08-13",
   "notes": [
-    "Fixed: overlay self-repairs its OpenVR runtime if antivirus removes it",
-    "Fixed: overlay recovers always-on-top automatically after fullscreen changes",
-    "Fixed: locked overlay briefly blocking clicks at startup"
+    "Fixed: sidebar model names follow the UI language when switched"
   ]
 }

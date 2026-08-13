@@ -2,6 +2,10 @@
 
 User-facing changes per build. The latest build's highlights also appear in-app when an update is ready.
 
+## r496 — 2026-08-13
+
+- New: Steam messages now arrive for EVERY chat, not just the open one — a friend messaging you pops a background tab with an unread dot, just like real Steam
+
 ## r495 — 2026-08-13
 
 - Fixed: the MIC/PEER model names in the sidebar now follow the UI language when you switch it

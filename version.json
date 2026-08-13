@@ -1,8 +1,8 @@
 {
-  "build": 495,
-  "tag": "r495",
+  "build": 496,
+  "tag": "r496",
   "date": "2026-08-13",
   "notes": [
-    "Fixed: sidebar model names follow the UI language when switched"
+    "New: Steam messages arrive for every chat — background tabs appear with unread dots like real Steam"
   ]
 }

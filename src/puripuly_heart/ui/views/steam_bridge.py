@@ -370,6 +370,7 @@ class SteamBridgeView(ft.Container):
         self._pend_task = None
         self._hist_blocks: list = []  # blocks currently rendered (for retranslate)
         self._seen_chat_ts: dict[int, int] = {}  # acct -> newest msg ts we've shown
+        self._unread_live: set[int] = set()   # accts with live unread (no open needed)
         self._friends: dict[int, dict] = {}
         self._search_index: dict[int, str] = {}
         self._tabs: list[int] = []
@@ -2209,7 +2210,9 @@ class SteamBridgeView(ft.Container):
         # Unread dot: a background tab whose chat has a newer message than we've
         # shown gets Steam's amber dot (cleared by opening the tab).
         unread = (not active and not self._dnd
-                  and int(f.get("last_chat") or 0) > self._seen_chat_ts.get(acct, 1 << 62))
+                  and (acct in self._unread_live
+                       or int(f.get("last_chat") or 0)
+                       > self._seen_chat_ts.get(acct, 1 << 62)))
         row_items = [
             _avatar(f.get("avatar", ""), 26),
             ft.Column([
@@ -3523,6 +3526,7 @@ class SteamBridgeView(ft.Container):
             return
         self._hide_ctx()
         self._open_seq += 1
+        self._unread_live.discard(acct)
         self._live_since_open = []
         self._active = acct
         if acct not in self._tabs:
@@ -3835,9 +3839,26 @@ class SteamBridgeView(ft.Container):
             if int(ev.get("acct", 0)) == self._active:
                 self._set_typing(ev.get("name", "") if ev.get("typing") else "")
         elif kind == "inbound":
-            if int(ev.get("acct", 0)) == self._active:
+            _in_acct = int(ev.get("acct", 0))
+            if _in_acct == self._active:
                 self._set_typing("")
                 await self._append_message(ev.get("message", {}))
+            elif _in_acct:
+                # a chat that is NOT open: surface a background tab with an
+                # unread dot and cache the line — never steal focus
+                m = ev.get("message", {})
+                with contextlib.suppress(Exception):
+                    blocks = self._chat_cache.setdefault(_in_acct, [])
+                    blocks.extend(self._coalesce([m]))
+                    if len(blocks) > 60:
+                        del blocks[:-40]
+                if _in_acct not in self._tabs:
+                    self._tabs.append(_in_acct)
+                self._unread_live.add(_in_acct)
+                self._rebuild_tabs()
+                if self.page:
+                    with contextlib.suppress(Exception):
+                        self.page.update()
         elif kind == "image_sent":
             if not ev.get("ok"):
                 d = ev.get("detail") or {}

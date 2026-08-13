@@ -444,6 +444,24 @@ class SteamPage:
                 [acct, int(since_ts)],
             ) or []
 
+    async def chat_activity(self) -> dict:
+        """acct -> m_rtLastMessageReceived for every 1:1 chat. One cheap read;
+        drives the all-chats inbound sweep (messages must surface even for
+        chats that are not open in the app)."""
+        try:
+            rows = await self._page.evaluate(
+                r"""() => {
+                  const a = window.g_FriendsUIApp;
+                  const out = [];
+                  (a.m_ChatStore.m_FriendChatStore.m_rgFriendChats || []).forEach(c => {
+                    out.push([c.m_unAccountIDFriend || 0, c.m_rtLastMessageReceived || 0]);
+                  });
+                  return out;
+                }""")
+            return {int(k): int(v) for k, v in (rows or []) if k}
+        except Exception:
+            return {}
+
     async def is_typing(self, acct: int) -> bool:
         try:
             return bool(await self._page.evaluate(

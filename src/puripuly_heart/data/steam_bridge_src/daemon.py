@@ -156,6 +156,8 @@ class Daemon:
         self._typing = False
         self._last_ts = 0                     # newest message time seen (server-fetch poll)
         self._fetch_err = None                # last fetch failure (dedup diag spam)
+        self._last_recv: dict[int, int] = {}  # acct -> last m_rtLastMessageReceived seen
+        self._recv_baselined = False          # first sweep only records, never emits
         self._seen_keys: set = set()          # (ts, from, text) already emitted, for dedup
         self._sent_pending: list[str] = []   # texts we sent, for echo dedup
         self._img_pending = 0                # app image-sends awaiting their echo
@@ -442,6 +444,42 @@ class Daemon:
                                          "invisible": self.own_invisible,
                                          "ingame": self.own_ingame, "game": self.own_game,
                                          "emoticons": self.emoticons, "stickers": self.stickers, "effects": self.effects})
+            # ALL-CHATS inbound sweep: a friend messaging a chat that is NOT
+            # open in the app must still surface (tab + unread + cached line)
+            # like real Steam. One cheap clock read; fetch only advanced chats.
+            if self._started and self.signed and ticks % 3 == 0:
+                with contextlib.suppress(Exception):
+                    activity = await self.steam.chat_activity()
+                    if activity and not self._recv_baselined:
+                        self._recv_baselined = True
+                        self._last_recv.update(activity)
+                    elif activity:
+                        changed = [a for a, ts in activity.items()
+                                   if a != self.active
+                                   and ts > self._last_recv.get(a, 0)][:3]
+                        for acct in changed:
+                            prev = self._last_recv.get(acct, 0)
+                            self._last_recv[acct] = activity[acct]
+                            fresh = await self.steam.fetch_messages(
+                                acct, max(prev - 3, 1))
+                            fresh.sort(key=lambda m: (m.get("ts") or 0,
+                                                      m.get("ordinal") or 0))
+                            for m in fresh:
+                                key = (m.get("ts"), m.get("from"), m.get("text"))
+                                if key in self._seen_keys:
+                                    continue
+                                self._seen_keys.add(key)
+                                _diag(f"INBOUND(sweep) acct={acct} "
+                                      f"from={m.get('from')}")
+                                await self.emit({"ev": "inbound", "acct": acct,
+                                                 "message": self._shape(m)})
+                        # brand-new chats appearing post-baseline start at
+                        # their current clock (handled above via changed)
+                        if self.active in activity:
+                            # the active poll already streams this chat — keep
+                            # its baseline current so tabbing away is quiet
+                            self._last_recv[self.active] = activity[self.active]
+
             if not self.active:
                 continue
             # keep the chat warm/foreground every ~4s (helps typing + mark-read).

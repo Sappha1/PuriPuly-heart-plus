@@ -20,7 +20,9 @@ import json
 import sys
 from pathlib import Path
 
-from PyInstaller.utils.hooks import collect_data_files, collect_dynamic_libs
+from PyInstaller.utils.hooks import (collect_data_files,
+                                     collect_dynamic_libs,
+                                     collect_submodules)
 
 # Add src to path for imports
 src_path = Path("src").resolve()
@@ -155,6 +157,7 @@ runtime_binaries += collect_vendored_openvr_runtime_binaries()
 # Hidden imports for dynamic imports
 hiddenimports = [
     "PIL.ImageGrab",       # beta/steam-bridge: clipboard-image paste (lazy import)
+    "pygments",            # r476: code-block syntax highlighting (lazy import)
     "kaldi_native_fbank",  # r318 speaker-ID features (imported lazily)
     "puripuly_heart.providers.stt.deepgram",
     "puripuly_heart.providers.stt.qwen_asr",
@@ -197,6 +200,7 @@ hiddenimports = [
     "ctranslate2",
     "langdetect",
 ]
+hiddenimports += collect_submodules("pygments.lexers")
 
 a = Analysis(
     [str(src_path / "puripuly_heart" / "main.py")],

@@ -237,6 +237,43 @@ def _segments(text: str):
         yield ("t", text[pos:])
 
 
+_CODE_COLORS = [
+    ("Comment", "#6a9955"), ("String", "#ce9178"), ("Number", "#b5cea8"),
+    ("Keyword", "#c586c0"), ("Name.Function", "#dcdcaa"),
+    ("Name.Class", "#4ec9b0"), ("Name.Builtin", "#4ec9b0"),
+    ("Name.Decorator", "#dcdcaa"), ("Operator", "#d4d4d4"),
+]
+
+
+def _code_spans(code: str) -> list:
+    """Syntax-highlighted spans via Pygments (bundled, fully offline)."""
+    mono = ft.TextStyle(color="#c9d1c8", font_family="Consolas", size=13)
+    try:
+        from pygments import lex
+        from pygments.lexers import guess_lexer
+        from pygments.util import ClassNotFound
+        try:
+            lexer = guess_lexer(code)
+        except ClassNotFound:
+            from pygments.lexers.special import TextLexer
+            lexer = TextLexer()
+        spans = []
+        for tok, val in lex(code, lexer):
+            if not val:
+                continue
+            color = "#c9d1c8"
+            ts = str(tok)
+            for prefix, c in _CODE_COLORS:
+                if ("Token." + prefix) in ts:
+                    color = c
+                    break
+            spans.append(ft.TextSpan(val, ft.TextStyle(
+                color=color, font_family="Consolas", size=13)))
+        return spans or [ft.TextSpan(code, mono)]
+    except Exception:
+        return [ft.TextSpan(code, mono)]
+
+
 def _plain_for_tr(text: str) -> str:
     """Translation/reading input: drop code blocks, unwrap quotes."""
     t = _SEG_RE.sub(lambda m: "" if m.group(1) == "c" else m.group(2), text or "")
@@ -2626,7 +2663,8 @@ class SteamBridgeView(ft.Container):
             orig = ""          # effect messages render only the banner below
         translated = self._needs_tr(orig) and (
             self._tr_outgoing if b.get("from_me") else self._tr_incoming)
-        if orig and _SEG_RE.search(orig):
+        if orig and (_SEG_RE.search(orig)
+                     or ("\n" in orig and translated)):
             out.extend(self._segmented_units(b, orig, translated))
         elif orig and translated:
             # Matches the VRChat tab: pinyin/romaji (top), original in GRAY, then
@@ -2721,23 +2759,34 @@ class SteamBridgeView(ft.Container):
         segs = b["_seg_tr"] = []           # (source_text, tr_ctrl), filled async
 
         def unit(seg: str, color: str) -> list:
+            # PER LINE: the reading and translation belong directly under the
+            # line they translate, not pooled at the segment's end
             items: list = []
-            src = _URL_RE.sub("", seg).strip()
-            do_tr = translated and bool(src) and self._needs_tr(src)
-            if do_tr and self._show_original and self._show_pinyin:
-                roman = self._romanize(src)
-                if roman:
-                    items.append(ft.Text(roman, size=12.5, italic=True,
-                                         color=_ACCENT))
-            if not do_tr or self._show_original:
-                items.append(ft.Text(spans=_spans(seg, color), size=14))
-            if do_tr:
-                tr_ctrl = ft.Text("", size=14, weight=ft.FontWeight.W_500,
-                                  color=_TEXT_PRIMARY)
-                if not self._show_original:
-                    tr_ctrl.spans = _spans(seg, "#9aa0a6")
-                segs.append((src, tr_ctrl))
-                items.append(tr_ctrl)
+            lines = seg.split("\n")
+            multi = len([l for l in lines if l.strip()]) > 1
+            for line in lines:
+                line_s = line.strip()
+                if not line_s:
+                    items.append(ft.Container(height=6))   # blank-line gap
+                    continue
+                src = _URL_RE.sub("", line_s).strip()
+                do_tr = translated and bool(src) and self._needs_tr(src)
+                if do_tr and self._show_original and self._show_pinyin:
+                    roman = self._romanize(src)
+                    if roman:
+                        items.append(ft.Text(roman, size=12.5, italic=True,
+                                             color=_ACCENT))
+                if not do_tr or self._show_original:
+                    items.append(ft.Text(spans=_spans(line_s, color), size=14))
+                if do_tr:
+                    tr_ctrl = ft.Text("", size=14, weight=ft.FontWeight.W_500,
+                                      color=_TEXT_PRIMARY)
+                    if not self._show_original:
+                        tr_ctrl.spans = _spans(line_s, "#9aa0a6")
+                    segs.append((src, tr_ctrl))
+                    items.append(tr_ctrl)
+                if multi and do_tr:
+                    items.append(ft.Container(height=4))   # gap between lines
             return items
 
         for kind, seg in _segments(text):
@@ -2754,8 +2803,7 @@ class SteamBridgeView(ft.Container):
                     margin=ft.margin.symmetric(vertical=2)))
             elif kind == "c":
                 outs.append(ft.Container(
-                    content=ft.Text(seg, size=13, font_family="Consolas",
-                                    color="#c9d1c8"),
+                    content=ft.Text(spans=_code_spans(seg), size=13),
                     border=ft.border.only(left=ft.BorderSide(3, "#4b8a6f")),
                     bgcolor="#141518", border_radius=4,
                     padding=10, margin=ft.margin.symmetric(vertical=2)))
@@ -3095,11 +3143,13 @@ class SteamBridgeView(ft.Container):
             if ((not b.get("from_me") and not self._tr_incoming)
                     or (b.get("from_me") and not self._tr_outgoing)):
                 return
-            for src, ctrl in segs:
-                tr = await self._tr(src, force=force)
-                if seq != self._open_seq:
-                    return
-                if not tr or tr == src:
+            results = await asyncio.gather(
+                *(self._tr(src, force=force) for src, _ in segs),
+                return_exceptions=True)
+            if seq != self._open_seq:
+                return
+            for (src, ctrl), tr in zip(segs, results):
+                if not isinstance(tr, str) or not tr or tr == src:
                     continue
                 self._apply_tr_spans(b, ctrl, tr)
                 with contextlib.suppress(Exception):

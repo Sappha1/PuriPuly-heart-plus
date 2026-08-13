@@ -325,6 +325,59 @@ class AudioSettings(ft.Column):
                 except Exception:
                     pass
 
+        # App audio: capture ONE application's sound instead of a whole device.
+        try:
+            from puripuly_heart.config.process_capture_platform import (
+                get_process_capture_platform_availability,
+            )
+
+            if get_process_capture_platform_availability().available:
+                from puripuly_heart.config.process_capture_resolution import (
+                    ProcessCaptureResolver,
+                )
+                from puripuly_heart.config.process_capture_target import (
+                    process_capture_display_name,
+                    serialize_process_capture_target,
+                )
+                from puripuly_heart.core.audio.process_identity import (
+                    PsutilCurrentUserProcessSnapshots,
+                )
+
+                resolver = ProcessCaptureResolver(
+                    snapshots=PsutilCurrentUserProcessSnapshots()
+                )
+                listed: set[str] = set()
+                for candidate in resolver.enumerate_candidates():
+                    value = serialize_process_capture_target(candidate.target)
+                    if value in listed:
+                        continue
+                    listed.add(value)
+                    name = process_capture_display_name(value) or value
+                    ambiguous = not bool(getattr(candidate, "enabled", True))
+                    options.append(OptionItem(
+                        value=value,
+                        label=t("capture.app_option", name=name,
+                                default=f"App audio: {name}"),
+                        description=(t("capture.app_multiple",
+                                       default="Multiple instances running — close the extras first")
+                                     if ambiguous else ""),
+                        disabled=ambiguous,
+                    ))
+                # keep the persisted target visible/selected while its app is
+                # closed — losing the selection silently would be a downgrade
+                saved = self._current_desktop_output_device
+                if saved.startswith("process:") and saved not in listed:
+                    name = process_capture_display_name(saved) or saved
+                    options.append(OptionItem(
+                        value=saved,
+                        label=t("capture.app_option", name=name,
+                                default=f"App audio: {name}"),
+                        description=t("capture.app_not_running",
+                                      default="App not running right now"),
+                    ))
+        except Exception as e:
+            logger.warning(f"Failed to enumerate app-audio capture targets: {e}")
+
         return options
 
     def _on_host_api_click(self, e) -> None:
@@ -366,6 +419,22 @@ class AudioSettings(ft.Column):
         """Handle microphone selection from modal."""
         self.microphone = value
         self._emit_change()
+
+    def _desktop_output_display_label(self) -> str:
+        value = self._current_desktop_output_device
+        if not value:
+            return self._default_option_label
+        try:
+            from puripuly_heart.config.process_capture_target import (
+                process_capture_display_name,
+            )
+
+            name = process_capture_display_name(value)
+        except Exception:
+            name = None
+        if name:
+            return t("capture.app_option", name=name, default=f"App audio: {name}")
+        return value
 
     def _on_desktop_output_click(self, e) -> None:
         """Open desktop loopback output selection modal."""
@@ -455,7 +524,7 @@ class AudioSettings(ft.Column):
         self._host_api_text.content.value = self._host_api_label_for(self._current_host_api)
         self._mic_text.content.value = self._current_microphone or self._default_option_label
         self._desktop_output_text.content.value = (
-            self._current_desktop_output_device or self._default_option_label
+            self._desktop_output_display_label()
         )
 
         if self.page:

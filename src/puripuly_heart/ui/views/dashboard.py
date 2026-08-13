@@ -19,7 +19,7 @@ from puripuly_heart.ui.fonts import font_for_language
 from puripuly_heart.ui.i18n import get_locale, language_name, t
 from puripuly_heart.ui.overlay_peer_contract import OverlayPeerConsumerContract
 
-_BUILD_TAG = "r476"  #increment each build so user can confirm version
+_BUILD_TAG = "r491"  #increment each build so user can confirm version
 
 # ── VRCT-style dark palette ──────────────────────────────────────────────────
 _BG_MAIN = "#2e2f32"
@@ -77,10 +77,12 @@ class _ToggleRow(ft.Container):
             height=12,
         )
 
+        self._icon = ft.Icon(icon, size=18, color=_TEXT_MUTED)
+        self._icon.animate_opacity = 600
         super().__init__(
             content=ft.Row(
                 [
-                    ft.Icon(icon, size=18, color=_TEXT_MUTED),
+                    self._icon,
                     label_col,
                     self._indicator,
                 ],
@@ -1080,6 +1082,7 @@ class DashboardView(ft.Row):
         self.on_self_in_overlay_toggle: object = None  # callback(value: bool) — spoken
         self.on_typed_in_overlay_toggle: object = None  # callback(value: bool) — typed
         self.on_vrc_mute_sync_toggle: object = None  # callback(value: bool)
+        self.on_open_settings_page: object = None  # callback() -> open the Settings tab
         self.on_overlay_transparency_change: object = None  # callback(alpha: float)
         # r362/r363: caption appearance, shared by the desktop and VR overlays.
         self.on_overlay_edge_style_change: object = None  # callback(style: str)
@@ -1111,7 +1114,7 @@ class DashboardView(ft.Row):
                 # Invisible counterweight mirrors the update button's reserved
                 # slot so the gear sits dead-center whether or not an update is
                 # showing; the update button fades in to the gear's right.
-                [ft.Container(width=44, height=40), gear_btn, self._update_btn],
+                [ft.Container(width=44, height=40), self._update_btn],
                 spacing=6,
                 alignment=ft.MainAxisAlignment.CENTER,
                 vertical_alignment=ft.CrossAxisAlignment.CENTER,
@@ -1151,7 +1154,6 @@ class DashboardView(ft.Row):
                 ft.Divider(height=1, color=_DIVIDER, thickness=1),
                 _mini_lang_tap,
                 ft.Divider(height=1, color=_DIVIDER, thickness=1),
-                self._mini_gear_btn,
                 self._mini_update_btn,
             ],
             spacing=4,
@@ -1277,7 +1279,7 @@ class DashboardView(ft.Row):
             ft.Icons.GRAPHIC_EQ, _voice_key,
             self._peer_panel,
             trailing=ft.Row(
-                [self._build_lang_swap_btn(), self._build_translit_gear()],
+                [self._build_lang_swap_btn()],
                 spacing=2, tight=True,
             ))
         self._voice_section_lbl = self._section_header_labels[-1][0]
@@ -1532,21 +1534,13 @@ class DashboardView(ft.Row):
         # Steam tab (Mute Sync / Loopback / OCR / Overlay / Clear do nothing there).
         self._vrc_header_actions = ft.Row(
             [
-                self._vrc_mute_sync_btn,
-                ft.Container(width=4),
-                ft.GestureDetector(
-                    content=self._chatbox_peer_btn,
-                    on_secondary_tap_down=self._on_loopback_right_click,
-                ),
-                ft.Container(width=4),
-                ft.GestureDetector(
-                    content=self._ocr_btn,
-                    on_secondary_tap_down=self._on_ocr_right_click,
-                ),
-                ft.Container(width=4),
                 self._overlay_header_btn,
                 ft.Container(width=4),
-                self._chat_clear_button,
+                ft.IconButton(ft.Icons.SETTINGS_OUTLINED, icon_size=17,
+                              icon_color=_TEXT_FAINT,
+                              tooltip=t("dashboard.chat_gear.tooltip",
+                                        default="Chat display, clear & settings"),
+                              on_click=lambda e: self._open_chat_gear_menu()),
             ],
             vertical_alignment=ft.CrossAxisAlignment.CENTER,
             spacing=0,
@@ -1565,16 +1559,14 @@ class DashboardView(ft.Row):
                           icon_color=_TEXT_FAINT,
                           tooltip=t("steam.settings_title"),
                           on_click=lambda e: self._steam_header_gear()),
-            ft.IconButton(ft.Icons.POWER_SETTINGS_NEW, icon_size=17,
-                          icon_color=_TEXT_FAINT,
-                          tooltip=t("steam.power_tip"),
-                          on_click=lambda e: self._steam_header_power()),
         ], spacing=0, visible=False)
         chat_header = ft.Row(
             [
-                self._tab_vrc,
+                ft.GestureDetector(content=self._tab_vrc,
+                                   on_secondary_tap_down=self._on_tab_vrc_right),
                 ft.Container(width=4),
-                self._tab_steam,
+                ft.GestureDetector(content=self._tab_steam,
+                                   on_secondary_tap_down=self._on_tab_steam_right),
                 ft.Container(expand=True),
                 self._vrc_header_actions,
                 self._steam_lang_slot,
@@ -1874,6 +1866,22 @@ class DashboardView(ft.Row):
         with contextlib.suppress(Exception):
             self._app_sidebar.visible = not self._app_sidebar.visible
             self.update()
+
+    def _on_tab_vrc_right(self, e) -> None:
+        x, y = self._tap_xy(e)
+        off = bool(getattr(self, "_chat_module_off", False))
+        label = (t("dashboard.tab_menu.chat_on", default="Turn chat back on")
+                 if off else
+                 t("dashboard.tab_menu.chat_off", default="Turn chat off"))
+        self._open_context_menu(x, y, [(label, None, self._on_chat_power)])
+
+    def _on_tab_steam_right(self, e) -> None:
+        x, y = self._tap_xy(e)
+        module_on = bool(getattr(self._steam_view, "_module_on", True))
+        label = (t("dashboard.tab_menu.steam_off", default="Turn Steam module off")
+                 if module_on else
+                 t("dashboard.tab_menu.steam_on", default="Turn Steam module on"))
+        self._open_context_menu(x, y, [(label, None, self._steam_header_power)])
 
     # ── beta/steam-bridge: chat tab strip (VRChat | Steam) ───────────────────
     def _select_chat_tab(self, which: str) -> None:
@@ -4144,6 +4152,8 @@ class DashboardView(ft.Row):
                  lambda: self._invoke_optional("on_show_changelog")),
                 (t("dashboard.title_menu.check_updates"), None,
                  lambda: self._invoke_optional("on_check_updates")),
+                (t("dashboard.title_menu.settings"), None,
+                 lambda: self._invoke_optional("on_open_settings_page")),
             ],
         )
 
@@ -5575,8 +5585,13 @@ class DashboardView(ft.Row):
         options that can't handle it are greyed out with a reason."""
         from puripuly_heart.config.settings import STTProviderName
         from puripuly_heart.ui.i18n import provider_label
-        # LOCAL_QWEN and WHISPER are local models — always free, no API key needed
-        _FREE_PROVIDERS = {STTProviderName.LOCAL_QWEN.value, STTProviderName.WHISPER.value}
+        # Local models — always free, no API key needed
+        _FREE_PROVIDERS = {
+            STTProviderName.LOCAL_QWEN.value,
+            STTProviderName.LOCAL_PARAKEET_V3.value,
+            STTProviderName.LOCAL_PARAKEET_JAPANESE.value,
+            STTProviderName.WHISPER.value,
+        }
         options = []
         for p in STTProviderName:
             if p.value in _FREE_PROVIDERS:
@@ -5594,10 +5609,21 @@ class DashboardView(ft.Row):
             # The local Qwen model can't hear every language. When this channel's
             # language is outside its set, selecting it would silently transcribe
             # nothing — grey it out with the reason instead of allowing a dead pick.
+            _local_lang_ok = None
+            if p == STTProviderName.LOCAL_QWEN:
+                _local_lang_ok = is_local_qwen_supported
+            elif p == STTProviderName.LOCAL_PARAKEET_V3:
+                from puripuly_heart.core.language import is_local_parakeet_v3_supported
+
+                _local_lang_ok = is_local_parakeet_v3_supported
+            elif p == STTProviderName.LOCAL_PARAKEET_JAPANESE:
+                from puripuly_heart.core.language import is_local_parakeet_ja_supported
+
+                _local_lang_ok = is_local_parakeet_ja_supported
             if (
-                p == STTProviderName.LOCAL_QWEN
+                _local_lang_ok is not None
                 and for_language
-                and not is_local_qwen_supported(for_language)
+                and not _local_lang_ok(for_language)
             ):
                 disabled = True
                 desc = t(
@@ -5872,7 +5898,48 @@ class DashboardView(ft.Row):
         self.show_pinyin = self.show_romaji = self.show_latin = new
         self._emit_transliteration_change()
 
-    def _open_translit_menu(self, e) -> None:
+    def _open_chat_gear_menu(self) -> None:
+        try:
+            page_w = float(getattr(self.page, "width", None) or 1200)
+        except Exception:
+            page_w = 1200.0
+
+        class _Anchor:
+            pass
+
+        anchor = _Anchor()
+        anchor.global_x = max(40.0, page_w - 320.0)
+        anchor.global_y = 46.0
+        self._open_translit_menu(anchor, include_chat_actions=True)
+
+    def _on_chat_power(self) -> None:
+        """One click turns MIC / PEER / TRANS all off (remembering which were
+        on); the next click restores exactly those. Uses the same toggle paths
+        as the sidebar rows so every side effect stays consistent."""
+        turning_off = not getattr(self, "_chat_module_off", False)
+        peer_on = False
+        if self._overlay_peer_contract is not None:
+            peer_on = bool(self._overlay_peer_contract.peer.intent_enabled)
+        cur = (bool(self.is_stt_on), peer_on, bool(self.is_translation_on))
+        if turning_off:
+            self._chat_power_prev = cur
+            want = (False, False, False)
+        else:
+            want = getattr(self, "_chat_power_prev", (False, False, True))
+        for is_on, target, fn in (
+            (cur[0], want[0], self._toggle_stt),
+            (cur[1], want[1], self._toggle_peer_translation),
+            (cur[2], want[2], self._toggle_translation),
+        ):
+            if bool(is_on) != bool(target):
+                with contextlib.suppress(Exception):
+                    fn()
+        self._chat_module_off = turning_off
+        with contextlib.suppress(Exception):
+            self._tab_vrc.opacity = 0.45 if turning_off else 1.0
+            self._tab_vrc.update()
+
+    def _open_translit_menu(self, e, include_chat_actions: bool = False) -> None:
         """Rich popover matching the overlay right-click menu: a section header, a Chatbox
         'format' button that expands to a radio list (like Display/Size), and On/Off pills
         for the overlay reading + grouped pinyin."""
@@ -6185,12 +6252,80 @@ class DashboardView(ft.Row):
             _fmt_section,
             _log_fmt_section,
         ]
+        if include_chat_actions:
+            def _opt_dots(opener):
+                def _open(ev):
+                    with contextlib.suppress(Exception):
+                        self._translit_popover_close()
+                    with contextlib.suppress(Exception):
+                        opener(ev)
+                return ft.GestureDetector(
+                    content=ft.Container(
+                        content=ft.Icon(ft.Icons.MORE_HORIZ, size=15,
+                                        color=_TEXT_MUTED),
+                        padding=ft.padding.symmetric(horizontal=4, vertical=2),
+                        border_radius=4,
+                    ),
+                    on_tap_down=_open,
+                )
+
+            def _chat_toggle(label, is_on, toggle, opener=None):
+                pill = _bool_pill([bool(is_on)],
+                                  lambda _v, _t=toggle: _t(None))
+                controls = [pill]
+                if opener is not None:
+                    controls.insert(0, _opt_dots(opener))
+                return _section_row(label, ft.Row(
+                    controls, spacing=6, tight=True,
+                    vertical_alignment=ft.CrossAxisAlignment.CENTER))
+
+            _toggle_rows: list[Any] = []
+            if getattr(self._vrc_mute_sync_btn, "visible", True):
+                _toggle_rows.append(_chat_toggle(
+                    t("dashboard.button.mute_sync"),
+                    self._vrc_mute_sync, self._on_vrc_mute_sync_click))
+            _toggle_rows.append(_chat_toggle(
+                t("dashboard.button.loopback"),
+                self._chatbox_send_peer, self._on_chatbox_peer_btn_click,
+                self._on_loopback_right_click))
+            _toggle_rows.append(_chat_toggle(
+                "OCR", self._ocr_on, self._on_ocr_btn_click,
+                self._on_ocr_right_click))
+            _toggle_rows.append(_div())
+            children[1:1] = _toggle_rows
         if extra_rows:
             children.append(_div())
             children += extra_rows
         children.append(_div())
         children.append(_adv_row)
         children.append(_sep_row)
+        if include_chat_actions:
+            def _action_row(icon, label, cb):
+                def _click(_ev):
+                    with contextlib.suppress(Exception):
+                        self._translit_popover_close()
+                    with contextlib.suppress(Exception):
+                        cb()
+                return ft.Container(
+                    content=ft.Row([
+                        ft.Icon(icon, size=14, color=_TEXT_MUTED),
+                        ft.Text(label, size=12, color=_TEXT_PRIMARY),
+                    ], spacing=8, vertical_alignment=ft.CrossAxisAlignment.CENTER),
+                    padding=ft.padding.symmetric(horizontal=10, vertical=6),
+                    border_radius=4, ink=True, on_click=_click,
+                )
+            children.append(_div())
+            children.append(_action_row(
+                ft.Icons.DELETE_SWEEP_OUTLINED,
+                t("dashboard.menu.clear_chat", default="Clear chat"),
+                lambda: self._on_chat_clear(None),
+            ))
+            children.append(_action_row(
+                ft.Icons.SETTINGS_OUTLINED,
+                t("dashboard.menu.settings", default="Settings"),
+                lambda: (self.on_open_settings_page()
+                         if callable(self.on_open_settings_page) else None),
+            ))
         children.append(ft.Container(height=4))
         content = ft.Container(content=ft.Column(
             children, spacing=0, tight=True, horizontal_alignment=ft.CrossAxisAlignment.STRETCH))
@@ -6672,8 +6807,51 @@ class DashboardView(ft.Row):
         except Exception:
             pass
 
+    def _set_mic_icon_sync_state(self, mode: str) -> None:
+        """MIC row icon = the mute-sync indicator now that the header pill is
+        gone: orange pulsing while waiting for VRChat's mute state, green
+        pulsing while synced, normal when the feature is off."""
+        icon = getattr(self._row_stt, "_icon", None)
+        if icon is None:
+            return
+        icon.color = {"syncing": "#e8a020", "active": _TOGGLE_ON}.get(mode, _TEXT_MUTED)
+        # pulse ONLY while waiting for VRChat's mute state — solid green once synced
+        self._mic_pulse_mode = "syncing" if mode == "syncing" else "off"
+        if mode == "syncing" and not getattr(self, "_mic_pulse_task_on", False):
+            self._mic_pulse_task_on = True
+            if self.page:
+                self.page.run_task(self._mic_pulse_loop)
+        if mode != "syncing":
+            icon.opacity = 1.0
+        with contextlib.suppress(Exception):
+            icon.update()
+
+    async def _mic_pulse_loop(self) -> None:
+        icon = getattr(self._row_stt, "_icon", None)
+        try:
+            dim = False
+            while getattr(self, "_mic_pulse_mode", "off") != "off":
+                dim = not dim
+                if icon is not None:
+                    icon.opacity = 0.35 if dim else 1.0
+                    with contextlib.suppress(Exception):
+                        icon.update()
+                await asyncio.sleep(0.7)
+        finally:
+            self._mic_pulse_task_on = False
+            if icon is not None:
+                icon.opacity = 1.0
+                with contextlib.suppress(Exception):
+                    icon.update()
+
     def _refresh_vrc_mute_sync_btn(self) -> None:
         active = self._vrc_mute_sync and self.is_stt_on
+        if not self.is_stt_on or not active:
+            self._set_mic_icon_sync_state("off")
+        elif self._vrc_mute_sync_osc_state is None:
+            self._set_mic_icon_sync_state("syncing")
+        else:
+            self._set_mic_icon_sync_state("active")
         btn = self._vrc_mute_sync_btn
         if not self.is_stt_on:
             # MIC is off — button is inert, show as fully dimmed

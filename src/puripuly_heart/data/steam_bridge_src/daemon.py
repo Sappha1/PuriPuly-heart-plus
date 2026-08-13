@@ -155,6 +155,7 @@ class Daemon:
         self.seen_count = 0
         self._typing = False
         self._last_ts = 0                     # newest message time seen (server-fetch poll)
+        self._fetch_err = None                # last fetch failure (dedup diag spam)
         self._seen_keys: set = set()          # (ts, from, text) already emitted, for dedup
         self._sent_pending: list[str] = []   # texts we sent, for echo dedup
         self._img_pending = 0                # app image-sends awaiting their echo
@@ -466,8 +467,11 @@ class Daemon:
                 continue
             try:
                 fresh = await self.steam.fetch_messages(self.active, self._last_ts - 3)
+                self._fetch_err = None
             except Exception as exc:
-                _diag(f"fetch error: {exc}")
+                if str(exc) != self._fetch_err:
+                    self._fetch_err = str(exc)
+                    _diag(f"fetch error: {exc}")
                 fresh = []
             # Emit strictly in time order — same-second messages from both sides can
             # come back interleaved, which made replies render before the message

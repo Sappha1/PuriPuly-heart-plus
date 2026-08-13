@@ -45,6 +45,8 @@ dependencies = [
   "langdetect>=1.0.9",
   "jieba>=0.42.1",
   "zeroconf>=0.147",
+  "proc-tap==1.1.1 ; implementation_name == 'cpython' and platform_machine == 'AMD64' and sys_platform == 'win32'",
+  "psutil>=5.9 ; sys_platform == 'win32'",
 ]
 
 [project.optional-dependencies]

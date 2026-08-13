@@ -984,7 +984,8 @@ def test_create_stt_backend_deepgram_uses_settings_and_secret() -> None:
     assert backend.model == "nova-3"
     assert backend.sample_rate_hz == 16000
     assert backend.language == get_deepgram_language(settings.languages.source_language)
-    assert list(backend.keyterms) == ["Alex", "Robin"]
+    # r380: DEFAULT_CUSTOM_VOCAB_TERMS ships empty, so default settings yield no keyterms.
+    assert list(backend.keyterms) == []
 
 
 def test_create_stt_backend_deepgram_passes_effective_custom_terms() -> None:
@@ -996,6 +997,7 @@ def test_create_stt_backend_deepgram_passes_effective_custom_terms() -> None:
             custom_terms={"ko": [" Puripuly ", "", "VRChat", "Puripuly"]},
         ),
     )
+    settings.languages.source_language = "ko"
     secrets = InMemorySecretStore()
     secrets.set("deepgram_api_key", "k3")
 
@@ -1240,7 +1242,7 @@ def test_local_qwen_sherpa_backend_rejects_legacy_8khz_runtime_sample_rate() -> 
         )
 
 
-def test_create_peer_stt_backend_local_qwen_uses_peer_language_without_hotwords() -> None:
+def test_create_peer_stt_backend_local_qwen_decodes_hint_free_without_hotwords() -> None:
     settings = AppSettings()
     settings.provider.peer_stt = STTProviderName.LOCAL_QWEN
     settings.languages.source_language = "ko"
@@ -1254,7 +1256,9 @@ def test_create_peer_stt_backend_local_qwen_uses_peer_language_without_hotwords(
     backend = create_peer_stt_backend(settings, secrets=secrets)
 
     assert isinstance(backend, LocalQwenSherpaSTTBackend)
-    assert getattr(backend, "language_hint", None) == "Chinese"
+    # r382: the peer channel decodes hint-free even with a pinned peer language;
+    # a wrong hint makes this model translate instead of transcribe.
+    assert getattr(backend, "language_hint", None) is None
     assert getattr(backend, "hotwords", ()) == ()
 
 
@@ -1360,7 +1364,8 @@ def test_create_stt_backend_soniox_uses_secret() -> None:
     backend = create_stt_backend(settings, secrets=secrets)
     assert isinstance(backend, SonioxRealtimeSTTBackend)
     assert backend.api_key == "k6"
-    assert list(backend.context_terms) == ["Alex", "Robin"]
+    # r380: DEFAULT_CUSTOM_VOCAB_TERMS ships empty, so default settings yield no context terms.
+    assert list(backend.context_terms) == []
 
 
 def test_create_stt_backend_soniox_passes_effective_custom_terms() -> None:
@@ -1372,6 +1377,7 @@ def test_create_stt_backend_soniox_passes_effective_custom_terms() -> None:
             custom_terms={"ko": [" Puripuly ", "VRChat", "Puripuly", " "]},
         ),
     )
+    settings.languages.source_language = "ko"
     secrets = InMemorySecretStore()
     secrets.set("soniox_api_key", "k6")
 

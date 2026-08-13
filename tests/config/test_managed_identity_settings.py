@@ -118,7 +118,7 @@ def test_load_settings_migrates_v22_referral_id_values(tmp_path, persisted_value
     loaded = load_settings(path)
     persisted = json.loads(path.read_text(encoding="utf-8"))
 
-    assert SETTINGS_SCHEMA_VERSION == 24
+    assert SETTINGS_SCHEMA_VERSION == 29
     assert loaded.settings_version == SETTINGS_SCHEMA_VERSION
     assert loaded.managed_identity.referral_id == expected
     assert persisted["settings_version"] == SETTINGS_SCHEMA_VERSION
@@ -183,9 +183,11 @@ def test_load_settings_backfills_openrouter_defaults(tmp_path) -> None:
     loaded = load_settings(path)
     persisted = json.loads(path.read_text(encoding="utf-8"))
 
-    assert loaded.openrouter.selected_source == OpenRouterCredentialSource.MANAGED
+    # A missing credential source backfills to NONE (dormant) now that the
+    # managed flow is retired.
+    assert loaded.openrouter.selected_source == OpenRouterCredentialSource.NONE
     assert loaded.openrouter.broker_base_url == DEFAULT_OPENROUTER_BROKER_BASE_URL
-    assert persisted["openrouter"]["selected_source"] == OpenRouterCredentialSource.MANAGED.value
+    assert persisted["openrouter"]["selected_source"] == OpenRouterCredentialSource.NONE.value
     assert persisted["openrouter"]["broker_base_url"] == DEFAULT_OPENROUTER_BROKER_BASE_URL
 
 

@@ -2,6 +2,19 @@
 
 User-facing changes per build. The latest build's highlights also appear in-app when an update is ready.
 
+## r491 — 2026-08-12
+
+- New: two free local speech models — Parakeet EN/EU (English + European languages) and Parakeet JA (Japanese), noticeably faster than the existing local model
+- New: each favorites tab can remember its own MIC/PEER model picks
+- New: PEER can capture a single app's audio (VRChat, Discord…) instead of the whole desktop — pick it in the peer device list
+- New: cleaner header — matching layout on both tabs; chat toggles, display options, Clear and Settings all under the gear; right-click a tab to turn that side off/on
+- Fixed: Steam — messages in brand-new chats now arrive, and your own messages no longer show twice after a reconnect
+- Fixed: saved model selections migrate safely instead of silently resetting
+- Fixed: download notices name the right model
+- Improved: faster fallback when the primary translator is slow or fails
+- Improved: the MIC icon shows mute-sync status (pulsing orange = syncing, solid green = synced)
+- Thanks: Parakeet models converted by csukuangfj for sherpa-onnx — thank you
+
 ## r473 — 2026-08-12
 
 - Fixed: sending an emoticon or image showed a duplicate in the app a moment later (the friend always received just one) — the server's echo is now recognized and absorbed

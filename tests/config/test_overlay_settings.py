@@ -14,22 +14,26 @@ from puripuly_heart.config.settings import (
 def test_overlay_settings_desktop_flet_defaults_serialize_canonical_shape() -> None:
     settings = from_dict({})
 
-    assert SETTINGS_SCHEMA_VERSION == 24
-    assert settings.settings_version == 24
+    assert SETTINGS_SCHEMA_VERSION == 29
+    assert settings.settings_version == 29
     assert settings.overlay.target == "steamvr"
-    assert settings.overlay.desktop_flet.size_preset == "medium"
+    assert settings.overlay.desktop_flet.size_preset == "xsmall"
     assert settings.overlay.desktop_flet.position.x is None
     assert settings.overlay.desktop_flet.position.y is None
-    assert settings.overlay.desktop_flet.locked is False
-    assert settings.overlay.desktop_flet.visual.background_alpha == 0.6
+    assert settings.overlay.desktop_flet.locked is True
+    assert settings.overlay.desktop_flet.visual.background_alpha == 0.01
 
     data = to_dict(settings)
 
     assert data["overlay"]["target"] == "steamvr"
     assert data["overlay"]["desktop_flet"] == {
-        "size_preset": "medium",
+        "size_preset": "xsmall",
         "position": {"x": None, "y": None},
-        "visual": {"background_alpha": 0.6},
+        "visual": {
+            "background_alpha": 0.01,
+            "edge_style": "shadow",
+            "text_background_alpha": 0.0,
+        },
     }
     assert "locked" not in data["overlay"]["desktop_flet"]
 
@@ -57,7 +61,7 @@ def test_overlay_settings_desktop_flet_tiny_preset_round_trips() -> None:
     assert round_tripped.overlay.desktop_flet.bounds.height == 160
 
 
-def test_overlay_settings_desktop_flet_legacy_locked_loads_startup_safe_and_is_not_serialized() -> (
+def test_overlay_settings_desktop_flet_locked_loads_but_is_not_serialized() -> (
     None
 ):
     settings = from_dict(
@@ -81,15 +85,20 @@ def test_overlay_settings_desktop_flet_legacy_locked_loads_startup_safe_and_is_n
     assert data["overlay"]["desktop_flet"] == {
         "size_preset": "large",
         "position": {"x": 320, "y": 720},
-        "visual": {"background_alpha": 0.45},
+        "visual": {
+            "background_alpha": 0.45,
+            "edge_style": "shadow",
+            "text_background_alpha": 0.0,
+        },
     }
     assert "locked" not in data["overlay"]["desktop_flet"]
     assert round_tripped.overlay.target == "desktop"
     assert round_tripped.overlay.desktop_flet.size_preset == "large"
     assert round_tripped.overlay.desktop_flet.position.x == 320
     assert round_tripped.overlay.desktop_flet.position.y == 720
-    assert settings.overlay.desktop_flet.locked is False
-    assert round_tripped.overlay.desktop_flet.locked is False
+    # locked defaults on (and loads as given) but stays a runtime-only field.
+    assert settings.overlay.desktop_flet.locked is True
+    assert round_tripped.overlay.desktop_flet.locked is True
     assert round_tripped.overlay.desktop_flet.visual.background_alpha == 0.45
 
 
@@ -117,11 +126,11 @@ def test_overlay_settings_desktop_flet_invalid_canonical_values_repair() -> None
         }
     )
 
-    assert settings.overlay.desktop_flet.size_preset == "medium"
+    assert settings.overlay.desktop_flet.size_preset == "xsmall"
     assert settings.overlay.desktop_flet.position.x is None
     assert settings.overlay.desktop_flet.position.y is None
-    assert settings.overlay.desktop_flet.locked is False
-    assert settings.overlay.desktop_flet.visual.background_alpha == 0.6
+    assert settings.overlay.desktop_flet.locked is True
+    assert settings.overlay.desktop_flet.visual.background_alpha == 0.01
 
     missing_and_non_finite = from_dict(
         {
@@ -138,7 +147,7 @@ def test_overlay_settings_desktop_flet_invalid_canonical_values_repair() -> None
     assert missing_and_non_finite.overlay.desktop_flet.size_preset == "xlarge"
     assert missing_and_non_finite.overlay.desktop_flet.position.x is None
     assert missing_and_non_finite.overlay.desktop_flet.position.y is None
-    assert missing_and_non_finite.overlay.desktop_flet.visual.background_alpha == 0.6
+    assert missing_and_non_finite.overlay.desktop_flet.visual.background_alpha == 0.01
 
 
 def test_overlay_settings_desktop_flet_background_alpha_clamps() -> None:
@@ -146,7 +155,8 @@ def test_overlay_settings_desktop_flet_background_alpha_clamps() -> None:
     clamped_low = from_dict({"overlay": {"desktop_flet": {"visual": {"background_alpha": -0.25}}}})
 
     assert clamped_high.overlay.desktop_flet.visual.background_alpha == 1.0
-    assert clamped_low.overlay.desktop_flet.visual.background_alpha == 0.0
+    # Clamps to DESKTOP_FLET_MIN_BACKGROUND_ALPHA (0.01), not fully transparent.
+    assert clamped_low.overlay.desktop_flet.visual.background_alpha == 0.01
 
 
 def test_overlay_settings_desktop_flet_legacy_bounds_and_visual_migrate_to_canonical() -> None:
@@ -174,7 +184,11 @@ def test_overlay_settings_desktop_flet_legacy_bounds_and_visual_migrate_to_canon
     assert data["overlay"]["desktop_flet"] == {
         "size_preset": "large",
         "position": {"x": 320, "y": 720},
-        "visual": {"background_alpha": 0.45},
+        "visual": {
+            "background_alpha": 0.45,
+            "edge_style": "shadow",
+            "text_background_alpha": 0.0,
+        },
     }
     assert "locked" not in data["overlay"]["desktop_flet"]
     assert "bounds" not in data["overlay"]["desktop_flet"]
@@ -217,10 +231,12 @@ def test_overlay_settings_desktop_flet_legacy_bounds_repair_and_tie_breaking() -
         }
     )
 
-    assert invalid_dimensions.overlay.desktop_flet.size_preset == "medium"
+    # Unusable bounds repair to the default preset; distance ties break
+    # toward the smaller preset.
+    assert invalid_dimensions.overlay.desktop_flet.size_preset == "xsmall"
     assert invalid_dimensions.overlay.desktop_flet.position.x is None
     assert invalid_dimensions.overlay.desktop_flet.position.y is None
-    assert tied_with_medium.overlay.desktop_flet.size_preset == "medium"
+    assert tied_with_medium.overlay.desktop_flet.size_preset == "small"
     assert tied_without_medium.overlay.desktop_flet.size_preset == "large"
 
 

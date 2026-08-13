@@ -75,6 +75,13 @@ def test_settings_roundtrip(tmp_path):
     shared_prompt = load_prompt_for_provider("gemini")
     expected.system_prompt = shared_prompt
     expected.system_prompts = {}
+    # Serialization records the active model's connection into the history.
+    expected.translation.connection_history[TranslationModel.GOOGLE_TRANSLATE.value] = (
+        TranslationConnection.FREE_WEB
+    )
+    # load_settings reconciles overlay.show_self with ui.self_in_overlay
+    # (AND of both, r334) and the hub gate defaults to off.
+    expected.overlay.show_self = False
 
     assert loaded == expected
 
@@ -112,18 +119,18 @@ def test_schema21_migration_forces_existing_peer_vad_hangover_to_500_ms(
     assert persisted["desktop_audio"]["vad_hangover_ms"] == 500
 
 
-def test_new_user_defaults_peer_voice_to_english_to_korean_local_qwen() -> None:
+def test_new_user_defaults_english_to_chinese_with_chinese_peer_local_qwen() -> None:
     settings = AppSettings()
 
-    assert settings.languages.source_language == "ko"
-    assert settings.languages.target_language == "en"
-    assert settings.languages.peer_source_language == "en"
-    assert settings.languages.peer_target_language == "ko"
-    assert settings.languages.effective_peer_source == "en"
-    assert settings.languages.effective_peer_target == "ko"
+    assert settings.languages.source_language == "en"
+    assert settings.languages.target_language == "zh-CN"
+    assert settings.languages.peer_source_language == "zh-CN"
+    assert settings.languages.peer_target_language == ""
+    assert settings.languages.effective_peer_source == "zh-CN"
+    assert settings.languages.effective_peer_target == "en"
     assert settings.provider.peer_stt == STTProviderName.LOCAL_QWEN
     assert settings.ui.integrated_context_enabled is True
-    assert settings.osc.chatbox_include_source is False
+    assert settings.osc.chatbox_include_source is True
 
 
 def test_partial_settings_deserialization_preserves_legacy_peer_fallbacks() -> None:
@@ -134,7 +141,9 @@ def test_partial_settings_deserialization_preserves_legacy_peer_fallbacks() -> N
     assert settings.languages.peer_source_language == ""
     assert settings.languages.peer_target_language == ""
     assert settings.languages.effective_peer_source == "ko"
-    assert settings.languages.effective_peer_target == "en"
+    # An unset peer target now falls back to the language the user speaks
+    # (their source), not the chat target.
+    assert settings.languages.effective_peer_target == "ko"
     assert settings.provider.peer_stt == STTProviderName.DEEPGRAM
     assert settings.ui.integrated_context_enabled is True
     assert settings.osc.chatbox_include_source is False
@@ -292,7 +301,7 @@ def test_migrate_v17_normalizes_directsound_host_api_and_preserves_device() -> N
 
 
 def test_migrate_v18_preserves_directsound_when_removing_legacy_osc_rate_limits() -> None:
-    assert SETTINGS_SCHEMA_VERSION == 24
+    assert SETTINGS_SCHEMA_VERSION == 29
 
     raw = to_dict(AppSettings())
     raw["settings_version"] = 17
@@ -336,7 +345,7 @@ def test_load_settings_persists_v17_directsound_preservation(tmp_path) -> None:
 
 
 def test_load_settings_persists_v18_osc_rate_limit_key_removal(tmp_path) -> None:
-    assert SETTINGS_SCHEMA_VERSION == 24
+    assert SETTINGS_SCHEMA_VERSION == 29
 
     path = tmp_path / "settings.json"
     raw = to_dict(AppSettings())
@@ -400,6 +409,10 @@ def test_translation_model_public_member_names_and_values_match_plan() -> None:
         ("GEMINI_31_FLASH_LITE", "gemini31_flash_lite"),
         ("QWEN_35_PLUS", "qwen35_plus"),
         ("LOCAL_LLM", "local_llm"),
+        ("DEEPL", "deepl"),
+        ("GOOGLE_TRANSLATE", "google_translate"),
+        ("BING", "bing"),
+        ("PAPAGO", "papago"),
     )
 
 
@@ -466,31 +479,31 @@ def test_local_llm_stray_api_key_settings_are_ignored_on_roundtrip() -> None:
     assert "local_llm" not in persisted["api_key_verified"]
 
 
-def test_translation_settings_defaults_to_gemma_managed_with_only_gemma_history() -> None:
+def test_translation_settings_defaults_to_free_google_translate_with_gemma_history() -> None:
     settings = TranslationSettings()
 
-    assert settings.model == TranslationModel.GEMMA4
-    assert settings.connection == TranslationConnection.MANAGED
+    assert settings.model == TranslationModel.GOOGLE_TRANSLATE
+    assert settings.connection == TranslationConnection.FREE_WEB
     assert settings.connection_history == {
-        TranslationModel.GEMMA4.value: TranslationConnection.MANAGED
+        TranslationModel.GEMMA4.value: TranslationConnection.OPENROUTER
     }
+    # to_dict records the active model's connection into the history.
     assert to_dict(AppSettings())["translation"] == {
-        "model": TranslationModel.GEMMA4.value,
-        "connection": TranslationConnection.MANAGED.value,
+        "model": TranslationModel.GOOGLE_TRANSLATE.value,
+        "connection": TranslationConnection.FREE_WEB.value,
         "connection_history": {
-            TranslationModel.GEMMA4.value: TranslationConnection.MANAGED.value,
+            TranslationModel.GEMMA4.value: TranslationConnection.OPENROUTER.value,
+            TranslationModel.GOOGLE_TRANSLATE.value: TranslationConnection.FREE_WEB.value,
         },
     }
 
 
 def test_public_translation_connection_helpers_match_model_matrix() -> None:
+    # MANAGED / MANAGED_CHINA retired 2026-07-17 — no model offers them.
     assert supported_translation_connections(TranslationModel.GEMMA4) == (
-        TranslationConnection.MANAGED,
         TranslationConnection.OPENROUTER,
     )
     assert supported_translation_connections(TranslationModel.DEEPSEEK_V4_FLASH) == (
-        TranslationConnection.MANAGED,
-        TranslationConnection.MANAGED_CHINA,
         TranslationConnection.OPENROUTER,
         TranslationConnection.OFFICIAL_BYOK,
     )
@@ -506,13 +519,31 @@ def test_public_translation_connection_helpers_match_model_matrix() -> None:
     assert supported_translation_connections(TranslationModel.LOCAL_LLM) == (
         TranslationConnection.OLLAMA,
     )
-    assert default_translation_connection(TranslationModel.GEMMA4) == TranslationConnection.MANAGED
+    assert supported_translation_connections(TranslationModel.DEEPL) == (
+        TranslationConnection.OFFICIAL_BYOK,
+    )
+    assert supported_translation_connections(TranslationModel.GOOGLE_TRANSLATE) == (
+        TranslationConnection.FREE_WEB,
+    )
+    assert supported_translation_connections(TranslationModel.BING) == (
+        TranslationConnection.FREE_WEB,
+    )
+    assert supported_translation_connections(TranslationModel.PAPAGO) == (
+        TranslationConnection.FREE_WEB,
+    )
+    assert (
+        default_translation_connection(TranslationModel.GEMMA4) == TranslationConnection.OPENROUTER
+    )
     assert (
         default_translation_connection(TranslationModel.GEMINI_3_FLASH)
         == TranslationConnection.OFFICIAL_BYOK
     )
     assert (
         default_translation_connection(TranslationModel.LOCAL_LLM) == TranslationConnection.OLLAMA
+    )
+    assert (
+        default_translation_connection(TranslationModel.GOOGLE_TRANSLATE)
+        == TranslationConnection.FREE_WEB
     )
 
 
@@ -866,9 +897,11 @@ def test_openrouter_alias_for_fields_does_not_expose_deepseek_v4_pro() -> None:
     assert get_openrouter_llm_profile("deepseek_v4_pro_byok") is None
 
 
-def test_materialize_translation_settings_maps_deepseek_managed_china_to_deepseek_only_openrouter() -> (
+def test_materialize_translation_settings_normalizes_retired_managed_china_to_openrouter_byok() -> (
     None
 ):
+    # MANAGED_CHINA retired 2026-07-17: stale in-memory state normalizes to the
+    # model's default connection (OpenRouter BYOK) instead of deepseek-only routing.
     settings = AppSettings()
     settings.translation = TranslationSettings(
         model=TranslationModel.DEEPSEEK_V4_FLASH,
@@ -882,46 +915,56 @@ def test_materialize_translation_settings_maps_deepseek_managed_china_to_deepsee
     returned = materialize_translation_settings(settings)
 
     assert returned is settings
+    assert settings.translation.connection == TranslationConnection.OPENROUTER
+    assert settings.translation.connection_history == {
+        TranslationModel.DEEPSEEK_V4_FLASH.value: TranslationConnection.OPENROUTER,
+    }
     assert settings.provider.llm == LLMProviderName.OPENROUTER
     assert settings.openrouter.llm_model == OpenRouterLLMModel.DEEPSEEK_V4_FLASH
-    assert settings.openrouter.selected_source == OpenRouterCredentialSource.MANAGED
-    assert settings.openrouter.selection_alias == OpenRouterSelectionAlias.DEEPSEEK_V4_FLASH_MANAGED
-    assert settings.openrouter.provider_routing == OpenRouterProviderRouting.DEEPSEEK_ONLY
+    assert settings.openrouter.selected_source == OpenRouterCredentialSource.BYOK
+    assert settings.openrouter.selection_alias == OpenRouterSelectionAlias.DEEPSEEK_V4_FLASH_BYOK
+    assert settings.openrouter.provider_routing == OpenRouterProviderRouting.DEFAULT
 
 
-def test_to_dict_roundtrips_deepseek_managed_china_provider_routing(tmp_path) -> None:
+def test_load_settings_migrates_retired_managed_china_translation_to_openrouter(tmp_path) -> None:
+    # A config saved before the 2026-07-17 retirement still carries
+    # connection=managed_china; loading migrates it to OpenRouter with
+    # default provider routing and persists the normalized shape.
     path = tmp_path / "settings.json"
-    settings = AppSettings()
-    settings.translation = TranslationSettings(
-        model=TranslationModel.DEEPSEEK_V4_FLASH,
-        connection=TranslationConnection.MANAGED_CHINA,
-        connection_history={
-            TranslationModel.DEEPSEEK_V4_FLASH.value: TranslationConnection.MANAGED_CHINA,
-        },
-    )
+    raw = to_dict(AppSettings())
+    raw["translation"] = {
+        "model": TranslationModel.DEEPSEEK_V4_FLASH.value,
+        "connection": "managed_china",
+        "connection_history": {TranslationModel.DEEPSEEK_V4_FLASH.value: "managed_china"},
+    }
+    path.write_text(json.dumps(raw, ensure_ascii=False, indent=2), encoding="utf-8")
 
-    save_settings(path, settings)
     loaded = load_settings(path)
     persisted = json.loads(path.read_text(encoding="utf-8"))
 
     assert loaded.translation.model == TranslationModel.DEEPSEEK_V4_FLASH
-    assert loaded.translation.connection == TranslationConnection.MANAGED_CHINA
-    assert loaded.openrouter.provider_routing == OpenRouterProviderRouting.DEEPSEEK_ONLY
-    assert persisted["translation"]["connection"] == TranslationConnection.MANAGED_CHINA.value
+    assert loaded.translation.connection == TranslationConnection.OPENROUTER
+    assert loaded.openrouter.provider_routing == OpenRouterProviderRouting.DEFAULT
+    assert loaded.openrouter.selected_source == OpenRouterCredentialSource.BYOK
+    assert loaded.openrouter.selection_alias == OpenRouterSelectionAlias.DEEPSEEK_V4_FLASH_BYOK
+    assert persisted["translation"]["connection"] == TranslationConnection.OPENROUTER.value
     assert (
-        persisted["openrouter"]["provider_routing"] == OpenRouterProviderRouting.DEEPSEEK_ONLY.value
+        persisted["openrouter"]["provider_routing"] == OpenRouterProviderRouting.DEFAULT.value
     )
 
 
-def test_app_settings_defaults_to_managed_openrouter_gemma_with_deepseek_fallback() -> None:
+def test_app_settings_defaults_to_free_google_translate_with_dormant_openrouter() -> None:
+    # New installs default to the keyless free-web Google Translate flow; the
+    # OpenRouter block stays dormant (no credential source) until the user
+    # picks an LLM model, with DeepSeek as the curated fallback.
     settings = AppSettings()
 
-    assert settings.translation.model == TranslationModel.GEMMA4
-    assert settings.translation.connection == TranslationConnection.MANAGED
-    assert settings.provider.llm == LLMProviderName.OPENROUTER
+    assert settings.translation.model == TranslationModel.GOOGLE_TRANSLATE
+    assert settings.translation.connection == TranslationConnection.FREE_WEB
+    assert settings.provider.llm == LLMProviderName.GOOGLE_TRANSLATE
     assert settings.openrouter.llm_model == OpenRouterLLMModel.GEMMA_4_26B_A4B_IT
-    assert settings.openrouter.selected_source == OpenRouterCredentialSource.MANAGED
-    assert settings.openrouter.selection_alias == OpenRouterSelectionAlias.GEMMA4_MANAGED
+    assert settings.openrouter.selected_source == OpenRouterCredentialSource.NONE
+    assert settings.openrouter.selection_alias is None
     assert (
         settings.openrouter.fallback_selection_alias
         == OpenRouterFallbackSelectionAlias.DEEPSEEK_V4_FLASH
@@ -1540,19 +1583,19 @@ def test_from_dict_defaults_missing_gemini_model_to_flash_lite():
     assert loaded.gemini.llm_model == GeminiLLMModel.GEMINI_31_FLASH_LITE
 
 
-def test_app_settings_defaults_vrc_mic_sync_to_off():
+def test_app_settings_defaults_vrc_mic_sync_to_on():
     settings = AppSettings()
 
-    assert settings.osc.vrc_mic_intercept is False
+    assert settings.osc.vrc_mic_intercept is True
 
 
-def test_from_dict_defaults_missing_vrc_mic_sync_to_off():
+def test_from_dict_defaults_missing_vrc_mic_sync_to_on():
     data = to_dict(AppSettings())
     data.setdefault("osc", {}).pop("vrc_mic_intercept", None)
 
     loaded = from_dict(data)
 
-    assert loaded.osc.vrc_mic_intercept is False
+    assert loaded.osc.vrc_mic_intercept is True
 
 
 def test_overlay_display_preferences_roundtrip(tmp_path):
@@ -1623,7 +1666,9 @@ def test_load_settings_backfills_overlay_display_preferences_when_overlay_sectio
     persisted = json.loads(path.read_text(encoding="utf-8"))
     assert persisted["overlay"]["show_translation"] is True
     assert persisted["overlay"]["show_peer_original"] is True
-    assert "overlay_enabled" not in persisted["ui"]
+    # ui.overlay_enabled is a real persisted setting again — the legacy value
+    # survives instead of being stripped.
+    assert persisted["ui"]["overlay_enabled"] is True
 
 
 def test_stt_custom_vocabulary_roundtrip(tmp_path):
@@ -1864,13 +1909,19 @@ def test_translation_settings_roundtrip_materializes_deepseek_official_byok(tmp_
     assert loaded.deepseek.llm_model == DeepSeekLLMModel.DEEPSEEK_V4_FLASH
 
 
-def test_to_dict_infers_default_translation_from_provider_only_qwen_plus() -> None:
-    settings = AppSettings()
-    settings.provider.llm = LLMProviderName.QWEN
-    settings.qwen.llm_model = QwenLLMModel.QWEN_35_PLUS
+def test_from_dict_infers_default_translation_from_provider_only_qwen_plus() -> None:
+    # A legacy file that has provider/qwen fields but no translation section
+    # gets its translation selection inferred on load.
+    data = to_dict(AppSettings())
+    data.pop("translation", None)
+    data["provider"]["llm"] = LLMProviderName.QWEN.value
+    data["qwen"]["llm_model"] = QwenLLMModel.QWEN_35_PLUS.value
 
-    serialized = to_dict(settings)
+    loaded = from_dict(data)
+    serialized = to_dict(loaded)
 
+    assert loaded.translation.model == TranslationModel.QWEN_35_PLUS
+    assert loaded.translation.connection == TranslationConnection.OFFICIAL_BYOK
     assert serialized["translation"]["model"] == TranslationModel.QWEN_35_PLUS.value
     assert serialized["translation"]["connection"] == TranslationConnection.OFFICIAL_BYOK.value
     assert serialized["provider"]["llm"] == LLMProviderName.QWEN.value
@@ -1996,12 +2047,15 @@ def test_from_dict_infers_legacy_gemma_managed_translation_selection() -> None:
 
     loaded = from_dict(data)
 
+    # The legacy managed credential source normalizes to OpenRouter BYOK.
     assert loaded.translation.model == TranslationModel.GEMMA4
-    assert loaded.translation.connection == TranslationConnection.MANAGED
+    assert loaded.translation.connection == TranslationConnection.OPENROUTER
+    assert loaded.openrouter.selected_source == OpenRouterCredentialSource.BYOK
+    assert loaded.openrouter.selection_alias == OpenRouterSelectionAlias.GEMMA4_BYOK
     assert loaded.openrouter.routing_mode == OpenRouterRoutingMode.NOVITA_FIRST
 
 
-def test_from_dict_migrates_direct_qwen_flash_main_to_deepseek_managed() -> None:
+def test_from_dict_migrates_direct_qwen_flash_main_to_deepseek_openrouter() -> None:
     data = to_dict(AppSettings())
     data.pop("translation", None)
     data["provider"]["llm"] = LLMProviderName.QWEN.value
@@ -2010,13 +2064,13 @@ def test_from_dict_migrates_direct_qwen_flash_main_to_deepseek_managed() -> None
     loaded = from_dict(data)
 
     assert loaded.translation.model == TranslationModel.DEEPSEEK_V4_FLASH
-    assert loaded.translation.connection == TranslationConnection.MANAGED
+    assert loaded.translation.connection == TranslationConnection.OPENROUTER
     assert loaded.provider.llm == LLMProviderName.OPENROUTER
     assert loaded.openrouter.llm_model == OpenRouterLLMModel.DEEPSEEK_V4_FLASH
-    assert loaded.openrouter.selection_alias == OpenRouterSelectionAlias.DEEPSEEK_V4_FLASH_MANAGED
+    assert loaded.openrouter.selection_alias == OpenRouterSelectionAlias.DEEPSEEK_V4_FLASH_BYOK
 
 
-def test_from_dict_migrates_openrouter_qwen_flash_main_to_deepseek_managed() -> None:
+def test_from_dict_migrates_openrouter_qwen_flash_main_to_deepseek_openrouter() -> None:
     data = to_dict(AppSettings())
     data.pop("translation", None)
     data["provider"]["llm"] = LLMProviderName.OPENROUTER.value
@@ -2030,11 +2084,11 @@ def test_from_dict_migrates_openrouter_qwen_flash_main_to_deepseek_managed() -> 
     loaded = from_dict(data)
 
     assert loaded.translation.model == TranslationModel.DEEPSEEK_V4_FLASH
-    assert loaded.translation.connection == TranslationConnection.MANAGED
+    assert loaded.translation.connection == TranslationConnection.OPENROUTER
     assert (
         loaded.openrouter.fallback_selection_alias == OpenRouterFallbackSelectionAlias.QWEN35_FLASH
     )
-    assert loaded.openrouter.selection_alias == OpenRouterSelectionAlias.DEEPSEEK_V4_FLASH_MANAGED
+    assert loaded.openrouter.selection_alias == OpenRouterSelectionAlias.DEEPSEEK_V4_FLASH_BYOK
 
 
 def test_from_dict_migrates_openrouter_qwen_flash_main_preserving_routing_and_fallback() -> None:
@@ -2053,14 +2107,14 @@ def test_from_dict_migrates_openrouter_qwen_flash_main_preserving_routing_and_fa
     persisted = to_dict(loaded)
 
     assert loaded.translation.model == TranslationModel.DEEPSEEK_V4_FLASH
-    assert loaded.translation.connection == TranslationConnection.MANAGED
+    assert loaded.translation.connection == TranslationConnection.OPENROUTER
     assert loaded.openrouter.routing_mode == OpenRouterRoutingMode.NOVITA_FIRST
     assert (
         loaded.openrouter.fallback_selection_alias == OpenRouterFallbackSelectionAlias.QWEN35_FLASH
     )
     assert loaded.openrouter.llm_model == OpenRouterLLMModel.DEEPSEEK_V4_FLASH
-    assert loaded.openrouter.selected_source == OpenRouterCredentialSource.MANAGED
-    assert loaded.openrouter.selection_alias == OpenRouterSelectionAlias.DEEPSEEK_V4_FLASH_MANAGED
+    assert loaded.openrouter.selected_source == OpenRouterCredentialSource.BYOK
+    assert loaded.openrouter.selection_alias == OpenRouterSelectionAlias.DEEPSEEK_V4_FLASH_BYOK
     assert persisted["openrouter"]["routing_mode"] == OpenRouterRoutingMode.NOVITA_FIRST.value
     assert (
         persisted["openrouter"]["fallback_selection_alias"]
@@ -2083,44 +2137,11 @@ def test_from_dict_migrates_openrouter_qwen_flash_main_preserving_routing_and_fa
     [
         (
             TranslationModel.GEMMA4,
-            TranslationConnection.MANAGED,
-            LLMProviderName.OPENROUTER,
-            OpenRouterLLMModel.GEMMA_4_26B_A4B_IT,
-            OpenRouterCredentialSource.MANAGED,
-            OpenRouterSelectionAlias.GEMMA4_MANAGED,
-            None,
-            None,
-            None,
-        ),
-        (
-            TranslationModel.GEMMA4,
             TranslationConnection.OPENROUTER,
             LLMProviderName.OPENROUTER,
             OpenRouterLLMModel.GEMMA_4_26B_A4B_IT,
             OpenRouterCredentialSource.BYOK,
             OpenRouterSelectionAlias.GEMMA4_BYOK,
-            None,
-            None,
-            None,
-        ),
-        (
-            TranslationModel.DEEPSEEK_V4_FLASH,
-            TranslationConnection.MANAGED,
-            LLMProviderName.OPENROUTER,
-            OpenRouterLLMModel.DEEPSEEK_V4_FLASH,
-            OpenRouterCredentialSource.MANAGED,
-            OpenRouterSelectionAlias.DEEPSEEK_V4_FLASH_MANAGED,
-            None,
-            None,
-            None,
-        ),
-        (
-            TranslationModel.DEEPSEEK_V4_FLASH,
-            TranslationConnection.MANAGED_CHINA,
-            LLMProviderName.OPENROUTER,
-            OpenRouterLLMModel.DEEPSEEK_V4_FLASH,
-            OpenRouterCredentialSource.MANAGED,
-            OpenRouterSelectionAlias.DEEPSEEK_V4_FLASH_MANAGED,
             None,
             None,
             None,
@@ -2230,15 +2251,17 @@ def test_load_settings_persists_translation_section_for_legacy_file(tmp_path) ->
     loaded = load_settings(path)
     persisted = json.loads(path.read_text(encoding="utf-8"))
 
+    # With no translation section, the selection is inferred from the default
+    # runtime fields (gemini provider -> flash lite over official BYOK).
     assert loaded.settings_version == SETTINGS_SCHEMA_VERSION
-    assert loaded.translation.model == TranslationModel.GEMMA4
-    assert loaded.translation.connection == TranslationConnection.MANAGED
+    assert loaded.translation.model == TranslationModel.GEMINI_31_FLASH_LITE
+    assert loaded.translation.connection == TranslationConnection.OFFICIAL_BYOK
     assert persisted["settings_version"] == SETTINGS_SCHEMA_VERSION
-    assert persisted["translation"]["model"] == TranslationModel.GEMMA4.value
-    assert persisted["translation"]["connection"] == TranslationConnection.MANAGED.value
+    assert persisted["translation"]["model"] == TranslationModel.GEMINI_31_FLASH_LITE.value
+    assert persisted["translation"]["connection"] == TranslationConnection.OFFICIAL_BYOK.value
     assert (
-        persisted["translation"]["connection_history"][TranslationModel.GEMMA4.value]
-        == TranslationConnection.MANAGED.value
+        persisted["translation"]["connection_history"][TranslationModel.GEMINI_31_FLASH_LITE.value]
+        == TranslationConnection.OFFICIAL_BYOK.value
     )
 
 
@@ -2253,13 +2276,13 @@ def test_load_settings_persists_default_translation_for_malformed_non_dict_secti
     loaded = load_settings(path)
     persisted = json.loads(path.read_text(encoding="utf-8"))
 
-    assert loaded.translation.model == TranslationModel.GEMMA4
-    assert loaded.translation.connection == TranslationConnection.MANAGED
+    assert loaded.translation.model == TranslationModel.GEMINI_31_FLASH_LITE
+    assert loaded.translation.connection == TranslationConnection.OFFICIAL_BYOK
     assert persisted["translation"] == {
-        "model": TranslationModel.GEMMA4.value,
-        "connection": TranslationConnection.MANAGED.value,
+        "model": TranslationModel.GEMINI_31_FLASH_LITE.value,
+        "connection": TranslationConnection.OFFICIAL_BYOK.value,
         "connection_history": {
-            TranslationModel.GEMMA4.value: TranslationConnection.MANAGED.value,
+            TranslationModel.GEMINI_31_FLASH_LITE.value: TranslationConnection.OFFICIAL_BYOK.value,
         },
     }
 
@@ -2489,7 +2512,7 @@ def test_from_dict_normalizes_legacy_gemini25_flash_lite_fallback_to_deepseek() 
 
 
 def test_openrouter_deepseek_v4_flash_aliases_use_stable_slug() -> None:
-    expected = "deepseek/deepseek-v4-flash"
+    expected = "deepseek/deepseek-v4-flash-0731"
     deepseek_model = getattr(OpenRouterLLMModel, "DEEPSEEK_V4_FLASH", None)
     deepseek_managed = getattr(OpenRouterSelectionAlias, "DEEPSEEK_V4_FLASH_MANAGED", None)
     deepseek_byok = getattr(OpenRouterSelectionAlias, "DEEPSEEK_V4_FLASH_BYOK", None)
@@ -2556,10 +2579,12 @@ def test_openrouter_settings_roundtrip_persists_deepseek_selection_and_fallback(
     path = tmp_path / "settings.json"
     deepseek_model = getattr(OpenRouterLLMModel, "DEEPSEEK_V4_FLASH", None)
     deepseek_managed = getattr(OpenRouterSelectionAlias, "DEEPSEEK_V4_FLASH_MANAGED", None)
+    deepseek_byok = getattr(OpenRouterSelectionAlias, "DEEPSEEK_V4_FLASH_BYOK", None)
     deepseek_fallback = getattr(OpenRouterFallbackSelectionAlias, "DEEPSEEK_V4_FLASH", None)
 
     assert deepseek_model is not None
     assert deepseek_managed is not None
+    assert deepseek_byok is not None
     assert deepseek_fallback is not None
 
     settings = AppSettings(
@@ -2580,25 +2605,27 @@ def test_openrouter_settings_roundtrip_persists_deepseek_selection_and_fallback(
         ),
     )
 
+    # Serialization normalizes the retired managed selection to BYOK.
     serialized = to_dict(settings)
 
-    assert serialized["openrouter"]["selection_alias"] == deepseek_managed.value
+    assert serialized["openrouter"]["selection_alias"] == deepseek_byok.value
     assert serialized["openrouter"]["llm_model"] == deepseek_model.value
-    assert serialized["openrouter"]["selected_source"] == OpenRouterCredentialSource.MANAGED.value
+    assert serialized["openrouter"]["selected_source"] == OpenRouterCredentialSource.BYOK.value
     assert serialized["openrouter"]["fallback_selection_alias"] == deepseek_fallback.value
+    assert serialized["translation"]["connection"] == TranslationConnection.OPENROUTER.value
 
-    save_settings(path, settings)
+    path.write_text(json.dumps(serialized, ensure_ascii=False, indent=2), encoding="utf-8")
 
     loaded = load_settings(path)
     persisted = json.loads(path.read_text(encoding="utf-8"))
 
-    assert loaded.openrouter.selection_alias == deepseek_managed
+    assert loaded.openrouter.selection_alias == deepseek_byok
     assert loaded.openrouter.llm_model == deepseek_model
-    assert loaded.openrouter.selected_source == OpenRouterCredentialSource.MANAGED
+    assert loaded.openrouter.selected_source == OpenRouterCredentialSource.BYOK
     assert loaded.openrouter.fallback_selection_alias == deepseek_fallback
-    assert persisted["openrouter"]["selection_alias"] == deepseek_managed.value
+    assert persisted["openrouter"]["selection_alias"] == deepseek_byok.value
     assert persisted["openrouter"]["llm_model"] == deepseek_model.value
-    assert persisted["openrouter"]["selected_source"] == OpenRouterCredentialSource.MANAGED.value
+    assert persisted["openrouter"]["selected_source"] == OpenRouterCredentialSource.BYOK.value
     assert persisted["openrouter"]["fallback_selection_alias"] == deepseek_fallback.value
 
 
@@ -2639,20 +2666,20 @@ def test_openrouter_qwen_flash_main_roundtrip_migrates_to_deepseek_and_preserves
     assert isinstance(loaded.openrouter.selection_alias, OpenRouterSelectionAlias)
     assert isinstance(loaded.openrouter.fallback_selection_alias, OpenRouterFallbackSelectionAlias)
     assert loaded.translation.model == TranslationModel.DEEPSEEK_V4_FLASH
-    assert loaded.translation.connection == TranslationConnection.MANAGED
-    assert loaded.openrouter.selection_alias == OpenRouterSelectionAlias.DEEPSEEK_V4_FLASH_MANAGED
+    assert loaded.translation.connection == TranslationConnection.OPENROUTER
+    assert loaded.openrouter.selection_alias == OpenRouterSelectionAlias.DEEPSEEK_V4_FLASH_BYOK
     assert (
         loaded.openrouter.fallback_selection_alias
         == OpenRouterFallbackSelectionAlias.DEEPSEEK_V4_FLASH
     )
     assert loaded.openrouter.llm_model == OpenRouterLLMModel.DEEPSEEK_V4_FLASH
-    assert loaded.openrouter.selected_source == OpenRouterCredentialSource.MANAGED
+    assert loaded.openrouter.selected_source == OpenRouterCredentialSource.BYOK
     assert (
         persisted["openrouter"]["selection_alias"]
-        == OpenRouterSelectionAlias.DEEPSEEK_V4_FLASH_MANAGED.value
+        == OpenRouterSelectionAlias.DEEPSEEK_V4_FLASH_BYOK.value
     )
     assert persisted["openrouter"]["llm_model"] == OpenRouterLLMModel.DEEPSEEK_V4_FLASH.value
-    assert persisted["openrouter"]["selected_source"] == OpenRouterCredentialSource.MANAGED.value
+    assert persisted["openrouter"]["selected_source"] == OpenRouterCredentialSource.BYOK.value
     assert (
         persisted["openrouter"]["fallback_selection_alias"]
         == OpenRouterFallbackSelectionAlias.DEEPSEEK_V4_FLASH.value
@@ -2701,17 +2728,18 @@ def test_load_settings_backfills_openrouter_aliases_from_legacy_fields(tmp_path)
     loaded = load_settings(path)
     persisted = json.loads(path.read_text(encoding="utf-8"))
 
+    # The legacy managed credential source normalizes to BYOK on load.
     assert loaded.settings_version == SETTINGS_SCHEMA_VERSION
     assert loaded.openrouter.llm_model == OpenRouterLLMModel.GEMMA_4_26B_A4B_IT
-    assert loaded.openrouter.selected_source == OpenRouterCredentialSource.MANAGED
-    assert loaded.openrouter.selection_alias == OpenRouterSelectionAlias.GEMMA4_MANAGED
+    assert loaded.openrouter.selected_source == OpenRouterCredentialSource.BYOK
+    assert loaded.openrouter.selection_alias == OpenRouterSelectionAlias.GEMMA4_BYOK
     assert (
         loaded.openrouter.fallback_selection_alias
         == OpenRouterFallbackSelectionAlias.DEEPSEEK_V4_FLASH
     )
     assert persisted["settings_version"] == SETTINGS_SCHEMA_VERSION
     assert (
-        persisted["openrouter"]["selection_alias"] == OpenRouterSelectionAlias.GEMMA4_MANAGED.value
+        persisted["openrouter"]["selection_alias"] == OpenRouterSelectionAlias.GEMMA4_BYOK.value
     )
     assert (
         persisted["openrouter"]["fallback_selection_alias"]

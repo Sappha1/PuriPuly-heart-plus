@@ -20,6 +20,7 @@ from puripuly_heart.config.llm_profiles import (
     OPENROUTER_FALLBACK_SELECTION_ALIAS_DEEPSEEK_V4_FLASH_CHINA,
     OPENROUTER_FALLBACK_SELECTION_ALIAS_NONE,
     OPENROUTER_FALLBACK_SELECTION_ALIAS_QWEN35_FLASH,
+    LEGACY_OPENROUTER_MODEL_DEEPSEEK_V4_FLASH,
     OPENROUTER_MODEL_DEEPSEEK_V4_FLASH,
     OPENROUTER_SELECTION_ALIAS_DEEPSEEK_V4_FLASH_BYOK,
     OPENROUTER_SELECTION_ALIAS_DEEPSEEK_V4_FLASH_MANAGED,
@@ -123,6 +124,8 @@ def normalize_owned_referral_id(value: object) -> str | None:
 
 class STTProviderName(str, Enum):
     LOCAL_QWEN = "local_qwen"
+    LOCAL_PARAKEET_V3 = "local_parakeet_v3"
+    LOCAL_PARAKEET_JAPANESE = "local_parakeet_ja"
     DEEPGRAM = "deepgram"
     QWEN_ASR = "qwen_asr"
     SONIOX = "soniox"
@@ -453,6 +456,9 @@ class LanguagePreset:
     # extra text targets. Old configs simply parse these as empty.
     extra_peer_sources: list[str] = field(default_factory=list)
     extra_peer_targets: list[str] = field(default_factory=list)
+    # Per-tab STT model pins ("" = follow the global provider setting).
+    stt_provider: str = ""
+    peer_stt_provider: str = ""
 
     @property
     def primary_target(self) -> str:
@@ -1679,6 +1685,8 @@ def to_dict(settings: AppSettings) -> dict[str, Any]:
                     "peer_target_language": p.peer_target_language,
                     "extra_peer_sources": list(p.extra_peer_sources),
                     "extra_peer_targets": list(p.extra_peer_targets),
+                    "stt_provider": p.stt_provider,
+                    "peer_stt_provider": p.peer_stt_provider,
                 }
                 for p in settings.languages.presets
             ],
@@ -1929,6 +1937,8 @@ def _parse_deepseek_llm_model(value: object) -> DeepSeekLLMModel:
 def _parse_openrouter_llm_model(value: object) -> OpenRouterLLMModel:
     if isinstance(value, str):
         normalized = value.strip()
+        if normalized == LEGACY_OPENROUTER_MODEL_DEEPSEEK_V4_FLASH:
+            normalized = OPENROUTER_MODEL_DEEPSEEK_V4_FLASH
         try:
             return OpenRouterLLMModel(normalized)
         except ValueError:
@@ -3921,6 +3931,8 @@ def from_dict(data: dict[str, Any]) -> AppSettings:
                     peer_target_language="",
                     extra_peer_sources=[str(c) for c in (p.get("extra_peer_sources") or [])],
                     extra_peer_targets=[str(c) for c in (p.get("extra_peer_targets") or [])],
+                    stt_provider=str(p.get("stt_provider", "") or ""),
+                    peer_stt_provider=str(p.get("peer_stt_provider", "") or ""),
                 )
                 for p in (data.get("languages", {}).get("presets") or [])
             ] or [
@@ -4264,6 +4276,18 @@ def _reconcile_self_in_overlay(settings: "AppSettings") -> None:
     settings.overlay.show_self = merged
 
 
+def _seed_preset_model_pins(settings: AppSettings) -> None:
+    """Every favorites tab carries an explicit model pin. Tabs from older
+    configs (pin == "") adopt the CURRENT global provider once, so switching
+    tabs always restores that tab's own model instead of trailing whatever
+    was picked last on another tab."""
+    for preset in settings.languages.presets:
+        if not preset.stt_provider:
+            preset.stt_provider = settings.provider.stt.value
+        if not preset.peer_stt_provider:
+            preset.peer_stt_provider = settings.provider.peer_stt.value
+
+
 def load_settings(path: Path) -> AppSettings:
     raw = json.loads(path.read_text(encoding="utf-8"))
     if not isinstance(raw, dict):
@@ -4273,6 +4297,7 @@ def load_settings(path: Path) -> AppSettings:
     if changed:
         save_settings(path, settings)
     _reconcile_self_in_overlay(settings)
+    _seed_preset_model_pins(settings)
     return settings
 
 

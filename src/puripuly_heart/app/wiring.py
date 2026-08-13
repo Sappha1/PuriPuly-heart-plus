@@ -592,6 +592,27 @@ def create_stt_backend(
             on_model_loaded=on_model_loaded,
         )
 
+    if settings.provider.stt in (
+        STTProviderName.LOCAL_PARAKEET_V3,
+        STTProviderName.LOCAL_PARAKEET_JAPANESE,
+    ):
+        from puripuly_heart.core.local_stt_assets import default_local_stt_model_dir
+        from puripuly_heart.providers.stt.local_parakeet_sherpa import (
+            LOCAL_PARAKEET_BACKENDS,
+        )
+
+        backend_cls, parakeet_model_id = LOCAL_PARAKEET_BACKENDS[settings.provider.stt.value]
+        return backend_cls(
+            model_dir=default_local_stt_model_dir(parakeet_model_id),
+            sample_rate_hz=STT_INTERNAL_SAMPLE_RATE_HZ,
+            stream_label="self",
+            denoise=bool(getattr(settings.stt, "mic_denoise", False)),
+            min_avg_logprob=None,
+            diagnostics_enabled=diagnostics_enabled,
+            on_model_loading=on_model_loading,
+            on_model_loaded=on_model_loaded,
+        )
+
     if settings.provider.stt == STTProviderName.DEEPGRAM:
         api_key = require_secret(secrets, key="deepgram_api_key", env_var="DEEPGRAM_API_KEY")
         return _create_deepgram_stt_backend(
@@ -751,6 +772,20 @@ def resolve_peer_stt_config(settings: AppSettings) -> ResolvedPeerSTTConfig:
             language_hint=None,
         )
 
+    if provider in (
+        STTProviderName.LOCAL_PARAKEET_V3,
+        STTProviderName.LOCAL_PARAKEET_JAPANESE,
+    ):
+        return ResolvedPeerSTTConfig(
+            provider=provider,
+            source_language=peer_source_language,
+            sample_rate_hz=STT_INTERNAL_SAMPLE_RATE_HZ,
+            keyterms=(),
+            # Parakeet models take no language hint at all — fixed model per
+            # language family, same hint-free rule as local Qwen above.
+            language_hint=None,
+        )
+
     if provider in (STTProviderName.GOOGLE_STT, STTProviderName.WHISPER):
         return ResolvedPeerSTTConfig(
             provider=provider,
@@ -771,7 +806,11 @@ def build_peer_stt_provider_signature(settings: AppSettings) -> tuple[object, ..
     # favorite tabs with different EXPLICIT peer languages (zh-CN ⇄ ja) still tore the
     # model down and showed the "loading speech model" popup on every switch.
     signature_source_language = resolved.source_language
-    if resolved.provider == STTProviderName.LOCAL_QWEN:
+    if resolved.provider in (
+        STTProviderName.LOCAL_QWEN,
+        STTProviderName.LOCAL_PARAKEET_V3,
+        STTProviderName.LOCAL_PARAKEET_JAPANESE,
+    ):
         signature_source_language = "__local_qwen_multilingual__"
     return (
         resolved.provider,
@@ -852,6 +891,27 @@ def create_peer_stt_backend(
             keepalive_interval_s=resolved.soniox_keepalive_interval_s,
             trailing_silence_ms=resolved.soniox_trailing_silence_ms,
             context_terms=resolved.keyterms,
+        )
+
+    if resolved.provider in (
+        STTProviderName.LOCAL_PARAKEET_V3,
+        STTProviderName.LOCAL_PARAKEET_JAPANESE,
+    ):
+        from puripuly_heart.core.local_stt_assets import default_local_stt_model_dir
+        from puripuly_heart.providers.stt.local_parakeet_sherpa import (
+            LOCAL_PARAKEET_BACKENDS,
+        )
+
+        backend_cls, parakeet_model_id = LOCAL_PARAKEET_BACKENDS[resolved.provider.value]
+        return backend_cls(
+            model_dir=default_local_stt_model_dir(parakeet_model_id),
+            sample_rate_hz=resolved.sample_rate_hz,
+            stream_label="peer",
+            min_avg_logprob=None,
+            diagnostics_enabled=diagnostics_enabled,
+            on_model_loading=on_model_loading,
+            on_model_loaded=on_model_loaded,
+            speaker_embedder=_shared_speaker_embedder(settings),
         )
 
     if resolved.provider == STTProviderName.LOCAL_QWEN:

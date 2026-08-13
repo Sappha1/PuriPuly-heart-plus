@@ -74,6 +74,9 @@ from puripuly_heart.core.clock import SystemClock
 from puripuly_heart.core.hardware_fingerprint import get_raw_hardware_fingerprint
 from puripuly_heart.core.llm.provider import SemaphoreLLMProvider
 from puripuly_heart.core.local_stt_assets import (
+    LOCAL_PARAKEET_JA_MODEL_ID,
+    LOCAL_PARAKEET_V3_MODEL_ID,
+    LOCAL_STT_MODEL_ID,
     LocalSTTInstallState,
     LocalSTTManifestInvalidError,
     LocalSTTModelMissingError,
@@ -228,6 +231,19 @@ DISCORD_AUTH_ERROR_KEY_BY_SUBCODE = {
 }
 _MICROPHONE_TEST_LEVEL_INTERVAL_S = 1.0
 LOCAL_QWEN_HALLUCINATION_GUIDANCE_TRIGGER_COUNT = 20
+
+# STT providers whose model is a locally-installed sherpa bundle — they share
+# the download / notice / enable-gate machinery below.
+LOCAL_SHERPA_STT_PROVIDERS = (
+    STTProviderName.LOCAL_QWEN,
+    STTProviderName.LOCAL_PARAKEET_V3,
+    STTProviderName.LOCAL_PARAKEET_JAPANESE,
+)
+LOCAL_SHERPA_MODEL_ID_BY_PROVIDER = {
+    STTProviderName.LOCAL_QWEN: LOCAL_STT_MODEL_ID,
+    STTProviderName.LOCAL_PARAKEET_V3: LOCAL_PARAKEET_V3_MODEL_ID,
+    STTProviderName.LOCAL_PARAKEET_JAPANESE: LOCAL_PARAKEET_JA_MODEL_ID,
+}
 
 
 def _mic_test_log_value(value: object) -> str:
@@ -851,10 +867,12 @@ class GuiController:
 
     def _build_self_stt_provider_signature(self, settings: AppSettings) -> tuple[object, ...]:
         local_qwen_identity = None
-        if settings.provider.stt == STTProviderName.LOCAL_QWEN:
+        if settings.provider.stt in LOCAL_SHERPA_STT_PROVIDERS:
             from puripuly_heart.core.local_stt_assets import default_local_stt_model_dir
 
-            local_qwen_identity = str(default_local_stt_model_dir())
+            local_qwen_identity = str(default_local_stt_model_dir(
+                LOCAL_SHERPA_MODEL_ID_BY_PROVIDER[settings.provider.stt]
+            ))
 
         return (
             settings.provider.stt,
@@ -2843,7 +2861,7 @@ class GuiController:
         # pin the signature's language slot to a stable sentinel instead of the
         # self-language-derived hint, avoiding an unnecessary reload.
         signature_language = backend.source_language
-        if settings.provider.peer_stt == STTProviderName.LOCAL_QWEN:
+        if settings.provider.peer_stt in LOCAL_SHERPA_STT_PROVIDERS:
             # Local Qwen is a single multilingual model: the source language is only a
             # per-utterance soft hint (set on each decode stream), NOT a model
             # parameter, and the model auto-detects language anyway. Switching favorite
@@ -3597,7 +3615,7 @@ class GuiController:
         if (
             enabled
             and self.settings is not None
-            and self.settings.provider.stt == STTProviderName.LOCAL_QWEN
+            and self.settings.provider.stt in LOCAL_SHERPA_STT_PROVIDERS
         ):
             current_status = self._current_local_stt_runtime_status()
             if current_status == "downloading":
@@ -3726,10 +3744,49 @@ class GuiController:
     def _refresh_local_stt_runtime_state(self) -> None:
         if self.settings is None:
             return
-        self._local_stt_install_state = inspect_local_stt_install_state()
+        self._local_stt_install_state = self._inspect_required_local_stt_models()
         if self._local_stt_runtime_status not in ("downloading", "download_failed"):
             self._local_stt_runtime_status = self._local_stt_install_state.status
         self._sync_local_stt_notice()
+
+    def _required_local_stt_model_ids(self) -> tuple[str, ...]:
+        """Model ids the CURRENT selection actually needs: the self provider's
+        model (always, when local) plus the peer provider's model only while
+        peer translation is requested — mirrors the notice gating."""
+        if self.settings is None:
+            return ()
+        ids: list[str] = []
+        self_provider = self.settings.provider.stt
+        if self_provider in LOCAL_SHERPA_STT_PROVIDERS:
+            ids.append(LOCAL_SHERPA_MODEL_ID_BY_PROVIDER[self_provider])
+        if self._peer_local_stt_requested(self.settings):
+            peer_model = LOCAL_SHERPA_MODEL_ID_BY_PROVIDER[
+                self.settings.provider.peer_stt
+            ]
+            if peer_model not in ids:
+                ids.append(peer_model)
+        return tuple(ids)
+
+    def _inspect_required_local_stt_models(self) -> LocalSTTInstallState:
+        from puripuly_heart.core.local_stt_assets import (
+            default_local_stt_model_dir,
+            load_local_stt_asset_manifest,
+        )
+
+        model_ids = self._required_local_stt_model_ids() or (LOCAL_STT_MODEL_ID,)
+        combined: LocalSTTInstallState | None = None
+        for model_id in model_ids:
+            state = inspect_local_stt_install_state(
+                default_local_stt_model_dir(model_id),
+                manifest=load_local_stt_asset_manifest(model_id),
+            )
+            if state.status == "invalid":
+                return state
+            if state.status == "missing":
+                combined = state
+            elif combined is None:
+                combined = state
+        return combined or LocalSTTInstallState(status="missing")
 
     def _current_local_stt_runtime_status(self) -> str:
         if self._local_stt_runtime_status in ("downloading", "download_failed"):
@@ -3740,7 +3797,7 @@ class GuiController:
         resolved_settings = settings or self.settings
         return bool(
             resolved_settings is not None
-            and resolved_settings.provider.peer_stt == STTProviderName.LOCAL_QWEN
+            and resolved_settings.provider.peer_stt in LOCAL_SHERPA_STT_PROVIDERS
             and self._peer_translation_activation_requested_for(resolved_settings)
         )
 
@@ -3753,7 +3810,7 @@ class GuiController:
     def _clear_local_stt_pending_enable_if_provider_switched_away(self) -> None:
         if self.settings is None:
             return
-        if self.settings.provider.stt != STTProviderName.LOCAL_QWEN:
+        if self.settings.provider.stt not in LOCAL_SHERPA_STT_PROVIDERS:
             self._reset_local_stt_pending_enable_after_install()
         if not self._peer_local_stt_requested(self.settings):
             self._reset_local_stt_pending_peer_enable_after_install()
@@ -3795,7 +3852,7 @@ class GuiController:
         status = self._current_local_stt_runtime_status()
         should_show = status in ("downloading", "loading") or (
             (
-                self.settings.provider.stt == STTProviderName.LOCAL_QWEN
+                self.settings.provider.stt in LOCAL_SHERPA_STT_PROVIDERS
                 or self._peer_local_stt_requested(self.settings)
             )
             and status != "ready"
@@ -3827,11 +3884,21 @@ class GuiController:
         self._local_stt_download_percent = 0
         self._sync_local_stt_notice()
         try:
-            installed = await ensure_local_stt_installed(
-                locale=self.settings.ui.locale,
-                on_status=self._handle_local_stt_download_status,
-                cancel_event=cancel_event,
+            from puripuly_heart.core.local_stt_assets import (
+                load_local_stt_asset_manifest,
             )
+
+            for model_id in self._required_local_stt_model_ids() or (
+                LOCAL_STT_MODEL_ID,
+            ):
+                self._local_stt_download_percent = 0
+                self._sync_local_stt_notice()
+                await ensure_local_stt_installed(
+                    manifest=load_local_stt_asset_manifest(model_id),
+                    locale=self.settings.ui.locale,
+                    on_status=self._handle_local_stt_download_status,
+                    cancel_event=cancel_event,
+                )
         except (asyncio.CancelledError, LocalSTTRuntimeInstallCancelled):
             return
         except LocalSTTRuntimeInstallError as exc:
@@ -3850,11 +3917,8 @@ class GuiController:
             if self._local_stt_download_origin == origin:
                 self._local_stt_download_origin = None
 
-        self._local_stt_install_state = LocalSTTInstallState(
-            status="ready",
-            installed_manifest=installed,
-        )
-        self._local_stt_runtime_status = "ready"
+        self._local_stt_install_state = self._inspect_required_local_stt_models()
+        self._local_stt_runtime_status = self._local_stt_install_state.status
         self._local_stt_download_percent = None
         self._clear_local_stt_pending_enable_if_provider_switched_away()
         self._sync_local_stt_notice()
@@ -3862,7 +3926,7 @@ class GuiController:
         should_resume_self_local_stt = (
             origin == "manual"
             and self.settings is not None
-            and self.settings.provider.stt == STTProviderName.LOCAL_QWEN
+            and self.settings.provider.stt in LOCAL_SHERPA_STT_PROVIDERS
             and self._local_stt_pending_enable_after_install
         )
         should_resume_peer_local_stt = (
@@ -3921,7 +3985,7 @@ class GuiController:
         return False
 
     async def _ensure_local_stt_ready(self) -> bool:
-        if self.settings is None or self.settings.provider.stt != STTProviderName.LOCAL_QWEN:
+        if self.settings is None or self.settings.provider.stt not in LOCAL_SHERPA_STT_PROVIDERS:
             return True
         current_status = self._current_local_stt_runtime_status()
         if current_status == "downloading":
@@ -4116,7 +4180,7 @@ class GuiController:
                     if (
                         self.hub is not None
                         and self.hub.stt is not None
-                        and self._selected_stt_provider() != STTProviderName.LOCAL_QWEN
+                        and self._selected_stt_provider() not in LOCAL_SHERPA_STT_PROVIDERS
                     ):
                         with contextlib.suppress(Exception):
                             await self.hub.stt.warmup()
@@ -4168,6 +4232,7 @@ class GuiController:
         idx = updated.languages.active_preset
         if 0 <= idx < len(updated.languages.presets):
             targets = [target_code] + (extra_target_codes or [])
+            _prev_preset = updated.languages.presets[idx]
             updated.languages.presets[idx] = LanguagePreset(
                 source_language=source_code,
                 target_languages=targets if targets else [target_code],
@@ -4175,7 +4240,36 @@ class GuiController:
                 peer_target_language=peer_target_code,
                 extra_peer_sources=list(extra_peer_source_codes or []),
                 extra_peer_targets=list(extra_peer_target_codes or []),
+                # per-tab model pins survive the language rebuild
+                stt_provider=getattr(_prev_preset, "stt_provider", "") or "",
+                peer_stt_provider=getattr(_prev_preset, "peer_stt_provider", "") or "",
             )
+            # Switching TO a tab applies its pinned models (if any). A tab
+            # without pins keeps whatever provider is globally selected.
+            if preset_index is not None:
+                _pinned = updated.languages.presets[idx]
+                for _pin, _attr in (
+                    (_pinned.stt_provider, "stt"),
+                    (_pinned.peer_stt_provider, "peer_stt"),
+                ):
+                    if _pin:
+                        with contextlib.suppress(ValueError):
+                            setattr(updated.provider, _attr, STTProviderName(_pin))
+                # the sidebar rows must follow a pin-driven model swap — they
+                # are only updated by the manual pickers otherwise
+                with contextlib.suppress(Exception):
+                    from puripuly_heart.ui.i18n import provider_label
+
+                    dash = getattr(self.app, "view_dashboard", None)
+                    if dash is not None:
+                        dash.set_stt_provider_label(
+                            provider_label(updated.provider.stt.value),
+                            updated.provider.stt.value,
+                        )
+                        dash.set_peer_stt_provider_label(
+                            provider_label(updated.provider.peer_stt.value),
+                            updated.provider.peer_stt.value,
+                        )
         # Sync language and extra targets to hub immediately so in-flight
         # translations use the new language before apply_settings completes.
         if self.hub is not None:
@@ -4871,7 +4965,55 @@ class GuiController:
             ),
         )
 
+    def _create_peer_process_audio_source(self, target):
+        from puripuly_heart.config.process_capture_resolution import (
+            ProcessCaptureResolver,
+        )
+        from puripuly_heart.core.audio.process_identity import (
+            PsutilCurrentUserProcessSnapshots,
+            PsutilProcessIdentityWatcher,
+        )
+        from puripuly_heart.core.audio.process_source import ProcessAudioCaptureSource
+
+        resolver = ProcessCaptureResolver(snapshots=PsutilCurrentUserProcessSnapshots())
+        resolution = resolver.resolve_for_start(target)
+        if not resolution.available:
+            reason = resolution.unavailable_reason or "no_process"
+            self.log_basic(
+                "[Capture][peer] app-audio target unavailable "
+                f"(kind={target.kind}, reason={reason}) — start the app or pick "
+                "another capture source"
+            )
+            raise RuntimeError(f"process capture target unavailable: {reason}")
+        source = ProcessAudioCaptureSource(
+            identity=resolution.identity,
+            watcher=PsutilProcessIdentityWatcher(),
+        )
+        self.log_basic(
+            "[Capture][peer] capturing app audio "
+            f"(kind={target.kind}, pid={resolution.identity.pid})"
+        )
+        return source
+
     def _create_peer_audio_source_from_runtime_config(self, config: PeerRuntimeConfig):
+        from puripuly_heart.config.process_capture_target import (
+            parse_process_capture_target,
+        )
+
+        process_target = parse_process_capture_target(config.output_device)
+        if process_target is not None:
+            raw_source = self._create_peer_process_audio_source(process_target)
+            wrapped_source = self._wrap_diagnostic_audio_source(
+                raw_source,
+                channel_label="peer",
+            )
+            return DesktopPeerPipeline(
+                source=wrapped_source,
+                auto_gain=bool(getattr(self.settings.desktop_audio, "auto_gain", True)),
+                target_sample_rate_hz=config.backend.sample_rate_hz,
+                is_detailed_enabled=self._detailed_audio_diag_enabled,
+                log_detailed=lambda message: self.log_detailed(message),
+            )
         # Resilient wrapper: survives headphone unplugs / endpoint re-creation by
         # watching for frame starvation and reopening capture (2026-07-24: a
         # mistaken unplug killed peer silently for 14 hours with zero log lines).

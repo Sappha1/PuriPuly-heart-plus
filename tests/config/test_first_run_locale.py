@@ -120,9 +120,11 @@ def test_first_run_settings_preserve_prompt_defaults() -> None:
 def test_first_run_settings_preserve_provider_defaults() -> None:
     settings = _new_first_run_settings("zh_CN")
 
+    # Chinese-locale first runs default to Bing (Google is blocked in China);
+    # the OpenRouter block stays dormant until the user picks an LLM model.
     assert settings.provider.stt == STTProviderName.LOCAL_QWEN
-    assert settings.provider.llm == LLMProviderName.OPENROUTER
-    assert settings.openrouter.selected_source == OpenRouterCredentialSource.MANAGED
+    assert settings.provider.llm == LLMProviderName.BING
+    assert settings.openrouter.selected_source == OpenRouterCredentialSource.NONE
 
 
 def test_first_run_settings_roundtrip_through_dict_serialization() -> None:
@@ -132,8 +134,8 @@ def test_first_run_settings_roundtrip_through_dict_serialization() -> None:
 
     assert restored.ui.locale == "ko"
     assert restored.provider.stt == STTProviderName.LOCAL_QWEN
-    assert restored.provider.llm == LLMProviderName.OPENROUTER
-    assert restored.openrouter.selected_source == OpenRouterCredentialSource.MANAGED
+    assert restored.provider.llm == LLMProviderName.GOOGLE_TRANSLATE
+    assert restored.openrouter.selected_source == OpenRouterCredentialSource.NONE
     assert restored.system_prompt == settings.system_prompt
     assert restored.system_prompts == {}
 

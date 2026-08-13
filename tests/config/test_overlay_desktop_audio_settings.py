@@ -45,20 +45,22 @@ def test_overlay_display_preferences_round_trip_in_shared_overlay_section() -> N
         }
     )
 
-    assert settings.ui.overlay_enabled is False
+    # overlay_enabled and peer_translation_enabled are real persisted ui
+    # settings again — explicit values survive instead of being forced off.
+    assert settings.ui.overlay_enabled is True
     assert settings.overlay.show_translation is False
     assert settings.overlay.show_peer_original is False
     assert settings.overlay.calibration.distance == 1.2
     assert settings.overlay.calibration.offset_y == -0.2
-    assert settings.ui.peer_translation_enabled is False
+    assert settings.ui.peer_translation_enabled is True
     assert settings.ui.integrated_context_enabled is True
     assert settings.desktop_audio.output_device == "Headphones (Loopback)"
 
     data = to_dict(settings)
     round_tripped = from_dict(data)
 
-    assert "overlay_enabled" not in data["ui"]
-    assert "peer_translation_enabled" not in data["ui"]
+    assert data["ui"]["overlay_enabled"] is True
+    assert data["ui"]["peer_translation_enabled"] is True
     assert "show_overlay_translation" not in data["ui"]
     assert "show_overlay_peer_original" not in data["ui"]
     assert data["overlay"]["show_translation"] is False
@@ -67,11 +69,11 @@ def test_overlay_display_preferences_round_trip_in_shared_overlay_section() -> N
     assert data["ui"]["integrated_context_bootstrapped"] is True
     assert data["desktop_audio"]["vad_hangover_ms"] == 950
     assert "overlay_calibration" not in data
-    assert round_tripped.ui.overlay_enabled is False
+    assert round_tripped.ui.overlay_enabled is True
     assert round_tripped.overlay.show_translation is False
     assert round_tripped.overlay.show_peer_original is False
     assert round_tripped.overlay.calibration.distance == 1.2
-    assert round_tripped.ui.peer_translation_enabled is False
+    assert round_tripped.ui.peer_translation_enabled is True
 
 
 def test_overlay_enabled_false_stays_separate_from_overlay_display_serialization() -> None:
@@ -85,7 +87,7 @@ def test_overlay_enabled_false_stays_separate_from_overlay_display_serialization
     data = to_dict(settings)
     round_tripped = from_dict(data)
 
-    assert "overlay_enabled" not in data["ui"]
+    assert data["ui"]["overlay_enabled"] is False
     assert round_tripped.ui.overlay_enabled is False
     assert data["overlay"]["show_translation"] is False
     assert round_tripped.overlay.show_translation is False
@@ -213,9 +215,10 @@ def test_load_settings_migrates_legacy_overlay_display_and_calibration_shape(
     assert settings.overlay.show_peer_original is False
     assert settings.overlay.calibration.distance == 1.2
     assert settings.overlay.calibration.offset_y == -0.2
-    assert settings.ui.peer_translation_enabled is False
-    assert "overlay_enabled" not in reloaded["ui"]
-    assert "peer_translation_enabled" not in reloaded["ui"]
+    # peer_translation_enabled persists as given instead of being forced off.
+    assert settings.ui.peer_translation_enabled is True
+    assert reloaded["ui"]["overlay_enabled"] is False
+    assert reloaded["ui"]["peer_translation_enabled"] is True
     assert "show_overlay_translation" not in reloaded["ui"]
     assert "show_overlay_peer_original" not in reloaded["ui"]
     assert reloaded["overlay"]["show_translation"] is False

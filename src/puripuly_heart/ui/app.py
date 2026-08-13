@@ -194,6 +194,7 @@ class TranslatorApp:
         self.view_dashboard.on_request_stt_download = self._on_request_stt_download
         self.view_dashboard.on_stt_provider_change = self._on_dashboard_stt_provider_change
         self.view_dashboard.on_peer_stt_provider_change = self._on_dashboard_peer_stt_provider_change
+        self.view_dashboard.on_open_settings_page = self._open_settings_tab
         # (Prototype) OCR detection overlay — self-contained, off by default.
         from puripuly_heart.ocr.manager import OcrOverlayManager
         self._ocr_manager = OcrOverlayManager()
@@ -388,6 +389,7 @@ class TranslatorApp:
                     return getattr(res, "text", text) or text
 
                 _sv.translate_message = _steam_translate
+                _sv.on_open_app_settings = self._open_settings_tab
 
                 # ── Steam-tab translator picker: the same SettingsModal card
                 # system as the dashboard, plain model names, greyed only when a
@@ -2123,6 +2125,16 @@ class TranslatorApp:
         # against the mic's provider, so unsupported peer languages slipped by.
         stt_provider = settings.provider.stt.value
         peer_stt_provider = getattr(settings.provider, "peer_stt", settings.provider.stt).value
+        # A tab switch may PIN different models — warn against the models the
+        # target tab will actually use, not the outgoing tab's (switching from
+        # a Parakeet tab to a Qwen/Chinese tab flashed a bogus incompatibility
+        # toast for the first second otherwise).
+        if preset_index is not None and 0 <= preset_index < len(settings.languages.presets):
+            _target_preset = settings.languages.presets[preset_index]
+            stt_provider = (getattr(_target_preset, "stt_provider", "") or stt_provider)
+            peer_stt_provider = (
+                getattr(_target_preset, "peer_stt_provider", "") or peer_stt_provider
+            )
         warning = None
         if source_code != previous_source_code:
             warning = get_stt_compatibility_warning(source_code, stt_provider)
@@ -2806,6 +2818,9 @@ class TranslatorApp:
                 return
             updated = copy.deepcopy(current)
             updated.provider.stt = STTProviderName(provider_value)
+            _langs = updated.languages
+            if 0 <= _langs.active_preset < len(_langs.presets):
+                _langs.presets[_langs.active_preset].stt_provider = provider_value
             # Update label immediately so UI reflects the change
             dash = getattr(self, "view_dashboard", None)
             if dash is not None:
@@ -2837,6 +2852,9 @@ class TranslatorApp:
                 return
             updated = copy.deepcopy(current)
             updated.provider.peer_stt = STTProviderName(provider_value)
+            _langs = updated.languages
+            if 0 <= _langs.active_preset < len(_langs.presets):
+                _langs.presets[_langs.active_preset].peer_stt_provider = provider_value
             # Update the PEER row label immediately, like the MIC handler does —
             # without this the runtime switched providers while the row kept
             # showing (and the picker kept highlighting) the old one.

@@ -417,18 +417,18 @@ class SteamPage:
         primary). GetMessagesFromTimeRange(start,end) returns {messages,...} pulled
         fresh from the server — the reliable way to see new messages. Same message
         shape as read_messages."""
-        try:
-            return await self._page.evaluate(
+        return await self._page.evaluate(
                 r"""async (args) => {
                   const [acct, since] = args;
                   const a = window.g_FriendsUIApp;
                   const cs = a.m_ChatStore, fcs = cs.m_FriendChatStore;
                   let c = (fcs.m_rgFriendChats || []).find(x => x.m_unAccountIDFriend === acct);
                   if (!c) { try { c = cs.GetFriendChat(acct); } catch (e) {} }
-                  if (!c || !c.GetMessagesFromTimeRange) return [];
+                  if (!c) throw new Error("nochat");
+                  if (!c.GetMessagesFromTimeRange) throw new Error("norange");
                   const now = Math.floor(Date.now() / 1000) + 5;
-                  let r = null;
-                  try { r = await c.GetMessagesFromTimeRange(since, now); } catch (e) { return []; }
+                  const start = since > 0 ? since : now - 905;
+                  const r = await c.GetMessagesFromTimeRange(start, now);
                   const msgs = (r && r.messages) ? r.messages : (Array.isArray(r) ? r : []);
                   const out = [];
                   for (const m of msgs) {
@@ -443,8 +443,6 @@ class SteamPage:
                 }""",
                 [acct, int(since_ts)],
             ) or []
-        except Exception:
-            return []
 
     async def is_typing(self, acct: int) -> bool:
         try:

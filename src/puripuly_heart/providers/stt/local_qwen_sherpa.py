@@ -20,6 +20,8 @@ from puripuly_heart.core.local_qwen_runtime import (
     ensure_local_qwen_windows_runtime,
 )
 from puripuly_heart.core.local_stt_assets import (
+    LOCAL_STT_MODEL_ID,
+    load_local_stt_asset_manifest,
     validate_local_stt_runtime_ready,
 )
 from puripuly_heart.core.stt.backend import (
@@ -420,6 +422,8 @@ class LocalQwenSherpaSTTBackend(STTBackend):
     diagnostics_enabled: Callable[[], bool] | None = None
     on_model_loading: object = None  # Callable[[str], None] — fired (with channel "self"|"peer") before model init
     on_model_loaded: object = None   # Callable[[str], None] — fired (with channel "self"|"peer") after model init
+    # Which bundled manifest validates model_dir (Parakeet subclasses override).
+    asset_model_id: str = LOCAL_STT_MODEL_ID
     _recognizer: object | None = field(init=False, default=None, repr=False)
     _load_lock: asyncio.Lock = field(init=False, repr=False)
     _decode_lock: asyncio.Lock = field(init=False, repr=False)
@@ -515,7 +519,7 @@ class LocalQwenSherpaSTTBackend(STTBackend):
             # Outer try/finally ensures the sentinel is always cleaned up, including
             # on CancelledError (BaseException), which bypasses except Exception blocks.
             try:
-                await asyncio.to_thread(validate_local_stt_runtime_ready, self.model_dir)
+                await asyncio.to_thread(self._validate_runtime_assets)
 
                 if callable(self.on_model_loading):
                     try:
@@ -544,6 +548,12 @@ class LocalQwenSherpaSTTBackend(STTBackend):
                     except Exception:
                         pass
             return self._recognizer
+
+    def _validate_runtime_assets(self) -> None:
+        validate_local_stt_runtime_ready(
+            self.model_dir,
+            manifest=load_local_stt_asset_manifest(self.asset_model_id),
+        )
 
     def _recognizer_cache_key(self) -> tuple:
         return (

@@ -152,6 +152,9 @@ runtime_binaries = collect_dynamic_libs(
 )
 runtime_binaries += collect_dynamic_libs("cryptography")
 runtime_binaries += collect_staged_soxr_runtime_binaries()
+# r481: per-app audio capture — proctap ships a compiled _native .pyd that
+# static analysis misses (imported via importlib inside the capture factory)
+runtime_binaries += collect_dynamic_libs("proctap")
 runtime_binaries += collect_vendored_openvr_runtime_binaries()
 
 # Hidden imports for dynamic imports
@@ -199,6 +202,16 @@ hiddenimports = [
     "faster_whisper",
     "ctranslate2",
     "langdetect",
+    # r481: per-app audio capture (lazy importlib inside the capture factory)
+    "proctap",
+    "proctap._native",
+    "proctap.backends.windows",
+    "psutil",
+    "puripuly_heart.core.audio.process_source",
+    "puripuly_heart.core.audio.process_identity",
+    "puripuly_heart.config.process_capture_platform",
+    "puripuly_heart.config.process_capture_resolution",
+    "puripuly_heart.config.process_capture_target",
 ]
 hiddenimports += collect_submodules("pygments.lexers")
 

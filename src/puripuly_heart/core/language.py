@@ -133,6 +133,25 @@ _LOCAL_QWEN_SUPPORTED: frozenset = frozenset({
 })
 
 
+# Languages the Parakeet v3 0.6B model transcribes (25 European languages;
+# NO Chinese/Japanese/Korean). The JA model is Japanese-only.
+_LOCAL_PARAKEET_V3_SUPPORTED: frozenset = frozenset({
+    "bg", "hr", "cs", "da", "nl", "en", "et", "fi", "fr", "de", "el", "hu",
+    "it", "lv", "lt", "mt", "pl", "pt", "ro", "sk", "sl", "es", "sv", "ru",
+    "uk",
+})
+
+
+def is_local_parakeet_v3_supported(code: str) -> bool:
+    if code in _LOCAL_PARAKEET_V3_SUPPORTED:
+        return True
+    return code.split("-")[0].lower() in _LOCAL_PARAKEET_V3_SUPPORTED
+
+
+def is_local_parakeet_ja_supported(code: str) -> bool:
+    return code.split("-")[0].lower() == "ja"
+
+
 def is_local_qwen_supported(code: str) -> bool:
     """Check if a language is supported by the local Qwen3-ASR 0.6B model."""
     if code in _LOCAL_QWEN_SUPPORTED:
@@ -267,6 +286,12 @@ def get_stt_compatibility_warning(code: str, stt_provider: str) -> SttCompatibil
 
     if stt_provider == "local_qwen" and not is_local_qwen_supported(code):
         return SttCompatibilityWarning("warning.local_qwen_not_supported", lang_code)
+
+    if stt_provider == "local_parakeet_v3" and not is_local_parakeet_v3_supported(code):
+        return SttCompatibilityWarning("warning.local_parakeet_not_supported", lang_code)
+
+    if stt_provider == "local_parakeet_ja" and not is_local_parakeet_ja_supported(code):
+        return SttCompatibilityWarning("warning.local_parakeet_not_supported", lang_code)
 
     if stt_provider == "qwen_asr" and not is_qwen_asr_supported(code):
         if is_deepgram_supported(code):

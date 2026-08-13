@@ -100,6 +100,7 @@ The installer is built from `installer.iss` with Inno Setup 6.
 - Fork developed by [Sappha1](https://github.com/Sappha1) together with **Claude** (Anthropic's AI coding agent).
 - Based on **PuriPuly Heart** by [salee](https://github.com/kapitalismho) — thank you for the excellent foundation.
 - Contributors and special thanks from the original project: RICHARDwuxiaofei; SUI_32C, Nagikokoro, motoka96, _Ykol魚, kascr_, Just Monika V, FLUVIA, Han โชเล่ย์, EA_PE, Ephedrine.
+- Local speech models (Qwen ASR, Parakeet EN/EU, Parakeet JA) converted and published for [sherpa-onnx](https://github.com/k2-fsa/sherpa-onnx) by [csukuangfj](https://github.com/csukuangfj) — thank you.
 
 ## License
 

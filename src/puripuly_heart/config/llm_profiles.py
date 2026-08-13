@@ -12,7 +12,10 @@ OPENROUTER_CREDENTIAL_SOURCE_BYOK = "byok"
 
 OPENROUTER_MODEL_GEMMA_4_26B_A4B_IT = "google/gemma-4-26b-a4b-it"
 OPENROUTER_MODEL_QWEN_35_FLASH_02_23 = "qwen/qwen3.5-flash-02-23"
-OPENROUTER_MODEL_DEEPSEEK_V4_FLASH = "deepseek/deepseek-v4-flash"
+OPENROUTER_MODEL_DEEPSEEK_V4_FLASH = "deepseek/deepseek-v4-flash-0731"
+# Pre-0731 identifier still present in older saved configs — normalized
+# forward at parse time.
+LEGACY_OPENROUTER_MODEL_DEEPSEEK_V4_FLASH = "deepseek/deepseek-v4-flash"
 
 OPENROUTER_SELECTION_ALIAS_GEMMA4_MANAGED = "gemma4_managed"
 OPENROUTER_SELECTION_ALIAS_GEMMA4_BYOK = "gemma4_byok"

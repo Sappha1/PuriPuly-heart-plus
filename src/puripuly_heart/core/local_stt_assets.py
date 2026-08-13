@@ -15,6 +15,17 @@ LOCAL_STT_INSTALL_DIRNAME = "qwen3-asr-0.6b-int8-sherpa"
 LOCAL_STT_INSTALLED_MANIFEST_FILENAME = "installed-manifest.json"
 LOCAL_STT_MANIFEST_RELATIVE_PATH = f"data/models/{LOCAL_STT_INSTALL_DIRNAME}.manifest.json"
 
+# Additional locally-installable sherpa models. install_dirname == model_id
+# for every bundled manifest, so one id names the manifest, the install dir
+# and the runtime identity.
+LOCAL_PARAKEET_V3_MODEL_ID = "parakeet-tdt-0.6b-v3-int8-sherpa"
+LOCAL_PARAKEET_JA_MODEL_ID = "parakeet-tdt-ctc-0.6b-ja-int8-sherpa"
+LOCAL_STT_ALL_MODEL_IDS = (
+    LOCAL_STT_MODEL_ID,
+    LOCAL_PARAKEET_V3_MODEL_ID,
+    LOCAL_PARAKEET_JA_MODEL_ID,
+)
+
 
 class LocalSTTAssetError(RuntimeError):
     """Base error for local STT asset contract failures."""
@@ -209,8 +220,8 @@ def default_local_stt_model_root() -> Path:
     return paths.default_models_dir()
 
 
-def default_local_stt_model_dir() -> Path:
-    return default_local_stt_model_root() / LOCAL_STT_INSTALL_DIRNAME
+def default_local_stt_model_dir(model_id: str = LOCAL_STT_INSTALL_DIRNAME) -> Path:
+    return default_local_stt_model_root() / model_id
 
 
 def default_local_stt_installed_manifest_path(model_dir: Path | None = None) -> Path:
@@ -240,8 +251,10 @@ def default_local_stt_source_for_locale(locale: str | None) -> str:
     return "huggingface"
 
 
-def load_local_stt_asset_manifest() -> LocalSTTAssetManifest:
-    manifest_path = resources.files("puripuly_heart").joinpath(LOCAL_STT_MANIFEST_RELATIVE_PATH)
+def load_local_stt_asset_manifest(model_id: str = LOCAL_STT_MODEL_ID) -> LocalSTTAssetManifest:
+    manifest_path = resources.files("puripuly_heart").joinpath(
+        f"data/models/{model_id}.manifest.json"
+    )
     with manifest_path.open("r", encoding="utf-8") as handle:
         payload = json.load(handle)
     if not isinstance(payload, dict):

@@ -1341,6 +1341,14 @@ class SteamBridgeView(ft.Container):
                 tip=_T("steam.tip_reload", default="Re-fetch this chat from Steam and redraw it with the current settings.")),
             btn(_T("steam.retranslate", default="Retranslate history"), lambda e: self._retranslate_prompt(),
                 tip=_T("steam.tip_retranslate", default="Redo translations")),
+            ft.Divider(height=1, color="#4b4c4f"),
+            btn(_T("steam.open_app_settings", default="App settings"),
+                lambda e: (self._toggle_settings(False),
+                           (self.on_open_app_settings()
+                            if callable(getattr(self, "on_open_app_settings", None))
+                            else None)),
+                tip=_T("steam.tip_open_app_settings",
+                       default="Open the full app settings page")),
         ], spacing=1, tight=True)
         # Never taller than the window: cap + scroll (the "menu is cut off"
         # bug). Sum the REAL control heights — a rough rows*33 estimate set a
@@ -3231,8 +3239,37 @@ class SteamBridgeView(ft.Container):
         # "No messages here yet").
         if self._live_since_open:
             have = {(int(b.get("_ts") or 0), b.get("text") or "") for b in blocks}
-            extra = [m for m in self._live_since_open
-                     if (int(m.get("ts") or 0), m.get("text") or "") not in have]
+
+            def _lsc(s: str) -> str:
+                s = (s or "").replace("\u02d0", ":").replace("\u02d1", ":")
+                return " ".join(s.split()).lower()
+
+            _own_hist = [b for b in blocks if b.get("from_me")]
+
+            def _dup(m: dict) -> bool:
+                if (int(m.get("ts") or 0), m.get("text") or "") in have:
+                    return True
+                if not m.get("from_me"):
+                    return False
+                mc = _lsc(m.get("text") or "")
+                if not mc:
+                    return False
+                mts = int(m.get("ts") or 0)
+                for hb in _own_hist:
+                    if mts and abs(int(hb.get("_ts") or 0) - mts) > 600:
+                        continue
+                    for ln in (hb.get("text") or "").split("\n"):
+                        lc = _lsc(ln)
+                        if not lc:
+                            continue
+                        if lc == mc:
+                            return True
+                        src = self._tr_cache.get(self._tr_key(ln.strip()))
+                        if src and _lsc(src) == mc:
+                            return True
+                return False
+
+            extra = [m for m in self._live_since_open if not _dup(m)]
             if extra:
                 blocks = blocks + self._coalesce(extra)
         _acct_now = self._active or 0
@@ -3605,6 +3642,7 @@ class SteamBridgeView(ft.Container):
             self._reconnect_delay = min(delay * 2, 15.0)
             await asyncio.sleep(delay)
             await self._connect()
+            self._live_since_open = []   # server history is authoritative now
             if self._writer is not None and self._active is not None:
                 await self._cmd({"cmd": "open", "acct": self._active})
 

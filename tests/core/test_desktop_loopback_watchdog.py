@@ -295,6 +295,49 @@ async def test_pinned_device_never_audio_seeks() -> None:
 
 
 @pytest.mark.asyncio
+async def test_request_reopen_recycles_capture_between_frames() -> None:
+    """2026-08-11: the pace-collapse watchdog asks for a reopen to shed a
+    stale capture backlog — the loop must recycle at the next frame."""
+    first, second = FakeInnerSource(), FakeInnerSource()
+    logs: list[str] = []
+    source, created = _make_source(
+        [first, second], _probe(_SPEAKERS, default=_SPEAKERS), log_basic=logs.append
+    )
+    first.feed(_frame())
+    second.feed(_frame())
+
+    it = source.frames().__aiter__()
+    await asyncio.wait_for(it.__anext__(), 1.0)
+    source.request_reopen("peer audio pace collapsed (ratio=0.01)")
+    assert (await asyncio.wait_for(it.__anext__(), 2.0)) is not None
+    assert len(created) == 2
+    assert first.closed
+    assert any("pace collapsed" in m for m in logs)
+    assert any("Capture reconnected" in m for m in logs)
+    await source.close()
+
+
+@pytest.mark.asyncio
+async def test_request_reopen_applies_during_a_quiet_spell() -> None:
+    """A reopen requested while no frames flow must still happen on the next
+    starvation tick — not wait for audio that may never come."""
+    first, second = FakeInnerSource(), FakeInnerSource()
+    source, created = _make_source([first, second], _probe(_SPEAKERS, default=_SPEAKERS))
+    first.feed(_frame())
+    second.feed(_frame())
+
+    it = source.frames().__aiter__()
+    await asyncio.wait_for(it.__anext__(), 1.0)
+    late = asyncio.ensure_future(it.__anext__())
+    await asyncio.sleep(0.02)  # parked in the starvation wait
+    source.request_reopen("peer audio pace collapsed (ratio=0.01)")
+    assert (await asyncio.wait_for(late, 2.0)) is not None
+    assert len(created) == 2
+    assert first.closed
+    await source.close()
+
+
+@pytest.mark.asyncio
 async def test_endpoint_survey_logs_all_endpoint_levels() -> None:
     """r313: a basic-level survey names every endpoint's live level so a log
     shows whether the call plays through the captured device or another one."""

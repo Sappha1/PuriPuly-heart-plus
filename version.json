@@ -1,9 +1,12 @@
 {
-  "build": 473,
-  "tag": "r473",
+  "build": 491,
+  "tag": "r491",
   "date": "2026-08-12",
   "notes": [
-    "Fixed: sending an emoticon or image no longer shows a duplicate in the app (the friend always received just one)",
-    "Fixed: emoticon names starting with a digit (like 8bitheart) render as emoticons"
+    "New: Parakeet EN/EU + Parakeet JA — two free local speech models, much faster",
+    "New: per-tab MIC/PEER model memory; single-app audio capture for PEER",
+    "New: unified minimal header — toggles and settings under the gear",
+    "Fixed: Steam new-chat messages + duplicate own messages after reconnect",
+    "Improved: faster translator fallback; MIC icon shows mute-sync status"
   ]
 }

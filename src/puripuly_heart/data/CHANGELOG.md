@@ -2,6 +2,12 @@
 
 User-facing changes per build. The latest build's highlights also appear in-app when an update is ready.
 
+## r494 — 2026-08-13
+
+- Fixed: the overlay now repairs its OpenVR runtime file automatically if an antivirus removes it
+- Fixed: the desktop overlay recovers always-on-top within seconds after fullscreen or display-mode changes (no more toggling it off and on)
+- Fixed: a locked overlay can no longer briefly block mouse clicks while starting up
+
 ## r493 — 2026-08-13
 
 - Fixed: fresh installs without the Steam module showed an empty chat panel (no tabs, no header) until the module was installed

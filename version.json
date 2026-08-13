@@ -1,8 +1,10 @@
 {
-  "build": 493,
-  "tag": "r493",
+  "build": 494,
+  "tag": "r494",
   "date": "2026-08-13",
   "notes": [
-    "Fixed: fresh installs without the Steam module showed an empty chat panel"
+    "Fixed: overlay self-repairs its OpenVR runtime if antivirus removes it",
+    "Fixed: overlay recovers always-on-top automatically after fullscreen changes",
+    "Fixed: locked overlay briefly blocking clicks at startup"
   ]
 }

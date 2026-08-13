@@ -383,21 +383,51 @@ class DefaultOverlayProcessRunner:
         return False
 
     @classmethod
+    def _restore_packaged_openvr_runtime_dll(cls, bundled_path: Path) -> bool:
+        """Antivirus quarantine loves unsigned DLLs next to unsigned exes — a
+        backup ships as non-executable package data; put it back when the real
+        DLL vanishes so one quarantine event doesn't kill the overlay."""
+        try:
+            from importlib import resources
+
+            backup = resources.files("puripuly_heart").joinpath(
+                "data/openvr/openvr_runtime.bin"
+            )
+            if not backup.is_file():
+                return False
+            bundled_path.parent.mkdir(parents=True, exist_ok=True)
+            bundled_path.write_bytes(backup.read_bytes())
+            logger.warning(
+                "restored missing OpenVR runtime DLL from the packaged backup "
+                "(an antivirus may have quarantined it): %s",
+                bundled_path,
+            )
+            return True
+        except Exception:
+            return False
+
+    @classmethod
     def _validate_packaged_openvr_runtime_dll(
         cls,
         bundled_path: Path,
     ) -> Path:
         if not bundled_path.is_file():
-            raise OverlayPreparationError(
-                "packaged_openvr_dll_missing",
-                f"Packaged OpenVR runtime DLL not found: {bundled_path}",
-            )
+            if not cls._restore_packaged_openvr_runtime_dll(bundled_path):
+                raise OverlayPreparationError(
+                    "packaged_openvr_dll_missing",
+                    f"Packaged OpenVR runtime DLL not found: {bundled_path}",
+                )
 
         try:
             return openvr_vendor.validate_openvr_runtime_dll(bundled_path)
         except FileNotFoundError as error:
             raise OverlayPreparationError("packaged_openvr_dll_missing", str(error)) from error
         except ValueError as error:
+            if cls._restore_packaged_openvr_runtime_dll(bundled_path):
+                try:
+                    return openvr_vendor.validate_openvr_runtime_dll(bundled_path)
+                except (FileNotFoundError, ValueError):
+                    pass
             raise OverlayPreparationError("openvr_dll_hash_mismatch", str(error)) from error
 
 

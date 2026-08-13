@@ -4270,6 +4270,16 @@ class FletDesktopRendererWindow:
             import ctypes
 
             hwnd = getattr(self, "_native_hwnd", 0)
+            # A fullscreen/DPI mode bounce can RECREATE the native window; a
+            # cached handle then points at a corpse and every re-assert
+            # silently no-ops until the user toggles the overlay. Revalidate.
+            if hwnd and not ctypes.windll.user32.IsWindow(hwnd):
+                hwnd = 0
+                self._native_hwnd = 0
+                logger.info(
+                    "[DesktopOverlay][Topmost] cached window handle went stale "
+                    "— re-resolving"
+                )
             if not hwnd:
                 hwnd = self._resolve_native_hwnd()
                 self._native_hwnd = hwnd
@@ -4283,7 +4293,36 @@ class FletDesktopRendererWindow:
                     )
             if hwnd:
                 # HWND_TOPMOST(-1), SWP_NOMOVE|SWP_NOSIZE|SWP_NOACTIVATE
-                ctypes.windll.user32.SetWindowPos(hwnd, -1, 0, 0, 0, 0, 0x13)
+                if not ctypes.windll.user32.SetWindowPos(hwnd, -1, 0, 0, 0, 0, 0x13):
+                    self._native_hwnd = 0   # failed — re-resolve next pass
+                self._reassert_native_click_through(hwnd)
+        except Exception:
+            pass
+
+    def _reassert_native_click_through(self, hwnd: int) -> None:
+        """While LOCKED the window must never eat mouse clicks. Flet applies
+        ignore_mouse_events on render, but the native window exists (and is
+        interactive) before the first locked render commits — and some mode
+        bounces reset the style. Enforce it alongside the topmost guard; edit
+        mode is left alone so unlocking stays fully interactive."""
+        if self._interaction_mode != _DESKTOP_INTERACTION_MODE_PASS_THROUGH:
+            return
+        try:
+            import ctypes
+
+            GWL_EXSTYLE = -20
+            WS_EX_TRANSPARENT = 0x20
+            WS_EX_LAYERED = 0x80000
+            get_style = ctypes.windll.user32.GetWindowLongPtrW
+            set_style = ctypes.windll.user32.SetWindowLongPtrW
+            current = get_style(hwnd, GWL_EXSTYLE)
+            wanted = current | WS_EX_TRANSPARENT | WS_EX_LAYERED
+            if current != wanted:
+                set_style(hwnd, GWL_EXSTYLE, wanted)
+                logger.info(
+                    "[DesktopOverlay][Lock] click-through style re-asserted "
+                    "(was 0x%x)", current,
+                )
         except Exception:
             pass
 

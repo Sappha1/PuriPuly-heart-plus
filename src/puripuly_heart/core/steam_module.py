@@ -223,16 +223,23 @@ def install(progress: Callable[[str], None] | None = None) -> Path:
 
     _p("deps")
     ok = False
-    for extra in ([], ["-i", "https://pypi.tuna.tsinghua.edu.cn/simple"]):
+    # pypi.org first, then Chinese mirrors — SSL resets on the default index
+    # are routine behind the GFW, and one mirror alone is not always enough
+    for extra in ([],
+                  ["-i", "https://pypi.tuna.tsinghua.edu.cn/simple"],
+                  ["-i", "https://mirrors.aliyun.com/pypi/simple/"],
+                  ["-i", "https://mirrors.ustc.edu.cn/pypi/simple/"]):
         r = subprocess.run([str(vpy), "-m", "pip", "install", "--quiet",
+                            "--timeout", "30", "--retries", "2",
                             "playwright"] + extra,
-                           capture_output=True, timeout=900,
+                           capture_output=True, timeout=600,
                            creationflags=_CREATE_NO_WINDOW)
         if r.returncode == 0:
             ok = True
             break
     if not ok:
-        raise RuntimeError("pip: " + (r.stderr or b"").decode(errors="replace")[:200])
+        raise RuntimeError("pip (all indexes): "
+                           + (r.stderr or b"").decode(errors="replace")[:200])
 
     _p("files")
     bridge = root / "steam_bridge"

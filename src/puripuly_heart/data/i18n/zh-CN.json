@@ -1081,5 +1081,6 @@
   "dashboard.tab_menu.chat_off": "关闭聊天",
   "dashboard.tab_menu.chat_on": "重新开启聊天",
   "dashboard.tab_menu.steam_off": "关闭 Steam 模块",
-  "dashboard.tab_menu.steam_on": "开启 Steam 模块"
+  "dashboard.tab_menu.steam_on": "开启 Steam 模块",
+  "dashboard.tab_menu.steam_signout": "退出 Steam 登录"
 }

@@ -1081,5 +1081,6 @@
   "dashboard.tab_menu.chat_off": "Turn chat off",
   "dashboard.tab_menu.chat_on": "Turn chat back on",
   "dashboard.tab_menu.steam_off": "Turn Steam module off",
-  "dashboard.tab_menu.steam_on": "Turn Steam module on"
+  "dashboard.tab_menu.steam_on": "Turn Steam module on",
+  "dashboard.tab_menu.steam_signout": "Sign out of Steam"
 }

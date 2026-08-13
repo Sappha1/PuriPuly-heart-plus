@@ -1081,5 +1081,6 @@
   "dashboard.tab_menu.chat_off": "チャットをオフ",
   "dashboard.tab_menu.chat_on": "チャットをオンに戻す",
   "dashboard.tab_menu.steam_off": "Steam モジュールをオフ",
-  "dashboard.tab_menu.steam_on": "Steam モジュールをオン"
+  "dashboard.tab_menu.steam_on": "Steam モジュールをオン",
+  "dashboard.tab_menu.steam_signout": "Steam からサインアウト"
 }

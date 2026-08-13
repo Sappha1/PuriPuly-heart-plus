@@ -1081,5 +1081,6 @@
   "dashboard.tab_menu.chat_off": "채팅 끄기",
   "dashboard.tab_menu.chat_on": "채팅 다시 켜기",
   "dashboard.tab_menu.steam_off": "Steam 모듈 끄기",
-  "dashboard.tab_menu.steam_on": "Steam 모듈 켜기"
+  "dashboard.tab_menu.steam_on": "Steam 모듈 켜기",
+  "dashboard.tab_menu.steam_signout": "Steam 로그아웃"
 }

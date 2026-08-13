@@ -2,6 +2,15 @@
 
 User-facing changes per build. The latest build's highlights also appear in-app when an update is ready.
 
+## r492 — 2026-08-13
+
+- Fixed: Steam — sent links no longer show a phantom duplicate in the app
+- Fixed: Steam — message order now matches Steam exactly when your replies interleave with your friend's messages
+- Fixed: untranslatable messages no longer leave a blank line
+- Fixed: turning chat off and back on from the tab no longer leaves Translation stuck waiting
+- New: right-click the Steam tab to turn the module off/on directly or sign out; a disabled module greys its tab
+- Improved: module installs behind restrictive networks automatically try more mirrors, and installed helpers now receive fixes with app updates
+
 ## r491 — 2026-08-12
 
 - New: two free local speech models — Parakeet EN/EU (English + European languages) and Parakeet JA (Japanese), noticeably faster than the existing local model

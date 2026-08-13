@@ -159,6 +159,30 @@ def _find_daemon_python() -> Path:
 
 
 _DAEMON_PYTHON = _find_daemon_python()
+
+
+def _refresh_bridge_sources() -> None:
+    """Installed helpers copied the bridge *.py ONCE at module install — app
+    updates never reached them. Before each spawn, re-copy any bundled source
+    that is newer and different. A local file that is NEWER than the bundled
+    one is kept (dev hot-edits must not be reverted by a stale build)."""
+    with contextlib.suppress(Exception):
+        import shutil
+        from puripuly_heart.core.steam_module import _bundled_bridge_src
+
+        src = _bundled_bridge_src()
+        dst = _BRIDGE_ROOT / "steam_bridge"
+        if not (src / "daemon.py").exists() or not dst.exists():
+            return
+        for f in src.glob("*.py"):
+            target = dst / f.name
+            with contextlib.suppress(Exception):
+                if target.exists():
+                    if target.read_bytes() == f.read_bytes():
+                        continue
+                    if target.stat().st_mtime > f.stat().st_mtime:
+                        continue
+                shutil.copy2(f, target)
 _CREATE_NO_WINDOW = 0x08000000
 
 
@@ -699,6 +723,7 @@ class SteamBridgeView(ft.Container):
                 s.close()
         with contextlib.suppress(Exception):
             import subprocess
+            _refresh_bridge_sources()
             self._proc = subprocess.Popen(
                 [str(_DAEMON_PYTHON), str(_DAEMON_PY)],
                 stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL,
@@ -928,6 +953,7 @@ class SteamBridgeView(ft.Container):
         url = self._sticker_url(name)
 
         async def _go() -> None:
+            await self._flush_pend()
             await self._render_live({
                 "from_me": True, "name": self._own_name, "avatar": self._own_avatar,
                 "text": "", "images": [], "stickers": [url],
@@ -1677,6 +1703,7 @@ class SteamBridgeView(ft.Container):
             self.page.close(dlg)
         if not self._active:
             return
+        await self._flush_pend()
         await self._render_live({"from_me": True, "name": self._own_name,
                                  "avatar": self._own_avatar, "text": "",
                                  "images": [path], "stickers": []})
@@ -2791,6 +2818,10 @@ class SteamBridgeView(ft.Container):
                                       color=_TEXT_PRIMARY)
                     if not self._show_original:
                         tr_ctrl.spans = _spans(line_s, "#9aa0a6")
+                    else:
+                        # empty until the translation lands — an untranslatable
+                        # line must not leave a blank row
+                        tr_ctrl.visible = False
                     segs.append((src, tr_ctrl))
                     items.append(tr_ctrl)
                 if multi and do_tr:
@@ -3180,6 +3211,7 @@ class SteamBridgeView(ft.Container):
             tc.update()
 
     def _apply_tr_spans(self, b: dict, tc, tr: str) -> None:
+        tc.visible = True
         if b.get("from_me") and self._show_pinyin:
             # own messages: the reading belongs to the TRANSLATION (the
             # original is usually not romanizable at all)
@@ -3433,6 +3465,7 @@ class SteamBridgeView(ft.Container):
                 self._last_spawn = now
                 import subprocess
                 with contextlib.suppress(Exception):
+                    _refresh_bridge_sources()
                     self._proc = subprocess.Popen(
                         [str(_DAEMON_PYTHON), str(_DAEMON_PY)],
                         stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL,
@@ -3568,6 +3601,9 @@ class SteamBridgeView(ft.Container):
         orig_out = (f"{clean} {codes}".strip() if clean else codes)
         acct = self._active
         fmt = self._send_fmt if clean else "orig_only"   # emote-only: send as-is
+        # A buffered friend burst must land BEFORE my message or the order
+        # diverges from Steam (their emote regrouped after my reply).
+        await self._flush_pend()
         # ALWAYS render my message instantly on my end; the pending accent line
         # fills with what actually got sent once the composed message goes out.
         b = await self._render_live({
@@ -3586,6 +3622,11 @@ class SteamBridgeView(ft.Container):
             # so it must not gate outgoing text)
             if b is not None:
                 b.pop("_out_pending", None)
+                _oc = b.get("_out_ctrl")
+                if _oc is not None:
+                    _oc.visible = False
+                    with contextlib.suppress(Exception):
+                        _oc.update()
             await self._cmd({"cmd": "send", "acct": acct, "text": orig_out})
             return
         zh = None
@@ -3594,9 +3635,16 @@ class SteamBridgeView(ft.Container):
                 zh = await self.translate_message(tr_src, True)
         zh = (zh or "").strip()
         if not zh or zh.lower() == tr_src.lower():
-            # translation failed or came back unchanged — send once, as-is
+            # translation failed or came back unchanged — send once, as-is,
+            # and retire the empty sent-line placeholder (it rendered as a
+            # blank row otherwise)
             if b is not None:
                 b.pop("_out_pending", None)
+                _oc = b.get("_out_ctrl")
+                if _oc is not None:
+                    _oc.visible = False
+                    with contextlib.suppress(Exception):
+                        _oc.update()
             await self._cmd({"cmd": "send", "acct": acct, "text": orig_out})
             return
         self._tr_cache[self._tr_key(zh)] = tr_src         # echo renders instantly

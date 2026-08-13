@@ -1,12 +1,11 @@
 {
-  "build": 491,
-  "tag": "r491",
-  "date": "2026-08-12",
+  "build": 492,
+  "tag": "r492",
+  "date": "2026-08-13",
   "notes": [
-    "New: Parakeet EN/EU + Parakeet JA — two free local speech models, much faster",
-    "New: per-tab MIC/PEER model memory; single-app audio capture for PEER",
-    "New: unified minimal header — toggles and settings under the gear",
-    "Fixed: Steam new-chat messages + duplicate own messages after reconnect",
-    "Improved: faster translator fallback; MIC icon shows mute-sync status"
+    "Fixed: Steam link duplicates, message ordering, blank untranslatable lines",
+    "Fixed: chat off/on no longer leaves Translation stuck waiting",
+    "New: Steam tab right-click — module off/on and sign out",
+    "Improved: more install mirrors for restrictive networks; helpers update with the app"
   ]
 }

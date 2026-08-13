@@ -19,7 +19,7 @@ from puripuly_heart.ui.fonts import font_for_language
 from puripuly_heart.ui.i18n import get_locale, language_name, t
 from puripuly_heart.ui.overlay_peer_contract import OverlayPeerConsumerContract
 
-_BUILD_TAG = "r491"  #increment each build so user can confirm version
+_BUILD_TAG = "r492"  #increment each build so user can confirm version
 
 # ── VRCT-style dark palette ──────────────────────────────────────────────────
 _BG_MAIN = "#2e2f32"
@@ -1877,11 +1877,36 @@ class DashboardView(ft.Row):
 
     def _on_tab_steam_right(self, e) -> None:
         x, y = self._tap_xy(e)
-        module_on = bool(getattr(self._steam_view, "_module_on", True))
-        label = (t("dashboard.tab_menu.steam_off", default="Turn Steam module off")
-                 if module_on else
-                 t("dashboard.tab_menu.steam_on", default="Turn Steam module on"))
-        self._open_context_menu(x, y, [(label, None, self._steam_header_power)])
+        sv = self._steam_view
+        module_on = bool(getattr(sv, "_module_on", True))
+        items: list = []
+        if module_on:
+            def _off() -> None:
+                with contextlib.suppress(Exception):
+                    sv._module_off()
+                self._set_steam_chip_active(False)
+
+            def _sign_out() -> None:
+                with contextlib.suppress(Exception):
+                    self.page.run_task(sv._cmd, {"cmd": "signout"})
+
+            items.append((t("dashboard.tab_menu.steam_off",
+                            default="Turn Steam module off"), None, _off))
+            items.append((t("dashboard.tab_menu.steam_signout",
+                            default="Sign out of Steam"), None, _sign_out))
+        else:
+            def _on() -> None:
+                with contextlib.suppress(Exception):
+                    sv._module_on = True
+                    sv._save_prefs()
+                    if callable(sv.on_module_state):
+                        sv.on_module_state(True)
+                    sv._hide_state_overlay()
+                self._set_steam_chip_active(True)
+
+            items.append((t("dashboard.tab_menu.steam_on",
+                            default="Turn Steam module on"), None, _on))
+        self._open_context_menu(x, y, items)
 
     # ── beta/steam-bridge: chat tab strip (VRChat | Steam) ───────────────────
     def _select_chat_tab(self, which: str) -> None:
@@ -5913,9 +5938,14 @@ class DashboardView(ft.Row):
         self._open_translit_menu(anchor, include_chat_actions=True)
 
     def _on_chat_power(self) -> None:
+        if self.page:
+            self.page.run_task(self._chat_power_async)
+
+    async def _chat_power_async(self) -> None:
         """One click turns MIC / PEER / TRANS all off (remembering which were
-        on); the next click restores exactly those. Uses the same toggle paths
-        as the sidebar rows so every side effect stays consistent."""
+        on); the next click restores exactly those. The three flows are
+        SERIALIZED with small gaps — fired back-to-back they raced and left
+        the TRANS row waiting forever."""
         turning_off = not getattr(self, "_chat_module_off", False)
         peer_on = False
         if self._overlay_peer_contract is not None:
@@ -5924,17 +5954,24 @@ class DashboardView(ft.Row):
         if turning_off:
             self._chat_power_prev = cur
             want = (False, False, False)
+            order = ((0, self._toggle_stt), (1, self._toggle_peer_translation),
+                     (2, self._toggle_translation))
         else:
             want = getattr(self, "_chat_power_prev", (False, False, True))
-        for is_on, target, fn in (
-            (cur[0], want[0], self._toggle_stt),
-            (cur[1], want[1], self._toggle_peer_translation),
-            (cur[2], want[2], self._toggle_translation),
-        ):
-            if bool(is_on) != bool(target):
+            # TRANS first on restore — the voice channels feed through it
+            order = ((2, self._toggle_translation), (0, self._toggle_stt),
+                     (1, self._toggle_peer_translation))
+        for idx, fn in order:
+            if bool(cur[idx]) != bool(want[idx]):
                 with contextlib.suppress(Exception):
                     fn()
+                await asyncio.sleep(0.35)
         self._chat_module_off = turning_off
+        with contextlib.suppress(Exception):
+            _sl = getattr(self._row_trans, "set_loading", None)
+            if callable(_sl):
+                _sl(False)
+            self._sync_translation_button_state()
         with contextlib.suppress(Exception):
             self._tab_vrc.opacity = 0.45 if turning_off else 1.0
             self._tab_vrc.update()

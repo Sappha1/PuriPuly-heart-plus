@@ -500,6 +500,11 @@ class Daemon:
                         s = (s or "").replace("ː", ":").replace("ˑ", ":")
                         s = re.sub(r"\[emoticon\]([A-Za-z0-9_]+)\[/emoticon\]",
                                    r":\1:", s)
+                        # Steam wraps bare links on echo: [url=X]X[/url] — the
+                        # app sent the RAW url, so unwrap before comparing or
+                        # every link send bounces back as a phantom duplicate
+                        s = re.sub(r"\[url=[^\]]*\]", "", s)
+                        s = s.replace("[/url]", "")
                         return " ".join(s.split())
                     raw = _canon(m.get("text") or "")
                     matched = next((s for s in self._sent_pending

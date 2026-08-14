@@ -2,6 +2,10 @@
 
 User-facing changes per build. The latest build's highlights also appear in-app when an update is ready.
 
+## r502 — 2026-08-14
+
+- Fixed: the Steam tab now remembers your place in the open chat when you switch to the Chat tab and back — the bottom stays at the bottom, and a scrolled-up position is restored exactly
+
 ## r501 — 2026-08-13
 
 - New: optional connection proxy in the Steam tab's settings — only the module's hidden browser uses it (e.g. 127.0.0.1:7890); games and the Steam client are unaffected. For networks where steamcommunity.com is blocked

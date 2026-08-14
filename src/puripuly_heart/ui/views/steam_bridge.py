@@ -750,6 +750,15 @@ class SteamBridgeView(ft.Container):
                 self._show_state_overlay("connecting")
             elif self._active is None and not self._state_overlay.visible:
                 self._show_state_overlay("idle")
+            elif self._active is not None and self.page:
+                # The tab swap re-mounts the message list and resets its
+                # scroll. Restore this chat's remembered spot: the bottom if
+                # the user was following, else their exact kept position.
+                # Capture NOW — the re-mount's own scroll event would clobber
+                # the kept dicts before the anchor task runs.
+                _keep = (None if self._was_following.get(self._active, True)
+                         else self._scroll_pos.get(self._active))
+                self.page.run_task(self._anchor_end, _keep)
             return
         self._started = True
         self._paint_snapshot()

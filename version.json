@@ -1,10 +1,8 @@
 {
-  "build": 501,
-  "tag": "r501",
-  "date": "2026-08-13",
+  "build": 502,
+  "tag": "r502",
+  "date": "2026-08-14",
   "notes": [
-    "New: optional Steam connection proxy for networks that block steamcommunity.com",
-    "Fixed: blocked networks now show 'can't reach Steam' with Retry instead of 'Not signed in'",
-    "Fixed: the chat log keeps its scroll position when returning from the Steam tab"
+    "Fixed: the Steam tab remembers your chat scroll position when switching tabs"
   ]
 }

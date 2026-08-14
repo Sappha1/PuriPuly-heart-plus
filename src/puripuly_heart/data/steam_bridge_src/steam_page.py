@@ -209,6 +209,10 @@ class SteamPage:
             proxy = "http://" + proxy
         self._proxy = proxy
         self._net_blocked = False   # steamcommunity.com unreachable (blocked network)
+        self._loaded_at = 0         # goto success time: the local history array
+                                    # stops receiving FRIEND messages from here on
+                                    # (Steam withholds push while the real client
+                                    # is primary) — do_open fetches the gap
         self._pw = None
         self._ctx = None
         self._page = None
@@ -276,6 +280,8 @@ class SteamPage:
             # proxy). Flag it so the app says "unreachable", not "signed out".
             self._net_blocked = True
             return
+        import time as _t
+        self._loaded_at = int(_t.time())
         for _ in range(40 if mode == "hidden" else 6):
             try:
                 if await self._page.evaluate(STORE_READY_JS):
@@ -306,6 +312,9 @@ class SteamPage:
 
     def net_blocked(self) -> bool:
         return self._net_blocked
+
+    def loaded_at(self) -> int:
+        return self._loaded_at
 
     async def wait_until_signed_in(self, timeout_s: int = 300) -> bool:
         import time as _t

@@ -385,6 +385,26 @@ class Daemon:
             if msgs:
                 break
             await asyncio.sleep(0.4)
+        # AUGMENT with a live server fetch: while the real Steam client is
+        # primary the local array gets NO friend messages (they only flow via
+        # GetMessagesFromTimeRange), so the array alone is missing every friend
+        # line since this page loaded — and everything from app-closed gaps.
+        with contextlib.suppress(Exception):
+            # Flat 48h window: even a FRESH page load's array lacks recent
+            # friend lines, so anchoring to page-load time fetched nothing.
+            # Dedup makes the overlap free; history is capped at 40 anyway.
+            _since = int(time.time()) - 48 * 3600
+            fresh = await self.steam.fetch_messages(acct, _since)
+            if fresh:
+                have = {(m.get("ts"), m.get("from"), m.get("text")) for m in msgs}
+                add = [m for m in fresh
+                       if (m.get("ts"), m.get("from"), m.get("text")) not in have]
+                if add:
+                    _diag(f"OPEN-AUGMENT acct={acct} +{len(add)} server msgs "
+                          f"(since={_since})")
+                    msgs = msgs + add
+                    msgs.sort(key=lambda m: (m.get("ts") or 0,
+                                             m.get("ordinal") or 0))
         self.seen_count = len(msgs)
         # Seed the server-fetch dedup from the loaded history so the live poll only
         # emits messages that arrive AFTER this open.
@@ -473,6 +493,12 @@ class Daemon:
                                          "invisible": self.own_invisible,
                                          "ingame": self.own_ingame, "game": self.own_game,
                                          "emoticons": self.emoticons, "stickers": self.stickers, "effects": self.effects})
+            if not self.clients:
+                continue    # nobody listening: do NOT fetch/emit — an emit to
+                            # zero clients is LOST, but the watermark/seen sets
+                            # would mark it delivered and the app could never
+                            # get it after reconnecting. Frozen clocks make the
+                            # first post-reconnect poll pull everything missed.
             # ALL-CHATS inbound sweep: a friend messaging a chat that is NOT
             # open in the app must still surface (tab + unread + cached line)
             # like real Steam. One cheap clock read; fetch only advanced chats.

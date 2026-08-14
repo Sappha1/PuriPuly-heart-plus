@@ -1,8 +1,9 @@
 {
-  "build": 502,
-  "tag": "r502",
+  "build": 503,
+  "tag": "r503",
   "date": "2026-08-14",
   "notes": [
-    "Fixed: the Steam tab remembers your chat scroll position when switching tabs"
+    "Fixed: Steam messages arriving while the app was closed are delivered on reconnect instead of vanishing",
+    "Fixed: reopening a Steam chat could show only your own messages - history is now completed from Steam's servers"
   ]
 }

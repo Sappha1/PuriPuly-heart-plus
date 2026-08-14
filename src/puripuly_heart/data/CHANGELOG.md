@@ -2,6 +2,11 @@
 
 User-facing changes per build. The latest build's highlights also appear in-app when an update is ready.
 
+## r503 — 2026-08-14
+
+- Fixed: Steam messages that arrived while the app was closed no longer vanish — the helper now holds them until the app reconnects and delivers everything it missed
+- Fixed: reopening a Steam chat could show only your own side of the conversation — the history is now completed with a live fetch from Steam's servers whenever a chat opens
+
 ## r502 — 2026-08-14
 
 - Fixed: the Steam tab now remembers your place in the open chat when you switch to the Chat tab and back — the bottom stays at the bottom, and a scrolled-up position is restored exactly

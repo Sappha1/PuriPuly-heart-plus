@@ -202,8 +202,13 @@ async () => {
 
 
 class SteamPage:
-    def __init__(self, profile_dir: str):
+    def __init__(self, profile_dir: str, proxy: str = ""):
         self._profile = profile_dir
+        proxy = (proxy or "").strip()
+        if proxy and "://" not in proxy:
+            proxy = "http://" + proxy
+        self._proxy = proxy
+        self._net_blocked = False   # steamcommunity.com unreachable (blocked network)
         self._pw = None
         self._ctx = None
         self._page = None
@@ -233,6 +238,7 @@ class SteamPage:
             user_data_dir=self._profile,
             channel="msedge",
             headless=False,   # hidden mode is windowless via --headless=new; login = visible
+            proxy=({"server": self._proxy} if self._proxy else None),
             args=args,
         )
         # CRITICAL for live messages: --headless=new reports the page as HIDDEN
@@ -261,7 +267,15 @@ class SteamPage:
                 } catch (e) {}
                 """)
         self._page = self._ctx.pages[0] if self._ctx.pages else await self._ctx.new_page()
-        await self._page.goto("https://steamcommunity.com/chat", timeout=60000)
+        self._net_blocked = False
+        try:
+            await self._page.goto("https://steamcommunity.com/chat", timeout=60000)
+        except Exception:
+            # DNS-poisoned / connection reset / timeout: steamcommunity.com is
+            # blocked on this network (e.g. mainland China without a covering
+            # proxy). Flag it so the app says "unreachable", not "signed out".
+            self._net_blocked = True
+            return
         for _ in range(40 if mode == "hidden" else 6):
             try:
                 if await self._page.evaluate(STORE_READY_JS):
@@ -270,6 +284,10 @@ class SteamPage:
             except Exception:
                 pass
             await self._page.wait_for_timeout(1000)
+        with contextlib.suppress(Exception):
+            u = self._page.url or ""
+            if u.startswith("chrome-error") or u == "about:blank":
+                self._net_blocked = True   # error page committed, not a login page
 
 
     async def _launch_ctx_with_fallback(self, *args, **kwargs):
@@ -285,6 +303,9 @@ class SteamPage:
         await self.close()
         self._pw = self._ctx = self._page = None
         await self.start(mode=mode)
+
+    def net_blocked(self) -> bool:
+        return self._net_blocked
 
     async def wait_until_signed_in(self, timeout_s: int = 300) -> bool:
         import time as _t

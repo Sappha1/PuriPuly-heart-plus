@@ -138,7 +138,7 @@ def parse_bbcode(raw: str) -> tuple[str, list[str], list[str]]:
 
 class Daemon:
     def __init__(self) -> None:
-        self.steam = SteamPage(PROFILE)
+        self.steam = SteamPage(PROFILE, proxy=os.environ.get("PPH_STEAM_PROXY", ""))
         self.own = 0
         self.own_avatar = ""
         self.own_name = ""
@@ -285,7 +285,12 @@ class Daemon:
 
     async def push_state(self, only: asyncio.StreamWriter | None = None) -> None:
         """Send everything a (new) client needs: status, own id, friends list."""
-        await self.emit({"ev": "status", "signed_in": self.signed, "mode": "hidden"}, only)
+        _netblk = False
+        if not self.signed:
+            with contextlib.suppress(Exception):
+                _netblk = bool(self.steam.net_blocked())
+        await self.emit({"ev": "status", "signed_in": self.signed, "mode": "hidden",
+                         "net_blocked": _netblk}, only)
         await self.emit({"ev": "own", "acct": self.own, "avatar": self.own_avatar,
                          "name": self.own_name, "state": self.own_state,
                          "invites": self.own_invites, "invisible": self.own_invisible,
@@ -311,6 +316,23 @@ class Daemon:
         self.signed = ok
         await self._load_own()
         if ok:
+            await self.refresh_list()
+        await self.push_state()
+
+    async def do_retry(self) -> None:
+        """Blocked-network recovery: a full hidden-browser restart re-runs the
+        page load, picking up a proxy/VPN the user turned on after the fact.
+        No status is emitted until the outcome is known — the view keeps its
+        'retrying' overlay instead of flashing 'Not signed in'."""
+        if self.signed:
+            await self.push_state()
+            return
+        with contextlib.suppress(Exception):
+            await self.steam.restart(mode="hidden")
+        self._started = True
+        self.signed = await self.steam.is_signed_in()
+        await self._load_own()
+        if self.signed:
             await self.refresh_list()
         await self.push_state()
 
@@ -629,6 +651,8 @@ class Daemon:
                     await self.push_state(only=writer)
                 elif cmd == "login":
                     await self.do_login()
+                elif cmd == "retry":
+                    await self.do_retry()
                 elif cmd == "open":
                     await self.do_open(int(obj.get("acct", 0)))
                 elif cmd == "send":

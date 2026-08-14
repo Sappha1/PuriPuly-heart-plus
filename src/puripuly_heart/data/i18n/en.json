@@ -1082,5 +1082,12 @@
   "dashboard.tab_menu.chat_on": "Turn chat back on",
   "dashboard.tab_menu.steam_off": "Turn Steam module off",
   "dashboard.tab_menu.steam_on": "Turn Steam module on",
-  "dashboard.tab_menu.steam_signout": "Sign out of Steam"
+  "dashboard.tab_menu.steam_signout": "Sign out of Steam",
+  "steam.net_title": "Can't reach Steam Community",
+  "steam.net_caption": "steamcommunity.com is not responding — some networks block it. Turn on a VPN, or set your proxy app's local port under this tab's settings gear, then retry.",
+  "steam.net_btn": "Retry",
+  "steam.net_retrying": "Retrying…",
+  "steam.proxy": "Connection proxy",
+  "steam.tip_proxy": "Route ONLY this module's hidden browser through a local VPN/proxy port — for networks where steamcommunity.com is blocked. Example: 127.0.0.1:7890. Games and the Steam client are not affected. Leave empty to connect directly.",
+  "steam.proxy_applied": "Proxy saved — reconnecting…"
 }

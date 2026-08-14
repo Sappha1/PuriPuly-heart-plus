@@ -13,6 +13,7 @@ from __future__ import annotations
 import asyncio
 import contextlib
 import json
+import os
 import re
 import socket
 import time
@@ -803,8 +804,20 @@ class SteamBridgeView(ft.Container):
                 "steam.off_caption",
                 default="The Steam helper and its hidden browser are not running, so this module uses no RAM.")
             self._state_btn_text.value = _T("steam.off_btn", default="Turn on")
+        elif mode == "net":
+            self._state_icon.name = ft.Icons.CLOUD_OFF_OUTLINED
+            self._state_icon.color = "#e0a030"
+            self._state_title.value = _T("steam.net_title",
+                                         default="Can't reach Steam Community")
+            self._state_caption.value = _T(
+                "steam.net_caption",
+                default="steamcommunity.com is not responding — some networks "
+                        "block it. Turn on a VPN, or set your proxy app's local "
+                        "port under this tab's settings gear, then retry.")
+            self._state_btn_text.value = _T("steam.net_btn", default="Retry")
         else:
             self._state_icon.name = ft.Icons.LOGIN
+            self._state_icon.color = _TEXT_FAINT
             self._state_title.value = _T("steam.signin_title", default="Not signed in to Steam")
             self._state_caption.value = _T(
                 "steam.signin_caption",
@@ -831,6 +844,20 @@ class SteamBridgeView(ft.Container):
             return
         if self._state_mode == "idle":
             self._module_off()
+            return
+        if self._state_mode == "net":
+            if self._state_btn.disabled:
+                return                      # a retry is already running
+            self._state_btn.disabled = True
+            self._state_prog.visible = True
+            self._state_caption.value = _T("steam.net_retrying",
+                                           default="Retrying…")
+            with contextlib.suppress(Exception):
+                self._state_caption.update()
+                self._state_prog.update()
+                self._state_btn.update()
+            if self.page:
+                self.page.run_task(self._cmd, {"cmd": "retry"})
             return
         if self._state_mode == "off":
             self._module_on = True
@@ -874,6 +901,40 @@ class SteamBridgeView(ft.Container):
             ])
         with contextlib.suppress(Exception):
             self.page.open(dlg)
+
+    def _set_proxy(self, raw: str) -> None:
+        val = (raw or "").strip()
+        if val == getattr(self, "_steam_proxy", ""):
+            return
+        self._steam_proxy = val
+        self._save_prefs()
+        if val:
+            os.environ["PPH_STEAM_PROXY"] = val
+        else:
+            os.environ.pop("PPH_STEAM_PROXY", None)
+        # the helper reads the proxy from the environment at spawn — bounce it
+        # so the setting applies now, not on the next app start
+        self._last_spawn = 0.0
+
+        async def _bounce() -> None:
+            with contextlib.suppress(Exception):
+                await self._cmd({"cmd": "quit"})
+            with contextlib.suppress(Exception):
+                if self._writer is not None:
+                    self._writer.close()
+            self._writer = None
+            self._reader = None
+            self._started = False
+            self._prewarmed = False
+            self._got_friends = False
+            await asyncio.sleep(1.0)
+            if self._module_on:
+                self._notice(_T("steam.proxy_applied",
+                                default="Proxy saved — reconnecting…"))
+                self.activate()
+
+        if self.page and self._module_on:
+            self.page.run_task(_bounce)
 
     def _module_off(self) -> None:
         self._module_on = False
@@ -1368,6 +1429,31 @@ class SteamBridgeView(ft.Container):
                 tip=_T("steam.tip_reload", default="Re-fetch this chat from Steam and redraw it with the current settings.")),
             btn(_T("steam.retranslate", default="Retranslate history"), lambda e: self._retranslate_prompt(),
                 tip=_T("steam.tip_retranslate", default="Redo translations")),
+            ft.Divider(height=1, color="#4b4c4f"),
+            ft.Container(
+                padding=ft.padding.only(left=6, right=6, top=4, bottom=2),
+                content=ft.Row([
+                    ft.Text(_T("steam.proxy", default="Connection proxy"),
+                            size=13, color=_TEXT_PRIMARY),
+                    info(_T("steam.tip_proxy",
+                            default="Route ONLY this module's hidden browser "
+                                    "through a local VPN/proxy port — for "
+                                    "networks where steamcommunity.com is "
+                                    "blocked. Example: 127.0.0.1:7890. Games "
+                                    "and the Steam client are not affected. "
+                                    "Leave empty to connect directly.")),
+                ], spacing=4, vertical_alignment=ft.CrossAxisAlignment.CENTER)),
+            ft.Container(
+                padding=ft.padding.only(left=6, right=6, bottom=4),
+                content=ft.TextField(
+                    value=getattr(self, "_steam_proxy", ""),
+                    hint_text="127.0.0.1:7890",
+                    dense=True, text_size=12.5, height=34,
+                    content_padding=ft.padding.symmetric(horizontal=8, vertical=6),
+                    border_color="#55565a", focused_border_color=_TOGGLE_ON,
+                    on_submit=lambda e: self._set_proxy(e.control.value),
+                    on_blur=lambda e: self._set_proxy(e.control.value),
+                )),
             ft.Divider(height=1, color="#4b4c4f"),
             btn(_T("steam.open_app_settings", default="App settings"),
                 lambda e: (self._toggle_settings(False),
@@ -2541,6 +2627,7 @@ class SteamBridgeView(ft.Container):
 
     # Steam-tab-only preferences (independent of the app's translation settings).
     def _load_prefs(self) -> None:
+        self._steam_proxy = ""
         with contextlib.suppress(Exception):
             if _PREFS_FILE.exists():
                 p = json.loads(_PREFS_FILE.read_text(encoding="utf-8"))
@@ -2574,6 +2661,12 @@ class SteamBridgeView(ft.Container):
                 self._pref_active = int(p.get("active_tab") or 0)
                 self._dnd = bool(p.get("dnd", False))
                 self._tr_outgoing = bool(p.get("tr_mine", True))
+                self._steam_proxy = str(p.get("proxy") or "").strip()
+        # the helper inherits this at spawn — set it before any daemon Popen
+        if self._steam_proxy:
+            os.environ["PPH_STEAM_PROXY"] = self._steam_proxy
+        else:
+            os.environ.pop("PPH_STEAM_PROXY", None)
 
     def _save_prefs(self) -> None:
         with contextlib.suppress(Exception):
@@ -2590,6 +2683,7 @@ class SteamBridgeView(ft.Container):
                 "read_ko": self._read_ko, "read_latin": self._read_latin,
                 "pinyin_grouped": self._pinyin_grouped,
                 "module_on": self._module_on,
+                "proxy": getattr(self, "_steam_proxy", ""),
                 "recent_picks": self._recent_picks[:24],
                 "open_tabs": list(self._tabs),
                 "active_tab": self._active or 0,
@@ -3790,7 +3884,8 @@ class SteamBridgeView(ft.Container):
                 elif self._active is None and self._module_on:
                     self._show_state_overlay("idle")
             elif self._module_on and ev.get("mode") != "login":
-                self._show_state_overlay("signedout")
+                self._show_state_overlay(
+                    "net" if ev.get("net_blocked") else "signedout")
         elif kind == "seen":
             _sa, _sts = int(ev.get("acct") or 0), int(ev.get("ts") or 0)
             if _sa and _sts and _sts > self._seen_chat_ts.get(_sa, 0):

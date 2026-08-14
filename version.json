@@ -1,8 +1,10 @@
 {
-  "build": 499,
-  "tag": "r499",
+  "build": 501,
+  "tag": "r501",
   "date": "2026-08-13",
   "notes": [
-    "Fixed: Steam duplicates on unread open, own-message replays, wrong-chat labeling, and same-second burst drops"
+    "New: optional Steam connection proxy for networks that block steamcommunity.com",
+    "Fixed: blocked networks now show 'can't reach Steam' with Retry instead of 'Not signed in'",
+    "Fixed: the chat log keeps its scroll position when returning from the Steam tab"
   ]
 }

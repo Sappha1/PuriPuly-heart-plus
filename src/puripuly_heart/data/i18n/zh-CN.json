@@ -1082,5 +1082,12 @@
   "dashboard.tab_menu.chat_on": "重新开启聊天",
   "dashboard.tab_menu.steam_off": "关闭 Steam 模块",
   "dashboard.tab_menu.steam_on": "开启 Steam 模块",
-  "dashboard.tab_menu.steam_signout": "退出 Steam 登录"
+  "dashboard.tab_menu.steam_signout": "退出 Steam 登录",
+  "steam.net_title": "无法连接 Steam 社区",
+  "steam.net_caption": "steamcommunity.com 无法访问——部分网络会屏蔽该域名。请开启 VPN，或在本页齿轮设置中填写代理软件的本地端口，然后重试。",
+  "steam.net_btn": "重试",
+  "steam.net_retrying": "正在重试……",
+  "steam.proxy": "连接代理",
+  "steam.tip_proxy": "仅让本模块的隐藏浏览器通过本地 VPN/代理端口联网——适用于 steamcommunity.com 被屏蔽的网络。例如：127.0.0.1:7890。不影响游戏和 Steam 客户端。留空则直接连接。",
+  "steam.proxy_applied": "代理已保存——正在重新连接……"
 }

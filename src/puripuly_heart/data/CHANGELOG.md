@@ -2,6 +2,12 @@
 
 User-facing changes per build. The latest build's highlights also appear in-app when an update is ready.
 
+## r501 — 2026-08-13
+
+- New: optional connection proxy in the Steam tab's settings — only the module's hidden browser uses it (e.g. 127.0.0.1:7890); games and the Steam client are unaffected. For networks where steamcommunity.com is blocked
+- Fixed: when steamcommunity.com can't be reached, the Steam tab now says so and offers Retry instead of showing "Not signed in"
+- Fixed: the chat log keeps your scroll position when you come back from the Steam tab (stays pinned to the newest messages)
+
 ## r499 — 2026-08-13
 
 - Fixed: opening an unread Steam chat no longer shows its messages twice

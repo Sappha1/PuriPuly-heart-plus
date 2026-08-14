@@ -1082,5 +1082,12 @@
   "dashboard.tab_menu.chat_on": "채팅 다시 켜기",
   "dashboard.tab_menu.steam_off": "Steam 모듈 끄기",
   "dashboard.tab_menu.steam_on": "Steam 모듈 켜기",
-  "dashboard.tab_menu.steam_signout": "Steam 로그아웃"
+  "dashboard.tab_menu.steam_signout": "Steam 로그아웃",
+  "steam.net_title": "Steam 커뮤니티에 연결할 수 없음",
+  "steam.net_caption": "steamcommunity.com이 응답하지 않습니다. 일부 네트워크에서는 차단되어 있습니다. VPN을 켜거나 이 탭의 톱니바퀴 설정에서 프록시 앱의 로컬 포트를 설정한 뒤 다시 시도하세요.",
+  "steam.net_btn": "다시 시도",
+  "steam.net_retrying": "다시 시도하는 중…",
+  "steam.proxy": "연결 프록시",
+  "steam.tip_proxy": "이 모듈의 숨겨진 브라우저만 로컬 VPN/프록시 포트를 통해 연결합니다. steamcommunity.com이 차단된 네트워크용입니다. 예: 127.0.0.1:7890. 게임과 Steam 클라이언트에는 영향이 없습니다. 비워 두면 직접 연결합니다.",
+  "steam.proxy_applied": "프록시 저장됨 — 다시 연결하는 중…"
 }

@@ -19,7 +19,7 @@ from puripuly_heart.ui.fonts import font_for_language
 from puripuly_heart.ui.i18n import get_locale, language_name, t
 from puripuly_heart.ui.overlay_peer_contract import OverlayPeerConsumerContract
 
-_BUILD_TAG = "r499"  #increment each build so user can confirm version
+_BUILD_TAG = "r501"  #increment each build so user can confirm version
 
 # ── VRCT-style dark palette ──────────────────────────────────────────────────
 _BG_MAIN = "#2e2f32"
@@ -1977,6 +1977,24 @@ class DashboardView(ft.Row):
         if which == "steam":
             with contextlib.suppress(Exception):
                 self._steam_view.activate()
+        elif getattr(self, "_chat_following", True):
+            # The pane swap re-mounts the chat Column and Flet resets its
+            # scroll to the top. If the user was at the bottom before leaving,
+            # put them back — two staggered jumps because the re-mounted list
+            # may not have laid out yet on the first frame.
+            async def _restore_follow() -> None:
+                for delay in (0.06, 0.3):
+                    await asyncio.sleep(delay)
+                    lv = self._chat_list_view
+                    if lv is None or not lv.page:
+                        continue
+                    with contextlib.suppress(Exception):
+                        lv.scroll_to(offset=-1, duration=0)
+                self._chat_following = True
+                self._set_chat_jump_visible(False)
+            with contextlib.suppress(Exception):
+                if self.page:
+                    self.page.run_task(_restore_follow)
 
     def _steam_side_capture_tap(self) -> None:
         # a tap on the friends column while the image viewer is open closes it

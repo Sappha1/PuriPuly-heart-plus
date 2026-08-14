@@ -2,6 +2,13 @@
 
 User-facing changes per build. The latest build's highlights also appear in-app when an update is ready.
 
+## r506 — 2026-08-14
+
+- Fixed: messages in background Steam chats could stop surfacing (no tab, no unread dot) — the module now verifies recent chats directly against Steam's servers instead of trusting activity clocks Steam sometimes freezes
+- Fixed: sending images could fail after the app ran for a few hours — the module's Steam web login now refreshes automatically and the upload retries
+- Fixed: the Steam tab could stay disconnected forever if its helper took too long to start — it now keeps retrying until it's back, and opening a chat during helper startup waits instead of silently failing
+- Improved: the "Can't reach Steam Community" screen now explains that the Steam client chats through different servers and is unaffected — only the web chat this module signs into is blocked
+
 ## r503 — 2026-08-14
 
 - Fixed: Steam messages that arrived while the app was closed no longer vanish — the helper now holds them until the app reconnects and delivers everything it missed

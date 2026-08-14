@@ -1,9 +1,11 @@
 {
-  "build": 503,
-  "tag": "r503",
+  "build": 506,
+  "tag": "r506",
   "date": "2026-08-14",
   "notes": [
-    "Fixed: Steam messages arriving while the app was closed are delivered on reconnect instead of vanishing",
-    "Fixed: reopening a Steam chat could show only your own messages - history is now completed from Steam's servers"
+    "Fixed: background Steam chats could stop surfacing messages - recent chats are now verified directly against Steam's servers",
+    "Fixed: image sends failing after a few hours - the Steam web login refreshes automatically and retries",
+    "Fixed: the Steam tab could stay disconnected if its helper started slowly - it now retries until connected",
+    "Improved: the 'Can't reach Steam Community' screen explains the Steam client is unaffected - only the web chat is blocked"
   ]
 }

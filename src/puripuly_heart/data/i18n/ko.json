@@ -1084,7 +1084,7 @@
   "dashboard.tab_menu.steam_on": "Steam 모듈 켜기",
   "dashboard.tab_menu.steam_signout": "Steam 로그아웃",
   "steam.net_title": "Steam 커뮤니티에 연결할 수 없음",
-  "steam.net_caption": "steamcommunity.com이 응답하지 않습니다. 일부 네트워크에서는 차단되어 있습니다. VPN을 켜거나 이 탭의 톱니바퀴 설정에서 프록시 앱의 로컬 포트를 설정한 뒤 다시 시도하세요.",
+  "steam.net_caption": "steamcommunity.com이 응답하지 않습니다. 일부 네트워크에서는 차단되어 있습니다. Steam 클라이언트 채팅은 다른 서버를 사용하므로 영향이 없습니다 — 이 모듈이 로그인에 사용하는 웹 채팅만 차단된 것입니다. VPN을 켜거나 이 탭의 톱니바퀴 설정에서 프록시 앱의 로컬 포트를 설정한 뒤 다시 시도하세요.",
   "steam.net_btn": "다시 시도",
   "steam.net_retrying": "다시 시도하는 중…",
   "steam.proxy": "연결 프록시",

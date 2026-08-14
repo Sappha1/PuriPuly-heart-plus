@@ -430,6 +430,42 @@ class Daemon:
         ok = await self.steam.send(acct, text)
         await self.emit({"ev": "sent", "ok": ok})
 
+    async def _sweep_deliver(self, acct: int, fresh: list, src: str) -> None:
+        """Watermark/dedup/own-echo gate + emit for background-chat fetches —
+        shared by the clock sweep and the round-robin verify fetch."""
+        fresh.sort(key=lambda m: (m.get("ts") or 0, m.get("ordinal") or 0))
+        for m in fresh:
+            mk = int(m.get("ts") or 0)
+            if mk < self._emitted.get(acct, 0):
+                continue
+            key = (m.get("ts"), m.get("from"), m.get("text"))
+            if key in self._seen_keys:
+                continue
+            self._seen_keys.add(key)
+            self._emitted[acct] = max(self._emitted.get(acct, 0), mk)
+            if m.get("from") == self.own:
+                raw_txt = (m.get("text") or "")
+                if (self._img_pending > 0
+                        and raw_txt.lstrip().startswith("[img")):
+                    self._img_pending -= 1
+                    continue
+                def _canon_s(s: str) -> str:
+                    s = (s or "").replace("ː", ":").replace("ˑ", ":")
+                    s = re.sub(r"\[emoticon\]([A-Za-z0-9_]+)\[/emoticon\]",
+                               r":\1:", s)
+                    s = re.sub(r"\[url=[^\]]*\]", "", s)
+                    s = s.replace("[/url]", "")
+                    return " ".join(s.split())
+                raw_c = _canon_s(raw_txt)
+                matched = next((s for s in self._sent_pending
+                                if _canon_s(s) == raw_c), None)
+                if matched is not None:
+                    self._sent_pending.remove(matched)
+                    continue
+            _diag(f"INBOUND({src}) acct={acct} from={m.get('from')}")
+            await self.emit({"ev": "inbound", "acct": acct,
+                             "message": self._shape(m)})
+
     async def poll_loop(self) -> None:
         ticks = 0
         while True:
@@ -517,47 +553,33 @@ class Daemon:
                             self._last_recv[acct] = activity[acct]
                             fresh = await self.steam.fetch_messages(
                                 acct, max(prev - 3, 1))
-                            fresh.sort(key=lambda m: (m.get("ts") or 0,
-                                                      m.get("ordinal") or 0))
-                            for m in fresh:
-                                mk = int(m.get("ts") or 0)
-                                if mk < self._emitted.get(acct, 0):
-                                    continue
-                                key = (m.get("ts"), m.get("from"), m.get("text"))
-                                if key in self._seen_keys:
-                                    continue
-                                self._seen_keys.add(key)
-                                self._emitted[acct] = max(
-                                    self._emitted.get(acct, 0), mk)
-                                if m.get("from") == self.own:
-                                    raw_txt = (m.get("text") or "")
-                                    if (self._img_pending > 0
-                                            and raw_txt.lstrip().startswith("[img")):
-                                        self._img_pending -= 1
-                                        continue
-                                    def _canon_s(s: str) -> str:
-                                        s = (s or "").replace("ː", ":").replace("ˑ", ":")
-                                        s = re.sub(r"\[emoticon\]([A-Za-z0-9_]+)\[/emoticon\]",
-                                                   r":\1:", s)
-                                        s = re.sub(r"\[url=[^\]]*\]", "", s)
-                                        s = s.replace("[/url]", "")
-                                        return " ".join(s.split())
-                                    raw_c = _canon_s(raw_txt)
-                                    matched = next((s for s in self._sent_pending
-                                                    if _canon_s(s) == raw_c), None)
-                                    if matched is not None:
-                                        self._sent_pending.remove(matched)
-                                        continue
-                                _diag(f"INBOUND(sweep) acct={acct} "
-                                      f"from={m.get('from')}")
-                                await self.emit({"ev": "inbound", "acct": acct,
-                                                 "message": self._shape(m)})
+                            await self._sweep_deliver(acct, fresh, "sweep")
                         # brand-new chats appearing post-baseline start at
                         # their current clock (handled above via changed)
                         if self.active in activity:
                             # the active poll already streams this chat — keep
                             # its baseline current so tabbing away is quiet
                             self._last_recv[self.active] = activity[self.active]
+
+            # CLOCK-FREEZE IMMUNITY: Steam can freeze m_rtLastMessageReceived
+            # for background sessions — the clock sweep then goes blind (a
+            # friend's message never surfaces). Verify ONE recent chat per
+            # pass with a real server fetch; the watermark + dedup gate in
+            # _sweep_deliver keeps it emit-only-new.
+            if self._started and self.signed and self.clients and ticks % 3 == 1:
+                with contextlib.suppress(Exception):
+                    _rr = [a for a, v in sorted(
+                               self.convos.items(),
+                               key=lambda kv: -(kv[1].get("last_chat") or 0))
+                           if a != self.active
+                           and (v.get("last_chat") or 0) > time.time() - 3 * 86400][:12]
+                    if _rr:
+                        self._rr_i = (getattr(self, "_rr_i", -1) + 1) % len(_rr)
+                        _acct = _rr[self._rr_i]
+                        _wm = self._emitted.get(_acct, 0)
+                        fresh = await self.steam.fetch_messages(
+                            _acct, (_wm - 3) if _wm else int(time.time()) - 900)
+                        await self._sweep_deliver(_acct, fresh, "rr")
 
             if not self.active:
                 continue
@@ -680,7 +702,16 @@ class Daemon:
                 elif cmd == "retry":
                     await self.do_retry()
                 elif cmd == "open":
-                    await self.do_open(int(obj.get("acct", 0)))
+                    try:
+                        await self.ensure_started()
+                        await self.do_open(int(obj.get("acct", 0)))
+                    except Exception as exc:
+                        _diag(f"OPEN-ERR acct={obj.get('acct')} "
+                              f"{type(exc).__name__}: {exc}")
+                        with contextlib.suppress(Exception):
+                            await self.emit({"ev": "opened",
+                                             "acct": int(obj.get("acct", 0)),
+                                             "ok": False})
                 elif cmd == "send":
                     await self.do_send(int(obj.get("acct", 0)), obj.get("text", ""))
                 elif cmd == "send_image":
@@ -697,6 +728,24 @@ class Daemon:
                         result = await self.steam.send_image(
                             acct, b64, Path(path).name, mime,
                             spoiler=bool(obj.get("spoiler")))
+                        if (not result.get("ok")
+                                and (result.get("status") == 401
+                                     or "Not Logged" in str(result.get("resp", "")))):
+                            # The page's HTTP login cookies go stale after a
+                            # few idle hours (chat rides the WebSocket and
+                            # keeps working) — a reload refreshes them from
+                            # the saved login. Reload, re-open, retry once.
+                            _diag("SEND_IMAGE 401 stale web session -> reload + retry")
+                            await self.steam.reload()
+                            for _ in range(20):
+                                await asyncio.sleep(1.0)
+                                if await self.steam.is_signed_in():
+                                    break
+                            with contextlib.suppress(Exception):
+                                await self.steam.open_conversation(acct)
+                            result = await self.steam.send_image(
+                                acct, b64, Path(path).name, mime,
+                                spoiler=bool(obj.get("spoiler")))
                     except Exception as exc:
                         result = {"step": "daemon", "err": str(exc)}
                     if result.get("ok"):

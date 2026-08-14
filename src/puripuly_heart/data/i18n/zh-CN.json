@@ -1084,7 +1084,7 @@
   "dashboard.tab_menu.steam_on": "开启 Steam 模块",
   "dashboard.tab_menu.steam_signout": "退出 Steam 登录",
   "steam.net_title": "无法连接 Steam 社区",
-  "steam.net_caption": "steamcommunity.com 无法访问——部分网络会屏蔽该域名。请开启 VPN，或在本页齿轮设置中填写代理软件的本地端口，然后重试。",
+  "steam.net_caption": "steamcommunity.com 无法访问——部分网络会屏蔽该域名。Steam 客户端聊天走的是另外的服务器，不受影响——只有本模块登录用的网页聊天端（steamcommunity.com）被屏蔽。请开启 VPN，或在本页齿轮设置中填写代理软件的本地端口，然后重试。",
   "steam.net_btn": "重试",
   "steam.net_retrying": "正在重试……",
   "steam.proxy": "连接代理",

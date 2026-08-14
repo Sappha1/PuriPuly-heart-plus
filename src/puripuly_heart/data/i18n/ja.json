@@ -1084,7 +1084,7 @@
   "dashboard.tab_menu.steam_on": "Steam モジュールをオン",
   "dashboard.tab_menu.steam_signout": "Steam からサインアウト",
   "steam.net_title": "Steam コミュニティに接続できません",
-  "steam.net_caption": "steamcommunity.com が応答しません。一部のネットワークではブロックされています。VPN をオンにするか、このタブの歯車設定でプロキシアプリのローカルポートを設定してから再試行してください。",
+  "steam.net_caption": "steamcommunity.com が応答しません。一部のネットワークではブロックされています。Steam クライアントのチャットは別のサーバーを使うため影響ありません — このモジュールがサインインに使うウェブチャットだけがブロックされています。VPN をオンにするか、このタブの歯車設定でプロキシアプリのローカルポートを設定してから再試行してください。",
   "steam.net_btn": "再試行",
   "steam.net_retrying": "再試行中…",
   "steam.proxy": "接続プロキシ",

@@ -821,8 +821,11 @@ class SteamBridgeView(ft.Container):
             self._state_caption.value = _T(
                 "steam.net_caption",
                 default="steamcommunity.com is not responding — some networks "
-                        "block it. Turn on a VPN, or set your proxy app's local "
-                        "port under this tab's settings gear, then retry.")
+                        "block it. Your Steam client chats through different "
+                        "servers and is NOT affected; only the web chat this "
+                        "module signs into is blocked. Turn on a VPN, or set "
+                        "your proxy app's local port under this tab's settings "
+                        "gear, then retry.")
             self._state_btn_text.value = _T("steam.net_btn", default="Retry")
         else:
             self._state_icon.name = ft.Icons.LOGIN
@@ -3575,6 +3578,15 @@ class SteamBridgeView(ft.Container):
     async def _connect(self) -> None:
         if self._writer is not None:
             return
+        if getattr(self, "_conn_busy", False):
+            return          # another _connect is mid-flight: never double-spawn
+        self._conn_busy = True
+        try:
+            await self._connect_inner()
+        finally:
+            self._conn_busy = False
+
+    async def _connect_inner(self) -> None:
         connected = False
         for _ in range(6):
             if await self._try_open():
@@ -3809,15 +3821,19 @@ class SteamBridgeView(ft.Container):
         # not go dead/blank. Reconnect (respawns the helper if needed).
         self._reader = None
         self._writer = None
-        if self._started:
-            # backoff so a flapping helper can't drive a 1s reopen storm
+        while self._started and self._module_on:
+            # backoff so a flapping helper can't drive a 1s reopen storm —
+            # and LOOP: a daemon that boots slower than one _connect window
+            # used to strand the tab disconnected forever
             delay = getattr(self, "_reconnect_delay", 1.0)
             self._reconnect_delay = min(delay * 2, 15.0)
             await asyncio.sleep(delay)
             await self._connect()
-            self._live_since_open = []   # server history is authoritative now
-            if self._writer is not None and self._active is not None:
-                await self._cmd({"cmd": "open", "acct": self._active})
+            if self._writer is not None:
+                self._live_since_open = []   # server history is authoritative
+                if self._active is not None:
+                    await self._cmd({"cmd": "open", "acct": self._active})
+                break   # _connect started a fresh _read_loop for this socket
 
     def _hide_loading(self) -> None:
         if self._loading.visible:

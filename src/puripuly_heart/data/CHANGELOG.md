@@ -2,6 +2,11 @@
 
 User-facing changes per build. The latest build's highlights also appear in-app when an update is ready.
 
+## r507 — 2026-08-15
+
+- Fixed: typing "/sticker <name>" in a Steam chat now sends the sticker itself (matched against your collection) instead of posting and translating the command as text
+- Fixed: other slash commands ("/me", "/shrug", ...) go out exactly as typed and are never translated
+
 ## r506 — 2026-08-14
 
 - Fixed: messages in background Steam chats could stop surfacing (no tab, no unread dot) — the module now verifies recent chats directly against Steam's servers instead of trusting activity clocks Steam sometimes freezes

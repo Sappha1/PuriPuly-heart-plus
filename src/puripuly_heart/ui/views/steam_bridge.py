@@ -1011,6 +1011,29 @@ class SteamBridgeView(ft.Container):
             self.page.run_task(self._cmd, {"cmd": "send_effect", "acct": acct,
                                            "name": name})
 
+    def _match_sticker_name(self, query: str) -> str:
+        """Best sticker in the user's collection for a typed name: exact,
+        then case/space-insensitive, then unique substring, then prefix."""
+        q = (query or "").strip()
+        if not q or not self._stickers:
+            return ""
+        if q in self._stickers:
+            return q
+        norm = lambda s: "".join(ch for ch in s.lower() if ch.isalnum())
+        nq = norm(q)
+        if not nq:
+            return ""
+        exact = [n for n in self._stickers if norm(n) == nq]
+        if exact:
+            return exact[0]
+        subs = [n for n in self._stickers if nq in norm(n)]
+        if len(subs) == 1:
+            return subs[0]
+        pref = [n for n in subs if norm(n).startswith(nq)]
+        if pref:
+            return sorted(pref, key=len)[0]
+        return subs[0] if subs else ""
+
     def _send_sticker(self, name: str) -> None:
         if self._react_target is not None:
             b, self._react_target = self._react_target, None
@@ -3730,6 +3753,29 @@ class SteamBridgeView(ft.Container):
         self._entry.value = ""
         if self.page:
             self._entry.update()
+        # SLASH COMMANDS are never prose: "/sticker <name>" sends the sticker
+        # itself; any other "/cmd ..." goes out verbatim, untranslated (a
+        # translator fed "/sticker sutekkaa" happily emitted Japanese).
+        if text.startswith("/") and len(text) > 1 and not text.startswith("//"):
+            _cmd, _, _arg = text[1:].partition(" ")
+            _cmd, _arg = _cmd.strip().lower(), _arg.strip()
+            if _cmd == "sticker":
+                _pick = self._match_sticker_name(_arg)
+                if _pick:
+                    self._send_sticker(_pick)
+                else:
+                    self._notice(_T("steam.sticker_unknown", name=_arg,
+                                    default=f"No sticker named \"{_arg}\" "
+                                            f"in your collection \u2014 open the "
+                                            f"picker to browse them"))
+                return
+            await self._flush_pend()
+            await self._render_live({
+                "from_me": True, "name": self._own_name, "avatar": self._own_avatar,
+                "text": text, "images": [], "stickers": [],
+                "ts": int(time.time())})
+            await self._cmd({"cmd": "send", "acct": self._active, "text": text})
+            return
         # Same behavior as the main chat tab: the ORIGINAL goes out (and renders)
         # IMMEDIATELY — never gated on DeepL latency — and the translation follows
         # as its own message the moment it's ready, shown under the original.

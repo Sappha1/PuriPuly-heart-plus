@@ -1089,5 +1089,6 @@
   "steam.net_retrying": "再試行中…",
   "steam.proxy": "接続プロキシ",
   "steam.tip_proxy": "このモジュールの隠しブラウザだけをローカル VPN/プロキシポート経由で接続します。steamcommunity.com がブロックされるネットワーク向け。例: 127.0.0.1:7890。ゲームや Steam クライアントには影響しません。空欄で直接接続。",
-  "steam.proxy_applied": "プロキシを保存しました — 再接続中…"
+  "steam.proxy_applied": "プロキシを保存しました — 再接続中…",
+  "steam.sticker_unknown": "コレクションに「{name}」というステッカーはありません — ピッカーを開いて探してください"
 }

@@ -1089,5 +1089,6 @@
   "steam.net_retrying": "正在重试……",
   "steam.proxy": "连接代理",
   "steam.tip_proxy": "仅让本模块的隐藏浏览器通过本地 VPN/代理端口联网——适用于 steamcommunity.com 被屏蔽的网络。例如：127.0.0.1:7890。不影响游戏和 Steam 客户端。留空则直接连接。",
-  "steam.proxy_applied": "代理已保存——正在重新连接……"
+  "steam.proxy_applied": "代理已保存——正在重新连接……",
+  "steam.sticker_unknown": "你的收藏中没有名为“{name}”的贴纸——打开选择器浏览"
 }

@@ -1089,5 +1089,6 @@
   "steam.net_retrying": "다시 시도하는 중…",
   "steam.proxy": "연결 프록시",
   "steam.tip_proxy": "이 모듈의 숨겨진 브라우저만 로컬 VPN/프록시 포트를 통해 연결합니다. steamcommunity.com이 차단된 네트워크용입니다. 예: 127.0.0.1:7890. 게임과 Steam 클라이언트에는 영향이 없습니다. 비워 두면 직접 연결합니다.",
-  "steam.proxy_applied": "프록시 저장됨 — 다시 연결하는 중…"
+  "steam.proxy_applied": "프록시 저장됨 — 다시 연결하는 중…",
+  "steam.sticker_unknown": "보유 스티커 중에 \"{name}\"이(가) 없습니다 — 선택기를 열어 찾아보세요"
 }

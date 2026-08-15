@@ -1,11 +1,9 @@
 {
-  "build": 506,
-  "tag": "r506",
-  "date": "2026-08-14",
+  "build": 507,
+  "tag": "r507",
+  "date": "2026-08-15",
   "notes": [
-    "Fixed: background Steam chats could stop surfacing messages - recent chats are now verified directly against Steam's servers",
-    "Fixed: image sends failing after a few hours - the Steam web login refreshes automatically and retries",
-    "Fixed: the Steam tab could stay disconnected if its helper started slowly - it now retries until connected",
-    "Improved: the 'Can't reach Steam Community' screen explains the Steam client is unaffected - only the web chat is blocked"
+    "Fixed: '/sticker <name>' in Steam chats sends the sticker itself instead of posting/translating the command as text",
+    "Fixed: other slash commands go out as typed and are never translated"
   ]
 }

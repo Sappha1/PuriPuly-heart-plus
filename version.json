@@ -1,9 +1,10 @@
 {
-  "build": 507,
-  "tag": "r507",
-  "date": "2026-08-15",
+  "build": 509,
+  "tag": "r509",
+  "date": "2026-08-18",
   "notes": [
-    "Fixed: '/sticker <name>' in Steam chats sends the sticker itself instead of posting/translating the command as text",
-    "Fixed: other slash commands go out as typed and are never translated"
+    "Fixed: opening the Steam tab could freeze the app for 30-50s and take the overlay down",
+    "Fixed: shared files (videos etc.) vanished from Steam chats - now shown as links",
+    "Fixed: Chinese-form 'System' speech hallucination filtered; stale friend status on tabs; typing dots; upload preview Cancel button"
   ]
 }

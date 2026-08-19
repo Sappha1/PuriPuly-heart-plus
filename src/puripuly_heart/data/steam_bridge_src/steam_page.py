@@ -1015,7 +1015,10 @@ class SteamPage:
                     return { step:'commit', status: r3.status,
                              resp: JSON.stringify(j3).slice(0,300),
                              sent: dbg };
-                  return { ok: true, ugcid: String(res.ugcid) };
+                  // r508: report the REAL 64-bit id (JSON.parse mangles it above
+                  // 2^53 -- two different uploads logged the 'same' ugcid)
+                  return { ok: true, ugcid: ((raw1.match(/"ugcid"\s*:\s*"?(\d+)"?/) || [])[1] || String(res.ugcid)),
+                           mime: mime, w: w, h: h, bytes: bytes.length };
                 }""",
                 [acct, b64, fname, mime, bool(spoiler)],
             ) or {"step": "eval", "err": "no result"}

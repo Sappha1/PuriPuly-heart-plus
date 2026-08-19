@@ -970,7 +970,7 @@
   "steam.copy_link": "링크 복사",
   "steam.upload": "업로드",
   "steam.spoiler": "스포일러로 표시",
-  "steam.typing": "{name} 입력 중…",
+  "steam.typing": "{name} 입력 중...",
   "steam.search": "친구 검색",
   "steam.input_hint": "보낼 메시지 입력",
   "steam.state_online": "온라인",

@@ -79,6 +79,11 @@ _TAG_RE = re.compile(r"\[/?[a-z][^\]]*\]", re.I)
 _IMGHOST_RE = re.compile(
     r"https?://(?:images\.steamusercontent\.com|cdn\.steamusercontent\.com|steamuserimages-a\.akamaihd\.net)/\S+",
     re.I)
+# r508: a shared file (mp4, zip, ...) also lives on cdn.steamusercontent.com —
+# under /filedownload/ — and is NOT an image. Folding it into the image list
+# stripped it from the text and the picture renderer silently failed, so the
+# recipient never saw that a file arrived. Only fold real image URLs.
+_FILE_URL_RE = re.compile(r"/filedownload/|\.(?:mp4|webm|mov|mkv|zip|rar|7z|pdf|txt|exe)(?:[?#]|$)", re.I)
 _STICKER_URL = "https://community.fastly.steamstatic.com/economy/sticker/{}/sticker.png"
 
 
@@ -126,9 +131,12 @@ def parse_bbcode(raw: str) -> tuple[str, list[str], list[str]]:
     # (dedup) and drop it from the text so only the picture renders.
     for u in _IMGHOST_RE.findall(text):
         u = u.rstrip(".,);")
+        if _FILE_URL_RE.search(u):
+            continue            # a shared FILE: keep it in the text as a link
         if u not in images:
             images.append(u)
-    text = _IMGHOST_RE.sub(" ", text)
+    text = _IMGHOST_RE.sub(lambda m: (m.group(0) if _FILE_URL_RE.search(m.group(0))
+                                      else " "), text)
     text = re.sub(r"[ \t]{2,}", " ", text)
     text = re.sub(r" ?\n ?", "\n", text)
     text = re.sub(r"\n{3,}", "\n\n", text).strip()
@@ -495,7 +503,10 @@ class Daemon:
                                          "stickers": self.stickers, "effects": self.effects})
                 except Exception:
                     pass
-            if self._started and self.signed and ticks % 9 == 0:
+            if self._started and self.signed and ticks % 3 == 0:
+                # r508: every ~4s (was ~12s) — tab chips showed a friend as
+                # offline until the user clicked the tab and the open path
+                # read the live persona. Only pushes when the signature moved.
                 try:
                     await self.refresh_list()
                     sig = self._friends_sig()

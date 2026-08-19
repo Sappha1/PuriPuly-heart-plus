@@ -643,6 +643,16 @@ class SteamBridgeView(ft.Container):
                                   self._viewer], expand=True)
         self._load_cache()
         self._load_prefs()
+        # r508: jieba's dictionary build (0.5-1.3s CPU) used to happen lazily
+        # on the UI thread the first time a Chinese line needed pinyin — inside
+        # the Steam tab's cold paint. Warm it in a daemon thread now.
+        with contextlib.suppress(Exception):
+            import threading as _th
+            def _warm():
+                with contextlib.suppress(Exception):
+                    from puripuly_heart.core.transliteration import warmup
+                    warmup()
+            _th.Thread(target=_warm, name="jieba-warm", daemon=True).start()
         self._update_own_header()
 
     def detach_left_panel(self) -> ft.Control:
@@ -761,7 +771,11 @@ class SteamBridgeView(ft.Container):
                 self.page.run_task(self._anchor_end, _keep)
             return
         self._started = True
-        self._paint_snapshot()
+        # r508: the snapshot paint used to run synchronously here — with the
+        # pinyin path pulling in jieba's dictionary build — and stalled the UI
+        # thread for up to a minute (the overlay heartbeat starved and killed
+        # itself: "Overlay failed"). Parse + warm off-thread, paint on-thread.
+        self._paint_snapshot(prefetch_only=True)
         _vlog.info("[SteamView] activate cold: friends=%d got=%s page=%s",
                    len(self._friends), self._got_friends, self.page is not None)
         if not self._got_friends:
@@ -1804,6 +1818,14 @@ class SteamBridgeView(ft.Container):
         dlg = ft.AlertDialog(
             modal=False, bgcolor=_BG_MENU,
             content=ft.Column([
+                ft.Row([
+                    ft.Container(expand=True),
+                    ft.IconButton(ft.Icons.CLOSE, icon_size=16, icon_color=_TEXT_FAINT,
+                                  tooltip=_T("steam.cancel", default="Cancel"),
+                                  width=28, height=28,
+                                  style=ft.ButtonStyle(padding=ft.padding.all(0)),
+                                  on_click=lambda e: self.page.close(dlg)),
+                ], spacing=0, tight=True),
                 ft.Image(src=path, width=380, height=280, fit=ft.ImageFit.CONTAIN,
                          border_radius=6),
                 ft.Text(f"'{name}'", size=13, color=_TEXT_FAINT,
@@ -2572,22 +2594,51 @@ class SteamBridgeView(ft.Container):
     def _purge_emote_cache(self) -> None:
         """Drop cache entries polluted with emote artifacts (bare emote names from
         pre-fix translations, or Steam's U+02D0 colon) so old ghosts stop
-        resurfacing in history."""
+        resurfacing in history.
+
+        r509: this ran on EVERY connect with an uncached re.compile per
+        (emote x cache entry) — ~1M regex builds on the UI thread, a 30-50s
+        freeze that also starved the overlay heartbeat ("Overlay failed").
+        Now: skip unless the emote list changed, ONE compiled alternation, and
+        the scan runs in a worker thread; only the pops touch the UI thread."""
         if not self._emoticons:
             return
-        names = {n.lower() for n in self._emoticons}
-        def bad(txt: str) -> bool:
-            t = (txt or "").lower()
-            if "ː" in t or "ː" in t:
-                return True
-            return any(re.search(rf"(?<![a-z0-9_]){re.escape(n)}(?![a-z0-9_])", t)
-                       for n in names)
-        dirty = [k for k, v in self._tr_cache.items() if bad(k) or bad(str(v))]
-        for k in dirty:
-            self._tr_cache.pop(k, None)
-        if dirty:
-            self._tr_dirty = 999           # force save
-            self._save_cache()
+        names = frozenset(n.lower() for n in self._emoticons)
+        if names == getattr(self, "_purged_for", None):
+            return                      # same emote list as last purge
+        self._purged_for = names
+        items = list(self._tr_cache.items())
+        if not items:
+            return
+
+        def _scan(items_, names_):
+            pat = re.compile(r"(?<![a-z0-9_])(?:" +
+                             "|".join(sorted((re.escape(n) for n in names_),
+                                             key=len, reverse=True)) +
+                             r")(?![a-z0-9_])")
+            out = []
+            for k, v in items_:
+                t = (k or "").lower()
+                if "ː" in t or pat.search(t):
+                    out.append(k); continue
+                t2 = str(v or "").lower()
+                if "ː" in t2 or pat.search(t2):
+                    out.append(k)
+            return out
+
+        async def _go():
+            dirty = await asyncio.to_thread(_scan, items, names)
+            for k in dirty:
+                self._tr_cache.pop(k, None)
+            if dirty:
+                self._tr_dirty = 999           # force save
+                self._save_cache()
+
+        if self.page:
+            self.page.run_task(_go)
+        else:
+            for k in _scan(items, names):
+                self._tr_cache.pop(k, None)
 
     def _load_cache(self) -> None:
         with contextlib.suppress(Exception):
@@ -2621,23 +2672,51 @@ class SteamBridgeView(ft.Container):
             _CACHE_FILE.with_name("ui_snapshot.json").write_text(
                 json.dumps(snap, ensure_ascii=False), encoding="utf-8")
 
-    def _paint_snapshot(self) -> None:
+    def _paint_snapshot(self, prefetch_only: bool = False) -> None:
+        if prefetch_only:
+            # Read + parse the (possibly 200KB+) snapshot in a worker thread,
+            # then hop back to the UI thread for the paint. Never block here.
+            def _load():
+                try:
+                    f = _CACHE_FILE.with_name("ui_snapshot.json")
+                    return json.loads(f.read_text(encoding="utf-8")) if f.exists() else None
+                except Exception:
+                    return None
+
+            async def _go():
+                snap = await asyncio.to_thread(_load)
+                if snap is None:
+                    return
+                self._snap_cached = snap
+                self._paint_snapshot(prefetch_only=False)
+                if self.page:
+                    with contextlib.suppress(Exception):
+                        self.page.update()
+
+            if self.page:
+                self.page.run_task(_go)
+            return
+        snap0 = getattr(self, "_snap_cached", None)
         if not self._chat_cache:
             # seed the chat cache from disk so restored tabs paint instantly
             with contextlib.suppress(Exception):
-                _f0 = _CACHE_FILE.with_name("ui_snapshot.json")
-                if _f0.exists():
-                    _snap0 = json.loads(_f0.read_text(encoding="utf-8"))
-                    for _k, _blks in (_snap0.get("chats") or {}).items():
-                        with contextlib.suppress(Exception):
-                            self._chat_cache.setdefault(int(_k), list(_blks))
+                _snap0 = snap0
+                if _snap0 is None:
+                    _f0 = _CACHE_FILE.with_name("ui_snapshot.json")
+                    if _f0.exists():
+                        _snap0 = json.loads(_f0.read_text(encoding="utf-8"))
+                for _k, _blks in ((_snap0 or {}).get("chats") or {}).items():
+                    with contextlib.suppress(Exception):
+                        self._chat_cache.setdefault(int(_k), list(_blks))
         if self._got_friends or self._friends:
             return
         with contextlib.suppress(Exception):
-            f = _CACHE_FILE.with_name("ui_snapshot.json")
-            if not f.exists():
-                return
-            snap = json.loads(f.read_text(encoding="utf-8"))
+            snap = snap0
+            if snap is None:
+                f = _CACHE_FILE.with_name("ui_snapshot.json")
+                if not f.exists():
+                    return
+                snap = json.loads(f.read_text(encoding="utf-8"))
             for k, v in (snap.get("seen") or {}).items():
                 with contextlib.suppress(Exception):
                     self._seen_chat_ts.setdefault(int(k), int(v))
@@ -3671,7 +3750,7 @@ class SteamBridgeView(ft.Container):
 
     def _set_typing(self, name: str) -> None:
         self._typing_text.value = (
-            _T("steam.typing", name=name, default=f"{name} is typing…") if name else "")
+            _T("steam.typing", name=name, default=f"{name} is typing...") if name else "")
         if self.page:
             with contextlib.suppress(Exception):
                 self._typing_text.update()
@@ -3683,6 +3762,7 @@ class SteamBridgeView(ft.Container):
         self._hide_ctx()
         self._open_seq += 1
         self._unread_live.discard(acct)
+        self._rebuild_tabs()      # r508: chip re-reads state (online/offline)
         self._live_since_open = []
         self._active = acct
         if acct not in self._tabs:
@@ -3759,6 +3839,7 @@ class SteamBridgeView(ft.Container):
         if text.startswith("/") and len(text) > 1 and not text.startswith("//"):
             _cmd, _, _arg = text[1:].partition(" ")
             _cmd, _arg = _cmd.strip().lower(), _arg.strip()
+            _vlog.info("[SteamView] slash command: /%s %r", _cmd, _arg[:40])
             if _cmd == "sticker":
                 _pick = self._match_sticker_name(_arg)
                 if _pick:

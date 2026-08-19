@@ -13,6 +13,10 @@ KNOWN_LOCAL_QWEN_HALLUCINATIONS = frozenset({
     # Instruction-corpus regurgitation on noise (Anhui user, r310 log): bare
     # prompts the model was trained on, emitted verbatim from mic noise.
     "虚构一个故事", "合并成一个句子", "格力空调", "格力",
+    # r508: the Chinese-side twin of the "System." hallucination — a friend's
+    # chatbox posted "系统。/ System." from noise. Whole-utterance only; a real
+    # sentence containing 系统 has other words and never reduces to this.
+    "系统", "系统。",
 })
 
 # Stock terms for the normalized checks below: junk if the text minus digits
@@ -20,7 +24,7 @@ KNOWN_LOCAL_QWEN_HALLUCINATIONS = frozenset({
 # ("的答案是：100。", "格力空调，格力空调。").
 _STOCK_TERMS = (
     "的答案是", "的答案", "虚构一个故事", "虚构人物", "虚构", "格力空调", "格力",
-    "合并成一个句子", "我可以不因为",
+    "合并成一个句子", "我可以不因为", "系统",
 )
 _PUNCT_DIGIT_STRIP_RE = re.compile(r"[\s\d.。,，!！?？;；:：、…·（）()\-—‘’“”'\"#*]+")
 

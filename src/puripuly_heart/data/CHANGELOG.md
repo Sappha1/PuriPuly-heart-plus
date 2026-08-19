@@ -2,6 +2,15 @@
 
 User-facing changes per build. The latest build's highlights also appear in-app when an update is ready.
 
+## r509 — 2026-08-18
+
+- Fixed: opening the Steam tab could freeze the whole app for 30–50 seconds (and take the overlay down with it: "Overlay failed") — a translation-cache cleanup ran on the UI thread every connect; it now takes milliseconds and runs in the background
+- Fixed: files shared on Steam (videos, archives, ...) were treated as images and vanished from the chat — they now show as clickable links
+- Fixed: the "System." speech-recognition hallucination is now also filtered in its Chinese form (系统。)
+- Fixed: a Steam tab could show a friend as offline until you clicked it — status now refreshes every few seconds and repaints on open
+- Fixed: the "is typing" dots sat in the middle of the line instead of on the baseline
+- Added: a Cancel (✕) button in the image-upload preview
+
 ## r507 — 2026-08-15
 
 - Fixed: typing "/sticker <name>" in a Steam chat now sends the sticker itself (matched against your collection) instead of posting and translating the command as text

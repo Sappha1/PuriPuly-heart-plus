@@ -970,7 +970,7 @@
   "steam.copy_link": "复制链接",
   "steam.upload": "上传",
   "steam.spoiler": "标记为剧透",
-  "steam.typing": "{name} 正在输入…",
+  "steam.typing": "{name} 正在输入...",
   "steam.search": "搜索好友",
   "steam.input_hint": "输入要发送的消息",
   "steam.state_online": "在线",

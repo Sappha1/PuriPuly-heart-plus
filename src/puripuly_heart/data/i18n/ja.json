@@ -970,7 +970,7 @@
   "steam.copy_link": "リンクをコピー",
   "steam.upload": "アップロード",
   "steam.spoiler": "ネタバレとしてタグ付け",
-  "steam.typing": "{name} が入力中…",
+  "steam.typing": "{name} が入力中...",
   "steam.search": "フレンドを検索",
   "steam.input_hint": "送信するメッセージを入力",
   "steam.state_online": "オンライン",

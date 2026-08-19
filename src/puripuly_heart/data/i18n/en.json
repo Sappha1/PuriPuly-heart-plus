@@ -970,7 +970,7 @@
   "steam.copy_link": "Copy link",
   "steam.upload": "Upload",
   "steam.spoiler": "Tag as Spoiler",
-  "steam.typing": "{name} is typing…",
+  "steam.typing": "{name} is typing...",
   "steam.search": "Search friends",
   "steam.input_hint": "Type message to send",
   "steam.state_online": "Online",

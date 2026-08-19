@@ -1,10 +1,8 @@
 {
-  "build": 509,
-  "tag": "r509",
-  "date": "2026-08-18",
+  "build": 510,
+  "tag": "r510",
+  "date": "2026-08-19",
   "notes": [
-    "Fixed: opening the Steam tab could freeze the app for 30-50s and take the overlay down",
-    "Fixed: shared files (videos etc.) vanished from Steam chats - now shown as links",
-    "Fixed: Chinese-form 'System' speech hallucination filtered; stale friend status on tabs; typing dots; upload preview Cancel button"
+    "Fixed: pressing Tab no longer swaps Your language and Target language"
   ]
 }

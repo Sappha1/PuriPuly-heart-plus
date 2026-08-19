@@ -19,7 +19,7 @@ from puripuly_heart.ui.fonts import font_for_language
 from puripuly_heart.ui.i18n import get_locale, language_name, t
 from puripuly_heart.ui.overlay_peer_contract import OverlayPeerConsumerContract
 
-_BUILD_TAG = "r509"  #increment each build so user can confirm version
+_BUILD_TAG = "r510"  #increment each build so user can confirm version
 
 # ── VRCT-style dark palette ──────────────────────────────────────────────────
 _BG_MAIN = "#2e2f32"
@@ -5289,15 +5289,10 @@ class DashboardView(ft.Row):
             pass
 
     def handle_message_input_tab_key(self) -> bool:
-        if not self._message_input_focused:
-            return False
-        self._swap_languages()
-        if hasattr(self, "_msg_input"):
-            try:
-                self._msg_input.focus()
-            except Exception:
-                pass
-        return True
+        # r510: Tab used to swap Your/Target language while the message box
+        # was focused — too easy to hit by accident mid-conversation, and the
+        # visible swap button already does it. Tab is inert now.
+        return False
 
     def _on_swap_hover(self, e) -> None:
         pass  # hover effect removed with text label

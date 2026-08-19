@@ -2,6 +2,10 @@
 
 User-facing changes per build. The latest build's highlights also appear in-app when an update is ready.
 
+## r510 — 2026-08-19
+
+- Fixed: pressing Tab swapped Your language and Target language back and forth — the key is inert now; use the swap button on the Translation card
+
 ## r509 — 2026-08-18
 
 - Fixed: opening the Steam tab could freeze the whole app for 30–50 seconds (and take the overlay down with it: "Overlay failed") — a translation-cache cleanup ran on the UI thread every connect; it now takes milliseconds and runs in the background

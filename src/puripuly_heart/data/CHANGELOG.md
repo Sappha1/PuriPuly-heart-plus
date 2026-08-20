@@ -2,6 +2,13 @@
 
 User-facing changes per build. The latest build's highlights also appear in-app when an update is ready.
 
+## r533 — 2026-08-20
+
+- Added: the text under a pasted image now always folds behind "Show text (N lines)" whenever it has more than one line, with or without a rendered translation
+- Fixed: an image sent to a Steam friend could arrive as a bare download link (or as an earlier picture) — Steam sometimes hands the upload the previous file's id, so every send now verifies it got a fresh one and re-asks if not
+- Fixed: posting a link once could show it two or three times — the link preview no longer repeats the URL as text and the echo of your own link message deduplicates properly
+- Fixed: Steam chat history could render out of order or duplicated after the chat helper restarted — replayed messages now slot into their correct time position and ones already on screen are dropped
+
 ## r531 — 2026-08-20
 
 - Added: pasted images now come back as a translated copy of the picture itself — each detected line is painted over in place, keeping its original position, size and colors (requires OCR module r281+)

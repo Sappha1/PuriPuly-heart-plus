@@ -3286,6 +3286,7 @@ class SteamBridgeView(ft.Container):
         # menu also blocked the page-wide drag-selection. Reactions keep
         # their plumbing (_send_react / react-mode picker) but no entry point.
         return ft.Container(
+            data=b,          # ts lookup for chronological inserts (r532)
             content=ft.Row([_avatar(b["avatar"]), col], spacing=8,
                            vertical_alignment=ft.CrossAxisAlignment.START),
             border_radius=6, bgcolor=ft.Colors.TRANSPARENT,
@@ -3765,6 +3766,14 @@ class SteamBridgeView(ft.Container):
             return
         key = (bool(m.get("from_me")), m.get("name", "") or "")
         ts = int(m.get("ts") or 0) or int(time.time())
+        # history replays (older than the newest block) must not fuse with
+        # live lines in the merge buffer — render them straight away so the
+        # out-of-order path in _render_live can place or drop them
+        newest = self._newest_block_ts()
+        if ts and newest and ts < newest - 1:
+            await self._flush_pend()
+            await self._render_live(m)
+            return
         if self._pend and self._pend["key"] == key \
                 and ts - self._pend["ts"] <= self._MERGE_GAP_S \
                 and sum(len(t) for t in self._pend["texts"]) < self._MERGE_MAX_CHARS:
@@ -3800,6 +3809,32 @@ class SteamBridgeView(ft.Container):
         if acct and ts:
             self._seen_chat_ts[acct] = max(self._seen_chat_ts.get(acct, 0), int(ts))
 
+    def _newest_block_ts(self) -> int:
+        for hb in reversed(self._hist_blocks):
+            hts = int(hb.get("_ts") or 0)
+            if hts:
+                return hts
+        return 0
+
+    def _find_replay_dupe(self, m: dict, ts: int):
+        """The block already showing this message, or None. A restarted
+        helper re-delivers the last ~15 min of history; anything already on
+        screen (exact line, or a line folded into a merged block) is a dupe."""
+        txt = (m.get("text", "") or "").strip()
+        imgs = list(m.get("images") or [])
+        for hb in reversed(self._hist_blocks[-200:]):
+            hts = int(hb.get("_ts") or 0)
+            if not hts or abs(ts - hts) > 3:
+                continue
+            if bool(hb.get("from_me")) != bool(m.get("from_me")):
+                continue
+            hbt = (hb.get("text") or "").strip()
+            if txt and (txt == hbt or (len(txt) > 3 and txt in hbt)):
+                return hb
+            if not txt and imgs and imgs == list(hb.get("images") or []):
+                return hb
+        return None
+
     async def _render_live(self, m: dict) -> None:
         # the first live message replaces the "No messages here yet" note
         if any(getattr(c, "data", None) == "empty" for c in self._messages.controls):
@@ -3815,6 +3850,36 @@ class SteamBridgeView(ft.Container):
              "images": m.get("images", []), "stickers": m.get("stickers", []),
              "_ts": ts, "_ord": int(m.get("ord") or 0),
              "_out_pending": bool(m.get("_out_pending"))}
+        # ── out-of-order delivery (r532): a restarted helper replays recent
+        # history in arbitrary order. Blind appends put an 11:29 message
+        # under an 11:22 one. Skip what's already on screen; anything new
+        # slots in at its chronological position instead of the bottom.
+        newest = self._newest_block_ts()
+        if ts and newest and ts < newest - 1 and not b["_out_pending"]:
+            dupe = self._find_replay_dupe(m, ts)
+            if dupe is not None:
+                return dupe
+            prev_lb = self._last_block
+            ctrls = self._messages.controls
+            i = len(ctrls) - 1
+            while i >= 0:
+                d = getattr(ctrls[i], "data", None)
+                bts = int(d.get("_ts") or 0) if isinstance(d, dict) else 0
+                if bts and bts <= ts:
+                    break
+                i -= 1
+            ctrl = self._block_control(b)
+            self._last_block = prev_lb        # inserts never anchor grouping
+            ctrls.insert(i + 1, ctrl)
+            hidx = len(self._hist_blocks)
+            while hidx > 0 and int(self._hist_blocks[hidx - 1].get("_ts")
+                                   or 0) > ts:
+                hidx -= 1
+            self._hist_blocks.insert(hidx, b)
+            if self.page:
+                self.page.update()
+            await self._translate_block(b, self._open_seq)
+            return b
         lb = self._last_block
         if (lb and lb.get("ts") and ts
                 and time.localtime(lb["ts"])[:3] != time.localtime(ts)[:3]):

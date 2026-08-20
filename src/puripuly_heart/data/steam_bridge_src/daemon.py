@@ -52,6 +52,33 @@ HOST, PORT = "127.0.0.1", 8791
 # a browser probe (which would fight the running app for the Steam profile).
 import time
 _DIAG = Path(__file__).resolve().parent / "diag.log"
+# ugcids of image uploads we already committed: beginfileupload sometimes
+# hands back the previous upload's slot, binding the new message to the wrong
+# file (friend sees a bare filedownload link or an old picture). send_image
+# rejects any begin response whose ugcid is in this list.
+_SENT_UGC = Path(__file__).resolve().parent / "sent_ugcids.json"
+
+
+def _load_sent_ugcids() -> list:
+    try:
+        import json as _j
+        v = _j.loads(_SENT_UGC.read_text(encoding="utf-8"))
+        return [str(x) for x in v][-50:] if isinstance(v, list) else []
+    except Exception:
+        return []
+
+
+def _record_sent_ugcid(ugcid: str) -> list:
+    ids = _load_sent_ugcids()
+    if str(ugcid) and str(ugcid) not in ids:
+        ids.append(str(ugcid))
+        ids = ids[-50:]
+        try:
+            import json as _j
+            _SENT_UGC.write_text(_j.dumps(ids), encoding="utf-8")
+        except Exception:
+            pass
+    return ids
 
 
 def _diag(msg: str) -> None:
@@ -101,13 +128,20 @@ def parse_bbcode(raw: str) -> tuple[str, list[str], list[str]]:
         lambda m: ((lambda u: images.append(u[-1]) if u else None)
                    (_URL_IN.findall(m.group(1) or "")) or " "), text)
 
+    # a link preview ([og url="U" img=...]) rides ALONGSIDE the URL text in
+    # the same message — re-emitting its url duplicated the link ("U U") and
+    # broke the own-echo dedupe. Only emit it when the URL isn't already there.
+    _og_free = _OG_RE.sub(" ", text)
+
     def _og(m: "re.Match") -> str:
         blk = m.group(1) or ""
         u = re.search(r'url="([^"]+)"', blk)
         img = re.search(r'img="([^"]+)"', blk)
         if img:
             images.append(img.group(1))
-        return (u.group(1) + " ") if u else " "
+        if u and u.group(1) not in _og_free:
+            return u.group(1) + " "
+        return " "
 
     text = _OG_RE.sub(_og, text)
     text = text.replace("\\[", "\x13").replace("\\]", "\x14")
@@ -140,6 +174,8 @@ def parse_bbcode(raw: str) -> tuple[str, list[str], list[str]]:
     text = re.sub(r"[ \t]{2,}", " ", text)
     text = re.sub(r" ?\n ?", "\n", text)
     text = re.sub(r"\n{3,}", "\n\n", text).strip()
+    # the same link repeated back-to-back is always preview residue
+    text = re.sub(r"(https?://\S+)(?:\s+\1)+", r"\1", text)
     text = text.replace("\x13", "[").replace("\x14", "]")
     return text, images, stickers
 
@@ -736,9 +772,10 @@ class Daemon:
                         mime = {"jpg": "image/jpeg", "jpeg": "image/jpeg",
                                 "gif": "image/gif", "webp": "image/webp"}.get(ext, "image/png")
                         b64 = base64.b64encode(data).decode("ascii")
+                        used_ids = _load_sent_ugcids()
                         result = await self.steam.send_image(
                             acct, b64, Path(path).name, mime,
-                            spoiler=bool(obj.get("spoiler")))
+                            spoiler=bool(obj.get("spoiler")), used=used_ids)
                         if (not result.get("ok")
                                 and (result.get("status") == 401
                                      or "Not Logged" in str(result.get("resp", "")))):
@@ -756,11 +793,12 @@ class Daemon:
                                 await self.steam.open_conversation(acct)
                             result = await self.steam.send_image(
                                 acct, b64, Path(path).name, mime,
-                                spoiler=bool(obj.get("spoiler")))
+                                spoiler=bool(obj.get("spoiler")), used=used_ids)
                     except Exception as exc:
                         result = {"step": "daemon", "err": str(exc)}
                     if result.get("ok"):
                         self._img_pending += 1   # swallow its echo in the poll
+                        _record_sent_ugcid(str(result.get("ugcid", "")))
                     _diag(f"SEND_IMAGE acct={acct} -> {result}")
                     await self.emit({"ev": "image_sent", "acct": acct,
                                      "ok": bool(result.get("ok")),

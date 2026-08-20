@@ -19,7 +19,7 @@ from puripuly_heart.ui.fonts import font_for_language
 from puripuly_heart.ui.i18n import get_locale, language_name, t
 from puripuly_heart.ui.overlay_peer_contract import OverlayPeerConsumerContract
 
-_BUILD_TAG = "r531"  #increment each build so user can confirm version
+_BUILD_TAG = "r533"  #increment each build so user can confirm version
 
 # ── VRCT-style dark palette ──────────────────────────────────────────────────
 _BG_MAIN = "#2e2f32"
@@ -4612,7 +4612,7 @@ class DashboardView(ft.Row):
         self.append_chat_entry(channel="ocr", source="ocr",
                                source_text=src, translated_text=dst,
                                image_path=_shown, image_alt=_alt,
-                               collapse_text=bool(_alt and _lines >= 4),
+                               collapse_text=bool(_lines >= 2),
                                insert_at=pos)
         return True
 

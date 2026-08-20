@@ -939,16 +939,22 @@ class SteamPage:
             return {"error": str(exc)}
 
     async def send_image(self, acct: int, b64: str, fname: str, mime: str,
-                         spoiler: bool = False) -> dict:
+                         spoiler: bool = False, used: list | None = None) -> dict:
         """Upload an image to Steam UGC and deliver it to the friend, reproducing
         the web client's flow (recon r415): POST chat/beginfileupload/ (sha1, size,
         dims) -> PUT the bytes to the returned host with the returned headers ->
         POST chat/commitfileupload/ (+friend_steamid via
-        PopulateCommitFileUploadFormData) — commit delivers the message."""
+        PopulateCommitFileUploadFormData) — commit delivers the message.
+
+        `used` lists ugcids of PREVIOUS committed uploads: beginfileupload has
+        been observed handing back the prior upload's ugcid (every other send),
+        which makes the delivered message reference the wrong file — the friend
+        then sees a bare filedownload link, or an earlier picture, instead of
+        the image. Any begin response whose ugcid is already used is re-asked."""
         try:
             return await self._page.evaluate(
                 r"""async (args) => {
-                  const [acct, b64, fname, mime, spoiler] = args;
+                  const [acct, b64, fname, mime, spoiler, used] = args;
                   const a = window.g_FriendsUIApp, cs = a.m_ChatStore;
                   let c = (cs.m_FriendChatStore.m_rgFriendChats||[]).find(x=>x.m_unAccountIDFriend===acct);
                   if (!c) { try { c = cs.GetFriendChat(acct); } catch(e){} }
@@ -973,13 +979,36 @@ class SteamPage:
                     fd.append('file_type', mime);
                     return fd;
                   };
-                  const r1 = await fetch(c.GetBeginFileUploadURL(),
-                                         {method:'POST', body: mk(), credentials:'include'});
-                  let j1 = null, raw1 = '';
-                  try { raw1 = await r1.text(); j1 = JSON.parse(raw1); } catch(e){}
-                  if (!j1 || j1.success !== 1)
-                    return { step:'begin', status: r1.status, resp: JSON.stringify(j1).slice(0,300) };
+                  const usedSet = new Set((used || []).map(String));
+                  const pickIds = (raw) =>
+                      [...raw.matchAll(/"ugcid"\s*:\s*"?(\d+)"?/g)].map(m => m[1]);
+                  let r1 = null, j1 = null, raw1 = '', beginTries = 0;
+                  // beginfileupload has been seen returning the PREVIOUS
+                  // upload's ugcid — commit then binds the message to the
+                  // wrong file. Re-ask until the slot is one we never used.
+                  while (beginTries < 3) {
+                    beginTries++;
+                    r1 = await fetch(c.GetBeginFileUploadURL(),
+                                     {method:'POST', body: mk(), credentials:'include'});
+                    j1 = null; raw1 = '';
+                    try { raw1 = await r1.text(); j1 = JSON.parse(raw1); } catch(e){}
+                    if (!j1 || j1.success !== 1)
+                      return { step:'begin', status: r1.status, resp: JSON.stringify(j1).slice(0,300) };
+                    const idsHere = pickIds(raw1);
+                    if (idsHere.some(i => !usedSet.has(i))) break;
+                    await new Promise(rs => setTimeout(rs, 350));
+                  }
                   const res = j1.result || j1;
+                  const allIds = pickIds(raw1);
+                  let idIdx = allIds.findIndex(i => !usedSet.has(i));
+                  if (idIdx < 0) idIdx = 0;
+                  const chosenUgc = allIds[idIdx] || String(res.ugcid);
+                  // timestamp/hmac must belong to the SAME slot: when the body
+                  // carries several entries, take the field at the same index
+                  const pickAt = (re) => {
+                    const ms = [...raw1.matchAll(re)].map(m => m[1]);
+                    return ms[idIdx] !== undefined ? ms[idIdx] : (ms[0] || '');
+                  };
                   const putURL = (res.use_https ? 'https://' : 'http://') + res.url_host + res.url_path;
                   const hdrs = {};
                   (res.request_headers||[]).forEach(x => { hdrs[x.name] = x.value; });
@@ -989,14 +1018,14 @@ class SteamPage:
                   const fd2 = mk();
                   fd2.append('success', '1');
                   // ugcid is a 64-bit id: JSON.parse mangles it above 2^53
-                  // (the commit-400 bug) — take the digits from the raw body.
-                  fd2.append('ugcid',
-                      (raw1.match(/"ugcid"\s*:\s*"?(\d+)"?/) || [])[1] || String(res.ugcid));
+                  // (the commit-400 bug) — digits come from the raw body, and
+                  // chosenUgc skips slots we already committed in the past.
+                  fd2.append('ugcid', chosenUgc);
                   fd2.append('timestamp',
-                      (raw1.match(/"timestamp"\s*:\s*"?(\d+)"?/) || [])[1] || String(res.timestamp));
+                      pickAt(/"timestamp"\s*:\s*"?(\d+)"?/g) || String(res.timestamp));
                   // The begin response signs the upload: its hmac MUST be echoed
                   // in the commit or Steam rejects it as a bad request.
-                  const hmac = (raw1.match(/"hmac"\s*:\s*"([^"]+)"/) || [])[1] || res.hmac || '';
+                  const hmac = pickAt(/"hmac"\s*:\s*"([^"]+)"/g) || res.hmac || '';
                   if (hmac) fd2.append('hmac', String(hmac));
                   try { c.PopulateCommitFileUploadFormData(fd2, {bSpoiler: !!spoiler}, {}); } catch(e){}
                   // Populate derives friend_steamid from this.accountid_partner,
@@ -1005,7 +1034,9 @@ class SteamPage:
                   fd2.set('friend_steamid', (76561197960265728n + BigInt(acct)).toString());
                   if (fd2.get('spoiler') === null) fd2.append('spoiler', spoiler ? '1' : '0');
                   const dbg = { partner: String(c.accountid_partner),
-                                beginKeys: Object.keys(res).join(',') };
+                                beginKeys: Object.keys(res).join(','),
+                                beginTries: beginTries, ids: allIds.join('|'),
+                                raw: raw1.slice(0, 300) };
                   try { for (const [k, v] of fd2.entries())
                           dbg[k] = (typeof v === 'string') ? String(v).slice(0, 60) : '<file>'; } catch (e) {}
                   const r3 = await fetch(c.GetCommitFileUploadURL(),
@@ -1017,10 +1048,11 @@ class SteamPage:
                              sent: dbg };
                   // r508: report the REAL 64-bit id (JSON.parse mangles it above
                   // 2^53 -- two different uploads logged the 'same' ugcid)
-                  return { ok: true, ugcid: ((raw1.match(/"ugcid"\s*:\s*"?(\d+)"?/) || [])[1] || String(res.ugcid)),
+                  return { ok: true, ugcid: chosenUgc, beginTries: beginTries,
+                           ids: allIds.join('|'),
                            mime: mime, w: w, h: h, bytes: bytes.length };
                 }""",
-                [acct, b64, fname, mime, bool(spoiler)],
+                [acct, b64, fname, mime, bool(spoiler), list(used or [])],
             ) or {"step": "eval", "err": "no result"}
         except Exception as exc:
             return {"step": "py", "err": str(exc)}

@@ -1093,5 +1093,21 @@
   "steam.sticker_unknown": "보유 스티커 중에 \"{name}\"이(가) 없습니다 — 선택기를 열어 찾아보세요",
   "steam.orig_style": "원문 스타일",
   "steam.tip_orig_style": "보내는 메시지 안의 원문 줄에 스타일을 적용합니다(라틴 문자만 — 중국어 등 다른 문자는 그대로). 번역 아래 작은 캐프션처럼 보입니다",
-  "steam.style_none": "기본"
+  "steam.style_none": "기본",
+  "dashboard.ocr.menu.paste_chat": "붙여넣은 이미지 읽기",
+  "dashboard.ocr.menu.paste_chat.tooltip": "채팅 탭에서 Ctrl+V로 이미지를 붙여넣으면 OCR 모듈이 로컬에서 읽어 텍스트가 채팅 기록에 남습니다. 이미지는 업로드되지 않고 VRChat으로도 전송되지 않습니다.",
+  "dashboard.ocr.paste.reading": "붙여넣은 이미지를 읽는 중…",
+  "dashboard.ocr.paste.needs_ocr": "먼저 OCR 모듈을 켜주세요 — 붙여넣은 이미지는 그것이 읽습니다.",
+  "dashboard.ocr.paste.empty": "그 이미지에서 읽을 수 있는 텍스트를 찾지 못했습니다",
+  "dashboard.ocr.paste.failed": "그 이미지를 읽지 못했습니다",
+  "dashboard.ocr.paste.needs_update": "붙여넣은 이미지를 읽으려면 OCR 모듈을 업데이트하세요(설정 → OCR 모듈).",
+  "dashboard.ocr.paste.open_tip": "클릭하여 붙여넣은 이미지 보기",
+  "dashboard.ocr.paste.thumb_tip": "Enter를 누르면 이 이미지를 읽습니다",
+  "dashboard.image.copy": "이미지 복사",
+  "dashboard.image.open": "파일 열기",
+  "dashboard.image.copy_path": "파일 경로 복사",
+  "dashboard.image.copied": "이미지를 복사했습니다",
+  "dashboard.image.copied_path": "경로를 복사했습니다",
+  "dashboard.image.copy_failed": "이 이미지를 복사하지 못했습니다",
+  "dashboard.ocr.paste.no_module": "OCR 모듈이 설치되지 않았습니다 — 설정에서 설치하면 붙여넣은 이미지를 읽을 수 있습니다."
 }

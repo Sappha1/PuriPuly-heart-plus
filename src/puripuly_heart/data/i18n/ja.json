@@ -1093,5 +1093,21 @@
   "steam.sticker_unknown": "コレクションに「{name}」というステッカーはありません — ピッカーを開いて探してください",
   "steam.orig_style": "原文のスタイル",
   "steam.tip_orig_style": "送信メッセージ内の原文行にスタイルを適用（ラテン文字のみ — 中国語などは変化しません）。訳文の下の小さなキャプションのように読めます",
-  "steam.style_none": "標準"
+  "steam.style_none": "標準",
+  "dashboard.ocr.menu.paste_chat": "貼り付けた画像を読み取る",
+  "dashboard.ocr.menu.paste_chat.tooltip": "チャットタブで Ctrl+V すると OCR モジュールがローカルで読み取り、テキストがチャットログに入ります。画像はアップロードされず、VRChat にも送信されません。",
+  "dashboard.ocr.paste.reading": "貼り付けた画像を読み取り中…",
+  "dashboard.ocr.paste.needs_ocr": "先に OCR モジュールをオンにしてください — 貼り付け画像はそれが読みます。",
+  "dashboard.ocr.paste.empty": "この画像に読める文字はありません",
+  "dashboard.ocr.paste.failed": "この画像を読み取れませんでした",
+  "dashboard.ocr.paste.needs_update": "貼り付け画像を読むには OCR モジュールを更新してください（設定 → OCR モジュール）。",
+  "dashboard.ocr.paste.open_tip": "クリックして貼り付けた画像を表示",
+  "dashboard.ocr.paste.thumb_tip": "Enter でこの画像を読み取り",
+  "dashboard.image.copy": "画像をコピー",
+  "dashboard.image.open": "ファイルを開く",
+  "dashboard.image.copy_path": "ファイルパスをコピー",
+  "dashboard.image.copied": "画像をコピーしました",
+  "dashboard.image.copied_path": "パスをコピーしました",
+  "dashboard.image.copy_failed": "この画像をコピーできませんでした",
+  "dashboard.ocr.paste.no_module": "OCR モジュールが未インストールです — 設定からインストールすると貼り付け画像を読めます。"
 }

@@ -2943,12 +2943,28 @@ class SteamBridgeView(ft.Container):
         # NOTE: legacy un-keyed cache entries are deliberately NOT read — they date
         # from before emote codes were stripped pre-translation, so many contain
         # mangled emote names ("meatytears") baked into the text.
-        out = text
-        if callable(self.translate_message):
+        # r516: two renders of the same message raced and each called the
+        # translator (two DeepL calls 400ms apart for one line). Share one
+        # in-flight request per key instead.
+        inflight = getattr(self, "_tr_inflight", None)
+        if inflight is None:
+            inflight = self._tr_inflight = {}
+        if not force and key in inflight:
             with contextlib.suppress(Exception):
-                r = await self.translate_message(text, False)
-                if r:
-                    out = r
+                return await asyncio.shield(inflight[key])
+        fut = asyncio.get_running_loop().create_future()
+        inflight[key] = fut
+        out = text
+        try:
+            if callable(self.translate_message):
+                with contextlib.suppress(Exception):
+                    r = await self.translate_message(text, False)
+                    if r:
+                        out = r
+        finally:
+            inflight.pop(key, None)
+            if not fut.done():
+                fut.set_result(out)
         self._tr_cache[key] = out
         self._tr_dirty += 1
         if self._tr_dirty >= 8:               # persist so restarts don't re-burn DeepL
@@ -3000,6 +3016,19 @@ class SteamBridgeView(ft.Container):
         for b in blocks:
             joined = " ".join(t.strip() for t in b["texts"] if t.strip())
             b["text"], b["emoticons"] = _extract_emoticons(joined)
+            if not b.get("from_me"):
+                # r516: a friend using a translator sends the original AND its
+                # translation as one two-line message. Use THEIR translation
+                # instead of producing a second identical one.
+                _ls = [l.strip() for l in b["text"].split("\n") if l.strip()]
+                if len(_ls) == 2:
+                    _cjk = [bool(_CJK_RE.search(l)) for l in _ls]
+                    if _cjk[0] != _cjk[1]:
+                        _src = _ls[0] if _cjk[0] else _ls[1]
+                        _dst = _ls[1] if _cjk[0] else _ls[0]
+                        if not self._needs_tr(_dst):
+                            b["text"] = _src
+                            b["_given_tr"] = _dst
             if b.get("from_me"):
                 # r513: restore a composed send to how it looked when sent —
                 # plain original on top, the rest on the accent line (else the
@@ -3024,6 +3053,14 @@ class SteamBridgeView(ft.Container):
             orig = ""          # effect messages render only the banner below
         translated = self._needs_tr(orig) and (
             self._tr_outgoing if b.get("from_me") else self._tr_incoming)
+        if translated and b.get("from_me"):
+            # r514: never re-process own text that already IS the sent result —
+            # a message composed here (accent line present) or typed in the
+            # real Steam client with the translation inline ("good != 好")
+            # otherwise gained a pinyin line and a back-translated duplicate.
+            if (b.get("_out_sent") or b.get("_out_pending")
+                    or _CJK_RE.search(orig)):
+                translated = False
         if orig and (_SEG_RE.search(orig)
                      or ("\n" in orig and translated)):
             out.extend(self._segmented_units(b, orig, translated))
@@ -3521,6 +3558,17 @@ class SteamBridgeView(ft.Container):
                     ctrl.update()
             return
         if not orig or tc is None:
+            return
+        _given = b.get("_given_tr")
+        if _given:
+            # r516: the sender's own translation — paint it, translate nothing
+            b.pop("_tr_prefilled", None)
+            if ((not b.get("from_me") and not self._tr_incoming)
+                    or (b.get("from_me") and not self._tr_outgoing)):
+                return
+            self._apply_tr_spans(b, tc, _given)
+            with contextlib.suppress(Exception):
+                tc.update()
             return
         if b.pop("_tr_prefilled", False):
             return                          # already painted from the cache

@@ -1093,5 +1093,21 @@
   "steam.sticker_unknown": "No sticker named \"{name}\" in your collection — open the picker to browse them",
   "steam.orig_style": "Original text style",
   "steam.tip_orig_style": "Style the original line inside sent messages (Latin letters only — Chinese and other scripts are untouched) so it reads as a small caption under the translation",
-  "steam.style_none": "Normal"
+  "steam.style_none": "Normal",
+  "dashboard.ocr.menu.paste_chat": "Read pasted images",
+  "dashboard.ocr.menu.paste_chat.tooltip": "Ctrl+V an image into the Chat tab and the OCR module reads it locally; the text lands in the chat log. The picture is never uploaded and nothing is sent to VRChat.",
+  "dashboard.ocr.paste.reading": "Reading the pasted image…",
+  "dashboard.ocr.paste.needs_ocr": "Turn the OCR module on first — pasted images are read by it.",
+  "dashboard.ocr.paste.empty": "No readable text in that image",
+  "dashboard.ocr.paste.failed": "Could not read that image",
+  "dashboard.ocr.paste.needs_update": "Update the OCR module to read pasted images (Settings → OCR module).",
+  "dashboard.ocr.paste.open_tip": "Click to view the pasted image",
+  "dashboard.ocr.paste.thumb_tip": "Press Enter to read this image",
+  "dashboard.image.copy": "Copy image",
+  "dashboard.image.open": "Open file",
+  "dashboard.image.copy_path": "Copy file path",
+  "dashboard.image.copied": "Image copied",
+  "dashboard.image.copied_path": "Path copied",
+  "dashboard.image.copy_failed": "Could not copy that image",
+  "dashboard.ocr.paste.no_module": "The OCR module isn't installed — install it in Settings to read pasted images."
 }

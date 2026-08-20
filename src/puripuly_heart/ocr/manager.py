@@ -112,6 +112,7 @@ def ocr_engine_available() -> bool:
 class OcrOverlayManager:
     def __init__(self, *, fps: float = 10.0, monitor: int = 1) -> None:
         self._proc: subprocess.Popen | None = None
+        self._paste_proc: subprocess.Popen | None = None
         self._fps = fps
         self._monitor = monitor
         # Defaults per user preference: scan only the focused VRChat window,
@@ -325,9 +326,70 @@ class OcrOverlayManager:
     def running(self) -> bool:
         return self._proc is not None and self._proc.poll() is None
 
+    @property
+    def paste_reader_running(self) -> bool:
+        return (self._paste_proc is not None
+                and self._paste_proc.poll() is None)
+
+    def ensure_paste_reader(self) -> bool:
+        """Bring up (or reuse) something that can read a pasted image. The
+        full overlay already can, so this only spawns the quiet reader when
+        live OCR is off — the two must never both answer one request."""
+        if self.running:
+            return True
+        if self.paste_reader_running:
+            return True
+        cmd, env = self._launch_cmd(["--paste-only", "1",
+                                     "--parent-pid", str(os.getpid()),
+                                     "--translate", "1"])
+        if not cmd:
+            return False
+        try:
+            self._paste_proc = subprocess.Popen(
+                cmd, env=env, creationflags=_CREATE_NO_WINDOW)
+            logger.info("[OCR] paste reader started (pid=%s)",
+                        self._paste_proc.pid)
+            return True
+        except Exception as exc:
+            logger.warning("[OCR] paste reader failed to start: %s", exc)
+            self._paste_proc = None
+            return False
+
+    def stop_paste_reader(self) -> None:
+        proc, self._paste_proc = self._paste_proc, None
+        if proc is None or proc.poll() is not None:
+            return
+        with contextlib.suppress(Exception):
+            proc.terminate()
+        logger.info("[OCR] paste reader stopped")
+
+    def _launch_cmd(self, flags: list) -> tuple:
+        """Resolve the OCR executable for these flags (shared by the overlay
+        and the quiet paste reader)."""
+        env = dict(os.environ)
+        if getattr(sys, "frozen", False):
+            packaged = _packaged_ocr_exe()
+            module_exe = _module_ocr_exe()
+            if os.path.exists(packaged):
+                return [packaged, *flags], env
+            if module_exe:
+                return [module_exe, *flags], env
+            if os.path.exists(_DEV_VENV_PY):
+                env["PYTHONPATH"] = _DEV_SRC
+                return ([_DEV_VENV_PY, "-m",
+                         "puripuly_heart.ocr.overlay_proc", *flags], env)
+            logger.warning("[OCR] no bundled overlay at %s and no dev venv",
+                           packaged)
+            return [], env
+        env.setdefault("PYTHONPATH", _DEV_SRC)
+        return ([sys.executable, "-m",
+                 "puripuly_heart.ocr.overlay_proc", *flags], env)
+
     def start(self) -> bool:
         if self.running:
             return True
+        # live OCR takes over paste duty — retire the quiet reader
+        self.stop_paste_reader()
         _shutdown_event(False)  # clear any previous OFF signal before spawning
         flags = ["--fps", str(self._fps), "--monitor", str(self._monitor),
                  "--parent-pid", str(os.getpid()),

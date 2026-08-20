@@ -559,6 +559,157 @@ def _is_own_language(text: str, tgt: str) -> bool:
 _FEED_PATH = os.path.join(os.path.expanduser("~"), "AppData", "Local",
                           "puripuly-heart", "ocr_feed.jsonl")
 
+# ── Clipboard-paste OCR (r515) ──────────────────────────────────────────────
+# The app writes {"path": "<png>"} lines here when the user pastes an image
+# into the Chat tab; results go to the chat feed only (never the overlay,
+# never VRChat).
+_PASTE_REQ = os.path.join(os.path.expanduser("~"), "AppData", "Local",
+                          "puripuly-heart", "ocr_paste_req.jsonl")
+_PASTE_OFF = [0]
+_PASTE_DONE: set = set()          # paths already read this session
+_PASTE_BASELINED = [False]
+
+
+def _paste_read_image(path: str):
+    """Load an image file as a BGR array (PIL handles unicode paths that
+    cv2.imread chokes on)."""
+    import numpy as _np
+    from PIL import Image as _Image
+
+    with _Image.open(path) as im:
+        rgb = im.convert("RGB")
+        arr = _np.array(rgb)
+    return arr[:, :, ::-1].copy()          # RGB -> BGR
+
+
+def _paste_lines(detector, bgr) -> list[str]:
+    """Read a pasted image end-to-end, in reading order."""
+    rows = detector.read_lines(bgr)
+    if not rows:
+        return []
+    rows = [r for r in rows if r[1] >= 0.30 and r[0] != "?"]
+    rows.sort(key=lambda r: (r[2], r[3]))          # top-to-bottom, left-to-right
+    return [r[0] for r in rows]
+
+
+def _np_ascontig(a):
+    import numpy as _np
+
+    return _np.ascontiguousarray(a)
+
+
+def _paste_loop(detector, stop: threading.Event) -> None:
+    import json as _json
+
+    while not stop.is_set():
+        stop.wait(0.4)
+        try:
+            size = os.path.getsize(_PASTE_REQ)
+        except OSError:
+            _PASTE_BASELINED[0] = True     # nothing queued yet
+            continue
+        if not _PASTE_BASELINED[0]:
+            # r520: do NOT baseline to EOF — the on-demand reader is started
+            # BY a request, so that request always predates it (a one-second-
+            # old paste got skipped as "stale"). Replay safety comes from the
+            # per-line timestamp check below + the app truncating the file at
+            # its own startup + the _PASTE_DONE path dedupe.
+            _PASTE_BASELINED[0] = True
+        if size <= _PASTE_OFF[0]:
+            if size < _PASTE_OFF[0]:
+                _PASTE_OFF[0] = 0          # file was truncated/cleared
+            continue
+        try:
+            with open(_PASTE_REQ, "r", encoding="utf-8") as fh:
+                fh.seek(_PASTE_OFF[0])
+                chunk = fh.read()
+                _PASTE_OFF[0] = fh.tell()
+        except Exception:
+            continue
+        for line in chunk.splitlines():
+            line = line.strip()
+            if not line:
+                continue
+            try:
+                req = _json.loads(line)
+                path = str(req.get("path") or "")
+            except Exception:
+                continue
+            if not path or not os.path.exists(path):
+                continue
+            ts = 0
+            try:
+                ts = int(req.get("ts") or 0)
+            except Exception:
+                ts = 0
+            if ts and time.time() - ts > 900:
+                continue                   # stale line from an old session
+            if path in _PASTE_DONE:
+                continue                   # never read the same file twice
+            _PASTE_DONE.add(path)
+            try:
+                _paste_handle(detector, str(req.get("id") or ""), path)
+            except Exception:
+                logger.warning("[OCR] paste read failed for %s", path,
+                               exc_info=True)
+                _paste_feed("", "", rid=str(req.get("id") or ""), error=True)
+
+
+def _paste_handle(detector, rid: str, path: str) -> None:
+    t0 = time.monotonic()
+    bgr = _paste_read_image(path)
+    lines = _paste_lines(detector, bgr)
+    if not lines:
+        logger.info("[OCR] paste: no text found in %s", os.path.basename(path))
+        _paste_feed("", "", rid=rid, empty=True)
+        return
+    src = "\n".join(lines)
+    dst = _paste_translate(src)
+    logger.info("[OCR] paste: %d line(s) in %.1fs", len(lines),
+                time.monotonic() - t0)
+    _paste_feed(src, dst, rid=rid)
+
+
+def _paste_translate(src: str, timeout_s: float = 25.0) -> str:
+    """Run the pasted text through the same translation queue the overlay
+    uses, so it honours the user's model/target choice."""
+    if not _XLAT_ENABLED[0]:
+        return ""
+    with _XLAT_LOCK:
+        hit = _XLAT_CACHE.get(src)
+        if hit is None and src not in _XLAT_QUEUED:
+            _XLAT_QUEUED.add(src)
+            _XLAT_PENDING.append(src)
+    if hit is not None:
+        return hit if hit != src else ""
+    end = time.monotonic() + timeout_s
+    while time.monotonic() < end:
+        time.sleep(0.25)
+        with _XLAT_LOCK:
+            hit = _XLAT_CACHE.get(src)
+        if hit is not None:
+            return hit if hit != src else ""
+    return ""
+
+
+def _paste_feed(src: str, dst: str, *, rid: str = "", empty: bool = False,
+                error: bool = False) -> None:
+    import json as _json
+
+    payload = {"src": src, "dst": dst, "paste": True}
+    if rid:
+        payload["id"] = rid
+    if empty:
+        payload["status"] = "empty"
+    if error:
+        payload["status"] = "error"
+    try:
+        with open(_FEED_PATH, "a", encoding="utf-8") as fh:
+            fh.write(_json.dumps(payload, ensure_ascii=False) + "\n")
+    except Exception:
+        pass
+
+
 
 def _load_translation_prefs() -> None:
     try:
@@ -3554,6 +3705,8 @@ def run(monitor_index: int = 1, fps: float = 0.0, max_side: int = _TRACK_SIDE,
     threading.Thread(target=_prtscn_loop, args=(cap, state, stop),
                      daemon=True).start()
     threading.Thread(target=_warm_pinyin, daemon=True).start()
+    threading.Thread(target=_paste_loop, args=(detector, stop),
+                     name="ocr-paste", daemon=True).start()
     threading.Thread(target=_wait_event_loop,
                      args=(_SELECT_REGION_EVENT,
                            lambda: _SELECT_REQ.__setitem__(0, True)),
@@ -4042,6 +4195,45 @@ def _acquire_single_instance() -> bool:
         return True
 
 
+def _paste_only_main(args) -> None:
+    """Quiet reader: only what a clipboard paste needs. No screen capture,
+    no overlay window, no hotkeys — the engine loads on the first image."""
+    # NOTE: this module does not import contextlib — plain try/except only.
+    _XLAT_ENABLED[0] = True
+    try:
+        _apply_prefs(_load_config())
+    except Exception:
+        pass
+    try:
+        _load_translation_prefs()
+    except Exception:
+        pass
+    for _bp in (_BR_REQ, _BR_RES):
+        try:
+            if os.path.exists(_bp):
+                open(_bp, "w").close()
+        except Exception:
+            pass
+    stop = threading.Event()
+    if args.parent_pid:
+        threading.Thread(target=_parent_watch_loop, args=(args.parent_pid,),
+                         daemon=True).start()
+    threading.Thread(target=_shutdown_listener, daemon=True).start()
+    threading.Thread(target=_xlat_loop, args=(stop,), daemon=True).start()
+    try:
+        detector = TextDetector(max_side=args.max_side)
+        logger.info("[OCR] paste-only reader ready")
+        _paste_loop(detector, stop)
+    except Exception:
+        # A crash here used to surface as a Windows "unhandled exception"
+        # dialog while the app waited on a read that would never arrive.
+        logger.exception("[OCR] paste-only reader stopped on an error")
+        try:
+            _paste_feed("", "", error=True)
+        except Exception:
+            pass
+
+
 def main() -> None:
     ap = argparse.ArgumentParser()
     ap.add_argument("--monitor", type=int, default=1)
@@ -4051,6 +4243,9 @@ def main() -> None:
                     help="restrict to this window title (e.g. VRChat); empty = whole screen")
     ap.add_argument("--parent-pid", type=int, default=0,
                     help="exit when this process dies (no orphan overlays)")
+    ap.add_argument("--paste-only", type=int, default=0,
+                    help="1 = quiet reader for clipboard pastes: no capture,"
+                         " no overlay window, no binds")
     ap.add_argument("--prewarm", type=int, default=1,
                     help="1 = recognize in background while subtitles are off"
                          " (instant Alt+T, bursts of CPU); 0 = recognize only"
@@ -4071,6 +4266,9 @@ def main() -> None:
                     help="0 = subtitle mode shows raw recognized text only"
                          " (no translation calls; debugging aid)")
     args = ap.parse_args()
+    if getattr(args, "paste_only", 0):
+        _paste_only_main(args)
+        return
     _XLAT_ENABLED[0] = bool(args.translate)
     _PREWARM[0] = bool(args.prewarm)
     _BUBBLES_ONLY[0] = bool(args.bubbles_only)

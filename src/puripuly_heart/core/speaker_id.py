@@ -74,7 +74,12 @@ MAX_SESSION_CLUSTERS = 64
 # and forcing the user to re-name the same person every session. Variants are
 # matched independently (best wins); a re-name close to an existing variant
 # refines it, a distant one becomes a new variant.
-MAX_VARIANTS_PER_NAME = 4
+# r521: was 4 — a person repeatedly re-named across sessions (VRChat voice
+# shifts a LOT with distance/spatialization/codec) kept EVICTING the variants
+# that covered their other conditions, so the 5th assignment could undo the
+# 1st. Eight slots keep near/far/quiet/loud prints alive simultaneously
+# without lowering any match threshold.
+MAX_VARIANTS_PER_NAME = 8
 # A re-enrollment at/above this similarity refines the nearest variant;
 # below it, the new print is kept as a separate channel of the same voice.
 VARIANT_MERGE_THRESHOLD = 0.70

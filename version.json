@@ -1,8 +1,11 @@
 {
-  "build": 513,
-  "tag": "r513",
-  "date": "2026-08-19",
+  "build": 522,
+  "tag": "r522",
+  "date": "2026-08-20",
   "notes": [
-    "Fixed: restarting the app no longer redisplays your own Steam messages with styled text, an extra pinyin line and a back-translation"
+    "Added: paste images into the Chat tab (Ctrl+V) - read locally by OCR, logged with text and translation, never uploaded or sent to VRChat",
+    "Added: works with OCR off via an on-demand quiet reader (OCR module r279+); chat images open in a viewer with copy options",
+    "Fixed: own Steam-client messages no longer duplicated with extra pinyin; OCR switch remembers its state; app process exits cleanly",
+    "Improved: voice naming keeps up to 8 prints per person; pasted images auto-clean with their log entries"
   ]
 }

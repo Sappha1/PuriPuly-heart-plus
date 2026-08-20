@@ -2,6 +2,17 @@
 
 User-facing changes per build. The latest build's highlights also appear in-app when an update is ready.
 
+## r522 — 2026-08-20
+
+- Added: paste an image into the Chat tab (Ctrl+V) and press Enter — the OCR module reads it locally and logs the picture with its text, reading and translation. The image is never uploaded and nothing is sent to VRChat
+- Added: pasted images attach as a small thumbnail above the message box first (click to preview, ✕ to remove); the finished entry keeps the image's spot in the log, shows a detected-language tag, and clicking any chat image opens a viewer with Copy image / Open file / Copy file path
+- Added: reading pasted images works with OCR switched off — a quiet reader starts on demand (no screen capture, no overlay); requires OCR module r279+
+- Fixed: your own Steam messages typed in the real Steam client no longer gain an extra reading line and a duplicated translation
+- Fixed: the OCR switch remembers its state across restarts instead of always starting off
+- Fixed: closing the app could leave its process running in the background for up to two minutes
+- Improved: naming a voice now keeps up to 8 voice prints per person (was 4) — re-assigning someone in new conditions no longer undoes earlier assignments
+- Improved: pasted images are cleaned up automatically when their chat entries are cleared or scroll out of the log
+
 ## r513 — 2026-08-19
 
 - Fixed: after restarting the app, your own Steam messages came back showing the styled original, an invented pinyin line and a back-translation — restored messages now look exactly as they did when you sent them

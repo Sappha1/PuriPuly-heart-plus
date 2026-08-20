@@ -29,6 +29,10 @@ OCR_MODULE_ASSET_NAME = "PuriPulyHeartOCR-module.zip"
 # Oldest module build this app can drive. Bump when the app<->overlay contract
 # (CLI flags, config file schema, feed format) changes incompatibly.
 REQUIRED_MODULE_BUILD = 277
+# Oldest module build that can read clipboard images pasted into the Chat tab
+# (r515 added the watcher). Older modules still do everything else, so this is
+# a per-feature gate rather than a bump of REQUIRED_MODULE_BUILD.
+PASTE_MODULE_BUILD = 279
 
 
 def modules_ocr_root() -> Path:

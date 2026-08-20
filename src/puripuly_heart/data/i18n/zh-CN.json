@@ -1093,5 +1093,21 @@
   "steam.sticker_unknown": "你的收藏中没有名为“{name}”的贴纸——打开选择器浏览",
   "steam.orig_style": "原文样式",
   "steam.tip_orig_style": "给发送消息中的原文行加上样式（仅限拉丁字母——中文等其他文字不受影响），让它像译文下的小注释",
-  "steam.style_none": "普通"
+  "steam.style_none": "普通",
+  "dashboard.ocr.menu.paste_chat": "识别粘贴的图片",
+  "dashboard.ocr.menu.paste_chat.tooltip": "在聊天页按 Ctrl+V 粘贴图片，OCR 模块会在本地识别，文字会出现在聊天记录中。图片不会被上传，也不会发送到 VRChat。",
+  "dashboard.ocr.paste.reading": "正在识别粘贴的图片……",
+  "dashboard.ocr.paste.needs_ocr": "请先开启 OCR 模块——粘贴的图片由它识别。",
+  "dashboard.ocr.paste.empty": "该图片中未找到可识别的文字",
+  "dashboard.ocr.paste.failed": "无法识别该图片",
+  "dashboard.ocr.paste.needs_update": "请更新 OCR 模块以识别粘贴的图片（设置 → OCR 模块）。",
+  "dashboard.ocr.paste.open_tip": "点击查看粘贴的图片",
+  "dashboard.ocr.paste.thumb_tip": "按回车识别该图片",
+  "dashboard.image.copy": "复制图片",
+  "dashboard.image.open": "打开文件",
+  "dashboard.image.copy_path": "复制文件路径",
+  "dashboard.image.copied": "图片已复制",
+  "dashboard.image.copied_path": "路径已复制",
+  "dashboard.image.copy_failed": "无法复制该图片",
+  "dashboard.ocr.paste.no_module": "未安装 OCR 模块——请在设置中安装后才能识别粘贴的图片。"
 }

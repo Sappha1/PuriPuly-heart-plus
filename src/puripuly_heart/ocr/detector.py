@@ -178,6 +178,56 @@ class TextDetector:
                 continue
         return boxes
 
+    def read_lines(self, bgr: np.ndarray) -> list[tuple[str, float, int, int]]:
+        """End-to-end read of a WHOLE image: (text, score, top_y, left_x) per
+        text line, in the engine's own order.
+
+        This is the full RapidOCR pipeline (detect -> classify -> recognize
+        with proper quad cropping), unlike detect()+recognize() which the
+        overlay drives box-by-box for tracked on-screen text. A pasted
+        screenshot has no tracking context, and the split path mis-crops it
+        into single characters — this reads the same images cleanly.
+        """
+        try:
+            self._ensure_engine()
+        except Exception as exc:
+            logger.warning("[OCR] full read failed: %s", exc)
+            return []
+        # The overlay raises RapidOCR's det limit for 4K screens, and its
+        # limit_type is "min" — which UPSCALES a small pasted image (a 223x44
+        # crop became ~8700px wide) until nothing is detectable. Restore the
+        # stock limit for this call only; the capture loop keeps its own.
+        pre = None
+        prev = None
+        try:
+            pre = self._engine.text_detector.preprocess_op[0]
+            prev = pre.limit_side_len
+        except Exception:
+            pre = None
+        try:
+            with self._init_lock:
+                if pre is not None:
+                    pre.limit_side_len = 736
+                try:
+                    res, _elapse = self._engine(bgr)
+                finally:
+                    if pre is not None and prev is not None:
+                        pre.limit_side_len = prev
+        except Exception as exc:
+            logger.warning("[OCR] full read failed: %s", exc)
+            return []
+        out: list[tuple[str, float, int, int]] = []
+        for row in (res or []):
+            try:
+                box, text, score = row[0], str(row[1]), float(row[2])
+                ys = [int(p[1]) for p in box]
+                xs = [int(p[0]) for p in box]
+                if text.strip():
+                    out.append((text.strip(), score, min(ys), min(xs)))
+            except Exception:
+                continue
+        return out
+
     def recognize(self, crops: list[np.ndarray]) -> list[tuple[str, float]]:
         """Read text from BGR crops (batch). Returns (text, score) per crop.
         FAIL-OPEN: engine trouble returns high-score empties so callers don't

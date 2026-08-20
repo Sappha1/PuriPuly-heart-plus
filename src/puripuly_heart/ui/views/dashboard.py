@@ -19,7 +19,7 @@ from puripuly_heart.ui.fonts import font_for_language
 from puripuly_heart.ui.i18n import get_locale, language_name, t
 from puripuly_heart.ui.overlay_peer_contract import OverlayPeerConsumerContract
 
-_BUILD_TAG = "r513"  #increment each build so user can confirm version
+_BUILD_TAG = "r522"  #increment each build so user can confirm version
 
 # ── VRCT-style dark palette ──────────────────────────────────────────────────
 _BG_MAIN = "#2e2f32"
@@ -522,7 +522,7 @@ class DashboardView(ft.Row):
         self.on_ocr_region_state = None  # (prototype) -> bool (region set?)
         self.on_ocr_bubbles_change = None  # (prototype) callback(bool)
         self.on_ocr_scope_change = None  # (prototype) callback(bool)
-        self._ocr_on = False
+        self._ocr_on = False   # replaced by the saved state below once prefs load
         # OCR menu preferences persist in the overlay config file (shared
         # with the manager, which reads the same keys for launch args).
         try:
@@ -625,6 +625,22 @@ class DashboardView(ft.Row):
                 self._ocr_style["scan_bind"] = ""
         self.on_ocr_style_change = None  # (prototype) callback(key, value)
         self.ocr_log_chat = bool(_ocr_p.get("log_chat", False))
+        # r515: paste an image into the Chat tab and OCR it locally
+        self.ocr_paste_chat = bool(_ocr_p.get("paste_chat", True))
+        # r519: OCR used to start OFF after every update even when the user
+        # left it on — remember it like the other module switches.
+        self._ocr_want_on = bool(_ocr_p.get("ocr_on", False))
+        self._ocr_running = False
+        self._paste_entries: dict = {}
+        self.on_ocr_paste_reader = None   # () -> bool: ensure a reader is up
+        with contextlib.suppress(Exception):
+            # stale requests from a previous run must never be replayed
+            from pathlib import Path as _P
+
+            _rq = (_P.home() / "AppData" / "Local" / "puripuly-heart"
+                   / "ocr_paste_req.jsonl")
+            if _rq.exists():
+                _rq.write_text("", encoding="utf-8")
         self.on_ocr_foreign_change = None  # (prototype) callback(bool)
         self.on_ocr_ignore_names_change = None  # (prototype) callback(bool)
         self.on_ocr_region_set = None  # (prototype) callback() — fresh drag
@@ -1760,6 +1776,8 @@ class DashboardView(ft.Row):
             border_radius=8,
             content_padding=ft.padding.symmetric(horizontal=12, vertical=8),
         )
+        self._pending_paste: list = []
+        paste_strip = self._build_paste_strip()
         input_row = ft.Container(
             content=ft.Row(
                 [
@@ -1781,6 +1799,8 @@ class DashboardView(ft.Row):
             padding=ft.padding.symmetric(horizontal=8, vertical=6),
             bgcolor=_BG_MAIN,
         )
+        # pasted-image thumbnails sit directly above the composer
+        input_row = ft.Column([paste_strip, input_row], spacing=0, tight=True)
 
         # ── Right panel ──────────────────────────────────────────────────────
         # beta/steam-bridge: the VRChat chat (chat_box + input) and the Steam
@@ -2141,6 +2161,7 @@ class DashboardView(ft.Row):
         # the pill: teal border/text when active, faint when off.
         self._ocr_on = not self._ocr_on
         on = self._ocr_on
+        self._save_ocr_pref("ocr_on", on)
         self._ocr_btn.border = ft.border.all(1, _TOGGLE_ON if on else "#3a3b3f")
         self._ocr_btn.content.color = _TOGGLE_ON if on else _TEXT_FAINT
         with contextlib.suppress(Exception):
@@ -2317,6 +2338,10 @@ class DashboardView(ft.Row):
         def _on_log(v: bool) -> None:
             self.ocr_log_chat = v
             self._save_ocr_pref("log_chat", v)
+
+        def _on_paste(v: bool) -> None:
+            self.ocr_paste_chat = v
+            self._save_ocr_pref("paste_chat", v)
 
         def _on_lock(_v: bool) -> None:
             if callable(self.on_ocr_region_toggle):
@@ -2993,6 +3018,8 @@ class DashboardView(ft.Row):
                                  _bool_pill(self._ocr_prewarm, _on_prewarm)),
                     _row_tt("dashboard.ocr.menu.log_chat",
                                  _bool_pill(self.ocr_log_chat, _on_log)),
+                    _row_tt("dashboard.ocr.menu.paste_chat",
+                                 _bool_pill(self.ocr_paste_chat, _on_paste)),
                     _row_tt("dashboard.ocr.menu.debug_shots",
                                  _mk_style_bool("debug_shots",
                                                 default_on=False)),
@@ -4149,9 +4176,414 @@ class DashboardView(ft.Row):
             numbers[cluster_id] = len(numbers) + 1
         return numbers[cluster_id]
 
+
+    # ── Clipboard OCR paste (r515) ──────────────────────────────────────────
+    def _ocr_paste_dir(self):
+        from pathlib import Path as _P
+
+        d = (_P.home() / "AppData" / "Local" / "puripuly-heart" / "ocr_paste")
+        d.mkdir(parents=True, exist_ok=True)
+        return d
+
+    def paste_ocr_image(self) -> bool:
+        """Ctrl+V on the Chat tab: OCR an image sitting in the clipboard.
+        Returns True when an image was taken (so normal text paste still
+        works for text clipboards). The picture is NEVER uploaded anywhere
+        and the text is NEVER sent to the game."""
+        if not getattr(self, "ocr_paste_chat", True):
+            return False
+        try:
+            from PIL import ImageGrab
+            grab = ImageGrab.grabclipboard()
+        except Exception:
+            return False
+        if grab is None:
+            return False
+        path = None
+        try:
+            import time as _t
+            from pathlib import Path as _P
+
+            if isinstance(grab, list):          # copied file(s)
+                for p in grab:
+                    if str(p).lower().endswith(
+                            (".png", ".jpg", ".jpeg", ".webp", ".bmp")):
+                        path = str(p)
+                        break
+                if not path:
+                    return False
+            else:
+                path = str(self._ocr_paste_dir() / f"paste-{int(_t.time()*1000)}.png")
+                grab.save(path, "PNG")
+        except Exception:
+            logger.exception("[OCR] clipboard save failed")
+            return False
+        # r517: attach it to the composer as a small thumbnail — the read
+        # happens on Enter, like sending any other message.
+        pend = list(getattr(self, "_pending_paste", []) or [])
+        if path not in pend:
+            pend.append(path)
+        self._pending_paste = pend[-4:]
+        self._refresh_paste_strip()
+        with contextlib.suppress(Exception):
+            self._msg_input.focus()
+        return True
+
+    # ── Pasted-image attachment strip (r517) ────────────────────────────────
+    def _build_paste_strip(self):
+        """Thumbnail row above the message box; hidden until an image is
+        pasted."""
+        self._paste_thumbs = ft.Row(
+            [], spacing=6, tight=True,
+            vertical_alignment=ft.CrossAxisAlignment.CENTER)
+        self._paste_strip = ft.Container(
+            content=self._paste_thumbs, visible=False,
+            padding=ft.padding.only(left=10, right=10, top=6),
+            bgcolor=_BG_MAIN)
+        return self._paste_strip
+
+    def _refresh_paste_strip(self) -> None:
+        strip = getattr(self, "_paste_strip", None)
+        row = getattr(self, "_paste_thumbs", None)
+        if strip is None or row is None:
+            return
+        paths = list(getattr(self, "_pending_paste", []) or [])
+        row.controls = [self._paste_thumb(p) for p in paths]
+        strip.visible = bool(paths)
+        with contextlib.suppress(Exception):
+            strip.update()
+
+    def _paste_thumb(self, path: str):
+        return ft.Container(
+            content=ft.Stack([
+                ft.Container(
+                    content=ft.Image(src=path, width=54, height=54,
+                                     fit=ft.ImageFit.COVER, border_radius=6),
+                    border_radius=6, ink=True,
+                    on_click=lambda e, p=path: self._preview_paste(p),
+                    tooltip=t("dashboard.ocr.paste.thumb_tip",
+                              default="Press Enter to read this image")),
+                ft.Container(
+                    content=ft.Icon(ft.Icons.CLOSE, size=11, color="#ffffff"),
+                    bgcolor="#000000cc", border_radius=8, width=16, height=16,
+                    alignment=ft.alignment.center, right=0, top=0, ink=True,
+                    on_click=lambda e, p=path: self._drop_paste(p)),
+            ]), width=58, height=58)
+
+    def _preview_paste(self, path: str) -> None:
+        """Steam-style lightbox for a chat image: the picture at its real
+        proportions, a ✕ in the card corner, and Copy image / Open file /
+        Copy path pills. A click anywhere outside the card closes it."""
+        overlay = getattr(self, "_img_viewer_overlay", None)
+        if overlay is None:
+            overlay = self._img_viewer_overlay = ft.Container(
+                visible=False, expand=True)
+
+        def _close(_e=None) -> None:
+            overlay.visible = False
+            with contextlib.suppress(Exception):
+                self.page.update()
+
+        def pill(icon, label, on_click):
+            return ft.Container(
+                content=ft.Row([
+                    ft.Icon(icon, size=15, color=_TEXT_PRIMARY),
+                    ft.Text(label, size=12.5, color=_TEXT_PRIMARY),
+                ], spacing=6, tight=True),
+                bgcolor="#2b2c30", border=ft.border.all(1, "#4b4c4f"),
+                border_radius=8,
+                padding=ft.padding.symmetric(horizontal=12, vertical=8),
+                ink=True, on_click=on_click)
+
+        pills = [
+            pill(ft.Icons.COPY, t("dashboard.image.copy", default="Copy image"),
+                 lambda e, p=path: self._copy_chat_image(p)),
+            pill(ft.Icons.OPEN_IN_NEW,
+                 t("dashboard.image.open", default="Open file"),
+                 lambda e, p=path: self._launch_path(p)),
+            pill(ft.Icons.LINK, t("dashboard.image.copy_path",
+                                  default="Copy file path"),
+                 lambda e, p=path: self._copy_chat_path(p)),
+        ]
+
+        def _card(iw, ih, img_ctrl):
+            return ft.GestureDetector(
+                on_tap=lambda e: None,          # clicks on the card don't close
+                content=ft.Container(
+                    width=max(iw, 320) + 28, height=ih + 116,
+                    bgcolor="#17181b", border=ft.border.all(1, "#4b4c4f"),
+                    border_radius=10,
+                    content=ft.Stack([
+                        ft.Container(
+                            padding=ft.padding.only(left=14, right=14,
+                                                    top=50, bottom=14),
+                            content=ft.Column([
+                                img_ctrl,
+                                ft.Row(pills, spacing=8, tight=True,
+                                       alignment=ft.MainAxisAlignment.CENTER),
+                            ], spacing=12, tight=True,
+                               horizontal_alignment=ft.CrossAxisAlignment.CENTER)),
+                        ft.Container(
+                            right=8, top=8, width=36, height=36,
+                            bgcolor="#26272b",
+                            border=ft.border.all(1, "#5a5b5f"),
+                            border_radius=8, ink=True,
+                            alignment=ft.alignment.center,
+                            content=ft.Icon(ft.Icons.CLOSE, size=20,
+                                            color="#ffffff"),
+                            on_click=_close),
+                    ], expand=True)))
+
+        iw, ih = 720, 460
+        img = ft.Image(src=path, width=iw, height=ih, fit=ft.ImageFit.CONTAIN)
+        with contextlib.suppress(Exception):
+            # size the frame to the picture's real proportions (no letterbox)
+            from PIL import Image as _PILImage
+
+            w, h = _PILImage.open(path).size
+            pw = int(getattr(self.page, "width", 0) or 1200)
+            ph = int(getattr(self.page, "height", 0) or 800)
+            scale = min((pw - 110) / w, (ph - 170) / h, 1.0)
+            iw, ih = max(1, int(w * scale)), max(1, int(h * scale))
+            img = ft.Image(src=path, width=iw, height=ih,
+                           fit=ft.ImageFit.CONTAIN)
+        overlay.content = ft.GestureDetector(
+            on_tap=_close,
+            content=ft.Container(bgcolor="#99000000", expand=True,
+                                 alignment=ft.alignment.center,
+                                 content=_card(iw, ih, img)))
+        with contextlib.suppress(Exception):
+            if overlay not in self.page.overlay:
+                self.page.overlay.append(overlay)
+            overlay.visible = True
+            self.page.update()
+
+    def _launch_path(self, path: str) -> None:
+        with contextlib.suppress(Exception):
+            import os as _os
+
+            _os.startfile(path)          # default image viewer
+
+    def _copy_chat_path(self, path: str) -> None:
+        with contextlib.suppress(Exception):
+            self.page.set_clipboard(path)
+            self._notice_ocr_paste(t("dashboard.image.copied_path",
+                                     default="Path copied"))
+
+    def _copy_chat_image(self, path: str) -> None:
+        """Put the picture itself on the clipboard, not just its path."""
+        def _work() -> None:
+            ok = False
+            with contextlib.suppress(Exception):
+                import subprocess as _sp
+
+                ps = ("Add-Type -AssemblyName System.Windows.Forms; "
+                      "Add-Type -AssemblyName System.Drawing; "
+                      f"$img=[System.Drawing.Image]::FromFile('{path}'); "
+                      "[System.Windows.Forms.Clipboard]::SetImage($img); "
+                      "$img.Dispose()")
+                _sp.run(["powershell", "-NoProfile", "-STA", "-Command", ps],
+                        check=True, creationflags=0x08000000, timeout=20)
+                ok = True
+            self._notice_ocr_paste(
+                t("dashboard.image.copied", default="Image copied")
+                if ok else
+                t("dashboard.image.copy_failed", default="Could not copy that image"))
+
+        import threading as _th
+
+        _th.Thread(target=_work, daemon=True).start()
+
+    def _drop_paste(self, path: str) -> None:
+        pend = list(getattr(self, "_pending_paste", []) or [])
+        self._pending_paste = [p for p in pend if p != path]
+        with contextlib.suppress(Exception):
+            from pathlib import Path as _P
+
+            f = _P(path)
+            if f.parent.name == "ocr_paste" and f.exists():
+                f.unlink()      # our own temp copy — drop it with the chip
+        self._refresh_paste_strip()
+
+    def _submit_pending_paste(self) -> bool:
+        """Enter/send with an attached image: hand it to the OCR module.
+        Returns True when the send was consumed by an attachment."""
+        pend = list(getattr(self, "_pending_paste", []) or [])
+        if not pend:
+            return False
+        with contextlib.suppress(Exception):
+            from puripuly_heart.core.ocr_module import (
+                PASTE_MODULE_BUILD, installed_module_build, module_ready,
+            )
+
+            if module_ready() and installed_module_build() < PASTE_MODULE_BUILD:
+                self._notice_ocr_paste(
+                    t("dashboard.ocr.paste.needs_update",
+                      default="Update the OCR module to read pasted images "
+                              "(Settings → OCR module)."))
+                return True
+        if not getattr(self, "_ocr_running", False):
+            # r519: a paste is a one-shot read — no need for live screen OCR.
+            # Bring up the quiet reader (no capture, no overlay) on demand.
+            ok = False
+            if callable(getattr(self, "on_ocr_paste_reader", None)):
+                with contextlib.suppress(Exception):
+                    ok = bool(self.on_ocr_paste_reader())
+            if not ok:
+                self._notice_ocr_paste(
+                    t("dashboard.ocr.paste.no_module",
+                      default="The OCR module isn't installed — install it in "
+                              "Settings to read pasted images."))
+                return True
+        import json as _json
+        import uuid as _uuid
+
+        queued = 0
+        for path in pend:
+            rid = _uuid.uuid4().hex
+            with contextlib.suppress(Exception):
+                import time as _time
+
+                req = self._ocr_paste_dir().parent / "ocr_paste_req.jsonl"
+                with open(req, "a", encoding="utf-8") as fh:
+                    fh.write(_json.dumps({"path": path, "id": rid,
+                                          "ts": int(_time.time())},
+                                         ensure_ascii=False) + "\n")
+                queued += 1
+                # the picture goes into the log right away as a reference;
+                # the recognized text replaces the placeholder when it lands
+                self._add_paste_placeholder(rid, path)
+        self._pending_paste = []
+        self._refresh_paste_strip()
+        return True
+
+    def _add_paste_placeholder(self, rid: str, path: str) -> None:
+        if self._chat_list_view is None:
+            return
+        reg = getattr(self, "_paste_entries", None)
+        if reg is None:
+            reg = self._paste_entries = {}
+        with contextlib.suppress(Exception):
+            entry = ft.Container(
+                content=ft.Column([
+                    ft.Row([
+                        ft.Text(t("dashboard.chat.received_ocr"), size=11,
+                                weight=ft.FontWeight.W_600, color="#6ab7e8"),
+                        ft.Text(t("dashboard.ocr.paste.reading",
+                                  default="Reading the pasted image…"),
+                                size=11, color=_TEXT_FAINT, italic=True),
+                    ], spacing=8, tight=True),
+                    self._chat_image_thumb(path),
+                ], spacing=4, tight=True),
+                padding=ft.padding.only(left=10, top=6, bottom=6, right=8),
+                border=ft.border.only(left=ft.BorderSide(2, "#6ab7e8")),
+                margin=ft.margin.only(top=4))
+            reg[rid] = (entry, path)
+            self._chat_list_view.controls.append(entry)
+            if self._chat_list_view.page:
+                self._chat_list_view.update()
+                self._follow_chat_if_following()
+        # A reader that dies (or never starts) must not leave "Reading…"
+        # spinning forever — give up loudly after a while.
+        with contextlib.suppress(Exception):
+            import threading as _th
+
+            def _timeout(rid=rid) -> None:
+                if rid in (getattr(self, "_paste_entries", None) or {}):
+                    self.resolve_paste_entry(rid, "", "", "error")
+
+            _t2 = _th.Timer(120.0, _timeout)
+            # daemon, or the pending timer holds the whole PROCESS alive for
+            # up to 2 minutes after the window closes (r521 zombie)
+            _t2.daemon = True
+            _t2.start()
+
+    def _chat_image_thumb(self, path: str):
+        """Small clickable picture used inside a chat entry. Sized to the
+        picture's real proportions — a fixed box left a large empty gap under
+        wide captures (CONTAIN letterboxing)."""
+        iw, ih = 190, 110
+        with contextlib.suppress(Exception):
+            from PIL import Image as _PILImage
+
+            w, h = _PILImage.open(path).size
+            scale = min(280 / max(w, 1), 140 / max(h, 1), 1.0)
+            iw, ih = max(1, int(w * scale)), max(1, int(h * scale))
+        return ft.Container(
+            content=ft.Image(src=path, width=iw, height=ih,
+                             fit=ft.ImageFit.CONTAIN, border_radius=6),
+            border_radius=6, ink=True, alignment=ft.alignment.center_left,
+            on_click=lambda e, p=path: self._preview_paste(p),
+            tooltip=t("dashboard.ocr.paste.open_tip",
+                      default="Click to view the pasted image"))
+
+    def resolve_paste_entry(self, rid: str, src: str, dst: str,
+                            status: str = "") -> bool:
+        """The OCR result for a pasted image arrived: swap the placeholder for
+        the finished entry (picture + recognized text + translation)."""
+        reg = getattr(self, "_paste_entries", None) or {}
+        item = reg.pop(rid, None)
+        if item is None:
+            return False
+        entry, path = item
+        pos = None
+        with contextlib.suppress(Exception):
+            if entry in self._chat_list_view.controls:
+                pos = self._chat_list_view.controls.index(entry)
+                self._chat_list_view.controls.remove(entry)
+        if status or not (src or "").strip():
+            self._notice_ocr_paste(
+                t("dashboard.ocr.paste.empty",
+                  default="No readable text in that image")
+                if status != "error" else
+                t("dashboard.ocr.paste.failed",
+                  default="Could not read that image"))
+            with contextlib.suppress(Exception):
+                if self._chat_list_view.page:
+                    self._chat_list_view.update()
+            return True
+        self.append_chat_entry(channel="ocr", source="ocr",
+                               source_text=src, translated_text=dst,
+                               image_path=path, insert_at=pos)
+        return True
+
+    def _delete_evicted_paste_images(self, evicted: list) -> None:
+        """Entries trimmed off the capped chat log take their temp pasted
+        screenshots with them — only files under our own ocr_paste folder,
+        never a user's original file pasted by path."""
+        for c in evicted or []:
+            with contextlib.suppress(Exception):
+                tag = getattr(c, "data", None)
+                if (isinstance(tag, tuple) and len(tag) == 2
+                        and tag[0] == "ocr_paste_img"):
+                    from pathlib import Path as _P
+
+                    f = _P(tag[1])
+                    if f.parent.name == "ocr_paste" and f.exists():
+                        f.unlink()
+
+    def _notice_ocr_paste(self, msg: str) -> None:
+        with contextlib.suppress(Exception):
+            if self.page:
+                self.page.open(ft.SnackBar(ft.Text(msg)))
+
+    def _clear_ocr_paste_temp(self) -> None:
+        """Chat cleared -> the pasted screenshots that produced those entries
+        are dead weight; drop them so the folder can't grow forever."""
+        with contextlib.suppress(Exception):
+            import shutil
+
+            d = self._ocr_paste_dir()
+            shutil.rmtree(d, ignore_errors=True)
+        with contextlib.suppress(Exception):
+            req = self._ocr_paste_dir().parent / "ocr_paste_req.jsonl"
+            if req.exists():
+                req.write_text("", encoding="utf-8")
+
     def _on_chat_clear(self, e) -> None:
         if self._chat_list_view is None:
             return
+        self._clear_ocr_paste_temp()
         self._chat_list_view.controls.clear()
         # r340: the speaker-tag registries point at those entries; without
         # this they keep dead controls for the rest of the session.
@@ -4623,6 +5055,8 @@ class DashboardView(ft.Row):
         speaker_name: str = "",
         speaker_cluster_id: int = -1,
         speaker_embedding: object = None,
+        image_path: str = "",
+        insert_at: "int | None" = None,
     ) -> None:
         if self._chat_list_view is None:
             return
@@ -4756,6 +5190,14 @@ class DashboardView(ft.Row):
                 size=10, color=label_color, weight=ft.FontWeight.W_600,
                 opacity=0.65,
             ))
+        elif is_ocr and src_lang:
+            # r522 (user suggestion): OCR reads whatever script is on screen —
+            # tag the detected language like auto-detect voice does
+            header_cells.append(ft.Text(
+                f" [{src_lang.split('-')[0].upper()}]",
+                size=10, color=label_color, weight=ft.FontWeight.W_600,
+                opacity=0.65,
+            ))
         if _speaker_tagged:
             # r318 speaker tag (r322: now the header itself). Named voices
             # show their name; anonymous ones a localized "Speaker N".
@@ -4863,6 +5305,11 @@ class DashboardView(ft.Row):
                 self.refresh_find_for_chat_change()
             return
 
+        if image_path:
+            # r518: pasted-image entries keep the picture as a reference
+            with contextlib.suppress(Exception):
+                content_rows = [self._chat_image_thumb(image_path),
+                                *content_rows]
         entry = ft.Container(
             content=ft.Column(
                 [header, *content_rows],
@@ -4880,9 +5327,21 @@ class DashboardView(ft.Row):
         # r371: a stable key per entry, so find can scroll to the match.
         self._chat_entry_seq += 1
         entry.key = f"chatentry-{self._chat_entry_seq}"
-        self._chat_list_view.controls.append(entry)
+        if image_path:
+            # r520: so the temp screenshot can be deleted when this entry
+            # scrolls out of the capped log (or on Clear chat)
+            entry.data = ("ocr_paste_img", image_path)
+        if insert_at is not None:
+            # r522: a resolved paste keeps its placeholder's position instead
+            # of jumping below whatever logged while it was reading
+            idx = max(0, min(int(insert_at), len(self._chat_list_view.controls)))
+            self._chat_list_view.controls.insert(idx, entry)
+        else:
+            self._chat_list_view.controls.append(entry)
         if len(self._chat_list_view.controls) > CHAT_MAX_ENTRIES:
+            evicted = self._chat_list_view.controls[:20]
             del self._chat_list_view.controls[:20]
+            self._delete_evicted_paste_images(evicted)
         try:
             self._chat_list_view.update()
             self._follow_chat_if_following()
@@ -4991,6 +5450,10 @@ class DashboardView(ft.Row):
             self.on_send_message("You", text)
 
     def _on_msg_input_submit(self, e) -> None:
+        # r517: an attached pasted image is what Enter sends (to the local OCR
+        # reader — never to VRChat); typed text sends as usual.
+        if self._submit_pending_paste():
+            return
         text = (e.control.value or "").strip()
         if text:
             e.control.value = ""
@@ -5002,6 +5465,8 @@ class DashboardView(ft.Row):
 
     def _on_send_btn_click(self, _e) -> None:
         if not hasattr(self, "_msg_input"):
+            return
+        if self._submit_pending_paste():
             return
         text = (self._msg_input.value or "").strip()
         if text:

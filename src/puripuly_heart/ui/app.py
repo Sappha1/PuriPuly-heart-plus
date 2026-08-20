@@ -200,6 +200,7 @@ class TranslatorApp:
         self._ocr_manager = OcrOverlayManager()
         self.view_dashboard.on_toggle_ocr = self._on_toggle_ocr
         self.view_dashboard.on_ocr_remove_module = self._on_ocr_remove_module
+        self.view_dashboard.on_ocr_paste_reader = self._ocr_manager.ensure_paste_reader
         self.view_dashboard.on_ocr_prewarm_change = self._ocr_manager.set_prewarm
         self.view_dashboard.on_ocr_region_toggle = self._ocr_manager.toggle_region
         self.view_dashboard.on_ocr_region_state = self._ocr_manager.region_enabled
@@ -551,6 +552,21 @@ class TranslatorApp:
                 # Pre-warm the Steam helper now so the tab has no "late load".
                 with contextlib.suppress(Exception):
                     _sv.prewarm()
+
+        # r519: OCR used to come back OFF after every update. Restore the pill
+        # to whatever the user left it on, and start the module to match.
+        with contextlib.suppress(Exception):
+            if getattr(self.view_dashboard, "_ocr_want_on", False):
+                import threading as _th
+
+                def _restore_ocr() -> None:
+                    with contextlib.suppress(Exception):
+                        if self._on_toggle_ocr(True):
+                            self.view_dashboard.set_ocr_on(True)
+
+                _t = _th.Timer(2.0, _restore_ocr)
+                _t.daemon = True     # never block process exit
+                _t.start()
 
         # Top nav bar for non-dashboard views (back + tab icons)
         _NAV_ICONS = [
@@ -1939,6 +1955,13 @@ class TranslatorApp:
                         _sv = getattr(dashboard, "_steam_view", None)
                         if _sv is not None and callable(getattr(_sv, "paste_image", None)):
                             _sv.paste_image()
+                else:
+                    # r515: Chat tab — an image in the clipboard is read by the
+                    # OCR module and logged here; it is never sent to VRChat.
+                    with contextlib.suppress(Exception):
+                        _po = getattr(dashboard, "paste_ocr_image", None)
+                        if callable(_po):
+                            _po()
         # r375: Enter steps to the next match (Shift+Enter the previous) while
         # the find bar is open. The field's own on_submit does this too; which
         # of the two actually fires is a Flet detail, so both are wired and the
@@ -2950,7 +2973,12 @@ class TranslatorApp:
                     dash.set_ocr_on(False)
             self._prompt_ocr_module_download()
             return False
-        return self._ocr_manager.toggle(enabled)
+        _ok = self._ocr_manager.toggle(enabled)
+        # r515: the clipboard-paste path needs to know whether the OCR module
+        # is up (it is what reads the image).
+        with contextlib.suppress(Exception):
+            self.view_dashboard._ocr_running = bool(enabled and _ok)
+        return _ok
 
     def _prompt_ocr_module_download(self) -> None:
         from puripuly_heart.ui.i18n import t
@@ -4085,7 +4113,27 @@ async def main_gui(page: ft.Page, *, config_path, debug_ui_preview: bool = False
                     d = _json.loads(line)
                 except Exception:
                     continue
-                if not getattr(app.view_dashboard, "ocr_log_chat", True):
+                from puripuly_heart.ui.i18n import t as _t
+                _is_paste = bool(d.get("paste"))
+                if _is_paste:
+                    _st = str(d.get("status") or "")
+                    _rid = str(d.get("id") or "")
+                    if _rid:
+                        with contextlib.suppress(Exception):
+                            if app.view_dashboard.resolve_paste_entry(
+                                    _rid, str(d.get("src", "")),
+                                    str(d.get("dst", "")), _st):
+                                continue
+                    if _st:
+                        with contextlib.suppress(Exception):
+                            app.view_dashboard._notice_ocr_paste(
+                                _t("dashboard.ocr.paste.empty",
+                                   default="No readable text in that image")
+                                if _st == "empty" else
+                                _t("dashboard.ocr.paste.failed",
+                                   default="Could not read that image"))
+                        continue
+                elif not getattr(app.view_dashboard, "ocr_log_chat", True):
                     continue
                 # PER-LINE isolation: a throw here (e.g. a transient flet
                 # control-update race) must NOT abort the whole batch —

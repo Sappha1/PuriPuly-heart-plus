@@ -113,6 +113,20 @@ _TINY_SUPER = str.maketrans({
 })
 _ORIG_STYLES = ("none", "small_caps", "superscript")
 
+# r513: Steam's history hands own sends back as the RAW styled payload — map
+# the tiny glyphs home so restored messages read as plain text again. Built
+# from the forward tables, so the two can never drift apart.
+_TINY_REVERSE = {}
+for _tbl in (_TINY_SMALL, _TINY_SUPER):
+    for _src_cp, _dst in _tbl.items():
+        if isinstance(_dst, str) and _dst not in _TINY_REVERSE:
+            _TINY_REVERSE[_dst] = chr(_src_cp)
+_TINY_REVERSE_TABLE = str.maketrans(_TINY_REVERSE)
+
+
+def _untiny(text: str) -> str:
+    return (text or "").translate(_TINY_REVERSE_TABLE)
+
 
 def _tiny_text(text: str, style: str) -> str:
     """Apply the picked tiny-text style, skipping URLs and :emote: tokens
@@ -2986,6 +3000,18 @@ class SteamBridgeView(ft.Container):
         for b in blocks:
             joined = " ".join(t.strip() for t in b["texts"] if t.strip())
             b["text"], b["emoticons"] = _extract_emoticons(joined)
+            if b.get("from_me"):
+                # r513: restore a composed send to how it looked when sent —
+                # plain original on top, the rest on the accent line (else the
+                # app re-romanizes and back-translates its own message).
+                b["text"] = _untiny(b["text"])
+                _lines = [l for l in b["text"].split("\n") if l.strip()]
+                if len(_lines) >= 2 and not b.get("_out_sent"):
+                    _head, _tail = _lines[0], _lines[1:]
+                    if not _CJK_RE.search(_head) and any(
+                            _CJK_RE.search(l) for l in _tail):
+                        b["text"] = _head
+                        b["_out_sent"] = "\n".join(_tail)
         return blocks
 
     def _message_body_controls(self, b: dict) -> list:

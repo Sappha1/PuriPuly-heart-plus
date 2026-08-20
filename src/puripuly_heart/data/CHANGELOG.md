@@ -2,6 +2,10 @@
 
 User-facing changes per build. The latest build's highlights also appear in-app when an update is ready.
 
+## r513 — 2026-08-19
+
+- Fixed: after restarting the app, your own Steam messages came back showing the styled original, an invented pinyin line and a back-translation — restored messages now look exactly as they did when you sent them
+
 ## r512 — 2026-08-19
 
 - New: "Original text style" in the Steam chat settings — send the original line as Sᴍᴀʟʟ Cᴀᴘs or ˢᵘᵖᵉʳˢᶜʳᶦᵖᵗ so it reads as a small caption under the translation. Latin letters only; Chinese and other scripts, links and emotes are left alone, and your own chat log still shows what you typed

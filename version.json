@@ -1,8 +1,8 @@
 {
-  "build": 512,
-  "tag": "r512",
+  "build": 513,
+  "tag": "r513",
   "date": "2026-08-19",
   "notes": [
-    "New: 'Original text style' for Steam sends - small caps or superscript for the original line (Latin only; your own log is unchanged)"
+    "Fixed: restarting the app no longer redisplays your own Steam messages with styled text, an extra pinyin line and a back-translation"
   ]
 }

@@ -83,6 +83,63 @@ _vlog = logging.getLogger("puripuly_heart.steam_view")
 # one letter somewhere so time strings ("12:34:56") never read as emotes.
 _EMOTE_RE = re.compile(r"[:ː](?=[0-9_]*[a-zA-Z])([a-zA-Z0-9][a-zA-Z0-9_]{1,})[:ː]")
 
+# ── Tiny-text styles for the outgoing ORIGINAL line (r511) ──────────────────
+# Latin-only lookalike glyphs; anything unmapped (CJK, punctuation) passes
+# through, so Chinese/Japanese/Korean text is never altered.
+_TINY_SMALL = str.maketrans({
+    "a": "\u1d00", "b": "\u0299", "c": "\u1d04", "d": "\u1d05", "e": "\u1d07",
+    "f": "\u0493", "g": "\u0262", "h": "\u029c", "i": "\u026a", "j": "\u1d0a",
+    "k": "\u1d0b", "l": "\u029f", "m": "\u1d0d", "n": "\u0274", "o": "\u1d0f",
+    "p": "\u1d18", "q": "\u01eb", "r": "\u0280", "t": "\u1d1b", "u": "\u1d1c",
+    "v": "\u1d20", "w": "\u1d21", "y": "\u028f", "z": "\u1d22",
+})
+_TINY_SUPER = str.maketrans({
+    "a": "\u1d43", "b": "\u1d47", "c": "\u1d9c", "d": "\u1d48", "e": "\u1d49",
+    "f": "\u1da0", "g": "\u1d4d", "h": "\u02b0", "i": "\u1da6", "j": "\u02b2",
+    "k": "\u1d4f", "l": "\u02e1", "m": "\u1d50", "n": "\u207f", "o": "\u1d52",
+    "p": "\u1d56", "q": "\u1d60", "r": "\u02b3", "s": "\u02e2", "t": "\u1d57",
+    "u": "\u1d58", "v": "\u1d5b", "w": "\u02b7", "x": "\u02e3", "y": "\u02b8",
+    "z": "\u1dbb",
+    "A": "\u1d2c", "B": "\u1d2e", "C": "\u1d9c", "D": "\u1d30", "E": "\u1d31",
+    "F": "\u1da0", "G": "\u1d33", "H": "\u1d34", "I": "\u1d35", "J": "\u1d36",
+    "K": "\u1d37", "L": "\u1d38", "M": "\u1d39", "N": "\u1d3a", "O": "\u1d3c",
+    "P": "\u1d3e", "Q": "\u1d60", "R": "\u1d3f", "S": "\u02e2", "T": "\u1d40",
+    "U": "\u1d41", "V": "\u2c7d", "W": "\u1d42", "X": "\u02e3", "Y": "\u02b8",
+    "Z": "\u1dbb",
+    "0": "\u2070", "1": "\u00b9", "2": "\u00b2", "3": "\u00b3", "4": "\u2074",
+    "5": "\u2075", "6": "\u2076", "7": "\u2077", "8": "\u2078", "9": "\u2079",
+    "+": "\u207a", "-": "\u207b", "=": "\u207c", "(": "\u207d", ")": "\u207e",
+    "?": "\u02c0",
+})
+_ORIG_STYLES = ("none", "small_caps", "superscript")
+
+
+def _tiny_text(text: str, style: str) -> str:
+    """Apply the picked tiny-text style, skipping URLs and :emote: tokens
+    whole (a styled URL breaks; a styled emote code stops rendering)."""
+    if style == "small_caps":
+        table = _TINY_SMALL
+    elif style == "superscript":
+        table = _TINY_SUPER
+    else:
+        return text
+    out = []
+    for tok in re.split(r"(\s+)", text or ""):
+        if ("://" in tok or tok.startswith("www.")
+                or (len(tok) > 2 and tok[0] in ":\u02d0" and tok[-1] in ":\u02d0")):
+            out.append(tok)
+        else:
+            out.append(tok.translate(table))
+    return "".join(out)
+
+
+def _orig_style_labels() -> dict:
+    return {
+        "none": _T("steam.style_none", default="Normal"),
+        "small_caps": "S\u1d0d\u1d00\u029f\u029f C\u1d00\u1d18s",
+        "superscript": "\u02e2\u1d58\u1d56\u1d49\u02b3\u02e2\u1d9c\u02b3\u1da6\u1d56\u1d57",
+    }
+
 
 # Steam room effects are slash commands the server renders as full-chat
 # effects on both ends.
@@ -337,6 +394,8 @@ class SteamBridgeView(ft.Container):
         self._send_fmt = "trans_only"
         self._tr_provider = "default"  # "default" = app's translator (e.g. DeepL); "bing" = free
         self._fmt_expanded = False    # "Send as" pill expands/collapses its radio list
+        self._style_expanded = False  # "Original text style" radio list
+        self._orig_style = "none"     # tiny-text style for the sent original line
         self._read_zh = True          # per-language reading lines (like the Chat tab)
         self._read_ja = True
         self._read_ko = True
@@ -1455,6 +1514,17 @@ class SteamBridgeView(ft.Container):
             *([radio_row(lbl, m == self._send_fmt,
                          (lambda e, m=m: self._set_send_fmt(m)))
                for m, lbl in _send_fmt_labels().items()] if self._fmt_expanded else []),
+            pill_row(_T("steam.orig_style", default="Original text style"),
+                     _T("steam.tip_orig_style",
+                        default="Style the original line inside sent messages "
+                                "(Latin letters only \u2014 Chinese and other "
+                                "scripts are untouched) so it reads as a small "
+                                "caption under the translation"),
+                     _orig_style_labels()[self._orig_style],
+                     lambda e: self._toggle_style_expanded()),
+            *([radio_row(lbl, m == self._orig_style,
+                         (lambda e, m=m: self._set_orig_style(m)))
+               for m, lbl in _orig_style_labels().items()] if self._style_expanded else []),
             ft.Divider(height=1, color="#4b4c4f"),
             toggle_row(_T("steam.show_pinyin", default="Show Pinyin"), _T("steam.tip_show_pinyin", default="Reading line above originals in this chat"),
                        self._show_pinyin, self._set_pinyin),
@@ -1567,6 +1637,21 @@ class SteamBridgeView(ft.Container):
 
     def _toggle_fmt_expanded(self) -> None:
         self._fmt_expanded = not self._fmt_expanded
+        if self._settings_panel.visible:
+            self._build_settings_panel()
+            with contextlib.suppress(Exception):
+                self._settings_panel.update()
+
+    def _toggle_style_expanded(self) -> None:
+        self._style_expanded = not self._style_expanded
+        if self._settings_panel.visible:
+            self._build_settings_panel()
+            with contextlib.suppress(Exception):
+                self._settings_panel.update()
+
+    def _set_orig_style(self, style: str) -> None:
+        self._orig_style = style if style in _ORIG_STYLES else "none"
+        self._save_prefs()
         if self._settings_panel.visible:
             self._build_settings_panel()
             with contextlib.suppress(Exception):
@@ -2751,6 +2836,9 @@ class SteamBridgeView(ft.Container):
                 self._tr_incoming = bool(p.get("tr_incoming", True))
                 self._tr_outgoing = bool(p.get("tr_outgoing", True))
                 self._show_original = bool(p.get("show_original", True))
+                self._orig_style = p.get("orig_style", "none")
+                if self._orig_style not in _ORIG_STYLES:
+                    self._orig_style = "none"
                 self._send_fmt = p.get("send_fmt", "")
                 if not self._send_fmt:      # migrate the short-lived r422 pref
                     self._send_fmt = {"tr_only": "trans_only", "both": "orig_trans",
@@ -2792,6 +2880,7 @@ class SteamBridgeView(ft.Container):
                 "tr_outgoing": self._tr_outgoing,
                 "show_original": self._show_original,
                 "send_fmt": self._send_fmt,
+                "orig_style": getattr(self, "_orig_style", "none"),
                 "tr_provider": self._tr_provider,
                 "read_zh": self._read_zh, "read_ja": self._read_ja,
                 "read_ko": self._read_ko, "read_latin": self._read_latin,
@@ -3914,8 +4003,14 @@ class SteamBridgeView(ft.Container):
         self._tr_cache[self._tr_key(zh)] = tr_src         # echo renders instantly
         reading = self._romanize(zh) if "read" in fmt else ""
         lines = []
+        _orig_line = orig_out
         if fmt.startswith("orig"):
-            lines.append(orig_out)
+            # r511: optional tiny-text style so the original reads as a small
+            # caption under the translation (Latin only; URLs/emotes skipped).
+            # r512: the styled line goes ONLY to Steam — the typed original is
+            # already on screen locally, so the accent line must exclude it.
+            _orig_line = _tiny_text(orig_out, self._orig_style)
+            lines.append(_orig_line)
         if reading:
             lines.append(reading)
         if fmt != "read_only":
@@ -3925,7 +4020,8 @@ class SteamBridgeView(ft.Container):
         if urls and not fmt.startswith("orig") and urls not in out2:
             out2 = f"{out2}\n{urls}".strip()   # links ride along untranslated
         await self._cmd({"cmd": "send", "acct": acct, "text": out2})
-        sent_extra = "\n".join(l for l in lines if l and l != orig_out)
+        sent_extra = "\n".join(l for l in lines
+                               if l and l != orig_out and l != _orig_line)
         if b is not None and sent_extra:
             b["_out_sent"] = sent_extra        # survives any re-render
         ctrl = (b or {}).get("_out_ctrl")

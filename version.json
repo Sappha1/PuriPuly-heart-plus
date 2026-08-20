@@ -1,8 +1,8 @@
 {
-  "build": 510,
-  "tag": "r510",
+  "build": 512,
+  "tag": "r512",
   "date": "2026-08-19",
   "notes": [
-    "Fixed: pressing Tab no longer swaps Your language and Target language"
+    "New: 'Original text style' for Steam sends - small caps or superscript for the original line (Latin only; your own log is unchanged)"
   ]
 }

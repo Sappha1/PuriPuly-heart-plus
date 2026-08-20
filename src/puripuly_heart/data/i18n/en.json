@@ -1090,5 +1090,8 @@
   "steam.proxy": "Connection proxy",
   "steam.tip_proxy": "Route ONLY this module's hidden browser through a local VPN/proxy port — for networks where steamcommunity.com is blocked. Example: 127.0.0.1:7890. Games and the Steam client are not affected. Leave empty to connect directly.",
   "steam.proxy_applied": "Proxy saved — reconnecting…",
-  "steam.sticker_unknown": "No sticker named \"{name}\" in your collection — open the picker to browse them"
+  "steam.sticker_unknown": "No sticker named \"{name}\" in your collection — open the picker to browse them",
+  "steam.orig_style": "Original text style",
+  "steam.tip_orig_style": "Style the original line inside sent messages (Latin letters only — Chinese and other scripts are untouched) so it reads as a small caption under the translation",
+  "steam.style_none": "Normal"
 }

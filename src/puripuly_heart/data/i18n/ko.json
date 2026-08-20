@@ -1090,5 +1090,8 @@
   "steam.proxy": "연결 프록시",
   "steam.tip_proxy": "이 모듈의 숨겨진 브라우저만 로컬 VPN/프록시 포트를 통해 연결합니다. steamcommunity.com이 차단된 네트워크용입니다. 예: 127.0.0.1:7890. 게임과 Steam 클라이언트에는 영향이 없습니다. 비워 두면 직접 연결합니다.",
   "steam.proxy_applied": "프록시 저장됨 — 다시 연결하는 중…",
-  "steam.sticker_unknown": "보유 스티커 중에 \"{name}\"이(가) 없습니다 — 선택기를 열어 찾아보세요"
+  "steam.sticker_unknown": "보유 스티커 중에 \"{name}\"이(가) 없습니다 — 선택기를 열어 찾아보세요",
+  "steam.orig_style": "원문 스타일",
+  "steam.tip_orig_style": "보내는 메시지 안의 원문 줄에 스타일을 적용합니다(라틴 문자만 — 중국어 등 다른 문자는 그대로). 번역 아래 작은 캐프션처럼 보입니다",
+  "steam.style_none": "기본"
 }

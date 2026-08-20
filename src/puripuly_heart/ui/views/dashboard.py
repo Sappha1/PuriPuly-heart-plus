@@ -19,7 +19,7 @@ from puripuly_heart.ui.fonts import font_for_language
 from puripuly_heart.ui.i18n import get_locale, language_name, t
 from puripuly_heart.ui.overlay_peer_contract import OverlayPeerConsumerContract
 
-_BUILD_TAG = "r522"  #increment each build so user can confirm version
+_BUILD_TAG = "r531"  #increment each build so user can confirm version
 
 # ── VRCT-style dark palette ──────────────────────────────────────────────────
 _BG_MAIN = "#2e2f32"
@@ -4270,10 +4270,12 @@ class DashboardView(ft.Row):
                     on_click=lambda e, p=path: self._drop_paste(p)),
             ]), width=58, height=58)
 
-    def _preview_paste(self, path: str) -> None:
+    def _preview_paste(self, path: str, alt: str = "") -> None:
         """Steam-style lightbox for a chat image: the picture at its real
         proportions, a ✕ in the card corner, and Copy image / Open file /
-        Copy path pills. A click anywhere outside the card closes it."""
+        Copy path pills. A click anywhere outside the card closes it.
+        When a translated render exists, a toggle pill swaps between it and
+        the untouched original."""
         overlay = getattr(self, "_img_viewer_overlay", None)
         if overlay is None:
             overlay = self._img_viewer_overlay = ft.Container(
@@ -4307,10 +4309,38 @@ class DashboardView(ft.Row):
         ]
 
         def _card(iw, ih, img_ctrl):
+            corner = [ft.Container(
+                right=8, top=8, width=36, height=36,
+                bgcolor="#26272b",
+                border=ft.border.all(1, "#5a5b5f"),
+                border_radius=8, ink=True,
+                alignment=ft.alignment.center,
+                content=ft.Icon(ft.Icons.CLOSE, size=20, color="#ffffff"),
+                on_click=_close)]
+            if alt:
+                # r524 (user suggestion): the original/translated flip lives
+                # as a swap icon next to the close button, not a bottom pill
+                _is_tr = path.endswith("-tr.png")
+                corner.append(ft.Container(
+                    right=52, top=8, width=36, height=36,
+                    bgcolor="#26272b",
+                    border=ft.border.all(1, "#5a5b5f"),
+                    border_radius=8, ink=True,
+                    alignment=ft.alignment.center,
+                    content=ft.Icon(ft.Icons.SYNC, size=19, color="#ffffff"),
+                    tooltip=(t("dashboard.image.show_original",
+                               default="Show original") if _is_tr else
+                             t("dashboard.image.show_translated",
+                               default="Show translation")),
+                    on_click=lambda e, p=alt, a=path: self._preview_paste(
+                        p, alt=a)))
+            # r524: the card must be at least as wide as the pill row, or the
+            # buttons clip off its right edge
+            cw = max(iw, 440) + 28
             return ft.GestureDetector(
                 on_tap=lambda e: None,          # clicks on the card don't close
                 content=ft.Container(
-                    width=max(iw, 320) + 28, height=ih + 116,
+                    width=cw, height=ih + 116,
                     bgcolor="#17181b", border=ft.border.all(1, "#4b4c4f"),
                     border_radius=10,
                     content=ft.Stack([
@@ -4323,15 +4353,7 @@ class DashboardView(ft.Row):
                                        alignment=ft.MainAxisAlignment.CENTER),
                             ], spacing=12, tight=True,
                                horizontal_alignment=ft.CrossAxisAlignment.CENTER)),
-                        ft.Container(
-                            right=8, top=8, width=36, height=36,
-                            bgcolor="#26272b",
-                            border=ft.border.all(1, "#5a5b5f"),
-                            border_radius=8, ink=True,
-                            alignment=ft.alignment.center,
-                            content=ft.Icon(ft.Icons.CLOSE, size=20,
-                                            color="#ffffff"),
-                            on_click=_close),
+                        *corner,
                     ], expand=True)))
 
         iw, ih = 720, 460
@@ -4498,7 +4520,7 @@ class DashboardView(ft.Row):
             _t2.daemon = True
             _t2.start()
 
-    def _chat_image_thumb(self, path: str):
+    def _chat_image_thumb(self, path: str, alt: str = ""):
         """Small clickable picture used inside a chat entry. Sized to the
         picture's real proportions — a fixed box left a large empty gap under
         wide captures (CONTAIN letterboxing)."""
@@ -4509,16 +4531,54 @@ class DashboardView(ft.Row):
             w, h = _PILImage.open(path).size
             scale = min(280 / max(w, 1), 140 / max(h, 1), 1.0)
             iw, ih = max(1, int(w * scale)), max(1, int(h * scale))
-        return ft.Container(
-            content=ft.Image(src=path, width=iw, height=ih,
-                             fit=ft.ImageFit.CONTAIN, border_radius=6),
-            border_radius=6, ink=True, alignment=ft.alignment.center_left,
-            on_click=lambda e, p=path: self._preview_paste(p),
-            tooltip=t("dashboard.ocr.paste.open_tip",
-                      default="Click to view the pasted image"))
+        img = ft.Image(src=path, width=iw, height=ih,
+                       fit=ft.ImageFit.CONTAIN, border_radius=6)
+        state = {"cur": path, "alt": alt}
+
+        def _flip_tip() -> str:
+            return (t("dashboard.image.show_original", default="Show original")
+                    if state["cur"].endswith("-tr.png") else
+                    t("dashboard.image.show_translated",
+                      default="Show translation"))
+
+        def _flip(e) -> None:
+            # r525 (user suggestion): flip the THUMBNAIL between the
+            # translated render and the untouched original, in place
+            state["cur"], state["alt"] = state["alt"], state["cur"]
+            img.src = state["cur"]
+            flip_btn.tooltip = _flip_tip()
+            with contextlib.suppress(Exception):
+                img.update()
+                flip_btn.update()
+
+        def _hover(e) -> None:
+            if state["alt"]:
+                flip_btn.visible = (e.data == "true")
+                with contextlib.suppress(Exception):
+                    flip_btn.update()
+
+        flip_btn = ft.Container(
+            visible=False, right=4, top=4, width=24, height=24,
+            bgcolor="#000000aa", border_radius=6, ink=True,
+            alignment=ft.alignment.center,
+            content=ft.Icon(ft.Icons.SYNC, size=14, color="#ffffff"),
+            tooltip=_flip_tip() if alt else "",
+            on_click=_flip)
+        body = ft.Stack([
+            ft.Container(
+                width=iw, height=ih,    # exact-fit: no stretch-width dead zone
+                content=img, border_radius=6, ink=True,
+                on_click=lambda e: self._preview_paste(state["cur"],
+                                                       alt=state["alt"]),
+                tooltip=t("dashboard.ocr.paste.open_tip",
+                          default="Click to view the pasted image")),
+            flip_btn,
+        ], width=iw, height=ih)
+        return ft.Row([ft.Container(content=body, width=iw, height=ih,
+                                    on_hover=_hover)], tight=True)
 
     def resolve_paste_entry(self, rid: str, src: str, dst: str,
-                            status: str = "") -> bool:
+                            status: str = "", rendered: str = "") -> bool:
         """The OCR result for a pasted image arrived: swap the placeholder for
         the finished entry (picture + recognized text + translation)."""
         reg = getattr(self, "_paste_entries", None) or {}
@@ -4542,9 +4602,18 @@ class DashboardView(ft.Row):
                 if self._chat_list_view.page:
                     self._chat_list_view.update()
             return True
+        _shown, _alt = path, ""
+        with contextlib.suppress(Exception):
+            from pathlib import Path as _P
+
+            if rendered and _P(rendered).exists():
+                _shown, _alt = rendered, path
+        _lines = len([l for l in (src or "").split("\n") if l.strip()])
         self.append_chat_entry(channel="ocr", source="ocr",
                                source_text=src, translated_text=dst,
-                               image_path=path, insert_at=pos)
+                               image_path=_shown, image_alt=_alt,
+                               collapse_text=bool(_alt and _lines >= 4),
+                               insert_at=pos)
         return True
 
     def _delete_evicted_paste_images(self, evicted: list) -> None:
@@ -4554,13 +4623,16 @@ class DashboardView(ft.Row):
         for c in evicted or []:
             with contextlib.suppress(Exception):
                 tag = getattr(c, "data", None)
-                if (isinstance(tag, tuple) and len(tag) == 2
+                if (isinstance(tag, tuple) and len(tag) >= 2
                         and tag[0] == "ocr_paste_img"):
                     from pathlib import Path as _P
 
-                    f = _P(tag[1])
-                    if f.parent.name == "ocr_paste" and f.exists():
-                        f.unlink()
+                    for pth in tag[1:]:
+                        if not pth:
+                            continue
+                        f = _P(pth)
+                        if f.parent.name == "ocr_paste" and f.exists():
+                            f.unlink()
 
     def _notice_ocr_paste(self, msg: str) -> None:
         with contextlib.suppress(Exception):
@@ -5056,6 +5128,8 @@ class DashboardView(ft.Row):
         speaker_cluster_id: int = -1,
         speaker_embedding: object = None,
         image_path: str = "",
+        image_alt: str = "",
+        collapse_text: bool = False,
         insert_at: "int | None" = None,
     ) -> None:
         if self._chat_list_view is None:
@@ -5121,7 +5195,52 @@ class DashboardView(ft.Row):
             # overlay shows pinyin for these lines, the log should match
             # even when the user's own display toggles differ.
             _want_pinyin = _want_romaji = True
-        if has_translation:
+        _pairs = None
+        if (is_ocr and image_path and translated_text
+                and "\n" in (source_text or "")):
+            _sl = (source_text or "").split("\n")
+            _dl = (translated_text or "").split("\n")
+            if len(_sl) == len(_dl):
+                _pairs = list(zip(_sl, _dl))
+        if _pairs is not None:
+            # r526: interleave per line — original with its translation right
+            # under it, reading first when the log format wants one — instead
+            # of a source wall followed by a translation wall
+            for _s, _d in _pairs:
+                _s, _d = _s.strip(), _d.strip()
+                if not _s and not _d:
+                    continue
+                # r527: romanize the CJK RUNS inside the line and keep the
+                # rest in place — the shared gate needs MOSTLY-CJK text, so
+                # mixed roster lines ("[tag] name 01:25") never got readings
+                if _want_read and _s:
+                    with contextlib.suppress(Exception):
+                        import re as _re
+
+                        def _read_run(m):
+                            r = transliterate_for_language(
+                                m.group(0), src_lang,
+                                show_pinyin=_want_pinyin,
+                                show_romaji=_want_romaji,
+                                show_latin=_want_latin)
+                            return (r or m.group(0)).strip()
+
+                        _tl = _re.sub(
+                            "[一-鿿぀-ヿ가-힯]+",
+                            _read_run, _s)
+                        if _tl and _tl != _s:
+                            content_rows.append(ft.Text(
+                                _tl, size=11, color=_TRANSLIT_COLOR,
+                                italic=True))
+                if _s and (_inc_src or not _d or _d == _s):
+                    content_rows.append(ft.Text(_s, size=13,
+                                                color=_TEXT_FAINT))
+                if _d and _d != _s:
+                    content_rows.append(ft.Text(
+                        _d, size=13, color=_TEXT_PRIMARY,
+                        weight=ft.FontWeight.W_500))
+                content_rows.append(ft.Container(height=3))
+        elif has_translation:
             translit_src = "" if not self._chat_reading_allowed(source_text, src_lang) else transliterate_for_language(
                 source_text, src_lang, show_pinyin=_want_pinyin, show_romaji=_want_romaji, show_latin=_want_latin
             )
@@ -5308,7 +5427,36 @@ class DashboardView(ft.Row):
         if image_path:
             # r518: pasted-image entries keep the picture as a reference
             with contextlib.suppress(Exception):
-                content_rows = [self._chat_image_thumb(image_path),
+                if collapse_text and content_rows:
+                    # r524: a dense capture (rosters, certificates) used to
+                    # flood the log — the translated image IS the content, so
+                    # the text folds behind a small expander
+                    _n = len([l for l in (source_text or "").split("\n")
+                              if l.strip()])
+                    _body = ft.Column(content_rows, spacing=1, tight=True,
+                                      visible=False)
+                    _lbl = ft.Text(
+                        t("dashboard.ocr.paste.show_text", n=str(_n),
+                          default=f"Show text ({_n} lines)"),
+                        size=11, color=_TEXT_FAINT, italic=True)
+
+                    def _tgl(e, _b=_body, _l=_lbl, _n=_n):
+                        _b.visible = not _b.visible
+                        _l.value = (t("dashboard.ocr.paste.hide_text",
+                                      default="Hide text") if _b.visible else
+                                    t("dashboard.ocr.paste.show_text",
+                                      n=str(_n),
+                                      default=f"Show text ({_n} lines)"))
+                        with contextlib.suppress(Exception):
+                            _l.update()
+                            _b.update()
+
+                    _toggle = ft.Container(content=_lbl, ink=True,
+                                           on_click=_tgl,
+                                           padding=ft.padding.symmetric(
+                                               vertical=2))
+                    content_rows = [_toggle, _body]
+                content_rows = [self._chat_image_thumb(image_path, image_alt),
                                 *content_rows]
         entry = ft.Container(
             content=ft.Column(
@@ -5328,9 +5476,9 @@ class DashboardView(ft.Row):
         self._chat_entry_seq += 1
         entry.key = f"chatentry-{self._chat_entry_seq}"
         if image_path:
-            # r520: so the temp screenshot can be deleted when this entry
+            # r520: so the temp screenshots can be deleted when this entry
             # scrolls out of the capped log (or on Clear chat)
-            entry.data = ("ocr_paste_img", image_path)
+            entry.data = ("ocr_paste_img", image_path, image_alt)
         if insert_at is not None:
             # r522: a resolved paste keeps its placeholder's position instead
             # of jumping below whatever logged while it was reading

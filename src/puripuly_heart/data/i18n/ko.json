@@ -1109,5 +1109,9 @@
   "dashboard.image.copied": "이미지를 복사했습니다",
   "dashboard.image.copied_path": "경로를 복사했습니다",
   "dashboard.image.copy_failed": "이 이미지를 복사하지 못했습니다",
-  "dashboard.ocr.paste.no_module": "OCR 모듈이 설치되지 않았습니다 — 설정에서 설치하면 붙여넣은 이미지를 읽을 수 있습니다."
+  "dashboard.ocr.paste.no_module": "OCR 모듈이 설치되지 않았습니다 — 설정에서 설치하면 붙여넣은 이미지를 읽을 수 있습니다.",
+  "dashboard.image.show_original": "원본 보기",
+  "dashboard.image.show_translated": "번역 보기",
+  "dashboard.ocr.paste.show_text": "텍스트 보기({n}줄)",
+  "dashboard.ocr.paste.hide_text": "텍스트 숨기기"
 }

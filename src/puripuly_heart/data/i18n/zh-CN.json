@@ -1109,5 +1109,9 @@
   "dashboard.image.copied": "图片已复制",
   "dashboard.image.copied_path": "路径已复制",
   "dashboard.image.copy_failed": "无法复制该图片",
-  "dashboard.ocr.paste.no_module": "未安装 OCR 模块——请在设置中安装后才能识别粘贴的图片。"
+  "dashboard.ocr.paste.no_module": "未安装 OCR 模块——请在设置中安装后才能识别粘贴的图片。",
+  "dashboard.image.show_original": "显示原图",
+  "dashboard.image.show_translated": "显示译文",
+  "dashboard.ocr.paste.show_text": "显示文字（{n} 行）",
+  "dashboard.ocr.paste.hide_text": "隐藏文字"
 }

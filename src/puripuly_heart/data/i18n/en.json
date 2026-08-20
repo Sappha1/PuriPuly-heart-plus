@@ -1109,5 +1109,9 @@
   "dashboard.image.copied": "Image copied",
   "dashboard.image.copied_path": "Path copied",
   "dashboard.image.copy_failed": "Could not copy that image",
-  "dashboard.ocr.paste.no_module": "The OCR module isn't installed — install it in Settings to read pasted images."
+  "dashboard.ocr.paste.no_module": "The OCR module isn't installed — install it in Settings to read pasted images.",
+  "dashboard.image.show_original": "Show original",
+  "dashboard.image.show_translated": "Show translation",
+  "dashboard.ocr.paste.show_text": "Show text ({n} lines)",
+  "dashboard.ocr.paste.hide_text": "Hide text"
 }

@@ -582,15 +582,297 @@ def _paste_read_image(path: str):
     return arr[:, :, ::-1].copy()          # RGB -> BGR
 
 
-def _paste_lines(detector, bgr) -> list[str]:
-    """Read a pasted image end-to-end, in reading order."""
+def _paste_rows(detector, bgr) -> list:
+    """Read a pasted image end-to-end: (text, score, x1, y1, x2, y2) rows in
+    reading order."""
     rows = detector.read_lines(bgr)
     if not rows:
         return []
     rows = [r for r in rows if r[1] >= 0.30 and r[0] != "?"]
-    rows.sort(key=lambda r: (r[2], r[3]))          # top-to-bottom, left-to-right
-    return [r[0] for r in rows]
+    rows.sort(key=lambda r: (r[3], r[2]))          # top-to-bottom, left-to-right
+    return rows
 
+
+def _paste_font(size: int, text: str = ""):
+    """A font that can actually draw `text`: Hangul needs Malgun Gothic
+    (Microsoft YaHei renders it as tofu boxes); everything else uses YaHei
+    with the app-bundled Noto as fallback."""
+    from PIL import ImageFont
+
+    hangul = any("\uac00" <= ch <= "\ud7af" for ch in (text or ""))
+    cands = ([r"C:\Windows\Fonts\malgun.ttf",
+              r"C:\Windows\Fonts\malgunbd.ttf"] if hangul else []) + [
+        r"C:\Windows\Fonts\msyh.ttc",
+        r"C:\Windows\Fonts\msyhbd.ttc",
+        os.path.join(os.path.dirname(__import__("sys").executable or ""),
+                     "_internal", "puripuly_heart", "data", "fonts",
+                     "NotoSansCJK-Medium.ttc"),
+    ]
+    for cand in cands:
+        try:
+            return ImageFont.truetype(cand, size)
+        except Exception:
+            continue
+    return ImageFont.load_default()
+
+
+def _render_translated(path: str, boxes: list) -> str:
+    """Paint translations over a pasted image, structure-aware (r530).
+    boxes: (x1, y1, x2, y2, src_text, dst_text[, reading]).
+    Returns the rendered file path, '' when nothing was painted."""
+    import re as _re
+
+    import numpy as _np
+    from PIL import Image as _Image
+    from PIL import ImageDraw as _Draw
+
+    im = _Image.open(path).convert("RGB")
+    arr = _np.array(im)
+    dr = _Draw.Draw(im)
+    H, W = arr.shape[:2]
+
+    def _clamp(x1, y1, x2, y2):
+        return (max(0, int(x1)), max(0, int(y1)),
+                min(W, int(x2)), min(H, int(y2)))
+
+    occupied = []
+    for b in boxes:
+        x1, y1, x2, y2 = _clamp(b[0], b[1], b[2], b[3])
+        if x2 - x1 >= 4 and y2 - y1 >= 4:
+            occupied.append((x1, y1, x2, y2))
+
+    todo = []
+    for b in boxes:
+        s_t = str(b[4] or "")
+        # a newline in a translation makes PIL's anchored text() throw and
+        # silently kills the whole render — collapse ALL whitespace runs
+        d_t = " ".join(str(b[5] or "").split())
+        if not (d_t.strip() and d_t.strip() != s_t.strip()):
+            continue
+        x1, y1, x2, y2 = _clamp(b[0], b[1], b[2], b[3])
+        if x2 - x1 >= 6 and y2 - y1 >= 6:
+            todo.append([x1, y1, x2, y2, s_t, d_t])
+    if not todo:
+        return ""
+
+    LUMW = _np.array([0.299, 0.587, 0.114], _np.float32)
+
+    def _ink_rows(x1, y1, x2, y2):
+        crop = arr[y1:y2, x1:x2].astype(_np.float32)
+        if crop.size == 0:
+            return y1, y2
+        lum = crop @ LUMW
+        dev = _np.abs(lum - float(_np.median(lum)))
+        thr = max(12.0, float(_np.percentile(dev, 88)))
+        rows = _np.where((dev >= thr).sum(axis=1) > 0)[0]
+        if len(rows) == 0:
+            return y1, y2
+        return y1 + int(rows[0]), y1 + int(rows[-1]) + 1
+
+    def _bg_color(x1, y1, x2, y2):
+        ring = _np.concatenate([
+            arr[y1:min(H, y1 + 2), x1:x2].reshape(-1, 3),
+            arr[max(0, y2 - 2):y2, x1:x2].reshape(-1, 3),
+            arr[y1:y2, x1:min(W, x1 + 2)].reshape(-1, 3),
+            arr[y1:y2, max(0, x2 - 2):x2].reshape(-1, 3),
+        ])
+        return tuple(int(v) for v in _np.median(ring, axis=0))
+
+    def _glyph_stats(x1, y1, x2, y2):
+        """(neutral_rgb, colored_rgb, colored_x_end_rel) from the crop.
+        colored_x_end_rel = rightmost column (relative) of the saturated
+        glyph run starting near the left edge, or None."""
+        try:
+            crop = arr[y1:y2, x1:x2].astype(_np.float32)
+            if crop.size < 200:
+                return None, None, None
+            lum = crop @ LUMW
+            dev = _np.abs(lum - float(_np.median(lum)))
+            thr = float(_np.percentile(dev, 85))
+            if thr < 14:
+                return None, None, None
+            mask = dev >= thr
+            px = crop[mask]
+            sat = px.max(axis=1) - px.min(axis=1)
+            neutral = px[sat <= 45]
+            colored = px[sat > 45]
+            n_rgb = (tuple(int(v) for v in _np.median(neutral, axis=0))
+                     if len(neutral) >= 12 else None)
+            c_rgb = (tuple(int(v) for v in _np.median(colored, axis=0))
+                     if len(colored) >= 12 else None)
+            span = None
+            if c_rgb is not None:
+                colmask = _np.zeros(crop.shape[1], bool)
+                satmap = crop.max(axis=2) - crop.min(axis=2)
+                colcnt = ((satmap > 45) & mask).sum(axis=0)
+                cols = _np.where(colcnt > 0)[0]
+                if len(cols) and cols[0] < crop.shape[1] * 0.45:
+                    # contiguous-ish run from the left
+                    run_end = cols[0]
+                    for c in cols:
+                        if c - run_end <= max(6, (y2 - y1) // 2):
+                            run_end = c
+                        else:
+                            break
+                    if run_end > cols[0] + 4:
+                        span = int(run_end) + 1
+            return n_rgb, c_rgb, span
+        except Exception:
+            return None, None, None
+
+    TAGS = ("\u6765\u8bbf", "\u79bb\u5f00")     # 来访 / 离开
+
+    def _tag_word(s_t):
+        for t in TAGS:
+            if t in s_t[:6]:
+                return t
+        return None
+
+    def _split_dst(d_t):
+        """Split "[Visit] Name" -> ("[Visit]", "Name"); None when no tag."""
+        m = _re.match(r"^\s*(\[[^\]]{1,12}\])\s*(.*)$", d_t)
+        if m:
+            return m.group(1), m.group(2).strip()
+        return None
+
+    # measure + columns (anchor displacement capped so a snapped pill can
+    # never slide left over the time column)
+    col_tol = max(8, int(W * 0.016))
+    lefts = sorted({b[0] for b in todo})
+    clusters, cl = [], []
+    for lx in lefts:
+        if cl and lx - cl[0] <= col_tol:
+            cl.append(lx)
+        else:
+            if cl:
+                clusters.append(cl)
+            cl = [lx]
+    if cl:
+        clusters.append(cl)
+    col_anchor = {}
+    for c in clusters:
+        if len(c) >= 2:
+            a = int(round(sum(c) / len(c)))
+            for lx in c:
+                col_anchor[lx] = max(lx - 4, min(lx + 4, a))
+
+    measured = []
+    for x1, y1, x2, y2, s_t, d_t in todo:
+        it, ib = _ink_rows(x1, y1, x2, y2)
+        ink_h = max(8, ib - it)
+        # CJK glyphs fill ~the whole em; latin caps ~0.72em. Sizing a latin
+        # translation from CJK ink at /0.72 rendered it LARGER than the
+        # source — match by script instead.
+        _cjk_src = any("一" <= ch <= "鿿"
+                       or "぀" <= ch <= "ヿ"
+                       or "가" <= ch <= "힯" for ch in s_t)
+        m_size = max(11, min(int(ink_h if _cjk_src else ink_h / 0.72),
+                             int((y2 - y1) * 1.05)))
+        measured.append([x1, y1, x2, y2, s_t, d_t, it, ib, m_size])
+    col_members: dict = {}
+    for m in measured:
+        col_members.setdefault(col_anchor.get(m[0], m[0]), []).append(m[8])
+    col_size = {a: sorted(v)[len(v) // 2] for a, v in col_members.items()
+                if len(v) >= 2}
+
+    # canonical tag colors + one shared tag size, voted across all rows
+    tag_votes: dict = {}
+    tag_sizes = []
+    for x1, y1, x2, y2, s_t, d_t, it, ib, m_size in measured:
+        w = _tag_word(s_t)
+        if not w:
+            continue
+        _n, c_rgb, _sp = _glyph_stats(x1, y1, x2, y2)
+        if c_rgb is not None:
+            tag_votes.setdefault(w, []).append(c_rgb)
+        tag_sizes.append(m_size)
+    tag_color = {}
+    for w, votes in tag_votes.items():
+        arrv = _np.array(votes, _np.float32)
+        tag_color[w] = tuple(int(v) for v in _np.median(arrv, axis=0))
+    tag_size = sorted(tag_sizes)[len(tag_sizes) // 2] if tag_sizes else None
+
+    plan_pills = []     # (px1, py1, px2, py2, bg)
+    plan_text = []      # (tx, ty, text, font, fg)
+    for x1, y1, x2, y2, s_t, d_t, ink_top, ink_bot, m_size in measured:
+        anchor_x = col_anchor.get(x1, x1)
+        w = _tag_word(s_t)
+        size = tag_size if (w and s_t.strip().startswith("[") and tag_size)             else col_size.get(anchor_x, m_size)
+        # a size inherited from a taller row must still fit THIS box
+        size = max(11, min(size, int((y2 - y1) * 1.05)))
+        n_rgb, c_rgb, span = _glyph_stats(x1, y1, x2, y2)
+        bg = _bg_color(x1, y1, x2, y2)
+        neutral = n_rgb or ((20, 20, 24) if sum(bg) > 420
+                            else (240, 240, 244))
+        limit = W - 2
+        for ox1, oy1, ox2, oy2 in occupied:
+            if ox1 <= x1:
+                continue
+            ov = min(y2, oy2) - max(y1, oy1)
+            if ov > 2:
+                limit = min(limit, ox1 - max(8, size // 3))
+        segs = None
+        if w:
+            parts = _split_dst(d_t)
+            canon = tag_color.get(w) or c_rgb
+            if parts and parts[1] and span:
+                # merged "[tag] name" box: tag + name as separate segments
+                tsz = tag_size or size
+                tfont = _paste_font(tsz, parts[0])
+                tag_w = int(dr.textlength(parts[0], font=tfont))
+                gap = max(8, tsz // 3)
+                segs = [(anchor_x, parts[0], tfont, canon or neutral),
+                        (anchor_x + tag_w + gap, parts[1],
+                         _paste_font(size, parts[1]), neutral)]
+            elif parts and not parts[1]:
+                tsz = tag_size or size
+                segs = [(anchor_x, parts[0], _paste_font(tsz, parts[0]),
+                         canon or neutral)]
+        if segs is None:
+            fg = neutral
+            if c_rgb is not None and (
+                    span is None or span >= 0.70 * (x2 - x1)
+                    or n_rgb is None):
+                fg = c_rgb          # wholly-colored line keeps its color
+            segs = [(anchor_x, d_t, _paste_font(size, d_t), fg)]
+        # width + fit: shrink the LAST segment only when even the extended
+        # pill cannot hold everything
+        def _need():
+            total = 0
+            for sx, txt, fnt, _c in segs:
+                total = max(total, (sx - x1) + int(dr.textlength(txt, font=fnt)))
+            return total + 4
+        px1 = max(0, x1 - 2)
+        px2 = max(x1 + 8,
+                  min(x2 if _need() <= x2 - x1 else max(x2, x1 + _need()),
+                      limit))
+        while _need() > px2 - x1 and segs[-1][2].size > 11:
+            sx, txt, fnt, c = segs[-1]
+            segs[-1] = (sx, txt, _paste_font(fnt.size - 1, txt), c)
+        # even at the floor size the text may not fit (tiny box, huge
+        # translation): ellipsize rather than draw across the neighbour
+        guard = 0
+        while _need() > px2 - x1 and guard < 400:
+            sx, txt, fnt, c = segs[-1]
+            core = txt[:-1].rstrip(".") if txt else ""
+            if len(core) <= 1:
+                break
+            segs[-1] = (sx, core[:-1] + ".", fnt, c)
+            guard += 1
+        ty = (ink_top + ink_bot) // 2
+        plan_pills.append((px1, max(0, y1 - 1), px2, min(H, y2 + 1), bg))
+        for sx, txt, fnt, c in segs:
+            plan_text.append((sx, ty, txt, fnt, c))
+
+    for px1, py1, px2, py2, bg in plan_pills:
+        dr.rounded_rectangle([px1, py1, px2, py2], radius=4, fill=bg)
+    for tx, ty, txt, fnt, c in plan_text:
+        dr.text((tx, ty), txt, font=fnt, fill=c, anchor="lm")
+
+    _root, _ = os.path.splitext(path)
+    out = _root + "-tr.png"
+    im.save(out, "PNG")
+    return out
 
 def _np_ascontig(a):
     import numpy as _np
@@ -658,16 +940,93 @@ def _paste_loop(detector, stop: threading.Event) -> None:
 def _paste_handle(detector, rid: str, path: str) -> None:
     t0 = time.monotonic()
     bgr = _paste_read_image(path)
-    lines = _paste_lines(detector, bgr)
-    if not lines:
+    rows = _paste_rows(detector, bgr)
+    if not rows:
         logger.info("[OCR] paste: no text found in %s", os.path.basename(path))
         _paste_feed("", "", rid=rid, empty=True)
         return
-    src = "\n".join(lines)
-    dst = _paste_translate(src)
-    logger.info("[OCR] paste: %d line(s) in %.1fs", len(lines),
-                time.monotonic() - t0)
-    _paste_feed(src, dst, rid=rid)
+    # translate each box INDIVIDUALLY — blob translation merged/dropped lines
+    texts = [r[0] for r in rows]
+    trs = _paste_translate_many(texts)
+    # r524: names and other proper nouns come back from the translator
+    # UNCHANGED and looked skipped in the render — fall back to pinyin so
+    # every CJK box gets a readable form.
+    def _roman_fallback(t):
+        try:
+            import re as _re
+            if not _re.search(r"[一-鿿぀-ヿ가-힯]", t):
+                return ""
+            from puripuly_heart.core.transliteration import to_pinyin_grouped
+            r = to_pinyin_grouped(t)
+            return r if r and r != t else ""
+        except Exception:
+            return ""
+    # r525: reading lines in the PICTURE are off for now (user preference —
+    # translation only); the pinyin fallback below still covers names the
+    # translator returns unchanged. Flip this to re-enable two-line boxes.
+    _want_reading = False
+    boxes = [(r[2], r[3], r[4], r[5], r[0],
+              trs.get(r[0], "") or _roman_fallback(r[0]),
+              _roman_fallback(r[0]) if _want_reading else "")
+             for r in rows]
+    rendered = ""
+    try:
+        rendered = _render_translated(path, boxes)
+    except Exception:
+        logger.warning("[OCR] paste render failed", exc_info=True)
+    # group boxes that share a visual row so the TEXT reads like the image
+    # ("[tag] name" stays one line instead of splitting) — the boxes remain
+    # separate for painting
+    grouped, cur, cur_mid = [], [], None
+    for r in rows:
+        mid = (r[3] + r[5]) / 2.0
+        h = max(1, r[5] - r[3])
+        if cur_mid is None or abs(mid - cur_mid) <= h * 0.6:
+            cur.append(r)
+            cur_mid = mid if cur_mid is None else (cur_mid + mid) / 2.0
+        else:
+            grouped.append(cur)
+            cur, cur_mid = [r], mid
+    if cur:
+        grouped.append(cur)
+
+    def _eff(t):
+        return trs.get(t) or _roman_fallback(t) or t
+
+    src = "\n".join(" ".join(x[0] for x in g) for g in grouped)
+    dst = "\n".join(" ".join(_eff(x[0]) for x in g) for g in grouped)
+    if dst == src:
+        dst = ""
+    logger.info("[OCR] paste: %d line(s) in %.1fs rendered=%s",
+                len(texts), time.monotonic() - t0, bool(rendered))
+    _paste_feed(src, dst, rid=rid, img=rendered)
+
+
+def _paste_translate_many(texts: list, timeout_s: float = 40.0) -> dict:
+    """Queue every unique line through the shared translation worker and
+    collect the results. Returns {src: translation-or-''}."""
+    uniq = [t for t in dict.fromkeys(t.strip() for t in texts) if t]
+    out: dict = {}
+    if not _XLAT_ENABLED[0] or not uniq:
+        return out
+    with _XLAT_LOCK:
+        for t in uniq:
+            hit = _XLAT_CACHE.get(t)
+            if hit is not None:
+                out[t] = "" if hit == t else hit
+            elif t not in _XLAT_QUEUED:
+                _XLAT_QUEUED.add(t)
+                _XLAT_PENDING.append(t)
+    end = time.monotonic() + timeout_s
+    while time.monotonic() < end and len(out) < len(uniq):
+        time.sleep(0.25)
+        with _XLAT_LOCK:
+            for t in uniq:
+                if t not in out:
+                    hit = _XLAT_CACHE.get(t)
+                    if hit is not None:
+                        out[t] = "" if hit == t else hit
+    return out
 
 
 def _paste_translate(src: str, timeout_s: float = 25.0) -> str:
@@ -692,13 +1051,15 @@ def _paste_translate(src: str, timeout_s: float = 25.0) -> str:
     return ""
 
 
-def _paste_feed(src: str, dst: str, *, rid: str = "", empty: bool = False,
-                error: bool = False) -> None:
+def _paste_feed(src: str, dst: str, *, rid: str = "", img: str = "",
+                empty: bool = False, error: bool = False) -> None:
     import json as _json
 
     payload = {"src": src, "dst": dst, "paste": True}
     if rid:
         payload["id"] = rid
+    if img:
+        payload["img"] = img
     if empty:
         payload["status"] = "empty"
     if error:

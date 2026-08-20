@@ -2,6 +2,17 @@
 
 User-facing changes per build. The latest build's highlights also appear in-app when an update is ready.
 
+## r531 — 2026-08-20
+
+- Added: pasted images now come back as a translated copy of the picture itself — each detected line is painted over in place, keeping its original position, size and colors (requires OCR module r281+)
+- Added: hover a pasted thumbnail to flip between the translated and original image; the full-size viewer gets the same corner toggle
+- Added: below the image, each line's original and translation are shown as pairs (with pinyin readings when enabled); long results fold behind "Show text (N lines)"
+- Fixed: painted translations no longer cover neighbouring parts of the image such as timestamps — text that cannot fit is shortened with … instead of overlapping
+- Fixed: green/red highlight colors from the original image stay on the right words, and the same word now renders at one consistent color, size and width on every row
+- Fixed: columns stay aligned with the original instead of drifting a few pixels between rows
+- Fixed: Korean translations rendered as rows of empty boxes
+- Fixed: a translation containing a line break could silently break the whole rendered image
+
 ## r522 — 2026-08-20
 
 - Added: paste an image into the Chat tab (Ctrl+V) and press Enter — the OCR module reads it locally and logs the picture with its text, reading and translation. The image is never uploaded and nothing is sent to VRChat

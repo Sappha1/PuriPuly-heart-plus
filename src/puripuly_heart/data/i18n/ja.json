@@ -1109,5 +1109,9 @@
   "dashboard.image.copied": "画像をコピーしました",
   "dashboard.image.copied_path": "パスをコピーしました",
   "dashboard.image.copy_failed": "この画像をコピーできませんでした",
-  "dashboard.ocr.paste.no_module": "OCR モジュールが未インストールです — 設定からインストールすると貼り付け画像を読めます。"
+  "dashboard.ocr.paste.no_module": "OCR モジュールが未インストールです — 設定からインストールすると貼り付け画像を読めます。",
+  "dashboard.image.show_original": "原画像を表示",
+  "dashboard.image.show_translated": "訳文を表示",
+  "dashboard.ocr.paste.show_text": "テキストを表示（{n} 行）",
+  "dashboard.ocr.paste.hide_text": "テキストを隠す"
 }

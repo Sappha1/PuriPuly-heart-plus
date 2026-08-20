@@ -1,11 +1,11 @@
 {
-  "build": 522,
-  "tag": "r522",
+  "build": 531,
+  "tag": "r531",
   "date": "2026-08-20",
   "notes": [
-    "Added: paste images into the Chat tab (Ctrl+V) - read locally by OCR, logged with text and translation, never uploaded or sent to VRChat",
-    "Added: works with OCR off via an on-demand quiet reader (OCR module r279+); chat images open in a viewer with copy options",
-    "Fixed: own Steam-client messages no longer duplicated with extra pinyin; OCR switch remembers its state; app process exits cleanly",
-    "Improved: voice naming keeps up to 8 prints per person; pasted images auto-clean with their log entries"
+    "Added: pasted images come back as a translated copy of the picture - each line painted over in place with its original position, size and colors (OCR module r281+)",
+    "Added: hover the thumbnail or use the viewer toggle to flip between translated and original; original/translation text pairs listed below the image",
+    "Fixed: painted translations no longer cover neighbouring image content; highlight colors, sizes and widths stay consistent and columns stay aligned",
+    "Fixed: Korean translations rendered as empty boxes; a translation containing a line break could break the whole rendered image"
   ]
 }

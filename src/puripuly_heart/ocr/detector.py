@@ -178,9 +178,9 @@ class TextDetector:
                 continue
         return boxes
 
-    def read_lines(self, bgr: np.ndarray) -> list[tuple[str, float, int, int]]:
-        """End-to-end read of a WHOLE image: (text, score, top_y, left_x) per
-        text line, in the engine's own order.
+    def read_lines(self, bgr: np.ndarray) -> list[tuple[str, float, int, int, int, int]]:
+        """End-to-end read of a WHOLE image: (text, score, x1, y1, x2, y2)
+        per text line, in the engine's own order.
 
         This is the full RapidOCR pipeline (detect -> classify -> recognize
         with proper quad cropping), unlike detect()+recognize() which the
@@ -216,14 +216,15 @@ class TextDetector:
         except Exception as exc:
             logger.warning("[OCR] full read failed: %s", exc)
             return []
-        out: list[tuple[str, float, int, int]] = []
+        out: list[tuple[str, float, int, int, int, int]] = []
         for row in (res or []):
             try:
                 box, text, score = row[0], str(row[1]), float(row[2])
                 ys = [int(p[1]) for p in box]
                 xs = [int(p[0]) for p in box]
                 if text.strip():
-                    out.append((text.strip(), score, min(ys), min(xs)))
+                    out.append((text.strip(), score,
+                                min(xs), min(ys), max(xs), max(ys)))
             except Exception:
                 continue
         return out

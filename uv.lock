@@ -1301,6 +1301,7 @@ dependencies = [
     { name = "soxr" },
     { name = "unidic-lite" },
     { name = "websockets" },
+    { name = "wordninja" },
     { name = "zeroconf" },
 ]
 
@@ -1367,6 +1368,7 @@ requires-dist = [
     { name = "soxr", specifier = "==1.0.0" },
     { name = "unidic-lite", specifier = ">=1.0.8" },
     { name = "websockets" },
+    { name = "wordninja", specifier = ">=2.0.0" },
     { name = "zeroconf", specifier = ">=0.147" },
 ]
 provides-extras = ["dev", "build"]
@@ -1971,6 +1973,12 @@ wheels = [
     { url = "https://files.pythonhosted.org/packages/1b/6c/c65773d6cab416a64d191d6ee8a8b1c68a09970ea6909d16965d26bfed1e/websockets-15.0.1-cp313-cp313-win_amd64.whl", hash = "sha256:e09473f095a819042ecb2ab9465aee615bd9c2028e4ef7d933600a8401c79561", size = 176837, upload-time = "2025-03-05T20:02:55.237Z" },
     { url = "https://files.pythonhosted.org/packages/fa/a8/5b41e0da817d64113292ab1f8247140aac61cbf6cfd085d6a0fa77f4984f/websockets-15.0.1-py3-none-any.whl", hash = "sha256:f7a866fbc1e97b5c617ee4116daaa09b722101d4a3c170c787450ba409f9736f", size = 169743, upload-time = "2025-03-05T20:03:39.41Z" },
 ]
+
+[[package]]
+name = "wordninja"
+version = "2.0.0"
+source = { registry = "https://pypi.org/simple" }
+sdist = { url = "https://files.pythonhosted.org/packages/30/15/abe4af50f4be92b60c25e43c1c64d08453b51e46c32981d80b3aebec0260/wordninja-2.0.0.tar.gz", hash = "sha256:1a1cc7ec146ad19d6f71941ee82aef3d31221700f0d8bf844136cf8df79d281a", size = 541572, upload-time = "2019-08-10T02:16:54.944Z" }
 
 [[package]]
 name = "wrapt"

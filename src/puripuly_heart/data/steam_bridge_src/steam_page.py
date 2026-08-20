@@ -474,6 +474,36 @@ class SteamPage:
                 [acct, int(since_ts)],
             ) or []
 
+    async def fetch_messages_range(self, acct: int, start: int,
+                                   end: int) -> list[dict]:
+        """Server fetch of an arbitrary [start, end] window — used to page
+        BACK through history older than what the app already shows. Same
+        shape as fetch_messages."""
+        return await self._page.evaluate(
+                r"""async (args) => {
+                  const [acct, start, end] = args;
+                  const a = window.g_FriendsUIApp;
+                  const cs = a.m_ChatStore, fcs = cs.m_FriendChatStore;
+                  let c = (fcs.m_rgFriendChats || []).find(x => x.m_unAccountIDFriend === acct);
+                  if (!c) { try { c = cs.GetFriendChat(acct); } catch (e) {} }
+                  if (!c) throw new Error("nochat");
+                  if (!c.GetMessagesFromTimeRange) throw new Error("norange");
+                  const r = await c.GetMessagesFromTimeRange(start, end);
+                  const msgs = (r && r.messages) ? r.messages : (Array.isArray(r) ? r : []);
+                  const out = [];
+                  for (const m of msgs) {
+                    if (m.eDeleteState) continue;
+                    if (m.m_bNoUserContent) continue;
+                    const t = (m.strMessageInternal || "").trim();
+                    if (!t) continue;
+                    out.push({from: m.unAccountID || 0, text: t,
+                              ordinal: m.unOrdinal || 0, ts: m.rtTimestamp || 0});
+                  }
+                  return out;
+                }""",
+                [acct, int(start), int(end)],
+            ) or []
+
     async def chat_activity(self) -> dict:
         """acct -> m_rtLastMessageReceived for every 1:1 chat. One cheap read;
         drives the all-chats inbound sweep (messages must surface even for

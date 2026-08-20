@@ -4123,7 +4123,9 @@ async def main_gui(page: ft.Page, *, config_path, debug_ui_preview: bool = False
                             if app.view_dashboard.resolve_paste_entry(
                                     _rid, str(d.get("src", "")),
                                     str(d.get("dst", "")), _st,
-                                    rendered=str(d.get("img", "") or "")):
+                                    rendered=str(d.get("img", "") or ""),
+                                    colors=d.get("colors") or None,
+                                    colseg=d.get("colseg") or None):
                                 continue
                     if _st:
                         with contextlib.suppress(Exception):

@@ -950,7 +950,7 @@ class SteamBridgeView(ft.Container):
             self._state_btn.disabled = True
             self._state_prog.visible = True
             self._state_caption.value = _T("steam.net_retrying",
-                                           default="Retrying…")
+                                           default="Retrying...")
             with contextlib.suppress(Exception):
                 self._state_caption.update()
                 self._state_prog.update()
@@ -976,7 +976,7 @@ class SteamBridgeView(ft.Container):
             self._state_btn.disabled = True
             self._state_caption.value = _T(
                 "steam.signin_wait",
-                default="A Steam sign-in window is opening — log in there. This can take a moment…")
+                default="A Steam sign-in window is opening — log in there. This can take a moment...")
             with contextlib.suppress(Exception):
                 self._state_caption.update()
                 self._state_btn.update()
@@ -1029,7 +1029,7 @@ class SteamBridgeView(ft.Container):
             await asyncio.sleep(1.0)
             if self._module_on:
                 self._notice(_T("steam.proxy_applied",
-                                default="Proxy saved — reconnecting…"))
+                                default="Proxy saved — reconnecting..."))
                 self.activate()
 
         if self.page and self._module_on:
@@ -1783,7 +1783,7 @@ class SteamBridgeView(ft.Container):
         if not paid:
             # free model — nothing to warn about, just do it
             with contextlib.suppress(Exception):
-                self.page.open(ft.SnackBar(ft.Text(_T("steam.retr_free", default="Retranslating…"))))
+                self.page.open(ft.SnackBar(ft.Text(_T("steam.retr_free", default="Retranslating..."))))
             self.page.run_task(self._retranslate_all)
             return
         dlg = ft.AlertDialog(
@@ -3633,6 +3633,35 @@ class SteamBridgeView(ft.Container):
                 self._apply_tr_spans(b, tc, tr)
                 b["_tr_prefilled"] = True
 
+    def _load_more_pill(self) -> ft.Control:
+        lbl = ft.Text(t("steam.load_earlier", default="Load earlier messages"),
+                      size=11.5, color=_TEXT_FAINT, italic=True)
+        self._loadmore_lbl = lbl
+        self._loadmore_busy = False
+        return ft.Container(
+            data="loadmore", content=lbl, alignment=ft.alignment.center,
+            padding=ft.padding.symmetric(vertical=6), ink=True,
+            border_radius=6, on_click=self._on_load_more)
+
+    def _on_load_more(self, _e=None) -> None:
+        if getattr(self, "_loadmore_busy", False) or not self._active:
+            return
+        oldest = 0
+        for hb in self._hist_blocks:
+            hts = int(hb.get("_ts") or 0)
+            if hts:
+                oldest = hts
+                break
+        self._loadmore_busy = True
+        with contextlib.suppress(Exception):
+            self._loadmore_lbl.value = t("steam.loading_earlier",
+                                         default="Loading...")
+            self._loadmore_lbl.update()
+        if self.page:
+            self.page.run_task(self._cmd, {"cmd": "more_history",
+                                           "acct": self._active,
+                                           "before": oldest})
+
     async def _render_history(self, messages: list, seq: int) -> None:
         blocks = self._coalesce(messages)
         if seq != self._open_seq:
@@ -3733,6 +3762,9 @@ class SteamBridgeView(ft.Container):
                     self._messages.controls.append(self._day_sep(_bts))
                     _prev_day = _day
             self._messages.controls.append(self._block_control(b))
+        # r543: Steam keeps months of history server-side — offer to page
+        # further back than the open snapshot
+        self._messages.controls.insert(0, self._load_more_pill())
         if not blocks:
             self._messages.controls.append(ft.Container(
                 data="empty",
@@ -3870,7 +3902,10 @@ class SteamBridgeView(ft.Container):
                 i -= 1
             ctrl = self._block_control(b)
             self._last_block = prev_lb        # inserts never anchor grouping
-            ctrls.insert(i + 1, ctrl)
+            _ins = i + 1
+            if _ins == 0 and ctrls and getattr(ctrls[0], "data", None) == "loadmore":
+                _ins = 1                       # the pill stays on top
+            ctrls.insert(_ins, ctrl)
             hidx = len(self._hist_blocks)
             while hidx > 0 and int(self._hist_blocks[hidx - 1].get("_ts")
                                    or 0) > ts:
@@ -4318,6 +4353,26 @@ class SteamBridgeView(ft.Container):
                 self._set_chat_head(self._friends[self._active])
             if self.page:
                 self.page.update()
+        elif kind == "history_older":
+            h_acct = int(ev.get("acct", 0))
+            msgs = ev.get("messages", []) or []
+            if h_acct == self._active:
+                for m in msgs:
+                    with contextlib.suppress(Exception):
+                        # older than everything on screen -> the out-of-order
+                        # path slots each one in chronologically and drops
+                        # ones the log already shows
+                        await self._render_live(m)
+                self._loadmore_busy = False
+                with contextlib.suppress(Exception):
+                    self._loadmore_lbl.value = (
+                        t("steam.load_earlier",
+                          default="Load earlier messages") if msgs else
+                        t("steam.no_earlier",
+                          default="No earlier messages"))
+                    self._loadmore_lbl.update()
+                if self.page:
+                    self.page.update()
         elif kind == "history":
             h_acct = int(ev.get("acct", 0))
             if h_acct == self._active:

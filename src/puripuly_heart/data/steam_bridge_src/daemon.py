@@ -759,6 +759,29 @@ class Daemon:
                             await self.emit({"ev": "opened",
                                              "acct": int(obj.get("acct", 0)),
                                              "ok": False})
+                elif cmd == "more_history":
+                    acct = int(obj.get("acct", 0))
+                    before = int(obj.get("before", 0) or 0)
+                    older: list = []
+                    with contextlib.suppress(Exception):
+                        # walk back in 14-day windows until something turns
+                        # up (Steam serves months of history server-side)
+                        end = (before - 1) if before else int(time.time())
+                        for _hop in range(9):
+                            got = await self.steam.fetch_messages_range(
+                                acct, end - 14 * 86400, end)
+                            if got:
+                                got.sort(key=lambda m: (m.get("ts") or 0,
+                                                        m.get("ordinal") or 0))
+                                older = got[-60:]
+                                break
+                            end -= 14 * 86400
+                    _diag(f"MORE-HISTORY acct={acct} before={before} "
+                          f"-> {len(older)}")
+                    await self.emit({"ev": "history_older", "acct": acct,
+                                     "before": before,
+                                     "messages": [self._shape(m)
+                                                  for m in older]})
                 elif cmd == "send":
                     await self.do_send(int(obj.get("acct", 0)), obj.get("text", ""))
                 elif cmd == "send_image":

@@ -19,7 +19,7 @@ from puripuly_heart.ui.fonts import font_for_language
 from puripuly_heart.ui.i18n import get_locale, language_name, t
 from puripuly_heart.ui.overlay_peer_contract import OverlayPeerConsumerContract
 
-_BUILD_TAG = "r533"  #increment each build so user can confirm version
+_BUILD_TAG = "r555"  #increment each build so user can confirm version
 
 # ── VRCT-style dark palette ──────────────────────────────────────────────────
 _BG_MAIN = "#2e2f32"
@@ -2526,7 +2526,7 @@ class DashboardView(ft.Row):
 
         def _mk_size_btn(pref_key: str, title: str,
                          labels: dict) -> ft.Container:
-            """Size picker button: presets + a Custom… numeric dialog.
+            """Size picker button: presets + a Custom... numeric dialog.
             Values are px strings; whatever isn't a preset shows 'N px'."""
 
             def _label_of(v) -> str:
@@ -2834,7 +2834,7 @@ class DashboardView(ft.Row):
             def _record(_ev) -> None:
                 if not self.page:
                     return
-                btxt.value = "…"
+                btxt.value = "..."
                 with contextlib.suppress(Exception):
                     btxt.update()
                 gen = getattr(self, "_bind_rec_gen", 0) + 1
@@ -2926,7 +2926,7 @@ class DashboardView(ft.Row):
         # Live scan status: the overlay writes ocr_state.json on every
         # scan on/off transition (plus a 2s heartbeat) — poll it while
         # the menu is open so the toggle bind visibly works.
-        _status_txt = ft.Text("…", size=11, weight=ft.FontWeight.W_600,
+        _status_txt = ft.Text("...", size=11, weight=ft.FontWeight.W_600,
                               color=_TEXT_FAINT, no_wrap=True)
         _status_pill = ft.Container(
             content=_status_txt,
@@ -4393,20 +4393,55 @@ class DashboardView(ft.Row):
                                      default="Path copied"))
 
     def _copy_chat_image(self, path: str) -> None:
-        """Put the picture itself on the clipboard, not just its path."""
+        """Put the picture itself on the clipboard, not just its path.
+        r548: written in-process (CF_DIB) — the old PowerShell hop took a
+        second, and a fast paste inside that window grabbed the PREVIOUS
+        clipboard."""
         def _work() -> None:
             ok = False
             with contextlib.suppress(Exception):
-                import subprocess as _sp
+                import ctypes
+                import io as _io
 
-                ps = ("Add-Type -AssemblyName System.Windows.Forms; "
-                      "Add-Type -AssemblyName System.Drawing; "
-                      f"$img=[System.Drawing.Image]::FromFile('{path}'); "
-                      "[System.Windows.Forms.Clipboard]::SetImage($img); "
-                      "$img.Dispose()")
-                _sp.run(["powershell", "-NoProfile", "-STA", "-Command", ps],
-                        check=True, creationflags=0x08000000, timeout=20)
+                from PIL import Image as _Img
+
+                img = _Img.open(path).convert("RGB")
+                buf = _io.BytesIO()
+                img.save(buf, "BMP")
+                data = buf.getvalue()[14:]        # drop BITMAPFILEHEADER
+                u32 = ctypes.windll.user32
+                k32 = ctypes.windll.kernel32
+                for _try in range(6):             # clipboard can be busy
+                    if u32.OpenClipboard(0):
+                        break
+                    import time as _time
+                    _time.sleep(0.05)
+                else:
+                    raise OSError("clipboard busy")
+                try:
+                    u32.EmptyClipboard()
+                    h = k32.GlobalAlloc(0x2042, len(data))
+                    ptr = k32.GlobalLock(h)
+                    ctypes.memmove(ptr, data, len(data))
+                    k32.GlobalUnlock(h)
+                    if not u32.SetClipboardData(8, h):    # CF_DIB
+                        raise OSError("SetClipboardData failed")
+                finally:
+                    u32.CloseClipboard()
                 ok = True
+            if not ok:
+                with contextlib.suppress(Exception):
+                    import subprocess as _sp
+
+                    ps = ("Add-Type -AssemblyName System.Windows.Forms; "
+                          "Add-Type -AssemblyName System.Drawing; "
+                          f"$img=[System.Drawing.Image]::FromFile('{path}'); "
+                          "[System.Windows.Forms.Clipboard]::SetImage($img); "
+                          "$img.Dispose()")
+                    _sp.run(["powershell", "-NoProfile", "-STA", "-Command",
+                             ps], check=True, creationflags=0x08000000,
+                            timeout=20)
+                    ok = True
             self._notice_ocr_paste(
                 t("dashboard.image.copied", default="Image copied")
                 if ok else
@@ -4426,6 +4461,12 @@ class DashboardView(ft.Row):
             if f.parent.name == "ocr_paste" and f.exists():
                 f.unlink()      # our own temp copy — drop it with the chip
         self._refresh_paste_strip()
+
+    def _ocr_auto_mode(self) -> bool:
+        """True when the Target box reads "Auto Detect": the voice badge is
+        on, or no partner language is pinned."""
+        return bool(getattr(self, "_auto_detect_voice", False)
+                    or not getattr(self, "_peer_source_lang_code", ""))
 
     def _submit_pending_paste(self) -> bool:
         """Enter/send with an attached image: hand it to the OCR module.
@@ -4469,6 +4510,7 @@ class DashboardView(ft.Row):
                 req = self._ocr_paste_dir().parent / "ocr_paste_req.jsonl"
                 with open(req, "a", encoding="utf-8") as fh:
                     fh.write(_json.dumps({"path": path, "id": rid,
+                                          "auto": self._ocr_auto_mode(),
                                           "ts": int(_time.time())},
                                          ensure_ascii=False) + "\n")
                 queued += 1
@@ -4489,12 +4531,35 @@ class DashboardView(ft.Row):
             entry = ft.Container(
                 content=ft.Column([
                     ft.Row([
-                        ft.Text(t("dashboard.chat.received_ocr"), size=11,
-                                weight=ft.FontWeight.W_600, color="#6ab7e8"),
-                        ft.Text(t("dashboard.ocr.paste.reading",
-                                  default="Reading the pasted image…"),
+                        # r549: the head is built EXACTLY like the finished
+                        # entry's, so the chip-OCR gap doesn't jump when
+                        # processing completes
+                        ft.Row([
+                            *([ft.Text("[", size=10, color="#6ab7e8",
+                                       weight=ft.FontWeight.W_600,
+                                       opacity=0.65),
+                               ft.Icon(ft.Icons.AUTO_AWESOME, size=10,
+                                       color="#6ab7e8", opacity=0.65),
+                               ft.Text("] ", size=10, color="#6ab7e8",
+                                       weight=ft.FontWeight.W_600,
+                                       opacity=0.65)]
+                              if self._ocr_auto_mode() else
+                              ([ft.Text(
+                                  "[%s] " % getattr(
+                                      self, "_peer_source_lang_code",
+                                      "").split("-")[0].upper(),
+                                  size=10, color="#6ab7e8", opacity=0.65,
+                                  weight=ft.FontWeight.W_600)]
+                               if getattr(self, "_peer_source_lang_code", "")
+                               else [])),
+                            ft.Text(t("dashboard.chat.received_ocr"),
+                                    size=11, weight=ft.FontWeight.W_600,
+                                    color="#6ab7e8"),
+                        ], spacing=1, tight=True),
+                        ft.Text(" " + t("dashboard.ocr.paste.reading",
+                                        default="Transcribing..."),
                                 size=11, color=_TEXT_FAINT, italic=True),
-                    ], spacing=8, tight=True),
+                    ], spacing=0, tight=True),
                     self._chat_image_thumb(path),
                 ], spacing=4, tight=True),
                 padding=ft.padding.only(left=10, top=6, bottom=6, right=8),
@@ -4505,7 +4570,7 @@ class DashboardView(ft.Row):
             if self._chat_list_view.page:
                 self._chat_list_view.update()
                 self._follow_chat_if_following()
-        # A reader that dies (or never starts) must not leave "Reading…"
+        # A reader that dies (or never starts) must not leave "Reading..."
         # spinning forever — give up loudly after a while.
         with contextlib.suppress(Exception):
             import threading as _th
@@ -4552,6 +4617,11 @@ class DashboardView(ft.Row):
                 flip_btn.update()
 
         def _hover(e) -> None:
+            # r544: a subtle tint marks the hovered picture (the old builds'
+            # highlight), and the flip button reveals when a flip exists
+            with contextlib.suppress(Exception):
+                e.control.bgcolor = ("#2a5d8480" if e.data == "true" else None)
+                e.control.update()
             if state["alt"]:
                 flip_btn.visible = (e.data == "true")
                 with contextlib.suppress(Exception):
@@ -4564,21 +4634,32 @@ class DashboardView(ft.Row):
             content=ft.Icon(ft.Icons.SYNC, size=14, color="#ffffff"),
             tooltip=_flip_tip() if alt else "",
             on_click=_flip)
+        def _open(e) -> None:
+            # the pointer's "leave" never fires under the lightbox overlay,
+            # which left the tint stuck — clear it on open
+            with contextlib.suppress(Exception):
+                wrap.bgcolor = None
+                wrap.update()
+            self._preview_paste(state["cur"], alt=state["alt"])
+
         body = ft.Stack([
             ft.Container(
                 width=iw, height=ih,    # exact-fit: no stretch-width dead zone
-                content=img, border_radius=6, ink=True,
-                on_click=lambda e: self._preview_paste(state["cur"],
-                                                       alt=state["alt"]),
+                # no Material ink: its amber splash clashes with the theme —
+                # the hover tint on the wrapper is the highlight
+                content=img, border_radius=6, on_click=_open,
                 tooltip=t("dashboard.ocr.paste.open_tip",
                           default="Click to view the pasted image")),
             flip_btn,
         ], width=iw, height=ih)
-        return ft.Row([ft.Container(content=body, width=iw, height=ih,
-                                    on_hover=_hover)], tight=True)
+        wrap = ft.Container(content=body, width=iw, height=ih,
+                            border_radius=6, on_hover=_hover)
+        return ft.Row([wrap], tight=True)
 
     def resolve_paste_entry(self, rid: str, src: str, dst: str,
-                            status: str = "", rendered: str = "") -> bool:
+                            status: str = "", rendered: str = "",
+                            colors: "list | None" = None,
+                            colseg: "list | None" = None) -> bool:
         """The OCR result for a pasted image arrived: swap the placeholder for
         the finished entry (picture + recognized text + translation)."""
         reg = getattr(self, "_paste_entries", None) or {}
@@ -4591,17 +4672,18 @@ class DashboardView(ft.Row):
             if entry in self._chat_list_view.controls:
                 pos = self._chat_list_view.controls.index(entry)
                 self._chat_list_view.controls.remove(entry)
+        # r538 (user preference): the picture STAYS in the log even when
+        # nothing was read or translated — a note under it says why, so a
+        # bad read can always be re-cropped and pasted again.
+        note = ""
+        if status == "error":
+            note = t("dashboard.ocr.paste.failed",
+                     default="Could not read that image")
+        elif status:
+            note = t("dashboard.ocr.paste.empty",
+                     default="No readable text in that image")
         if status or not (src or "").strip():
-            self._notice_ocr_paste(
-                t("dashboard.ocr.paste.empty",
-                  default="No readable text in that image")
-                if status != "error" else
-                t("dashboard.ocr.paste.failed",
-                  default="Could not read that image"))
-            with contextlib.suppress(Exception):
-                if self._chat_list_view.page:
-                    self._chat_list_view.update()
-            return True
+            src, dst = "", ""
         _shown, _alt = path, ""
         with contextlib.suppress(Exception):
             from pathlib import Path as _P
@@ -4613,7 +4695,8 @@ class DashboardView(ft.Row):
                                source_text=src, translated_text=dst,
                                image_path=_shown, image_alt=_alt,
                                collapse_text=bool(_lines >= 2),
-                               insert_at=pos)
+                               insert_at=pos, ocr_note=note,
+                               ocr_colors=colors, ocr_colseg=colseg)
         return True
 
     def _delete_evicted_paste_images(self, evicted: list) -> None:
@@ -5131,11 +5214,15 @@ class DashboardView(ft.Row):
         image_alt: str = "",
         collapse_text: bool = False,
         insert_at: "int | None" = None,
+        ocr_note: str = "",
+        ocr_colors: "list | None" = None,
+        ocr_colseg: "list | None" = None,
+        timestamp_override: str = "",
     ) -> None:
         if self._chat_list_view is None:
             return
         import datetime as _dt
-        timestamp = _dt.datetime.now().strftime("%H:%M")
+        timestamp = timestamp_override or _dt.datetime.now().strftime("%H:%M")
         is_peer = channel == "peer"
         is_ocr = channel == "ocr"
         if is_ocr:
@@ -5189,12 +5276,11 @@ class DashboardView(ft.Row):
         _inc_src = _fmt in ("orig_trans", "orig_read_trans")
         _read_only = _fmt == "read_only"
         _want_read = _fmt in ("orig_read_trans", "read_trans", "read_only")
+        # r548/r552 (user): OCR entries follow the Chat log FORMAT alone —
+        # "Original + Pinyin + Translation" means pinyin shows, "Original +
+        # Translation" means it doesn't (the r550 extra gate on the display
+        # toggle hid pinyin the format asked for)
         _want_romaji = _want_pinyin = _want_latin = _want_read
-        if is_ocr:
-            # OCR entries always romanize by the sniffed script — the
-            # overlay shows pinyin for these lines, the log should match
-            # even when the user's own display toggles differ.
-            _want_pinyin = _want_romaji = True
         _pairs = None
         if (is_ocr and image_path and translated_text
                 and "\n" in (source_text or "")):
@@ -5206,39 +5292,80 @@ class DashboardView(ft.Row):
             # r526: interleave per line — original with its translation right
             # under it, reading first when the log format wants one — instead
             # of a source wall followed by a translation wall
-            for _s, _d in _pairs:
+            for _pi, (_s, _d) in enumerate(_pairs):
                 _s, _d = _s.strip(), _d.strip()
+                _lc = (ocr_colors[_pi] if ocr_colors and _pi < len(ocr_colors)
+                       and ocr_colors[_pi] else "")
                 if not _s and not _d:
                     continue
                 # r527: romanize the CJK RUNS inside the line and keep the
                 # rest in place — the shared gate needs MOSTLY-CJK text, so
                 # mixed roster lines ("[tag] name 01:25") never got readings
-                if _want_read and _s:
-                    with contextlib.suppress(Exception):
-                        import re as _re
+                import re as _re
 
-                        def _read_run(m):
-                            r = transliterate_for_language(
-                                m.group(0), src_lang,
-                                show_pinyin=_want_pinyin,
-                                show_romaji=_want_romaji,
-                                show_latin=_want_latin)
-                            return (r or m.group(0)).strip()
+                def _read_run(m):
+                    r = transliterate_for_language(
+                        m.group(0), src_lang,
+                        show_pinyin=_want_pinyin,
+                        show_romaji=_want_romaji,
+                        show_latin=_want_latin)
+                    return (r or m.group(0)).strip()
 
-                        _tl = _re.sub(
-                            "[一-鿿぀-ヿ가-힯]+",
-                            _read_run, _s)
-                        if _tl and _tl != _s:
-                            content_rows.append(ft.Text(
-                                _tl, size=11, color=_TRANSLIT_COLOR,
-                                italic=True))
-                if _s and (_inc_src or not _d or _d == _s):
-                    content_rows.append(ft.Text(_s, size=13,
-                                                color=_TEXT_FAINT))
-                if _d and _d != _s:
-                    content_rows.append(ft.Text(
-                        _d, size=13, color=_TEXT_PRIMARY,
-                        weight=ft.FontWeight.W_500))
+                def _read_of(txt):
+                    try:
+                        return _re.sub("[一-鿿぀-ヿ가-힯]+", _read_run, txt)
+                    except Exception:
+                        return txt
+
+                _segs = (ocr_colseg[_pi]
+                         if ocr_colseg and _pi < len(ocr_colseg) else None)
+                # tolerate both [src, color] pairs and [src, dst, color]
+                if _segs:
+                    _segs = [(seg[0], (seg[1] if len(seg) > 2 else ""),
+                              seg[-1]) for seg in _segs]
+                if _segs and any(c for _s3, _d3, c in _segs):
+                    # r545: ALL trio lines render from the same segments, so
+                    # the tag color rides the reading, the original and the
+                    # translation alike — and spacing comes from the joins
+                    if (_want_read and _s
+                            and self._chat_reading_allowed(_s, src_lang)):
+                        _rd = [( _read_of(_s3), c) for _s3, _d3, c in _segs]
+                        if " ".join(r for r, _c in _rd) != _s:
+                            # r547 (user): no italics on the OCR reading line
+                            content_rows.append(ft.Text(size=11,
+                                spans=[ft.TextSpan(str(r) + " ",
+                                    style=ft.TextStyle(
+                                        color=(c or _TRANSLIT_COLOR)))
+                                    for r, c in _rd]))
+                    if _s and (_inc_src or not _d or _d == _s):
+                        content_rows.append(ft.Text(size=13, spans=[
+                            ft.TextSpan(str(_s3) + " ",
+                                style=ft.TextStyle(
+                                    color=(c or _lc or _TEXT_FAINT)))
+                            for _s3, _d3, c in _segs]))
+                    if _d and _d != _s and not _read_only:
+                        _dsegs = [(_d3 or _s3, c) for _s3, _d3, c in _segs]
+                        content_rows.append(ft.Text(size=13,
+                            weight=ft.FontWeight.W_500, spans=[
+                                ft.TextSpan(str(t3) + " ",
+                                    style=ft.TextStyle(
+                                        color=(c or _TEXT_PRIMARY)))
+                                for t3, c in _dsegs]))
+                else:
+                    if (_want_read and _s
+                            and self._chat_reading_allowed(_s, src_lang)):
+                        with contextlib.suppress(Exception):
+                            _tl = _read_of(_s)
+                            if _tl and _tl != _s:
+                                content_rows.append(ft.Text(
+                                    _tl, size=11, color=_TRANSLIT_COLOR))
+                    if _s and (_inc_src or not _d or _d == _s):
+                        content_rows.append(ft.Text(_s, size=13,
+                                                    color=_lc or _TEXT_FAINT))
+                    if _d and _d != _s and not _read_only:
+                        content_rows.append(ft.Text(
+                            _d, size=13, color=_TEXT_PRIMARY,
+                            weight=ft.FontWeight.W_500))
                 content_rows.append(ft.Container(height=3))
         elif has_translation:
             translit_src = "" if not self._chat_reading_allowed(source_text, src_lang) else transliterate_for_language(
@@ -5269,6 +5396,37 @@ class DashboardView(ft.Row):
             if translit:
                 content_rows.append(ft.Text(translit, size=11, color=_TRANSLIT_COLOR, italic=True))
             content_rows.append(ft.Text(translated_text.strip(), size=13, color=_TEXT_PRIMARY, weight=ft.FontWeight.W_500))
+        elif is_ocr and image_path and not source_text.strip():
+            # r537/r538: nothing was read or translated — the picture stays
+            # in the log with the reason underneath instead of an OCR dump,
+            # an empty row, or (worst) discarding the image behind a banner
+            content_rows.append(ft.Text(
+                ocr_note or t("dashboard.ocr.paste.nothing_foreign",
+                              default="No foreign text found to translate."),
+                size=11.5, color=_TEXT_FAINT, italic=True))
+        elif is_ocr and (ocr_colors or ocr_colseg) and (source_text or "").strip():
+            # r540/r546: transcript mode keeps each line's original colors —
+            # per-SEGMENT when the module supplied them (a mixed row's tag
+            # stays green even though the row as a whole probes neutral)
+            for _i, _ln in enumerate((source_text or "").split("\n")):
+                if not _ln.strip():
+                    continue
+                _segs = (ocr_colseg[_i]
+                         if ocr_colseg and _i < len(ocr_colseg) else None)
+                if _segs:
+                    _segs = [(seg[0], seg[-1]) for seg in _segs]
+                if _segs and any(c for _t2, c in _segs):
+                    content_rows.append(ft.Text(size=13, spans=[
+                        ft.TextSpan(str(_t2) + " ",
+                                    style=ft.TextStyle(
+                                        color=(c or _TEXT_PRIMARY)))
+                        for _t2, c in _segs]))
+                else:
+                    _c = (ocr_colors[_i] if ocr_colors
+                          and _i < len(ocr_colors)
+                          and ocr_colors[_i] else _TEXT_PRIMARY)
+                    content_rows.append(ft.Text(_ln.strip(), size=13,
+                                                color=_c))
         else:
             content_rows.append(ft.Text(source_text.strip(), size=13, color=_TEXT_PRIMARY))
 
@@ -5304,19 +5462,37 @@ class DashboardView(ft.Row):
                 getattr(self, "_auto_detect_voice", False) or not self.is_translation_on
             )
         ):
-            header_cells.append(ft.Text(
-                f" [{src_lang.split('-')[0].upper()}]",
+            # r534 (user suggestion): the chip leads the header, with a
+            # space — "[JA] Speaker 1", not "[JA]Speaker 1"
+            header_cells.insert(0, ft.Text(
+                f"[{src_lang.split('-')[0].upper()}] ",
                 size=10, color=label_color, weight=ft.FontWeight.W_600,
                 opacity=0.65,
             ))
-        elif is_ocr and src_lang:
-            # r522 (user suggestion): OCR reads whatever script is on screen —
-            # tag the detected language like auto-detect voice does
-            header_cells.append(ft.Text(
-                f" [{src_lang.split('-')[0].upper()}]",
-                size=10, color=label_color, weight=ft.FontWeight.W_600,
-                opacity=0.65,
-            ))
+        elif is_ocr:
+            # r522/r534: the chip leads the header. r541: it reflects the LIVE
+            # Target state — the Auto Detect star when no partner language is
+            # pinned, else the pinned (or sniffed) language, even on entries
+            # where nothing was read ("[ZH] OCR" + "no foreign text").
+            _chip_lang = src_lang or (
+                "" if self._ocr_auto_mode()
+                else getattr(self, "_peer_source_lang_code", ""))
+            if self._ocr_auto_mode():
+                # r542: bracketed like the language chips — "[✦] OCR"
+                header_cells.insert(0, ft.Row([
+                    ft.Text("[", size=10, color=label_color,
+                            weight=ft.FontWeight.W_600, opacity=0.65),
+                    ft.Icon(ft.Icons.AUTO_AWESOME, size=10,
+                            color=label_color, opacity=0.65),
+                    ft.Text("] ", size=10, color=label_color,
+                            weight=ft.FontWeight.W_600, opacity=0.65),
+                ], spacing=1, tight=True))
+            elif _chip_lang:
+                header_cells.insert(0, ft.Text(
+                    f"[{_chip_lang.split('-')[0].upper()}] ",
+                    size=10, color=label_color, weight=ft.FontWeight.W_600,
+                    opacity=0.65,
+                ))
         if _speaker_tagged:
             # r318 speaker tag (r322: now the header itself). Named voices
             # show their name; anonymous ones a localized "Speaker N".
@@ -5430,18 +5606,27 @@ class DashboardView(ft.Row):
                 if collapse_text and content_rows:
                     # r524: a dense capture (rosters, certificates) used to
                     # flood the log — the translated image IS the content, so
-                    # the text folds behind a small expander
+                    # the text folds behind a small expander. r553: the
+                    # open/closed state survives a settings re-render.
                     _n = len([l for l in (source_text or "").split("\n")
                               if l.strip()])
+                    _xs = getattr(self, "_ocr_expand_state", None)
+                    if _xs is None:
+                        _xs = self._ocr_expand_state = {}
+                    _open0 = bool(_xs.get(image_path))
                     _body = ft.Column(content_rows, spacing=1, tight=True,
-                                      visible=False)
+                                      visible=_open0)
                     _lbl = ft.Text(
-                        t("dashboard.ocr.paste.show_text", n=str(_n),
-                          default=f"Show text ({_n} lines)"),
+                        (t("dashboard.ocr.paste.hide_text",
+                           default="Hide text") if _open0 else
+                         t("dashboard.ocr.paste.show_text", n=str(_n),
+                           default=f"Show text ({_n} lines)")),
                         size=11, color=_TEXT_FAINT, italic=True)
 
-                    def _tgl(e, _b=_body, _l=_lbl, _n=_n):
+                    def _tgl(e, _b=_body, _l=_lbl, _n=_n,
+                             _key=image_path, _xs=_xs):
                         _b.visible = not _b.visible
+                        _xs[_key] = _b.visible
                         _l.value = (t("dashboard.ocr.paste.hide_text",
                                       default="Hide text") if _b.visible else
                                     t("dashboard.ocr.paste.show_text",
@@ -5479,6 +5664,22 @@ class DashboardView(ft.Row):
             # r520: so the temp screenshots can be deleted when this entry
             # scrolls out of the capped log (or on Clear chat)
             entry.data = ("ocr_paste_img", image_path, image_alt)
+        if is_ocr and image_path:
+            # r550 (user expectation): remember how to rebuild this entry so
+            # a Chat log format change re-renders it IMMEDIATELY
+            import weakref as _wr
+
+            reg = getattr(self, "_ocr_repaint_reg", None)
+            if reg is None:
+                reg = self._ocr_repaint_reg = []
+            reg.append((_wr.ref(entry), dict(
+                channel=channel, source=source, source_text=source_text,
+                translated_text=translated_text,
+                src_lang_hint=src_lang_hint, image_path=image_path,
+                image_alt=image_alt, collapse_text=collapse_text,
+                ocr_note=ocr_note, ocr_colors=ocr_colors,
+                ocr_colseg=ocr_colseg, timestamp_override=timestamp)))
+            del reg[:-60]
         if insert_at is not None:
             # r522: a resolved paste keeps its placeholder's position instead
             # of jumping below whatever logged while it was reading
@@ -6550,6 +6751,27 @@ class DashboardView(ft.Row):
         self._chat_log_format = fmt
         if callable(self.on_chat_log_format_change):
             self.on_chat_log_format_change(fmt)
+        # r550 (user expectation): the format applies to what's already on
+        # screen — OCR entries rebuild themselves in place right away
+        with contextlib.suppress(Exception):
+            self._reformat_ocr_entries()
+
+    def _reformat_ocr_entries(self) -> None:
+        reg = list(getattr(self, "_ocr_repaint_reg", None) or [])
+        if not reg or self._chat_list_view is None:
+            return
+        self._ocr_repaint_reg = []
+        for ref, kwargs in reg:
+            entry = ref()
+            if entry is None:
+                continue
+            with contextlib.suppress(ValueError, Exception):
+                idx = self._chat_list_view.controls.index(entry)
+                self._chat_list_view.controls.remove(entry)
+                self.append_chat_entry(insert_at=idx, **kwargs)
+        with contextlib.suppress(Exception):
+            if self._chat_list_view.page:
+                self._chat_list_view.update()
 
     def _toggle_overlay_reading(self) -> None:
         new = not (self.show_pinyin or self.show_romaji or self.show_latin)
@@ -6792,6 +7014,8 @@ class DashboardView(ft.Row):
                 except Exception: pass
                 if callable(self.on_chat_reading_flag_change):
                     self.on_chat_reading_flag_change(_fn, _s[0])
+                with contextlib.suppress(Exception):
+                    self._reformat_ocr_entries()
             _chat_reading_rows.append(ft.Container(
                 content=ft.Row([_chk_icon, _lbl], spacing=8,
                                vertical_alignment=ft.CrossAxisAlignment.CENTER),
@@ -6822,6 +7046,8 @@ class DashboardView(ft.Row):
             def _on_show(val: bool):
                 self.show_pinyin = self.show_romaji = self.show_latin = val
                 self._emit_transliteration_change()
+                with contextlib.suppress(Exception):
+                    self._reformat_ocr_entries()
             extra_rows.append(_section_row(
                 t("dashboard.translit.menu.show_reading", system=rw), _bool_pill(_sr_ref, _on_show),
                 tooltip=t("dashboard.translit.menu.show_reading.tooltip", system=rw)))
@@ -7011,6 +7237,8 @@ class DashboardView(ft.Row):
         if callable(self.on_pinyin_word_grouping_change):
             self.on_pinyin_word_grouping_change(value)
         self._sync_translit_cols()
+        with contextlib.suppress(Exception):
+            self._reformat_ocr_entries()
 
     def set_pinyin_word_grouping_state(self, value: bool) -> None:
         self._pinyin_word_grouping = bool(value)
@@ -7114,7 +7342,7 @@ class DashboardView(ft.Row):
 
     def _on_show_romanization_toggle(self, value: bool) -> None:
         # Auto Detect: flip every "show" romanization flag so any detected language
-        # (Korean→romaja, Chinese→pinyin, Arabic→latin, …) gets romanized.
+        # (Korean→romaja, Chinese→pinyin, Arabic→latin, ...) gets romanized.
         self.show_pinyin = value
         self.show_romaji = value
         self.show_latin = value

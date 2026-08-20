@@ -2,6 +2,14 @@
 
 User-facing changes per build. The latest build's highlights also appear in-app when an update is ready.
 
+## r555 — 2026-08-20
+
+- Added: "Load earlier messages" in Steam chats — pages back through the server's history
+- Added: pasted-image text keeps the original's colors, and display settings (Chat log format, pinyin toggles) re-apply to existing entries instantly
+- Improved: translated-image painting — text unchanged by translation (times, names) keeps its original pixels, tags align on one column with consistent colors and sizes
+- Improved: OCR text cleanup — jammed words re-spaced, broken brackets repaired, clipped junk from window edges dropped
+- Fixed: Copy image is instant, Auto Detect is respected live (star chip shows immediately), failed reads keep the picture with a short note instead of discarding it
+
 ## r533 — 2026-08-20
 
 - Added: the text under a pasted image now always folds behind "Show text (N lines)" whenever it has more than one line, with or without a rendered translation

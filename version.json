@@ -1,11 +1,11 @@
 {
-  "build": 533,
-  "tag": "r533",
+  "build": 555,
+  "tag": "r555",
   "date": "2026-08-20",
   "notes": [
-    "Added: multi-line text under pasted images always folds behind a Show text expander",
-    "Fixed: Steam image sends could arrive as a bare download link or an earlier picture - every upload now verifies it got a fresh file id",
-    "Fixed: a posted link could show two or three times - link previews no longer repeat the URL and own-message echoes deduplicate",
-    "Fixed: Steam chat history could render out of order or duplicated after the helper restarted - replays insert in place and duplicates drop"
+    "Added: Load earlier messages in Steam chats; pasted-image text keeps original colors and settings re-apply instantly",
+    "Improved: translated-image painting keeps unchanged text (times, names) as original pixels with aligned, consistent tags",
+    "Improved: OCR cleanup - jammed words re-spaced, broken brackets repaired, edge junk dropped",
+    "Fixed: instant image copy, live Auto Detect chip, failed reads keep the picture with a note"
   ]
 }

@@ -340,6 +340,8 @@ _XLAT_PENDING: list[str] = []
 _XLAT_QUEUED: set[str] = set()
 _XLAT_TRIES: dict[str, int] = {}
 _XLAT_TARGET = ["en"]
+_XLAT_AUTO = [False]   # Target box on "Auto Detect": no pinned partner
+                       # language, so pastes keep their full transcript
 _XLAT_SVC = ["bing"]
 _XLAT_WORKERS = 2
 # Master translation switch (debug aid): off = Alt+T shows the RAW recognized
@@ -389,10 +391,10 @@ def _is_pronoun_text(text: str) -> bool:
 def _looks_truncated_bio(t: str) -> bool:
     """VRChat machine-truncates long bio/pronoun fields with a trailing
     ellipsis; chat bubbles are never cut that way. A SHORT text ending in a
-    truncation mark is nameplate bio ('microwave ov…', 'INTP /…')."""
-    if not (t.endswith("...") or t.endswith("..") or t.endswith("…")):
+    truncation mark is nameplate bio ('microwave ov...', 'INTP /...')."""
+    if not (t.endswith("...") or t.endswith("..") or t.endswith("...")):
         return False
-    core = _norm_name(t.rstrip(".…"))
+    core = _norm_name(t.rstrip("...."))
     return 0 < len(core) <= 16
 
 
@@ -582,6 +584,37 @@ def _paste_read_image(path: str):
     return arr[:, :, ::-1].copy()          # RGB -> BGR
 
 
+def _respace_token(w: str) -> str:
+    """The rec model jams English words together ("Readingthe"). Restore
+    spaces on long all-letter tokens with a frequency-based split, keeping
+    the original casing. Mixed tokens (digits, underscores — usernames)
+    are never touched, and doubtful splits are rejected."""
+    if len(w) < 9 or not w.isascii() or not w.isalpha():
+        return w
+    try:
+        import wordninja
+        parts = wordninja.split(w.lower())
+    except Exception:
+        return w
+    if len(parts) < 2 or any(len(p) == 1 and p not in ("a", "i")
+                             for p in parts):
+        return w
+    if (sum(1 for p in parts if len(p) <= 2) > len(parts) // 2
+            and max(len(p) for p in parts) < 6):
+        # "captured by i" is fine (long lead word); "ju n k y" is not
+        return w
+    out, i = [], 0
+    for p in parts:
+        out.append(w[i:i + len(p)])
+        i += len(p)
+    return " ".join(out)
+
+
+def _wlen(t: str) -> int:
+    """Approximate display width in half-chars: CJK counts double."""
+    return sum(2 if ord(c) >= 0x2E80 else 1 for c in t)
+
+
 def _paste_rows(detector, bgr) -> list:
     """Read a pasted image end-to-end: (text, score, x1, y1, x2, y2) rows in
     reading order."""
@@ -589,6 +622,95 @@ def _paste_rows(detector, bgr) -> list:
     if not rows:
         return []
     rows = [r for r in rows if r[1] >= 0.30 and r[0] != "?"]
+    # a sliver clipped by the image border (another window peeking into the
+    # screenshot) reads as truncated junk — demand more confidence there,
+    # and drop a whole STACK of narrow edge-pinned boxes outright
+    Wimg = bgr.shape[1]
+    rows = [r for r in rows
+            if not ((r[4] >= Wimg - 4 or r[2] <= 3)
+                    and r[1] < 0.62 and (r[4] - r[2]) < Wimg * 0.3)]
+    edge = [r for r in rows
+            if r[2] >= Wimg * 0.85 and (r[4] - r[2]) < Wimg * 0.15]
+    if len(edge) >= 3:
+        rows = [r for r in rows if r not in edge]
+    # script-boundary spaces FIRST, so the freed ASCII runs are eligible
+    # for the word splitter below ("Capturedbyname..." -> "Capturedby name..."
+    # -> "Captured by i ...")
+    import re as _re
+    rows = [(_re.sub("(\\d)(?=[\\u4e00-\\u9fff])", "\\g<1> ", r[0]),
+             *r[1:]) for r in rows]
+    rows = [(_re.sub("([A-Za-z])(?=[\\u4e00-\\u9fff])", "\\g<1> ", r[0]),
+             *r[1:]) for r in rows]
+    # cross-line spacing hints: the same text often appears twice in one
+    # image (nameplate + caption) and only ONE read keeps its spaces. A
+    # jammed token whose letters match a correctly-spaced word run adopts
+    # that run's boundaries — exact, unlike the dictionary fallback.
+    hints: dict = {}
+    for r in rows:
+        ws = [w for w in r[0].split(" ") if w]
+        for a in range(len(ws)):
+            for b in range(a + 2, min(a + 6, len(ws)) + 1):
+                seg = " ".join(ws[a:b])
+                key = seg.replace(" ", "").lower()
+                if len(key) >= 9 and key.isascii() and key.isalpha():
+                    # same letters seen with different spacing: the MORE
+                    # segmented read wins — a half-jammed line must not
+                    # poison the hint for the fully-spaced one
+                    prev = hints.get(key)
+                    if prev is None or seg.count(" ") > prev.count(" "):
+                        hints[key] = seg
+
+    def _fix_token(w):
+        h = hints.get(w.lower())
+        if h and len(h.replace(" ", "")) == len(w):
+            out, i = [], 0
+            for seg in h.split(" "):
+                out.append(w[i:i + len(seg)])
+                i += len(seg)
+            return " ".join(out)
+        return _respace_token(w)
+
+    rows = [(" ".join(_fix_token(w) for w in r[0].split(" ")),
+             *r[1:]) for r in rows]
+    # dropped-bracket repair: "[tag..." with no closing bracket, when
+    # siblings read "[tag]" complete — restore the "]" so the split, the
+    # colors AND the translation treat the tag as a tag
+    import re as _re
+    complete = set()
+    for r in rows:
+        complete.update(_re.findall(
+            "[\\[\\u3010]([^\\]\\u3011]{1,8})[\\]\\u3011]", r[0]))
+
+    def _fix_brk(t):
+        for tag in sorted(complete, key=len, reverse=True):
+            t = _re.sub("([\\[\\u3010])" + _re.escape(tag)
+                        + "(?![\\]\\u3011])",
+                        lambda m: m.group(1) + tag + "] ", t)
+        return _re.sub("  +", " ", t)
+
+    if complete:
+        rows = [(_fix_brk(r[0]), *r[1:]) for r in rows]
+    # a time stuck to what follows it ("02:42:281/1...") gets its space back
+    rows = [(_re.sub("^(\\d{2}:\\d{2}:\\d{2})(?=\\S)", "\\g<1> ", r[0]),
+             *r[1:]) for r in rows]
+    # and a digit runs straight into CJK ("1/1\u53ea") — space it the way the
+    # translation will ("1/1 piece")
+    rows = [(_re.sub("(\\d)(?=[\\u4e00-\\u9fff])", "\\g<1> ", r[0]),
+             *r[1:]) for r in rows]
+    # a latin letter straight into CJK ("Capturedbyname...") gets a space too,
+    # which also frees the ASCII run for the word splitter
+    rows = [(_re.sub("([A-Za-z])(?=[\\u4e00-\\u9fff])", "\\g<1> ", r[0]),
+             *r[1:]) for r in rows]
+
+    # roster dividers OCR reads as stray "]" or "|" pollute everything
+    # downstream — scrub them from the row text itself
+    def _scrub(t):
+        t = _re.sub("(?<=[\\]\\u3011])\\s*[\\]|\\uff5c\\u2502]+", " ", t)
+        t = _re.sub("^[\\]|\\uff5c\\u2502]+\\s*", "", t)
+        t = _re.sub("(?<=\\s)[|\\uff5c\\u2502]+(?=\\s)", "", t)
+        return _re.sub("  +", " ", t).strip()
+
+    rows = [(_scrub(r[0]), *r[1:]) for r in rows]
     rows.sort(key=lambda r: (r[3], r[2]))          # top-to-bottom, left-to-right
     return rows
 
@@ -645,9 +767,10 @@ def _render_translated(path: str, boxes: list) -> str:
     for b in boxes:
         s_t = str(b[4] or "")
         # a newline in a translation makes PIL's anchored text() throw and
-        # silently kills the whole render — collapse ALL whitespace runs
-        d_t = " ".join(str(b[5] or "").split())
-        if not (d_t.strip() and d_t.strip() != s_t.strip()):
+        # silently kills the whole render — collapse ALL whitespace runs;
+        # U+2026 becomes "..." (the CJK font paints it as centered dots)
+        d_t = " ".join(str(b[5] or "").replace("\u2026", "...").split())
+        if not (d_t.strip() and _norm_cmp(d_t) != _norm_cmp(s_t)):
             continue
         x1, y1, x2, y2 = _clamp(b[0], b[1], b[2], b[3])
         if x2 - x1 >= 6 and y2 - y1 >= 6:
@@ -669,6 +792,15 @@ def _render_translated(path: str, boxes: list) -> str:
             return y1, y2
         return y1 + int(rows[0]), y1 + int(rows[-1]) + 1
 
+    def _ink_col_mask(x1, y1, x2, y2):
+        crop = arr[y1:y2, x1:x2].astype(_np.float32)
+        if crop.size == 0:
+            return _np.zeros(0, bool)
+        lum = crop @ LUMW
+        dev = _np.abs(lum - float(_np.median(lum)))
+        thr = max(12.0, float(_np.percentile(dev, 85)))
+        return (dev >= thr).sum(axis=0) > 0
+
     def _bg_color(x1, y1, x2, y2):
         ring = _np.concatenate([
             arr[y1:min(H, y1 + 2), x1:x2].reshape(-1, 3),
@@ -679,18 +811,17 @@ def _render_translated(path: str, boxes: list) -> str:
         return tuple(int(v) for v in _np.median(ring, axis=0))
 
     def _glyph_stats(x1, y1, x2, y2):
-        """(neutral_rgb, colored_rgb, colored_x_end_rel) from the crop.
-        colored_x_end_rel = rightmost column (relative) of the saturated
-        glyph run starting near the left edge, or None."""
+        """(neutral_rgb, colored_rgb, cs, ce): colored-run start/end columns
+        relative to the box, or None when the box has no colored run."""
         try:
             crop = arr[y1:y2, x1:x2].astype(_np.float32)
             if crop.size < 200:
-                return None, None, None
+                return None, None, None, None
             lum = crop @ LUMW
             dev = _np.abs(lum - float(_np.median(lum)))
             thr = float(_np.percentile(dev, 85))
             if thr < 14:
-                return None, None, None
+                return None, None, None, None
             mask = dev >= thr
             px = crop[mask]
             sat = px.max(axis=1) - px.min(axis=1)
@@ -700,39 +831,46 @@ def _render_translated(path: str, boxes: list) -> str:
                      if len(neutral) >= 12 else None)
             c_rgb = (tuple(int(v) for v in _np.median(colored, axis=0))
                      if len(colored) >= 12 else None)
-            span = None
+            cs = ce = None
             if c_rgb is not None:
-                colmask = _np.zeros(crop.shape[1], bool)
                 satmap = crop.max(axis=2) - crop.min(axis=2)
                 colcnt = ((satmap > 45) & mask).sum(axis=0)
                 cols = _np.where(colcnt > 0)[0]
-                if len(cols) and cols[0] < crop.shape[1] * 0.45:
-                    # contiguous-ish run from the left
-                    run_end = cols[0]
-                    for c in cols:
-                        if c - run_end <= max(6, (y2 - y1) // 2):
-                            run_end = c
+                if len(cols) >= 5:
+                    gapmax = max(6, (y2 - y1) // 2)
+                    best = (0, int(cols[0]), int(cols[0]))
+                    s0 = p0 = int(cols[0])
+                    for c in cols[1:]:
+                        c = int(c)
+                        if c - p0 <= gapmax:
+                            p0 = c
                         else:
-                            break
-                    if run_end > cols[0] + 4:
-                        span = int(run_end) + 1
-            return n_rgb, c_rgb, span
+                            if p0 - s0 > best[0]:
+                                best = (p0 - s0, s0, p0)
+                            s0 = p0 = c
+                    if p0 - s0 > best[0]:
+                        best = (p0 - s0, s0, p0)
+                    if best[0] >= 8:
+                        cs, ce = best[1], best[2] + 1
+            return n_rgb, c_rgb, cs, ce
         except Exception:
-            return None, None, None
+            return None, None, None, None
 
-    TAGS = ("\u6765\u8bbf", "\u79bb\u5f00")     # 来访 / 离开
+    TAGS = ("\u6765\u8bbf", "\u79bb\u5f00")     # visit / leave
+    _SM_RE = ("^\\s*(.{0,60}?)([\\[\\u3010][^\\]\\u3011]{1,12}"
+              "[\\]\\u3011])\\s*(.*)$")
 
     def _tag_word(s_t):
         for t in TAGS:
-            if t in s_t[:6]:
+            if t in s_t[:6] or ("[" + t) in s_t or ("\u3010" + t) in s_t:
                 return t
         return None
 
     def _split_dst(d_t):
-        """Split "[Visit] Name" -> ("[Visit]", "Name"); None when no tag."""
-        m = _re.match(r"^\s*(\[[^\]]{1,12}\])\s*(.*)$", d_t)
+        """("prefix", "[Visit]", "rest") — prefix may be empty."""
+        m = _re.match(r"^\s*(.{0,60}?)(\[[^\]]{1,12}\])\s*(.*)$", d_t)
         if m:
-            return m.group(1), m.group(2).strip()
+            return m.group(1).strip(), m.group(2), m.group(3).strip()
         return None
 
     # measure + columns (anchor displacement capped so a snapped pill can
@@ -760,12 +898,9 @@ def _render_translated(path: str, boxes: list) -> str:
     for x1, y1, x2, y2, s_t, d_t in todo:
         it, ib = _ink_rows(x1, y1, x2, y2)
         ink_h = max(8, ib - it)
-        # CJK glyphs fill ~the whole em; latin caps ~0.72em. Sizing a latin
-        # translation from CJK ink at /0.72 rendered it LARGER than the
-        # source — match by script instead.
-        _cjk_src = any("一" <= ch <= "鿿"
-                       or "぀" <= ch <= "ヿ"
-                       or "가" <= ch <= "힯" for ch in s_t)
+        _cjk_src = any("\u4e00" <= ch <= "\u9fff"
+                       or "\u3040" <= ch <= "\u30ff"
+                       or "\uac00" <= ch <= "\ud7af" for ch in s_t)
         m_size = max(11, min(int(ink_h if _cjk_src else ink_h / 0.72),
                              int((y2 - y1) * 1.05)))
         measured.append([x1, y1, x2, y2, s_t, d_t, it, ib, m_size])
@@ -775,32 +910,39 @@ def _render_translated(path: str, boxes: list) -> str:
     col_size = {a: sorted(v)[len(v) // 2] for a, v in col_members.items()
                 if len(v) >= 2}
 
-    # canonical tag colors + one shared tag size, voted across all rows
+    # canonical tag colors, one shared size, and ONE pixel column for tags
+    # (median of the colored runs' measured starts)
     tag_votes: dict = {}
     tag_sizes = []
+    tag_starts = []
     for x1, y1, x2, y2, s_t, d_t, it, ib, m_size in measured:
         w = _tag_word(s_t)
         if not w:
             continue
-        _n, c_rgb, _sp = _glyph_stats(x1, y1, x2, y2)
+        _n, c_rgb, cs, ce = _glyph_stats(x1, y1, x2, y2)
         if c_rgb is not None:
             tag_votes.setdefault(w, []).append(c_rgb)
+        if cs is not None and ce is not None \
+                and (ce - cs) < 0.70 * (x2 - x1):
+            tag_starts.append(x1 + cs)
         tag_sizes.append(m_size)
     tag_color = {}
     for w, votes in tag_votes.items():
         arrv = _np.array(votes, _np.float32)
         tag_color[w] = tuple(int(v) for v in _np.median(arrv, axis=0))
     tag_size = sorted(tag_sizes)[len(tag_sizes) // 2] if tag_sizes else None
+    tag_col = (sorted(tag_starts)[len(tag_starts) // 2]
+               if len(tag_starts) >= 2 else None)
 
     plan_pills = []     # (px1, py1, px2, py2, bg)
     plan_text = []      # (tx, ty, text, font, fg)
     for x1, y1, x2, y2, s_t, d_t, ink_top, ink_bot, m_size in measured:
         anchor_x = col_anchor.get(x1, x1)
         w = _tag_word(s_t)
-        size = tag_size if (w and s_t.strip().startswith("[") and tag_size)             else col_size.get(anchor_x, m_size)
-        # a size inherited from a taller row must still fit THIS box
+        size = tag_size if (w and s_t.strip().startswith("[") and tag_size) \
+            else col_size.get(anchor_x, m_size)
         size = max(11, min(size, int((y2 - y1) * 1.05)))
-        n_rgb, c_rgb, span = _glyph_stats(x1, y1, x2, y2)
+        n_rgb, c_rgb, cs, ce = _glyph_stats(x1, y1, x2, y2)
         bg = _bg_color(x1, y1, x2, y2)
         neutral = n_rgb or ((20, 20, 24) if sum(bg) > 420
                             else (240, 240, 244))
@@ -811,46 +953,153 @@ def _render_translated(path: str, boxes: list) -> str:
             ov = min(y2, oy2) - max(y1, oy1)
             if ov > 2:
                 limit = min(limit, ox1 - max(8, size // 3))
+        wholly = (cs is not None and ce is not None
+                  and (ce - cs) >= 0.70 * (x2 - x1))
         segs = None
+        pill_from = None
+        pill_to = None
         if w:
             parts = _split_dst(d_t)
             canon = tag_color.get(w) or c_rgb
-            if parts and parts[1] and span:
-                # merged "[tag] name" box: tag + name as separate segments
+            sm = _re.match(_SM_RE, s_t)
+            if parts and sm and canon and (parts[0] or parts[2]) \
+                    and not wholly:
+                # merged box: time | tag | name. The tag anchors on its own
+                # colored pixels (or the shared column); unchanged parts
+                # keep their ORIGINAL pixels.
+                pre, tagtxt, rest = parts
+                rest = rest.lstrip("]|\u2502\u3011 ").strip()
+                rest_src = sm.group(3).lstrip("]|\u2502\u3011 ").strip()
                 tsz = tag_size or size
-                tfont = _paste_font(tsz, parts[0])
-                tag_w = int(dr.textlength(parts[0], font=tfont))
                 gap = max(8, tsz // 3)
-                segs = [(anchor_x, parts[0], tfont, canon or neutral),
-                        (anchor_x + tag_w + gap, parts[1],
-                         _paste_font(size, parts[1]), neutral)]
-            elif parts and not parts[1]:
+                # the SHARED column wins: per-row colored starts inherit
+                # the source's own anti-aliasing jitter
+                if tag_col is not None and x1 - 8 <= tag_col < x2 - 8:
+                    # -2: the measured start sits inside the bracket stroke's
+                    # anti-aliasing, a hair right of the visual edge
+                    tag_x = max(x1, tag_col - 2)
+                elif cs is not None:
+                    tag_x = x1 + cs
+                else:
+                    tag_x = x1 + int((x2 - x1)
+                                     * (_wlen(sm.group(1))
+                                        / max(1, _wlen(s_t))))
+                tfont = _paste_font(tsz, tagtxt)
+                tag_w = int(dr.textlength(tagtxt, font=tfont))
+                segs = []
+                pre_same = (" ".join(pre.split())
+                            == " ".join(sm.group(1).split()))
+                if pre_same or not sm.group(1).strip():
+                    pill_from = max(x1, tag_x - 2)
+                else:
+                    pfont = _paste_font(size, pre)
+                    segs.append((anchor_x, pre, pfont, neutral))
+                    tag_x = max(tag_x, anchor_x + int(
+                        dr.textlength(pre, font=pfont)) + gap)
+                segs.append((tag_x, tagtxt, tfont, canon or neutral))
+                # case-insensitive: a translator that merely capitalized
+                # ("name_x" -> "Name_x") did not translate — the original
+                # pixels stay
+                rest_same = bool(rest and rest_src
+                                 and _norm_cmp(rest).lower()
+                                 == _norm_cmp(rest_src).lower())
+                if rest and not rest_same:
+                    rx = tag_x + tag_w + gap
+                    if ce is not None:
+                        rx = max(rx, x1 + ce + gap)
+                    segs.append((rx, rest, _paste_font(size, rest), neutral))
+                elif rest_same:
+                    # unchanged name keeps its pixels — its true start comes
+                    # from the box's own ink columns (estimates clipped some
+                    # names and missed some dividers). If the painted tag
+                    # would SPILL into it (English grows), repaint the name
+                    # shifted instead of colliding.
+                    name_px = None
+                    if ce is not None and x1 + ce + 8 < x2 - 12:
+                        # threshold the NAME region alone — the tag's strong
+                        # colors skewed a whole-box percentile so high the
+                        # name's own columns fell below it
+                        colsink = _ink_col_mask(x1 + ce + 4, y1, x2, y2)
+                        for ci in range(0, max(0, len(colsink) - 14)):
+                            if colsink[ci] and int(
+                                    colsink[ci:ci + 14].sum()) >= 8:
+                                name_px = x1 + ce + 4 + ci
+                                break
+                    if name_px is None:
+                        name_px = x2 - int((x2 - x1)
+                                           * (_wlen(rest_src)
+                                              / max(1, _wlen(s_t))))
+                    fit_to = min(name_px - 3, limit)
+                    if tag_x + tag_w + 4 <= fit_to:
+                        pill_to = fit_to
+                    else:
+                        rx = tag_x + tag_w + gap
+                        segs.append((rx, rest,
+                                     _paste_font(size, rest), neutral))
+            elif parts and not parts[0] and not parts[2] and canon:
+                # a lone tag box: paint it at its own pixels, pill slightly
+                # extended so a divider right of the box vanishes too
                 tsz = tag_size or size
-                segs = [(anchor_x, parts[0], _paste_font(tsz, parts[0]),
+                if tag_col is not None and x1 - 8 <= tag_col < x2:
+                    tag_x = max(x1, tag_col - 2)
+                    pill_from = max(x1, tag_x - 2)
+                elif cs is not None and not wholly:
+                    tag_x = x1 + cs
+                    pill_from = max(x1, tag_x - 2)
+                else:
+                    tag_x = anchor_x
+                segs = [(tag_x, parts[1], _paste_font(tsz, parts[1]),
                          canon or neutral)]
+                pill_to = min(limit, x2 + 24)
+                if pill_to <= x2:
+                    pill_to = None
         if segs is None:
             fg = neutral
-            if c_rgb is not None and (
-                    span is None or span >= 0.70 * (x2 - x1)
-                    or n_rgb is None):
+            if c_rgb is not None and (cs is None or wholly or n_rgb is None):
                 fg = c_rgb          # wholly-colored line keeps its color
-            segs = [(anchor_x, d_t, _paste_font(size, d_t), fg)]
+            # unchanged words at the START keep their ORIGINAL pixels; the
+            # changed tail is located from the RIGHT edge (short segment =
+            # small estimate error)
+            d_paint = d_t
+            cx0 = anchor_x
+            sw, dw = s_t.split(" "), d_t.split(" ")
+            k = 0
+            while (k < min(len(sw), len(dw)) and sw[k]
+                   and sw[k] == dw[k]):
+                k += 1
+            if k and k < len(sw) and len(" ".join(sw[:k])) >= 4:
+                tail_src = " ".join(sw[k:])
+                tail_px = x2 - int((x2 - x1)
+                                   * (_wlen(tail_src)
+                                      / max(1, _wlen(s_t))))
+                pill_from = max(x1 + 4, min(tail_px - 2, x2 - 8))
+                d_paint = " ".join(dw[k:]).strip()
+                cx0 = pill_from + 4
+            elif k and k >= len(sw):
+                d_paint = " ".join(dw[k:]).strip()
+                if not d_paint:
+                    continue
+            if not d_paint:
+                continue            # everything matched: nothing to paint
+            segs = [(cx0, d_paint, _paste_font(size, d_paint), fg)]
         # width + fit: shrink the LAST segment only when even the extended
         # pill cannot hold everything
         def _need():
             total = 0
             for sx, txt, fnt, _c in segs:
-                total = max(total, (sx - x1) + int(dr.textlength(txt, font=fnt)))
+                total = max(total, (sx - x1)
+                            + int(dr.textlength(txt, font=fnt)))
             return total + 4
-        px1 = max(0, x1 - 2)
-        px2 = max(x1 + 8,
-                  min(x2 if _need() <= x2 - x1 else max(x2, x1 + _need()),
-                      limit))
+        px1 = max(0, (pill_from if pill_from is not None else x1) - 2)
+        if pill_to is not None:
+            px2 = max(px1 + 8, min(pill_to, limit))
+        else:
+            px2 = max(px1 + 8,
+                      min(x2 if _need() <= x2 - x1 else max(x2, x1 + _need()),
+                          limit))
         while _need() > px2 - x1 and segs[-1][2].size > 11:
             sx, txt, fnt, c = segs[-1]
             segs[-1] = (sx, txt, _paste_font(fnt.size - 1, txt), c)
-        # even at the floor size the text may not fit (tiny box, huge
-        # translation): ellipsize rather than draw across the neighbour
         guard = 0
         while _need() > px2 - x1 and guard < 400:
             sx, txt, fnt, c = segs[-1]
@@ -930,24 +1179,48 @@ def _paste_loop(detector, stop: threading.Event) -> None:
                 continue                   # never read the same file twice
             _PASTE_DONE.add(path)
             try:
-                _paste_handle(detector, str(req.get("id") or ""), path)
+                _paste_handle(detector, str(req.get("id") or ""), path,
+                              auto=req.get("auto"))
             except Exception:
                 logger.warning("[OCR] paste read failed for %s", path,
                                exc_info=True)
                 _paste_feed("", "", rid=str(req.get("id") or ""), error=True)
 
 
-def _paste_handle(detector, rid: str, path: str) -> None:
+def _norm_cmp(s: str) -> str:
+    """Comparison form of a line: U+2026 and interpunct runs become "...",
+    whitespace collapses. A translator that only 'fixed' dots or spacing did
+    not translate anything."""
+    import re as _re
+
+    s = (s or "").replace("\u2026", "...")
+    s = _re.sub("[\u00b7\u2022\u22c5]{2,}", "...", s)
+    return " ".join(s.split())
+
+
+def _paste_handle(detector, rid: str, path: str, auto=None) -> None:
     t0 = time.monotonic()
+    # live prefs: the request carries the app's CURRENT auto-detect state
+    # (settings.json only persists on exit, so a fresh read can be stale —
+    # still refreshed here as the fallback for requests without the flag)
+    _load_translation_prefs()
+    _auto_eff = _XLAT_AUTO[0] if auto is None else bool(auto)
     bgr = _paste_read_image(path)
     rows = _paste_rows(detector, bgr)
     if not rows:
         logger.info("[OCR] paste: no text found in %s", os.path.basename(path))
         _paste_feed("", "", rid=rid, empty=True)
         return
-    # translate each box INDIVIDUALLY — blob translation merged/dropped lines
-    texts = [r[0] for r in rows]
+    # translate each box INDIVIDUALLY — blob translation merged/dropped lines.
+    # Lines already in the user's language skip the translator — but ONLY
+    # when the configured target is English is pure ASCII "already readable"
+    # (an EN->ZH user needs their English screenshots translated as ever).
+    _skip_ascii = str(_XLAT_TARGET[0] or "").lower().startswith("en")
+    texts = [r[0] for r in rows
+             if (not _skip_ascii) or any(ord(ch) > 127 for ch in r[0])]
     trs = _paste_translate_many(texts)
+    trs = {k: v for k, v in trs.items()
+           if _norm_cmp(v) and _norm_cmp(v) != _norm_cmp(k)}
     # r524: names and other proper nouns come back from the translator
     # UNCHANGED and looked skipped in the render — fall back to pinyin so
     # every CJK box gets a readable form.
@@ -970,10 +1243,7 @@ def _paste_handle(detector, rid: str, path: str) -> None:
               _roman_fallback(r[0]) if _want_reading else "")
              for r in rows]
     rendered = ""
-    try:
-        rendered = _render_translated(path, boxes)
-    except Exception:
-        logger.warning("[OCR] paste render failed", exc_info=True)
+
     # group boxes that share a visual row so the TEXT reads like the image
     # ("[tag] name" stays one line instead of splitting) — the boxes remain
     # separate for painting
@@ -990,16 +1260,214 @@ def _paste_handle(detector, rid: str, path: str) -> None:
     if cur:
         grouped.append(cur)
 
+    # r535: with an English "Your language", incidental UI chrome ("Chat",
+    # window titles) read from a screenshot is pure noise next to the foreign
+    # content the user pasted the image FOR — drop text rows with no foreign
+    # script. An ALL-English paste keeps its text (logging it is the point),
+    # and non-English user languages are untouched.
+    def _grp_foreign(g):
+        import re as _re
+        return any(_re.search("[\\u0370-\\u1fff\\u2e80-\\uffff]", x[0])
+                   for x in g)
+    # under Target="Auto Detect" there is NO pinned partner language, so the
+    # full transcript stays (r539, user request) — filtering only applies to
+    # an explicit pair like ZH->EN
+    if _skip_ascii and not _auto_eff \
+            and any(_grp_foreign(g) for g in grouped):
+        grouped = [g for g in grouped if _grp_foreign(g)]
+
+    # r536: the same text read from two places in one image (a name inside
+    # the picture AND as a caption under it) is one fact — list it once.
+    _seen_txt: set = set()
+    _uniq = []
+    for g in grouped:
+        key = _norm_cmp(" ".join(x[0] for x in g))
+        if key and key in _seen_txt:
+            continue
+        _seen_txt.add(key)
+        _uniq.append(g)
+    grouped = _uniq
+
     def _eff(t):
         return trs.get(t) or _roman_fallback(t) or t
 
+    # the image reads left-to-right: a tag box detected 2px above its
+    # row's time box must not push the time to the END of the text line
+    for g in grouped:
+        g.sort(key=lambda r: r[2])
+
+    def _probe_color(x1, y1, x2, y2):
+        """Dominant glyph color of a region, as a display-safe hex — ''
+        for neutral text (the log's default gray reads fine there)."""
+        try:
+            import numpy as _np
+            crop = bgr[max(0, y1):y2, max(0, x1):x2].astype("float32")
+            if crop.size < 300:
+                return ""
+            lum = (crop[..., 2] * 0.299 + crop[..., 1] * 0.587
+                   + crop[..., 0] * 0.114)
+            dev = _np.abs(lum - float(_np.median(lum)))
+            m = dev >= max(14.0, float(_np.percentile(dev, 85)))
+            if int(m.sum()) < 30:
+                return ""
+            b_, g_, r_ = [int(v) for v in _np.median(crop[m], axis=0)]
+            if max(r_, g_, b_) - min(r_, g_, b_) < 28:
+                return ""
+            mx = max(r_, g_, b_)
+            if mx < 170:            # lift dark colors for the dark theme
+                k = 170.0 / max(1, mx)
+                r_, g_, b_ = [min(255, int(v * k)) for v in (r_, g_, b_)]
+            return "#%02x%02x%02x" % (r_, g_, b_)
+        except Exception:
+            return ""
+
+    def _grp_color(g):
+        return _probe_color(min(x[2] for x in g), min(x[3] for x in g),
+                            max(x[4] for x in g), max(x[5] for x in g))
+
+    line_colors = [_grp_color(g) for g in grouped]
+
+    # per-BOX segments: a mixed row (white time + green tag + white name)
+    # probes neutral as a whole — each box keeps its own color instead. A
+    # MERGED "[tag] name" box still averages out, so a bracketed head gets
+    # its own left-region probe and its own colored span.
+    _BRK = ("^(.{0,60}?)([\\[\\u3010][^\\]\\u3011]{1,12}"
+            "[\\]\\u3011])(.*)$")
+
+    def _seg_of_box(x):
+        """[src_seg, dst_seg, color] pieces of one detected box. A bracketed
+        tag ANYWHERE in a merged box ("23:55:49 [Visit] Name") gets its own
+        segment — its pixel span estimated from character position — so the
+        tag color rides every line of the trio."""
+        import re as _re
+        t = str(x[0])
+        d = _eff(t)
+        c = _probe_color(x[2], x[3], x[4], x[5])
+        if c:
+            return [[t, d, c]]
+        m = _re.match(_BRK, t)
+        if not m:
+            return [[t, d, c]]
+        w = max(1, x[4] - x[2])
+        n = max(1, _wlen(t))
+        a = x[2] + int(w * (_wlen(m.group(1)) / n))
+        b = x[2] + int(w * ((_wlen(m.group(1)) + _wlen(m.group(2))) / n))
+        if b < a + 6:
+            b = a + 6
+        lc = _probe_color(a, x[3], b, x[5])
+        if not lc:
+            return [[t, d, c]]
+        dm = _re.match(_BRK, d or "")
+        pre_d = dm.group(1).strip() if dm else ""
+        tag_d = dm.group(2) if dm else ""
+        rest_d = dm.group(3).strip() if dm else (d or "")
+        rest_d = rest_d.lstrip("]|\u2502\u3011 ").strip()
+        segs = []
+        if m.group(1).strip():
+            segs.append([m.group(1).strip(), pre_d, ""])
+        elif pre_d:
+            tag_d = (pre_d + " " + tag_d).strip()
+        segs.append([m.group(2), tag_d, lc])
+        if m.group(3).strip():
+            segs.append([m.group(3).strip(), rest_d,
+                         _probe_color(b, x[3], x[4], x[5])])
+        return segs
+
+    col_segs = [sum((_seg_of_box(x) for x in g), []) for g in grouped]
+
+    # r547 (user suggestion): educated guess — the same tag word appearing
+    # colored elsewhere lends its color to siblings the image left plain
+    # (old renders painted some tags white)
+    def _tag_key(txt):
+        import re as _re
+        m = _re.search("[\\[\\u3010]([^\\]\\u3011]{1,12})[\\]\\u3011]", txt)
+        return m.group(1).strip().lower() if m else ""
+
+    _votes: dict = {}
+    for line in col_segs:
+        for seg in line:
+            k = _tag_key(seg[0])
+            if k and seg[-1]:
+                _votes.setdefault(k, []).append(seg[-1])
+    import re as _re_v
+    _fixed = []
+    for line in col_segs:
+        out = []
+        for seg in line:
+            k = _tag_key(seg[0]) if not seg[-1] else ""
+            if k and k in _votes:
+                vs = _votes[k]
+                col = max(set(vs), key=vs.count)
+                m = _re_v.match(_BRK, seg[0])
+                if m:
+                    dm = _re_v.match(_BRK, seg[1] or "")
+                    pre_d = dm.group(1).strip() if dm else ""
+                    tag_d = dm.group(2) if dm else ""
+                    rest_d = dm.group(3).strip() if dm else (seg[1] or "")
+                    if m.group(1).strip():
+                        out.append([m.group(1).strip(), pre_d, ""])
+                    elif pre_d:
+                        tag_d = (pre_d + " " + tag_d).strip()
+                    out.append([m.group(2), tag_d, col])
+                    if m.group(3).strip():
+                        out.append([m.group(3).strip(), rest_d, ""])
+                    continue
+            out.append(seg)
+        _fixed.append(out)
+    col_segs = _fixed
+
+    # r549: one source, one translation — a name translated properly in one
+    # row must not fall back to pinyin in another (prefer the ASCII/global
+    # translation over a diacritic fallback)
+    _best: dict = {}
+    for line in col_segs:
+        for s0, d0, c0 in line:
+            k = _norm_cmp(s0)
+            if k and d0 and _norm_cmp(d0) != k:
+                cur = _best.get(k)
+                if cur is None or (not cur.isascii() and d0.isascii()):
+                    _best[k] = d0
+    _alts: dict = {}
+    for line in col_segs:
+        for seg in line:
+            k = _norm_cmp(seg[0])
+            if k in _best:
+                if seg[1] and seg[1] != _best[k]:
+                    _alts.setdefault(k, set()).add(seg[1])
+                seg[1] = _best[k]
+    for b in boxes:
+        d_t = str(b[5] or "")
+        for k, alts in _alts.items():
+            for a in alts:
+                if a and a in d_t:
+                    d_t = d_t.replace(a, _best[k])
+        if d_t != str(b[5] or ""):
+            _i = boxes.index(b)
+            boxes[_i] = (*b[:5], d_t, *b[6:])
+    trs.update({k: v for k, v in
+                ((s0, seg1) for line in col_segs
+                 for s0, seg1, _c in line) if v})
+
+    try:
+        rendered = _render_translated(path, boxes)
+    except Exception:
+        logger.warning("[OCR] paste render failed", exc_info=True)
+
     src = "\n".join(" ".join(x[0] for x in g) for g in grouped)
     dst = "\n".join(" ".join(_eff(x[0]) for x in g) for g in grouped)
-    if dst == src:
+    if _norm_cmp(dst) == _norm_cmp(src):
         dst = ""
+    # r537: no line produced a translation (or a reading) -> the paste is
+    # already in the user's language. OCR transcripts of English are jammed
+    # junk ("wordsruntogether") — log just the picture, no text block.
+    # (r539: unless Target is "Auto Detect" — then the transcript is wanted)
+    if not dst.strip() and not _auto_eff:
+        src = ""
     logger.info("[OCR] paste: %d line(s) in %.1fs rendered=%s",
                 len(texts), time.monotonic() - t0, bool(rendered))
-    _paste_feed(src, dst, rid=rid, img=rendered)
+    _paste_feed(src, dst, rid=rid, img=rendered,
+                colors=line_colors if src else None,
+                colseg=col_segs if src else None)
 
 
 def _paste_translate_many(texts: list, timeout_s: float = 40.0) -> dict:
@@ -1052,10 +1520,16 @@ def _paste_translate(src: str, timeout_s: float = 25.0) -> str:
 
 
 def _paste_feed(src: str, dst: str, *, rid: str = "", img: str = "",
-                empty: bool = False, error: bool = False) -> None:
+                empty: bool = False, error: bool = False,
+                colors: list | None = None,
+                colseg: list | None = None) -> None:
     import json as _json
 
     payload = {"src": src, "dst": dst, "paste": True}
+    if colors and any(colors):
+        payload["colors"] = colors
+    if colseg and any(seg[-1] for line in colseg for seg in line):
+        payload["colseg"] = colseg
     if rid:
         payload["id"] = rid
     if img:
@@ -1082,7 +1556,10 @@ def _load_translation_prefs() -> None:
             data = json.load(fh)
         lang = str(data.get("languages", {}).get("source_language") or "en")
         _XLAT_TARGET[0] = lang
-        logger.info("[OCR] translation target: %s", lang)
+        _XLAT_AUTO[0] = bool(data.get("languages", {})
+                             .get("auto_detect_peer_voice"))
+        logger.info("[OCR] translation target: %s auto=%s",
+                    lang, _XLAT_AUTO[0])
     except Exception as exc:
         logger.debug("[OCR] settings read failed (target stays en): %s", exc)
 
@@ -3252,7 +3729,7 @@ def _track_loop(cap: _Capture, target: _Target, anchors: _Anchors,
             # Pass 1 — suppressed-name rects. Anything sitting directly
             # BENEATH a suppressed name is nameplate chrome (status line,
             # pronouns, bio) and is suppressed with it, whatever it says —
-            # content matching can't catch "INTP /<name>&…" bios, geometry can.
+            # content matching can't catch "INTP /<name>&..." bios, geometry can.
             name_rects: list[tuple[float, float, float, float]] = []
             if _ignore_active() or _groups_active():
                 for tr in tracked:
@@ -3306,7 +3783,7 @@ def _track_loop(cap: _Capture, target: _Target, anchors: _Anchors,
             def _above_rects(bx1: float, by1: float, bx2: float, by2: float,
                              arects) -> bool:
                 # GROUP banners hug the TOP edge of the nameplate ('中国烟草'
-                # / 'Today Mute …' plates). Gap is measured glyph-box to
+                # / 'Today Mute ...' plates). Gap is measured glyph-box to
                 # glyph-box, so BOTH plates' padding sits between — up to
                 # ~1.35 name-heights is still "hugging". Chat bubbles float
                 # clearly higher, above the group banner itself.

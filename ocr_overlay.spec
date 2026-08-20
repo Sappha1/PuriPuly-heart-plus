@@ -35,6 +35,10 @@ datas = (
     collect_data_files("rapidocr_onnxruntime", include_py_files=True)
     + collect_data_files("jieba")               # dict.txt for word-grouped pinyin
     + collect_data_files("pypinyin")
+    # wordninja is a lone module; its frequency list lives in a sibling
+    # data dir it resolves relative to its own file
+    + [(str(Path(SPECPATH) / ".venv/Lib/site-packages/wordninja/wordninja_words.txt.gz"),
+        "wordninja")]
 )
 
 # onnxruntime-directml: DirectML.dll + providers ride along here
@@ -43,6 +47,7 @@ runtime_binaries = collect_dynamic_libs("onnxruntime")
 hiddenimports = [
     "puripuly_heart.ocr.detector",
     "rapidocr_onnxruntime",
+    "wordninja",
     # deps of rapidocr's dynamically-imported engine modules — invisible to
     # static analysis because the importing .py files ship as data
     "pyclipper",

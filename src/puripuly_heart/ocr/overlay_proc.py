@@ -619,6 +619,33 @@ def _paste_rows(detector, bgr) -> list:
     """Read a pasted image end-to-end: (text, score, x1, y1, x2, y2) rows in
     reading order."""
     rows = detector.read_lines(bgr)
+    # Japanese second pass: the main rec model is the CHINESE one, whose
+    # charset has essentially no kana — kana-only lines come back EMPTY and
+    # Japanese signs vanish. Re-read with the japan model and adopt its rows
+    # for regions the first pass left uncovered.
+    try:
+        ja = detector.read_lines_ja(bgr)
+    except Exception:
+        ja = []
+    if ja:
+        import re as _re
+        _kana = _re.compile("[\\u3041-\\u30ff]")
+
+        def _iou(a, b):
+            ix = max(0, min(a[4], b[4]) - max(a[2], b[2]))
+            iy = max(0, min(a[5], b[5]) - max(a[3], b[3]))
+            inter = ix * iy
+            ua = ((a[4] - a[2]) * (a[5] - a[3])
+                  + (b[4] - b[2]) * (b[5] - b[3]) - inter)
+            return inter / ua if ua > 0 else 0.0
+
+        for jr in ja:
+            overlap = max((_iou(jr, r) for r in rows), default=0.0)
+            # only lines the ch pass missed entirely, and only when they
+            # actually contain kana — a re-read of Latin/hanzi the ch model
+            # already handled must not duplicate or degrade it
+            if overlap < 0.3 and jr[1] >= 0.35 and _kana.search(jr[0]):
+                rows.append(jr)
     if not rows:
         return []
     rows = [r for r in rows if r[1] >= 0.30 and r[0] != "?"]

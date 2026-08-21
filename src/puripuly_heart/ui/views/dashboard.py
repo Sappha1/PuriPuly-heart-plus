@@ -19,7 +19,7 @@ from puripuly_heart.ui.fonts import font_for_language
 from puripuly_heart.ui.i18n import get_locale, language_name, t
 from puripuly_heart.ui.overlay_peer_contract import OverlayPeerConsumerContract
 
-_BUILD_TAG = "r555"  #increment each build so user can confirm version
+_BUILD_TAG = "r563"  #increment each build so user can confirm version
 
 # ── VRCT-style dark palette ──────────────────────────────────────────────────
 _BG_MAIN = "#2e2f32"
@@ -1831,7 +1831,20 @@ class DashboardView(ft.Row):
             self._steam_view = ft.Container()
             self._tab_steam.visible = False
             self._tab_steam_wrap.visible = False
-        self._chat_body = ft.Container(content=self._vrc_chat_body, expand=True)
+        # Both chat bodies live PERMANENTLY in this Stack from construction.
+        # Building it lazily on the first Steam switch REPARENTED the live
+        # VRC chat tree, after which its incremental updates (new log
+        # entries, entry-box clears, jump button) silently stopped painting
+        # until something forced a full re-render.
+        self._vrc_wrap = ft.Container(
+            content=self._vrc_chat_body,
+            left=0, top=0, right=0, bottom=0)
+        self._steam_wrap = ft.Container(
+            content=None, left=0, top=0, right=0, bottom=0,
+            opacity=0, offset=ft.Offset(-2, 0))
+        self._chat_stack = ft.Stack([self._vrc_wrap, self._steam_wrap],
+                                    expand=True)
+        self._chat_body = ft.Container(content=self._chat_stack, expand=True)
         right_panel = ft.Container(
             content=ft.Column(
                 [
@@ -1937,14 +1950,33 @@ class DashboardView(ft.Row):
 
     # ── beta/steam-bridge: chat tab strip (VRChat | Steam) ───────────────────
     def _select_chat_tab(self, which: str) -> None:
+        if (which != "steam" and getattr(self, "_chat_tab", None) == "steam"
+                and hasattr(self, "_steam_view")):
+            # Snapshot the Steam view's live scroll state BEFORE the pane swap
+            # unmounts its list — teardown fires scroll events with bogus
+            # positions that used to overwrite the remembered spot.
+            with contextlib.suppress(Exception):
+                self._steam_view.deactivate()
         self._chat_tab = which
         on, off = _TOGGLE_ON, _TEXT_FAINT
         self._tab_vrc.content.color = on if which == "vrc" else off
         self._tab_vrc.bgcolor = "#243447" if which == "vrc" else ft.Colors.TRANSPARENT
         self._tab_steam.content.color = on if which == "steam" else off
         self._tab_steam.bgcolor = "#243447" if which == "steam" else ft.Colors.TRANSPARENT
-        self._chat_body.content = (
-            self._steam_view if which == "steam" else self._vrc_chat_body)
+        # The Stack is built at construction (see _chat_body) so nothing is
+        # ever reparented; the inactive pane is hidden with opacity 0 and
+        # shoved off-viewport (hit-tests follow the offset, so it can't eat
+        # clicks) while staying mounted — its scroll position never moves.
+        # Only the Steam view itself mounts lazily, on its first select.
+        if which == "steam" and self._steam_wrap.content is None:
+            self._steam_wrap.content = self._steam_view
+        _steam_on = which == "steam"
+        self._steam_wrap.opacity = 1 if _steam_on else 0
+        self._steam_wrap.offset = (ft.Offset(0, 0) if _steam_on
+                                   else ft.Offset(-2, 0))
+        self._vrc_wrap.opacity = 0 if _steam_on else 1
+        self._vrc_wrap.offset = (ft.Offset(-2, 0) if _steam_on
+                                 else ft.Offset(0, 0))
         # VRChat-only header actions don't apply to the Steam tab.
         with contextlib.suppress(Exception):
             self._vrc_header_actions.visible = (which != "steam")
@@ -7465,8 +7497,10 @@ class DashboardView(ft.Row):
         card = getattr(self, "_text_section_card", None)
         if card is None:
             return
-        visible = (not getattr(self, "_unified_translation", True)
-                   or not self._peer_source_lang_code)
+        # the user's Separate-box toggle ALWAYS wins — Auto Detect used to
+        # force the card visible as a "needs a manual pick" escape hatch,
+        # which read as the toggle being ignored
+        visible = not getattr(self, "_unified_translation", True)
         if card.visible != visible:
             card.visible = visible
             try:

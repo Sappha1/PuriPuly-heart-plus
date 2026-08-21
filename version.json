@@ -1,11 +1,12 @@
 {
-  "build": 555,
-  "tag": "r555",
-  "date": "2026-08-20",
+  "build": 563,
+  "tag": "r563",
+  "date": "2026-08-21",
   "notes": [
-    "Added: Load earlier messages in Steam chats; pasted-image text keeps original colors and settings re-apply instantly",
-    "Improved: translated-image painting keeps unchanged text (times, names) as original pixels with aligned, consistent tags",
-    "Improved: OCR cleanup - jammed words re-spaced, broken brackets repaired, edge junk dropped",
-    "Fixed: instant image copy, live Auto Detect chip, failed reads keep the picture with a note"
+    "Added: Japanese text recognition in pasted images (OCR module build 301)",
+    "Improved: Steam chats keep their exact scroll position - instant tab switches, scrollbar tracks the cursor",
+    "Fixed: invisible chats, missing translations in newly opened tabs, image-send wiping open chats",
+    "Fixed: Chat tab log not updating until a tab switch",
+    "Fixed: Text Translation box toggle with Auto Detect, per-chat Load earlier, Ctrl+F on the Steam tab"
   ]
 }

@@ -2,6 +2,15 @@
 
 User-facing changes per build. The latest build's highlights also appear in-app when an update is ready.
 
+## r563 — 2026-08-21
+
+- Added: Japanese text in pasted images is now recognized — kana lines previously came back empty (dedicated recognition model, OCR module build 301)
+- Improved: Steam chats keep their exact scroll position — tab switches (Chat|Steam and between chat tabs) are instant with no reload flicker, and dragging the scrollbar tracks the cursor precisely
+- Fixed: a Steam chat could render invisible until reopened, and a newly opened tab's translations could stay missing until the tab was reopened
+- Fixed: sending an image could wipe all open Steam chats to the module screen even though the picture still sent
+- Fixed: the Chat tab log could stop updating (sent text staying in the box) until switching tabs and back
+- Fixed: the separate Text Translation box now follows its toggle when the target language is Auto Detect; Ctrl+F no longer captures typing on the Steam tab; "Load earlier messages" works independently per chat
+
 ## r555 — 2026-08-20
 
 - Added: "Load earlier messages" in Steam chats — pages back through the server's history

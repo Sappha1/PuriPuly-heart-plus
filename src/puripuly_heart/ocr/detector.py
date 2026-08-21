@@ -229,6 +229,83 @@ class TextDetector:
                 continue
         return out
 
+    def _ensure_ja_engine(self):
+        """Second engine with the JAPAN rec model. The bundled ch_PP-OCRv3
+        rec charset has essentially no kana (4 katakana / 1 hiragana of 6625
+        chars), so kana-only lines recognize as EMPTY — Japanese signs
+        vanished from pastes entirely. Shares nothing with the main engine;
+        built lazily on first use, None if the model files are absent."""
+        eng = getattr(self, "_ja_engine", None)
+        if eng is not None:
+            return eng if eng != "missing" else None
+        with self._init_lock:
+            eng = getattr(self, "_ja_engine", None)
+            if eng is not None:
+                return eng if eng != "missing" else None
+            try:
+                from pathlib import Path as _P
+                base = _P(__file__).resolve().parent / "models"
+                mp = base / "japan_PP-OCRv4_rec_mobile.onnx"
+                kp = base / "japan_dict.txt"
+                if not mp.exists() or not kp.exists():
+                    self._ja_engine = "missing"
+                    return None
+                from rapidocr_onnxruntime import RapidOCR as _R
+                from rapidocr_onnxruntime.ch_ppocr_v3_rec.text_recognize \
+                    import TextRecognizer as _Rec
+                eng = _R()
+                eng.text_recognizer = _Rec({
+                    "use_cuda": False,
+                    "model_path": str(mp), "keys_path": str(kp),
+                    "rec_img_shape": [3, 48, 320], "rec_batch_num": 6})
+                self._ja_engine = eng
+                return eng
+            except Exception as exc:
+                logger.warning("[OCR] japan rec unavailable: %s", exc)
+                self._ja_engine = "missing"
+                return None
+
+    def read_lines_ja(self, bgr: np.ndarray) -> list[tuple[str, float, int, int, int, int]]:
+        """read_lines with the japan recognizer — same shape of output.
+        Empty list when the japan model isn't bundled or anything fails."""
+        eng = self._ensure_ja_engine()
+        if eng is None:
+            return []
+        pre = None
+        prev = None
+        try:
+            pre = eng.text_detector.preprocess_op[0]
+            prev = pre.limit_side_len
+        except Exception:
+            pre = None
+        try:
+            with self._init_lock:
+                if pre is not None:
+                    pre.limit_side_len = 736
+                try:
+                    # text_score lowered: stylized kana legitimately lands in
+                    # the 0.3-0.5 band; _paste_rows filters merged rows again
+                    res, _elapse = eng(bgr, text_score=0.3, box_thresh=0.5,
+                                       unclip_ratio=1.6)
+                finally:
+                    if pre is not None and prev is not None:
+                        pre.limit_side_len = prev
+        except Exception as exc:
+            logger.warning("[OCR] japan read failed: %s", exc)
+            return []
+        out: list[tuple[str, float, int, int, int, int]] = []
+        for row in (res or []):
+            try:
+                box, text, score = row[0], str(row[1]), float(row[2])
+                ys = [int(p[1]) for p in box]
+                xs = [int(p[0]) for p in box]
+                if text.strip():
+                    out.append((text.strip(), score,
+                                min(xs), min(ys), max(xs), max(ys)))
+            except Exception:
+                continue
+        return out
+
     def recognize(self, crops: list[np.ndarray]) -> list[tuple[str, float]]:
         """Read text from BGR crops (batch). Returns (text, score) per crop.
         FAIL-OPEN: engine trouble returns high-score empties so callers don't

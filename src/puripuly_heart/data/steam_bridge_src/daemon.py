@@ -281,11 +281,15 @@ class Daemon:
         with contextlib.suppress(Exception):
             _diag("REVIVE friends session (page reload after persona 0)")
             await self.emit({"ev": "status", "signed_in": False, "mode": "starting"})
-            await self.steam.reload()
-            for _ in range(30):
-                await asyncio.sleep(1.0)
-                if await self.steam.is_signed_in():
-                    break
+            self._reloading = True   # pause the poll loop over the reload
+            try:
+                await self.steam.reload()
+                for _ in range(30):
+                    await asyncio.sleep(1.0)
+                    if await self.steam.is_signed_in():
+                        break
+            finally:
+                self._reloading = False
             self.signed = await self.steam.is_signed_in()
             await self._load_own()
             if self.signed:
@@ -317,7 +321,11 @@ class Daemon:
 
     async def refresh_list(self) -> None:
         items = await self.steam.list_friends()   # full friends list + status
-        self.convos = {i["acct"]: i for i in items}
+        # never clobber a populated list with an empty read — the page is
+        # mid-reload (401 recovery) and an empty push would make the UI treat
+        # every open tab as stale and wipe them
+        if items or not self.convos:
+            self.convos = {i["acct"]: i for i in items}
 
     def _friends_sig(self):
         # top-6 recently-messaged order, so RECENT re-orders on new messages
@@ -515,6 +523,10 @@ class Daemon:
         while True:
             await asyncio.sleep(1.3)
             ticks += 1
+            if getattr(self, "_reloading", False):
+                # a deliberate page reload is in progress — every read would
+                # see a half-booted page and emit bogus empty events
+                continue
             # Refresh the friends list (status changes) every ~12s, but only
             # push when something actually changed, so the list doesn't rebuild
             # (and scroll-jump) needlessly.
@@ -807,16 +819,22 @@ class Daemon:
                             # keeps working) — a reload refreshes them from
                             # the saved login. Reload, re-open, retry once.
                             _diag("SEND_IMAGE 401 stale web session -> reload + retry")
-                            await self.steam.reload()
-                            for _ in range(20):
-                                await asyncio.sleep(1.0)
-                                if await self.steam.is_signed_in():
-                                    break
-                            with contextlib.suppress(Exception):
-                                await self.steam.open_conversation(acct)
-                            result = await self.steam.send_image(
-                                acct, b64, Path(path).name, mime,
-                                spoiler=bool(obj.get("spoiler")), used=used_ids)
+                            self._reloading = True   # pause the poll loop —
+                            # its reads of the half-booted page emit bogus
+                            # empty friends / blank own-info events
+                            try:
+                                await self.steam.reload()
+                                for _ in range(20):
+                                    await asyncio.sleep(1.0)
+                                    if await self.steam.is_signed_in():
+                                        break
+                                with contextlib.suppress(Exception):
+                                    await self.steam.open_conversation(acct)
+                                result = await self.steam.send_image(
+                                    acct, b64, Path(path).name, mime,
+                                    spoiler=bool(obj.get("spoiler")), used=used_ids)
+                            finally:
+                                self._reloading = False
                     except Exception as exc:
                         result = {"step": "daemon", "err": str(exc)}
                     if result.get("ok"):

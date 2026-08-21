@@ -39,6 +39,12 @@ datas = (
     # data dir it resolves relative to its own file
     + [(str(Path(SPECPATH) / ".venv/Lib/site-packages/wordninja/wordninja_words.txt.gz"),
         "wordninja")]
+    # japan rec model for the paste second pass — the ch rec charset has no
+    # kana; detector.read_lines_ja resolves these next to its own file
+    + [(str(Path(SPECPATH) / "src/puripuly_heart/ocr/models/japan_PP-OCRv4_rec_mobile.onnx"),
+        "puripuly_heart/ocr/models"),
+       (str(Path(SPECPATH) / "src/puripuly_heart/ocr/models/japan_dict.txt"),
+        "puripuly_heart/ocr/models")]
 )
 
 # onnxruntime-directml: DirectML.dll + providers ride along here

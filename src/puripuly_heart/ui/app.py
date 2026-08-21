@@ -1362,6 +1362,20 @@ class TranslatorApp:
 
                     self._queue_settings_mutation_task(_task)
 
+        # This swap disposes the WHOLE dashboard — including the Steam view,
+        # which stays mounted in the chat Stack even while the VRC tab is
+        # foreground — so the scroll protocol must run whenever the Steam
+        # view has ever been mounted, not only when its tab is showing:
+        # snapshot before the unmount (teardown scroll events would poison
+        # the remembered spot) and re-anchor after the remount (every chat
+        # column comes back at the top).
+        _sv = getattr(dash, "_steam_view", None) if dash is not None else None
+        _steam_live = (_sv is not None
+                       and getattr(getattr(dash, "_steam_wrap", None),
+                                   "content", None) is not None)
+        if _steam_live and previous_tab == 0 and index != 0:
+            with contextlib.suppress(Exception):
+                _sv.deactivate()
         view_map = {0: self.view_dashboard, 1: self.view_settings, 2: self.view_logs,
                     3: self.view_about, 4: self.view_api_requests}
         self._inner_content.content = view_map.get(index, self.view_dashboard)
@@ -1370,6 +1384,10 @@ class TranslatorApp:
         for i, ic in enumerate(self._top_nav_icons):
             ic.color = "#48a495" if (i + 1) == index else "#6e7175"
         self.content_area.update()
+        if _steam_live and index == 0 and previous_tab != 0:
+            with contextlib.suppress(Exception):
+                _sv.note_remount()
+                _sv.activate()
         self._set_bottom_nav_selected(index)
         if index == 1:
             self.view_settings.refresh_prompt_if_empty()
@@ -1939,9 +1957,13 @@ class TranslatorApp:
             if bool(getattr(event, "ctrl", False)) and not bool(
                 getattr(event, "alt", False)
             ) and not bool(getattr(event, "meta", False)):
-                opener = getattr(dashboard, "open_find_bar", None)
-                if callable(opener):
-                    opener()
+                # find-in-chat belongs to the VRC chat tab; on the Steam tab
+                # the (permanently mounted, invisible) find bar would steal
+                # focus and swallow all typing
+                if getattr(dashboard, "_chat_tab", "") != "steam":
+                    opener = getattr(dashboard, "open_find_bar", None)
+                    if callable(opener):
+                        opener()
                 return
         # beta/steam-bridge: Ctrl+V with an IMAGE in the clipboard queues it as an
         # attachment in the Steam tab. Text clipboards return False so the normal

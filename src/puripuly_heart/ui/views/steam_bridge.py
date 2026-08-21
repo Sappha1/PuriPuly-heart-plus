@@ -529,8 +529,27 @@ class SteamBridgeView(ft.Container):
         # auto_scroll is deliberately OFF forever: Flutter re-applies it on ANY
         # repaint (window redraws, PrintScreen, etc.), yanking the list to the end.
         # Following is done by explicit scroll_to commands instead (_scroll_to_end).
-        self._messages = ft.ListView(expand=True, spacing=10, padding=14, auto_scroll=False,
-                                     on_scroll=self._on_msg_scroll)
+        # Every open chat gets its OWN scrollable Column, all permanently
+        # mounted in this Stack; switching chats toggles opacity/offset (the
+        # same trick as the Chat|Steam pane swap) so each chat keeps its
+        # scroll position at the Flutter level and re-opens instantly.
+        # Columns, not ListViews: the lazy ListView only ESTIMATES its total
+        # height, which made scrollbar drags accelerate away from the cursor
+        # as the estimate shifted; a scrollable Column lays everything out
+        # and the thumb tracks the cursor exactly.
+        self._msg_lists: dict = {}      # acct -> (wrapper Container, Column)
+        self._col_epoch: dict = {}      # acct -> _remount_epoch when anchored
+        self._remount_epoch = 0
+        self._loadmore_busy: dict = {}  # acct -> load-earlier in flight
+        self._messages_fallback = ft.Column(
+            controls=[], expand=True, spacing=10,
+            scroll=ft.ScrollMode.AUTO, auto_scroll=False,
+            on_scroll=self._on_msg_scroll,
+            horizontal_alignment=ft.CrossAxisAlignment.STRETCH)
+        self._messages_fb_wrap = ft.Container(
+            content=self._messages_fallback, padding=14,
+            left=0, top=0, right=0, bottom=0)
+        self._messages_stack = ft.Stack([self._messages_fb_wrap], expand=True)
         self._following = True
         self._max_scroll = 0.0
         # Centered horizontally at the bottom, matching the VRChat chat tab.
@@ -592,7 +611,7 @@ class SteamBridgeView(ft.Container):
             top_bar,
             ft.Divider(height=1, color=_DIVIDER, thickness=1),
             ft.Container(content=ft.Stack([
-                ft.SelectionArea(content=self._messages), self._jump_btn,
+                ft.SelectionArea(content=self._messages_stack), self._jump_btn,
             ], expand=True), expand=True),
             typing_row,
             ft.Divider(height=1, color=_DIVIDER, thickness=1),
@@ -834,13 +853,25 @@ class SteamBridgeView(ft.Container):
             elif self._active is None and not self._state_overlay.visible:
                 self._show_state_overlay("idle")
             elif self._active is not None and self.page:
-                # The tab swap re-mounts the message list and resets its
-                # scroll. Restore this chat's remembered spot: the bottom if
-                # the user was following, else their exact kept position.
-                # Capture NOW — the re-mount's own scroll event would clobber
-                # the kept dicts before the anchor task runs.
+                # Restore this chat's remembered spot: the bottom if the user
+                # was following, else their exact kept position. With the
+                # persistently-mounted columns this is normally a no-op; it
+                # matters after a REAL remount (App-settings round trip).
+                # NOTE: no _mount_guard stamp here — a plain tab switch fires
+                # no remount events any more, and the guard was eating real
+                # scrolls made right after returning. note_remount() stamps
+                # it for the flows that actually dispose the tree.
                 _keep = (None if self._was_following.get(self._active, True)
                          else self._scroll_pos.get(self._active))
+                if self._messages.opacity != 1:
+                    # a stale opacity-0 curtain from a detached anchor task
+                    # makes the whole log invisible-but-clickable — lift it
+                    self._messages.opacity = 1
+                _vlog.info("[SteamView] activate warm: keep=%s", _keep)
+                self._keep_once = (_keep, time.time())  # r556: the history
+                # re-render 1-2s later must restore THIS spot, not whatever
+                # a remount's scroll reset wrote into the dicts meanwhile
+                self._col_epoch[self._active] = getattr(self, "_remount_epoch", 0)
                 self.page.run_task(self._anchor_end, _keep)
             return
         self._started = True
@@ -856,7 +887,39 @@ class SteamBridgeView(ft.Container):
         if self.page:
             self.page.run_task(self._connect)
 
+    def note_remount(self) -> None:
+        # The WHOLE dashboard was disposed and remounted (App-settings round
+        # trip): every chat column's Flutter scroll reset to the top and the
+        # remount fires bogus scroll events. Guard the dicts and invalidate
+        # every column's anchored-epoch so the next _open re-anchors it.
+        self._mount_guard = time.time()
+        self._remount_epoch = getattr(self, "_remount_epoch", 0) + 1
+
+    def deactivate(self) -> None:
+        # Tab is switching AWAY (or the dashboard itself is being swapped
+        # out). Teardown scroll events with bogus positions must not land in
+        # the dicts; the in-memory _following/_last_pixels pair is the last
+        # REAL user state — write it now and ignore events during teardown.
+        if self._active is not None:
+            self._was_following[self._active] = self._following
+            if (not self._following
+                    and getattr(self, "_last_pixels_acct", None) == self._active):
+                # only trust the pixels if they were recorded for THIS chat —
+                # after a chat switch they can still describe the previous one
+                self._scroll_pos[self._active] = float(
+                    getattr(self, "_last_pixels", 0.0))
+        _vlog.info("[SteamView] deactivate: following=%s px=%.0f own=%s",
+                   self._following, float(getattr(self, "_last_pixels", 0) or 0),
+                   getattr(self, "_last_pixels_acct", None) == self._active)
+        self._mount_guard = time.time()
+
     def _show_state_overlay(self, mode: str) -> None:
+        if mode == "idle" and self._messages.controls:
+            # r556: a restored chat already painted (a 50ms cold-start race)
+            # — the idle cover would sit over it INVISIBLY forever. A real
+            # idle state always has an empty message list.
+            _vlog.info("[SteamView] overlay 'idle' suppressed: chat visible")
+            return
         _vlog.info("[SteamView] overlay -> %r (page=%s)", mode, self.page is not None)
         if self._is_popout and mode in ("idle", "off", "popped"):
             return                      # module control lives in the main app
@@ -1757,6 +1820,12 @@ class SteamBridgeView(ft.Container):
         # cache hits are instant; only genuinely new text would call the API
         await asyncio.gather(*(self._translate_block(b, seq) for b in blocks))
         self._save_cache()
+        # belt: per-control patches into a freshly (re)structured tree can be
+        # dropped silently — one batched flush guarantees the translations
+        # actually paint ("no translations until close+reopen" bug)
+        with contextlib.suppress(Exception):
+            if self.page and seq == self._open_seq:
+                self.page.update()
 
     def _reload_chat(self) -> None:
         # Full reload from the helper (re-reads + re-groups server history) —
@@ -2550,6 +2619,10 @@ class SteamBridgeView(ft.Container):
             self._scroll_pos.pop(a, None)
             self._was_following.pop(a, None)
             self._render_fp.pop(a, None)
+            _ce = self._msg_lists.pop(a, None)
+            if _ce is not None:
+                with contextlib.suppress(Exception):
+                    self._messages_stack.controls.remove(_ce[0])
         if self._active in removed and self.page:
             self.page.run_task(self._open, acct)
         self._rebuild_tabs()
@@ -2562,10 +2635,14 @@ class SteamBridgeView(ft.Container):
         self._scroll_pos.clear()
         self._was_following.clear()
         self._render_fp.clear()
-        self._messages.controls.clear()
+        for _a, (_w, _c) in list(self._msg_lists.items()):
+            with contextlib.suppress(Exception):
+                self._messages_stack.controls.remove(_w)
+        self._msg_lists.clear()
         self._last_block = None
         self._hist_blocks = []
         self._active = None
+        self._show_msg_list(None)
         self._set_chat_head(None)
         self._entry.disabled = True
         if self._module_on:
@@ -2581,16 +2658,22 @@ class SteamBridgeView(ft.Container):
         # a closed tab forgets its position — reopening jumps to the newest
         self._scroll_pos.pop(acct, None)
         self._was_following.pop(acct, None)
+        self._render_fp.pop(acct, None)   # a reopen must repaint, not fp-skip
+        self._loadmore_busy.pop(acct, None)
+        # drop the closed chat's mounted column — removing it from the stack
+        # blanks it immediately and frees its controls
+        _ent = self._msg_lists.pop(acct, None)
+        if _ent is not None:
+            with contextlib.suppress(Exception):
+                self._messages_stack.controls.remove(_ent[0])
         if acct == self._active:
-            # Clear the closed chat's content IMMEDIATELY — don't leave it on screen
-            # while the next chat's history loads.
-            self._messages.controls.clear()
             self._last_block = None
             self._hist_blocks = []
             if self._tabs:
                 self.page.run_task(self._open, self._tabs[-1])
                 return
             self._active = None
+            self._show_msg_list(None)
             self._set_chat_head(None)
             self._entry.disabled = True
             if self._module_on:
@@ -2601,14 +2684,62 @@ class SteamBridgeView(ft.Container):
             self.page.update()
 
     # ── messages ─────────────────────────────────────────────────────────────
+    @property
+    def _messages(self):
+        if self._active is not None:
+            return self._ensure_msg_list(self._active)
+        return self._messages_fallback
+
+    def _ensure_msg_list(self, acct):
+        ent = self._msg_lists.get(acct)
+        if ent is None:
+            col = ft.Column(
+                controls=[], expand=True, spacing=10,
+                scroll=ft.ScrollMode.AUTO, auto_scroll=False,
+                on_scroll=self._on_msg_scroll, data=acct,
+                horizontal_alignment=ft.CrossAxisAlignment.STRETCH)
+            wrap = ft.Container(content=col, padding=14,
+                                left=0, top=0, right=0, bottom=0,
+                                opacity=0, offset=ft.Offset(-2, 0))
+            ent = (wrap, col)
+            self._msg_lists[acct] = ent
+            self._messages_stack.controls.append(wrap)
+        return ent[1]
+
+    def _show_msg_list(self, acct) -> None:
+        # bring one chat's column on-stage; park the rest off-viewport
+        for a, (w, _c) in self._msg_lists.items():
+            on = (a == acct)
+            w.opacity = 1 if on else 0
+            w.offset = ft.Offset(0, 0) if on else ft.Offset(-2, 0)
+        fbw = self._messages_fb_wrap
+        fb_on = acct not in self._msg_lists
+        fbw.opacity = 1 if fb_on else 0
+        fbw.offset = ft.Offset(0, 0) if fb_on else ft.Offset(-2, 0)
+
     def _on_msg_scroll(self, e) -> None:
         with contextlib.suppress(Exception):
+            if getattr(e.control, "data", None) != self._active:
+                return   # echo from a hidden (non-active) chat column
             self._max_scroll = e.max_scroll_extent or 0.0
+            self._raw_pixels = float(e.pixels or 0)   # telemetry, not intent
+            # Events fired right after a tab-switch (re)mount, or as the echo
+            # of an _anchor_end scroll_to, carry stale/bogus geometry — they
+            # are NOT the user scrolling. Record nothing from them;
+            # _anchor_end maintains the state for its own scrolls.
+            now = time.time()
+            if (now - getattr(self, "_mount_guard", 0) < 0.8
+                    or now - getattr(self, "_anchor_ts", 0) < 0.5):
+                return
+            self._last_pixels = float(e.pixels or 0)
+            self._last_pixels_acct = self._active
+            self._user_scroll_ts = now   # real user movement vetoes pinning
             want = ((e.max_scroll_extent or 0) > 80
                     and e.pixels < (e.max_scroll_extent or 0) - 40)
             # While scrolled up, stop following new messages; resume at the bottom
             # or via the jump button. Scrolling only ever happens via _scroll_to_end.
             self._following = not want
+            self._keep_once = None   # a real scroll outranks the switch capture
             if self._active is not None:
                 self._scroll_pos[self._active] = float(e.pixels or 0)
                 self._was_following[self._active] = self._following
@@ -2618,31 +2749,114 @@ class SteamBridgeView(ft.Container):
 
     def _scroll_to_end(self, duration: int = 80) -> None:
         with contextlib.suppress(Exception):
+            # suppress the echo (and the animation's intermediate events) —
+            # programmatic scrolls must not register as user movement or arm
+            # the user-scroll veto against their own translation re-pin
+            self._anchor_ts = time.time() + max(0.0, duration / 1000.0)
             self._messages.scroll_to(offset=-1, duration=max(1, duration))
 
+    def _lift_opacity(self) -> None:
+        if self._messages.opacity != 1:
+            self._messages.opacity = 1
+            with contextlib.suppress(Exception):
+                self._messages.update()
+            with contextlib.suppress(Exception):
+                if self.page and self._messages.page is None:
+                    self.page.update()   # control detached: page-level
+                                         # flush so the lift isn't lost
+
     async def _anchor_end(self, pos: float | None = None) -> None:
-        # After a rebuild the client needs a beat to lay out the new content —
-        # scrolling immediately lands on stale geometry (the toggle-pushes-view-
-        # off-the-end bug). Anchor twice across a short delay to be sure.
         # pos=None jumps to the end (fresh chat); a px value restores a kept
-        # position (open tabs keep their spot, like real Steam). duration=1 and
-        # the pre-anchor opacity=0 mean the scroll is never visible.
+        # position (open tabs keep their spot, like real Steam). duration=1
+        # and the pre-anchor opacity=0 mean the scroll is never visible.
+        # A single early scroll lands on stale geometry (long lists lay out
+        # over many frames, and translations landing above the fold keep
+        # GROWING the content afterwards — Flutter keeps `pixels`, so an
+        # anchored-at-end view drifts mid-chat). For the end case, keep
+        # re-pinning until the extent stops moving; stop the moment the user
+        # scrolls away.
+        # Generation token: only the NEWEST anchor task may scroll or lift
+        # the curtain — a stale one crossing a chat switch or a re-render
+        # would scroll the wrong list or reveal a curtain the newer render
+        # just dropped.
+        self._anchor_gen = gen = getattr(self, "_anchor_gen", 0) + 1
         try:
-            for delay in (0.05, 0.2):
+            await asyncio.sleep(0.05)
+            if gen != self._anchor_gen:
+                return
+            self._following = pos is None
+            self._anchor_ts = time.time()
+            with contextlib.suppress(Exception):
+                self._messages.scroll_to(
+                    offset=(-1 if pos is None else pos), duration=1)
+            if pos is not None:
+                await asyncio.sleep(0.2)
+                if gen != self._anchor_gen:
+                    return
+                self._following = False
+                self._anchor_ts = time.time()
+                with contextlib.suppress(Exception):
+                    self._messages.scroll_to(offset=pos, duration=1)
+                # echo events are ignored, so keep the live pair honest and
+                # show the jump pill (a kept pos always means scrolled-up)
+                self._last_pixels = float(pos)
+                self._last_pixels_acct = self._active
+                if not self._jump_btn.visible:
+                    self._jump_btn.visible = True
+                    with contextlib.suppress(Exception):
+                        self._jump_btn.update()
+                return
+            if self._jump_btn.visible:
+                self._jump_btn.visible = False
+                with contextlib.suppress(Exception):
+                    self._jump_btn.update()
+            # End case: pin until the extent stops moving. The curtain stays
+            # DOWN while it settles (deadline-capped) so the user never sees
+            # the list bounce; after the deadline, pinning continues invisibly
+            # (at-end -> at-end). Any recent real user scroll vetoes the pin.
+            _t0 = time.time()
+            last_max = -1.0
+            stable = 0
+            for delay in (0.15, 0.2, 0.3, 0.5, 0.5, 0.7, 1.0, 1.0):
                 await asyncio.sleep(delay)
-                self._following = pos is None
+                if gen != self._anchor_gen:
+                    return
+                if time.time() - _t0 > 1.2:
+                    self._lift_opacity()
+                if not self._following:
+                    break                    # user scrolled away — they win
+                if time.time() - getattr(self, "_user_scroll_ts", 0) < 1.5:
+                    break                    # user is interacting — hands off
+                raw = float(getattr(self, "_raw_pixels", 0.0) or 0.0)
+                mx = float(getattr(self, "_max_scroll", 0.0) or 0.0)
+                if mx > 300 and raw < mx - 300:
+                    break                    # dragging up against the pin
+                self._anchor_ts = time.time()
                 with contextlib.suppress(Exception):
-                    self._messages.scroll_to(
-                        offset=(-1 if pos is None else pos), duration=1)
+                    self._messages.scroll_to(offset=-1, duration=1)
+                if mx == last_max:
+                    stable += 1
+                    if stable >= 2:
+                        break                # extent settled — pinned for real
+                else:
+                    stable = 0
+                last_max = mx
+            _vlog.info("[SteamView] anchor: end-pin done max=%.0f raw=%.0f "
+                       "stable=%d following=%s",
+                       float(getattr(self, "_max_scroll", 0) or 0),
+                       float(getattr(self, "_raw_pixels", 0) or 0),
+                       stable, self._following)
         finally:
-            if self._messages.opacity != 1:
-                self._messages.opacity = 1
-                with contextlib.suppress(Exception):
-                    self._messages.update()
+            if gen == self._anchor_gen:
+                self._lift_opacity()     # never leave the curtain down
+
 
     def _jump_to_latest(self) -> None:
         with contextlib.suppress(Exception):
             self._following = True
+            self._keep_once = None   # explicit user choice outranks the capture
+            if self._active is not None:
+                self._was_following[self._active] = True
             self._scroll_to_end(200)
             self._jump_btn.visible = False
             self._jump_btn.update()
@@ -3536,6 +3750,22 @@ class SteamBridgeView(ft.Container):
             self.page.set_clipboard(url)
             self.page.open(ft.SnackBar(ft.Text(_T("steam.link_copied", default="Link copied")), duration=1400))
 
+    def _stick_to_end(self) -> None:
+        # A translation landing above the fold grows the list; Flutter keeps
+        # `pixels`, so an at-end view drifts mid-chat (and the scrollbar thumb
+        # crawls away from the cursor). While following, re-pin invisibly.
+        if not self._following:
+            return
+        if time.time() - getattr(self, "_user_scroll_ts", 0) < 1.5:
+            return                     # user is interacting — hands off
+        raw = float(getattr(self, "_raw_pixels", 0.0) or 0.0)
+        mx = float(getattr(self, "_max_scroll", 0.0) or 0.0)
+        if mx > 300 and raw < mx - 300:
+            return                     # user is actually up the history
+        self._anchor_ts = time.time()
+        with contextlib.suppress(Exception):
+            self._messages.scroll_to(offset=-1, duration=1)
+
     async def _translate_block(self, b: dict, seq: int, *, force: bool = False) -> None:
         orig = b.get("text", "")
         tc = b.get("_ctrl")
@@ -3551,12 +3781,16 @@ class SteamBridgeView(ft.Container):
                 return_exceptions=True)
             if seq != self._open_seq:
                 return
+            _hit = False
             for (src, ctrl), tr in zip(segs, results):
                 if not isinstance(tr, str) or not tr or tr == src:
                     continue
                 self._apply_tr_spans(b, ctrl, tr)
+                _hit = True
                 with contextlib.suppress(Exception):
                     ctrl.update()
+            if _hit:
+                self._stick_to_end()
             return
         if not orig or tc is None:
             return
@@ -3570,6 +3804,7 @@ class SteamBridgeView(ft.Container):
             self._apply_tr_spans(b, tc, _given)
             with contextlib.suppress(Exception):
                 tc.update()
+            self._stick_to_end()
             return
         if b.pop("_tr_prefilled", False):
             return                          # already painted from the cache
@@ -3584,6 +3819,7 @@ class SteamBridgeView(ft.Container):
         self._apply_tr_spans(b, tc, tr)
         with contextlib.suppress(Exception):
             tc.update()
+        self._stick_to_end()
 
     def _apply_tr_spans(self, b: dict, tc, tr: str) -> None:
         tc.visible = True
@@ -3634,29 +3870,38 @@ class SteamBridgeView(ft.Container):
                 b["_tr_prefilled"] = True
 
     def _load_more_pill(self) -> ft.Control:
-        lbl = ft.Text(t("steam.load_earlier", default="Load earlier messages"),
+        # NOTE: pills are PER-CHAT now (one per persistent column) — no
+        # singleton label/busy state; resolve via _pill_lbl / _loadmore_busy
+        # dict keyed by acct.
+        lbl = ft.Text(_T("steam.load_earlier", default="Load earlier messages"),
                       size=11.5, color=_TEXT_FAINT, italic=True)
-        self._loadmore_lbl = lbl
-        self._loadmore_busy = False
         return ft.Container(
             data="loadmore", content=lbl, alignment=ft.alignment.center,
             padding=ft.padding.symmetric(vertical=6), ink=True,
             border_radius=6, on_click=self._on_load_more)
 
+    def _pill_lbl(self, acct):
+        ent = self._msg_lists.get(acct)
+        c = ent[1].controls[0] if ent and ent[1].controls else None
+        return c.content if getattr(c, "data", None) == "loadmore" else None
+
     def _on_load_more(self, _e=None) -> None:
-        if getattr(self, "_loadmore_busy", False) or not self._active:
+        if not self._active or self._loadmore_busy.get(self._active):
             return
+        self._keep_once = None   # user is reading older history — a later
+                                 # render must not warp them back
         oldest = 0
         for hb in self._hist_blocks:
             hts = int(hb.get("_ts") or 0)
             if hts:
                 oldest = hts
                 break
-        self._loadmore_busy = True
+        self._loadmore_busy[self._active] = True
         with contextlib.suppress(Exception):
-            self._loadmore_lbl.value = t("steam.loading_earlier",
-                                         default="Loading...")
-            self._loadmore_lbl.update()
+            lbl = self._pill_lbl(self._active)
+            if lbl is not None:
+                lbl.value = _T("steam.loading_earlier", default="Loading...")
+                lbl.update()
         if self.page:
             self.page.run_task(self._cmd, {"cmd": "more_history",
                                            "acct": self._active,
@@ -3665,6 +3910,11 @@ class SteamBridgeView(ft.Container):
     async def _render_history(self, messages: list, seq: int) -> None:
         blocks = self._coalesce(messages)
         if seq != self._open_seq:
+            return
+        if not blocks and self._hist_blocks:
+            # r556: a just-started helper answers the open with an EMPTY
+            # snapshot while it is still signing in — that must not wipe a
+            # populated view (the cause of "messages flashed then vanished")
             return
         # Steam's own last-chat clock can run ahead of the newest HISTORY entry
         # (own sends, filtered items) — without marking live renders too, a
@@ -3746,6 +3996,22 @@ class SteamBridgeView(ft.Container):
         self._pend = None                  # drop any half-buffered live lines
         _keep_pos = (None if self._was_following.get(_acct_now, True)
                      else self._scroll_pos.get(_acct_now))
+        _ko = getattr(self, "_keep_once", None)
+        if isinstance(_ko, tuple) and time.time() - _ko[1] < 3.0:
+            # every render in the activation window uses the position
+            # captured at the tab switch — the SECOND render (server
+            # augment) used to fall back to stale dicts and yank the view
+            _keep_pos = _ko[0]
+        try:
+            await self._render_history_body(blocks, _keep_pos, seq)
+        except Exception:
+            _vlog.exception("[SteamView] render_history FAILED mid-rebuild")
+            self._messages.opacity = 1
+            with contextlib.suppress(Exception):
+                self._messages.update()
+        return
+
+    async def _render_history_body(self, blocks, _keep_pos, seq) -> None:
         self._messages.opacity = 0         # hidden until anchored — no visible scroll
         self._messages.controls.clear()
         self._following = _keep_pos is None
@@ -3765,6 +4031,7 @@ class SteamBridgeView(ft.Container):
         # r543: Steam keeps months of history server-side — offer to page
         # further back than the open snapshot
         self._messages.controls.insert(0, self._load_more_pill())
+        self._loadmore_busy.pop(self._active or 0, None)
         if not blocks:
             self._messages.controls.append(ft.Container(
                 data="empty",
@@ -3778,9 +4045,20 @@ class SteamBridgeView(ft.Container):
                 self._seen_chat_ts.get(self._active or 0, 0),
                 max(int(b.get("_ts") or 0) for b in blocks))
         self._prefill_translations(blocks)
+        # r556: the cold-connect 'idle' overlay can land AFTER the restored
+        # tab already painted (an 84ms race) and then sits over the messages
+        # forever — a populated render for an active chat dismisses it
+        if blocks and self._active is not None                 and self._state_mode in ("idle", "connecting"):
+            self._hide_state_overlay()
         self._rebuild_tabs()               # clears this tab's unread dot
+        if self._active is not None:
+            self._col_epoch[self._active] = self._remount_epoch
         if self.page:
             self.page.run_task(self._anchor_end, _keep_pos)
+        else:
+            # no page to run the anchor task -> nothing would ever lift the
+            # opacity curtain; show the list as-is (r556 blank-tab fix)
+            self._messages.opacity = 1
         if self.page:
             self.page.update()
         # translate all blocks at once (cached ones are instant) instead of
@@ -3874,6 +4152,8 @@ class SteamBridgeView(ft.Container):
                 c for c in self._messages.controls
                 if getattr(c, "data", None) != "empty"]
         self._mark_seen(self._active or 0, int(m.get("ts") or 0))
+        if self._active is not None                 and self._state_mode in ("idle", "connecting"):
+            self._hide_state_overlay()
         self._live_since_open = (self._live_since_open + [dict(m)])[-30:]
         text, emos = _extract_emoticons((m.get("text", "") or "").strip())
         ts = int(m.get("ts") or 0) or int(time.time())
@@ -4027,6 +4307,16 @@ class SteamBridgeView(ft.Container):
         self._unread_live.discard(acct)
         self._rebuild_tabs()      # r508: chip re-reads state (online/offline)
         self._live_since_open = []
+        if acct != self._active:
+            # the position captured at the tab switch belongs to the chat
+            # that was active THEN — a different chat must not consume it,
+            # nor may the old chat's live scroll state masquerade as the new
+            # chat's (deactivate would stamp it into the wrong dict entry),
+            # nor may the old chat's recent scrolling veto the new chat's
+            # settle loop
+            self._keep_once = None
+            self._following = True
+            self._user_scroll_ts = 0.0
         self._active = acct
         if acct not in self._tabs:
             self._tabs.append(acct)
@@ -4038,18 +4328,46 @@ class SteamBridgeView(ft.Container):
         # chat's history arrives (then _render_history swaps atomically), so a
         # fast switch doesn't flash blank.
         self._entry.disabled = False   # let them type right away, don't wait for load
-        # ALWAYS swap the pane on a tab switch — keeping the previous chat
-        # visible read as "wrong chat shown". Cached chats paint instantly and
-        # the fresh fetch replaces them silently; uncached ones show a loading
-        # state (never a blank wall, and never someone else's messages).
+        # Each chat has its own permanently-mounted column — switching tabs
+        # just brings it on-stage, so an already-built chat shows instantly
+        # at its preserved scroll position with NO rebuild and NO anchor.
+        # Only a first open (or empty column) builds content.
         if self._state_mode == "idle":
             self._hide_state_overlay()
         self._pend = None
         self._last_block = None
-        self._messages.controls.clear()
+        lst = self._ensure_msg_list(acct)
+        self._show_msg_list(acct)
         cached = self._chat_cache.get(acct)
-        if cached:
+        if cached and lst.controls:
+            # already built — normally parked exactly where the user left it,
+            # so show it untouched; the fresh fetch below fp-skips (or
+            # repaints) as needed
             self._hist_blocks = cached
+            # follow-state and jump pill belong to THIS chat now
+            self._following = self._was_following.get(acct, True)
+            if self._jump_btn.visible == self._following:
+                self._jump_btn.visible = not self._following
+            if self._col_epoch.get(acct) != self._remount_epoch:
+                # the dashboard was remounted since this column was last
+                # anchored — its Flutter scroll reset to the top; restore
+                # the kept spot invisibly
+                self._col_epoch[acct] = self._remount_epoch
+                _keep_pos = (None if self._following
+                             else self._scroll_pos.get(acct))
+                lst.opacity = 0
+                if self.page:
+                    self.page.run_task(self._anchor_end, _keep_pos)
+            else:
+                lst.opacity = 1            # belt: never a stuck curtain
+            # repair any translations that never landed (cache hits are
+            # instant and _tr_prefilled guards make this cheap)
+            if self.page:
+                self.page.run_task(self._fill_translations, cached,
+                                   self._open_seq)
+        elif cached:
+            self._hist_blocks = cached
+            self._col_epoch[acct] = self._remount_epoch
             _keep_pos = (None if self._was_following.get(acct, True)
                          else self._scroll_pos.get(acct))
             self._following = _keep_pos is None
@@ -4065,10 +4383,15 @@ class SteamBridgeView(ft.Container):
                         _prev_day = _day
                 self._messages.controls.append(self._block_control(b))
             self._prefill_translations(cached)
+            # the cache-rebuild view needs its load-earlier pill too — without
+            # it a reopened tab whose history event fp-skips never gets one
+            self._messages.controls.insert(0, self._load_more_pill())
+            self._loadmore_busy.pop(acct, None)
             if self.page:
                 self.page.run_task(self._anchor_end, _keep_pos)
                 self.page.run_task(self._fill_translations, cached, self._open_seq)
         else:
+            self._messages.controls.clear()
             self._messages.controls.append(ft.Container(
                 content=ft.Row([
                     ft.ProgressRing(width=16, height=16, stroke_width=2,
@@ -4317,8 +4640,12 @@ class SteamBridgeView(ft.Container):
                     with contextlib.suppress(Exception):
                         self.page.update()
         elif kind == "friends":
-            if not (ev.get("items") or []) and not self._got_friends:
-                return          # pre-signin empty push — keep Connecting up
+            if not (ev.get("items") or []):
+                # an empty friends push is NEVER a reason to tear down open
+                # tabs — it happens mid Steam-page reload (the image-send 401
+                # recovery) and used to wipe every chat to the idle screen.
+                # A genuine sign-out arrives via the 'status' event instead.
+                return
             if self._state_mode == "connecting":
                 self._hide_state_overlay()
                 if self._active is None and self._module_on:
@@ -4333,9 +4660,13 @@ class SteamBridgeView(ft.Container):
                     self._scroll_pos.pop(a, None)
                     self._was_following.pop(a, None)
                     self._render_fp.pop(a, None)
+                    _se = self._msg_lists.pop(a, None)
+                    if _se is not None:
+                        with contextlib.suppress(Exception):
+                            self._messages_stack.controls.remove(_se[0])
                 if self._active in stale:
                     self._active = None
-                    self._messages.controls.clear()
+                    self._show_msg_list(None)
                     self._hist_blocks = []
                     if self._tabs and self.page:
                         self.page.run_task(self._open, self._tabs[-1])
@@ -4356,6 +4687,19 @@ class SteamBridgeView(ft.Container):
         elif kind == "history_older":
             h_acct = int(ev.get("acct", 0))
             msgs = ev.get("messages", []) or []
+            # reset the busy flag and pill label for WHICHEVER chat answered —
+            # the user may have switched tabs while the reply was in flight
+            # (the singleton flag used to stick True and dead-lock every pill)
+            self._loadmore_busy.pop(h_acct, None)
+            with contextlib.suppress(Exception):
+                _plbl = self._pill_lbl(h_acct)
+                if _plbl is not None:
+                    _plbl.value = (
+                        _T("steam.load_earlier",
+                          default="Load earlier messages") if msgs else
+                        _T("steam.no_earlier",
+                          default="No earlier messages"))
+                    _plbl.update()
             if h_acct == self._active:
                 for m in msgs:
                     with contextlib.suppress(Exception):
@@ -4363,14 +4707,6 @@ class SteamBridgeView(ft.Container):
                         # path slots each one in chronologically and drops
                         # ones the log already shows
                         await self._render_live(m)
-                self._loadmore_busy = False
-                with contextlib.suppress(Exception):
-                    self._loadmore_lbl.value = (
-                        t("steam.load_earlier",
-                          default="Load earlier messages") if msgs else
-                        t("steam.no_earlier",
-                          default="No earlier messages"))
-                    self._loadmore_lbl.update()
                 if self.page:
                     self.page.update()
         elif kind == "history":

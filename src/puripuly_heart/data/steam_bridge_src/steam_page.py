@@ -189,12 +189,29 @@ async () => {
     let fav = false; try { fav = !!fs.m_FavoritesStore.BIsFavorited(acct); } catch (e) {}
     let nick = "";
     try { nick = f.m_strNickname || (p && p.m_strNickname) || ""; } catch (e) {}
+    let lastSeen = 0;
+    try {
+      // field names vary across FriendsUI builds — scan for any plausible
+      // RTime32 property instead of guessing one name
+      const scan = (o) => {
+        let best = 0;
+        for (const k in o) {
+          try {
+            if (/last.*(seen|online)/i.test(k) && typeof o[k] === "number"
+                && o[k] > 1000000000 && o[k] < 4102444800 && o[k] > best)
+              best = o[k];
+          } catch (e) {}
+        }
+        return best;
+      };
+      lastSeen = (p ? scan(p) : 0) || scan(f) || 0;
+    } catch (e) {}
     out.push({ acct, name: nameOf(f), avatar: avatarOf(f), state, ingame, game,
                appid, icon: ingame ? appIcon(appid) : "",
                flags: p ? (p.m_unPersonaStateFlags || 0) : 0,
                nick, real: (p && p.m_strPlayerName) || "",
                fav, groups: groupOf[acct] || [], last_chat: lastChat[acct] || 0,
-               unread: unread[acct] || 0 });
+               unread: unread[acct] || 0, last_seen: lastSeen });
   }
   return out;
 }
@@ -355,6 +372,30 @@ class SteamPage:
             return await self._page.evaluate(FRIENDS_JS) or []
         except Exception:
             return []
+
+    async def dump_persona_keys(self, acct: int) -> str:
+        """Diagnostic: every scalar property (name+value) on one friend's
+        objects — used once to identify the real last-seen field name."""
+        try:
+            return await self._page.evaluate(
+                r"""(acct) => {
+                  const f = window.g_FriendsUIApp.m_FriendStore.GetFriend(acct);
+                  const p = f && f.m_persona;
+                  const rep = (o) => {
+                    const r = {};
+                    for (const k in o) {
+                      try {
+                        const v = o[k];
+                        if (typeof v === "number" || typeof v === "string"
+                            || typeof v === "boolean") r[k] = v;
+                      } catch (e) {}
+                    }
+                    return r;
+                  };
+                  return JSON.stringify({f: rep(f || {}), p: rep(p || {})});
+                }""", acct)
+        except Exception as exc:
+            return f"dump failed: {exc}"
 
     async def preload_recent(self, n: int = 20) -> None:
         """Warm history for the n most-recent chats so opening them is instant."""

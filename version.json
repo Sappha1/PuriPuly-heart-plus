@@ -1,12 +1,12 @@
 {
-  "build": 563,
-  "tag": "r563",
-  "date": "2026-08-21",
+  "build": 586,
+  "tag": "r586",
+  "date": "2026-08-26",
   "notes": [
-    "Added: Japanese text recognition in pasted images (OCR module build 301)",
-    "Improved: Steam chats keep their exact scroll position - instant tab switches, scrollbar tracks the cursor",
-    "Fixed: invisible chats, missing translations in newly opened tabs, image-send wiping open chats",
-    "Fixed: Chat tab log not updating until a tab switch",
-    "Fixed: Text Translation box toggle with Auto Detect, per-chat Load earlier, Ctrl+F on the Steam tab"
+    "Added: Steam-style image upload state with automatic retries and a Retry/Discard card on failure",
+    "Added: collapsible friends sidebar; Last online times for offline friends (all languages)",
+    "Changed: Steam chat tabs moved to the Chat | Steam bar - compact chips that always fit the window",
+    "Fixed: the subtitle overlay stays on top - reasserts within a second when covered",
+    "Fixed: pop-out window flashes on new messages; Steam module toggle reliably restarts its helper"
   ]
 }

@@ -19,7 +19,7 @@ from puripuly_heart.ui.fonts import font_for_language
 from puripuly_heart.ui.i18n import get_locale, language_name, t
 from puripuly_heart.ui.overlay_peer_contract import OverlayPeerConsumerContract
 
-_BUILD_TAG = "r563"  #increment each build so user can confirm version
+_BUILD_TAG = "r586"  #increment each build so user can confirm version
 
 # ── VRCT-style dark palette ──────────────────────────────────────────────────
 _BG_MAIN = "#2e2f32"
@@ -1324,17 +1324,28 @@ class DashboardView(ft.Row):
         )
         self._full_div1 = ft.Divider(height=1, color=_DIVIDER, thickness=1)
         self._full_div2 = ft.Divider(height=1, color=_DIVIDER, thickness=1)
+        self._sidebar_top_div = ft.Divider(height=1, color=_DIVIDER,
+                                           thickness=1)
+        # collapsed state: the IDENTICAL bare strip the Steam sidebar uses —
+        # full-height click target, arrow centered mid-edge
+        self._sidebar_expand_strip = ft.Container(
+            visible=False, expand=True, alignment=ft.alignment.center,
+            content=ft.Icon(ft.Icons.CHEVRON_RIGHT, size=16,
+                            color=_TEXT_FAINT),
+            on_click=self._on_sidebar_collapse_click,
+            tooltip=t("dashboard.tooltip.expand_sidebar"), ink=True)
         sidebar = ft.Container(
             content=ft.Column(
                 [
                     self._sidebar_header,
-                    ft.Divider(height=1, color=_DIVIDER, thickness=1),
+                    self._sidebar_top_div,
                     self._toggles_section,
                     self._full_div1,
                     self._middle_section,
                     self._full_div2,
                     self._sidebar_nav_row,
                     self._mini_content,
+                    self._sidebar_expand_strip,
                 ],
                 spacing=0,
                 expand=True,
@@ -1579,13 +1590,28 @@ class DashboardView(ft.Row):
         self._tab_steam_wrap = ft.GestureDetector(
             content=self._tab_steam,
             on_secondary_tap_down=self._on_tab_steam_right)
+        # the Steam friend tabs live on THIS bar when docked (a thin divider
+        # plus breathing room so they don't read as a category label)
+        self._steam_tabs_host = ft.Row(
+            [], spacing=6, expand=True,
+            vertical_alignment=ft.CrossAxisAlignment.CENTER)
+        self._steam_tabs_wrap = ft.Container(
+            visible=False, expand=20,   # dominant share vs the width-8 spacer
+            # (two expand=True siblings would SPLIT the bar and clip the tabs)
+            content=ft.Row([
+                ft.Container(width=1, height=20, bgcolor=_DIVIDER,
+                             margin=ft.margin.only(left=10)),
+                self._steam_tabs_host,
+            ], spacing=10, expand=True,
+               vertical_alignment=ft.CrossAxisAlignment.CENTER))
         chat_header = ft.Row(
             [
                 ft.GestureDetector(content=self._tab_vrc,
                                    on_secondary_tap_down=self._on_tab_vrc_right),
                 ft.Container(width=4),
                 self._tab_steam_wrap,
-                ft.Container(expand=True),
+                self._steam_tabs_wrap,
+                ft.Container(expand=True, width=8),
                 self._vrc_header_actions,
                 self._steam_lang_slot,
                 self._steam_header_actions,
@@ -1949,7 +1975,51 @@ class DashboardView(ft.Row):
         self._open_context_menu(x, y, items)
 
     # ── beta/steam-bridge: chat tab strip (VRChat | Steam) ───────────────────
+    def _on_steam_friends_collapse(self, collapsed: bool) -> None:
+        # rail mode, mirroring the Chat sidebar: slim strip that keeps the
+        # single arrow so it can always expand back
+        with contextlib.suppress(Exception):
+            # collapsed = a bare 22px edge strip: no brand, no divider, no
+            # friends — just the view's full-height centered-arrow strip
+            self._steam_side.width = 22 if collapsed else 220
+            self._steam_brand_box.visible = not collapsed
+            _dv = getattr(self, "_steam_side_div", None)
+            if _dv is not None:
+                _dv.visible = not collapsed
+            if getattr(self, "_chat_tab", "") == "steam":
+                self.update()
+
+    def _set_steam_tab_hidden(self, hidden: bool) -> None:
+        # while the chat lives in its own window the tab chip disappears
+        # entirely; it comes back when that window closes (unless the module
+        # itself is off, which owns the chip's visibility then)
+        with contextlib.suppress(Exception):
+            show = (not hidden) and bool(
+                getattr(self._steam_view, "_module_on", True))
+            self._tab_steam.visible = show
+            self._tab_steam_wrap.visible = show
+            if hidden:
+                self._steam_tabs_wrap.visible = False
+            self.update()
+
+    def _focus_steam_popout(self) -> None:
+        with contextlib.suppress(Exception):
+            import ctypes
+            u32 = ctypes.windll.user32
+            hwnd = u32.FindWindowW(None, "Steam Chat \u2014 PuriPulyHeart+")
+            if hwnd:
+                if u32.IsIconic(hwnd):
+                    u32.ShowWindow(hwnd, 9)     # SW_RESTORE
+                u32.SetForegroundWindow(hwnd)
+
     def _select_chat_tab(self, which: str) -> None:
+        if which == "steam":
+            _sv = getattr(self, "_steam_view", None)
+            if _sv is not None and getattr(_sv, "_popped_out", False):
+                # the chat lives in its own window — focus THAT instead of
+                # switching this pane to the empty popped placeholder
+                self._focus_steam_popout()
+                return
         if (which != "steam" and getattr(self, "_chat_tab", None) == "steam"
                 and hasattr(self, "_steam_view")):
             # Snapshot the Steam view's live scroll state BEFORE the pane swap
@@ -1970,6 +2040,8 @@ class DashboardView(ft.Row):
         # Only the Steam view itself mounts lazily, on its first select.
         if which == "steam" and self._steam_wrap.content is None:
             self._steam_wrap.content = self._steam_view
+            self._steam_view.on_friends_collapse = self._on_steam_friends_collapse
+            self._steam_view.external_tab_strip = self._steam_tabs_host
         _steam_on = which == "steam"
         self._steam_wrap.opacity = 1 if _steam_on else 0
         self._steam_wrap.offset = (ft.Offset(0, 0) if _steam_on
@@ -1989,17 +2061,53 @@ class DashboardView(ft.Row):
         if not hasattr(self, "_steam_side"):
             with contextlib.suppress(Exception):
                 lp = self._steam_view.detach_left_panel()
-                brand = ft.Container(
-                    content=ft.GestureDetector(
-                        content=ft.Row([
-                            ft.Text("PuriPulyHeart+", size=14, weight=ft.FontWeight.BOLD,
-                                    color=_TOGGLE_ON),
-                            ft.Text(_BUILD_TAG, size=10, color=_TEXT_FAINT),
-                        ], spacing=6, tight=True,
-                           vertical_alignment=ft.CrossAxisAlignment.CENTER),
+                self._steam_brand_title = ft.Text(
+                    "PuriPulyHeart+", size=14, weight=ft.FontWeight.BOLD,
+                    color=_TOGGLE_ON)
+                self._steam_brand_tag = ft.Text(_BUILD_TAG, size=10,
+                                                color=_TEXT_FAINT)
+                self._steam_collapse_icon = ft.Icon(
+                    ft.Icons.CHEVRON_LEFT, size=16, color=_TEXT_FAINT)
+                self._steam_collapse_btn = _steam_collapse_btn = ft.Container(
+                    content=self._steam_collapse_icon,
+                    on_click=lambda e: self._steam_view._on_friends_toggle(),
+                    tooltip=t("dashboard.tooltip.collapse_sidebar"),
+                    padding=ft.padding.all(4), border_radius=4,
+                    on_hover=lambda e: (
+                        setattr(e.control, "bgcolor",
+                                "#3f4044" if e.data == "true"
+                                else ft.Colors.TRANSPARENT)
+                        or (e.control.update() if e.control.page else None)))
+                self._steam_brand_spacer = ft.Container(expand=True)
+                self._steam_brand_row = ft.Row([
+                    ft.GestureDetector(
+                        # EXACT clone of the Chat header's title button — the
+                        # inner (4,2) padded container is what keeps the two
+                        # tabs' collapse arrows pixel-aligned
+                        content=ft.Container(
+                            content=ft.Row(
+                                [self._steam_brand_title,
+                                 self._steam_brand_tag],
+                                spacing=6, tight=True,
+                                vertical_alignment=ft.CrossAxisAlignment.CENTER),
+                            padding=ft.padding.symmetric(horizontal=4,
+                                                         vertical=2),
+                            border_radius=4,
+                            tooltip=t("dashboard.tooltip.title_menu"),
+                            on_hover=lambda e: (
+                                setattr(e.control, "bgcolor",
+                                        "#3f4044" if e.data == "true"
+                                        else ft.Colors.TRANSPARENT)
+                                or (e.control.update()
+                                    if e.control.page else None))),
                         on_tap_down=self._on_title_menu_tap,
                         mouse_cursor=ft.MouseCursor.CLICK),
-                    tooltip=t("dashboard.tooltip.title_menu"), ink=True,
+                    self._steam_brand_spacer,
+                    _steam_collapse_btn,
+                ], spacing=6,
+                   vertical_alignment=ft.CrossAxisAlignment.CENTER)
+                self._steam_brand_box = brand = ft.Container(
+                    content=self._steam_brand_row,
                     padding=ft.padding.symmetric(horizontal=16, vertical=10))
                 self._steam_side_capture = ft.Container(
                     visible=False, left=0, top=0, right=0, bottom=0,
@@ -2009,7 +2117,8 @@ class DashboardView(ft.Row):
                     content=ft.Stack(
                         [ft.Column(
                             [brand,
-                             ft.Divider(height=1, color=_DIVIDER, thickness=1),
+                             (lambda _dv: (setattr(self, "_steam_side_div", _dv) or _dv))(
+                                 ft.Divider(height=1, color=_DIVIDER, thickness=1)),
                              lp],
                             spacing=0, expand=True,
                             horizontal_alignment=ft.CrossAxisAlignment.STRETCH),
@@ -2020,7 +2129,15 @@ class DashboardView(ft.Row):
         with contextlib.suppress(Exception):
             self._app_sidebar.visible = (which != "steam")
         with contextlib.suppress(Exception):
+            self._steam_tabs_wrap.visible = (which == "steam")
+            if which == "steam":
+                self._steam_view._rebuild_tabs()
+        with contextlib.suppress(Exception):
             self._steam_side.visible = (which == "steam")
+        if which == "steam":
+            with contextlib.suppress(Exception):
+                self._on_steam_friends_collapse(bool(getattr(
+                    self._steam_view, "_friends_collapsed", False)))
         # Update FIRST so the Steam view is mounted (its .page is set) BEFORE
         # activate() runs — otherwise activate can't schedule the connect and it
         # sits on "connecting" forever.
@@ -2113,11 +2230,17 @@ class DashboardView(ft.Row):
         self._full_div2.visible = not collapsed
         self._sidebar_nav_row.visible = not collapsed
 
-        # Mini content visibility
-        self._mini_content.visible = collapsed
+        # Collapsed = the identical bare edge strip the Steam sidebar uses:
+        # the header and its divider hide entirely; the dedicated full-height
+        # strip with the centered arrow takes over (stretching the padded
+        # header instead left the 16px icon clipped to a sliver in 22px).
+        self._mini_content.visible = False
+        self._sidebar_header.visible = not collapsed
+        self._sidebar_top_div.visible = not collapsed
+        self._sidebar_expand_strip.visible = collapsed
 
         # Width
-        self._sidebar_container.width = 56 if collapsed else 220
+        self._sidebar_container.width = 22 if collapsed else 220
 
         try:
             if self.page:

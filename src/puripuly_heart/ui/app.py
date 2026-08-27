@@ -511,6 +511,8 @@ class TranslatorApp:
                     _sv._popped_out = True
                     with contextlib.suppress(Exception):
                         self.view_dashboard._select_chat_tab("vrc")
+                    with contextlib.suppress(Exception):
+                        self.view_dashboard._set_steam_tab_hidden(True)
 
                     async def _watch() -> None:
                         import asyncio as _aio
@@ -520,6 +522,8 @@ class TranslatorApp:
                                 break
                             await _aio.sleep(1.0)
                         _sv._popped_out = False
+                        with contextlib.suppress(Exception):
+                            self.view_dashboard._set_steam_tab_hidden(False)
                         if _sv._state_mode == "popped":
                             _sv._hide_state_overlay()
                             if _sv._active is not None:

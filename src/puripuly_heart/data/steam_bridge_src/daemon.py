@@ -557,6 +557,18 @@ class Daemon:
                 # read the live persona. Only pushes when the signature moved.
                 try:
                     await self.refresh_list()
+                    if (not getattr(self, "_persona_dumped", False)
+                            and self.convos):
+                        # one-shot: dump one OFFLINE friend's fields so the
+                        # last-seen property can be identified for real
+                        self._persona_dumped = True
+                        with contextlib.suppress(Exception):
+                            _off = next((a for a, i in self.convos.items()
+                                         if not i.get("state")
+                                         and not i.get("ingame")), None)
+                            if _off:
+                                _diag("PERSONA-KEYS "
+                                      + str(await self.steam.dump_persona_keys(_off)))
                     sig = self._friends_sig()
                     if sig != self._last_sig:
                         self._last_sig = sig
@@ -835,6 +847,53 @@ class Daemon:
                                     spoiler=bool(obj.get("spoiler")), used=used_ids)
                             finally:
                                 self._reloading = False
+                        # Steam's beginfileupload intermittently answers
+                        # HTTP 400 with "success":10 ("A server error
+                        # occurred") — a transient server-side hiccup its
+                        # own client retries through. Two short retries
+                        # before declaring failure.
+                        for _wait in (2.0, 5.0):
+                            if result.get("ok"):
+                                break
+                            _st = result.get("status")
+                            _rs = str(result.get("resp") or "")
+                            if _st in (429, 500, 502, 503) or (
+                                    _st == 400 and '"success":10' in _rs
+                            ) or (_st is None
+                                  and result.get("step") == "py"):
+                                # step "py" with no status = the evaluate
+                                # itself failed (connection blip / page
+                                # navigation) — the most transient class
+                                _diag(f"SEND_IMAGE transient {_st} -> retry in {_wait}s")
+                                await asyncio.sleep(_wait)
+                                result = await self.steam.send_image(
+                                    acct, b64, Path(path).name, mime,
+                                    spoiler=bool(obj.get("spoiler")), used=used_ids)
+                            else:
+                                break
+                        # "success":10 SURVIVING the backoff retries means the
+                        # page's upload session is wedged (chat keeps working;
+                        # observed 2026-08-21 02:16-02:44, every begin failing
+                        # for half an hour). A page reload rebuilds the session
+                        # — the same recovery that fixes the 401 case.
+                        if (not result.get("ok")
+                                and result.get("status") == 400
+                                and '"success":10' in str(result.get("resp") or "")):
+                            _diag("SEND_IMAGE persistent success:10 -> reload + retry")
+                            self._reloading = True
+                            try:
+                                await self.steam.reload()
+                                for _ in range(20):
+                                    await asyncio.sleep(1.0)
+                                    if await self.steam.is_signed_in():
+                                        break
+                                with contextlib.suppress(Exception):
+                                    await self.steam.open_conversation(acct)
+                                result = await self.steam.send_image(
+                                    acct, b64, Path(path).name, mime,
+                                    spoiler=bool(obj.get("spoiler")), used=used_ids)
+                            finally:
+                                self._reloading = False
                     except Exception as exc:
                         result = {"step": "daemon", "err": str(exc)}
                     if result.get("ok"):
@@ -843,6 +902,7 @@ class Daemon:
                     _diag(f"SEND_IMAGE acct={acct} -> {result}")
                     await self.emit({"ev": "image_sent", "acct": acct,
                                      "ok": bool(result.get("ok")),
+                                     "sid": obj.get("sid"),
                                      "detail": result})
                 elif cmd == "send_sticker" or cmd == "send_effect":
                     kind = "sticker" if cmd == "send_sticker" else "effect"

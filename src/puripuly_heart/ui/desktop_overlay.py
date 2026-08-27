@@ -4296,6 +4296,15 @@ class FletDesktopRendererWindow:
                 if not ctypes.windll.user32.SetWindowPos(hwnd, -1, 0, 0, 0, 0, 0x13):
                     self._native_hwnd = 0   # failed — re-resolve next pass
                 self._reassert_native_click_through(hwnd)
+                # the guard loop must run no matter WHICH path first got a
+                # handle — startup-reveal was the only starter before, and
+                # any other route left the overlay unguarded forever
+                if not getattr(self, "_topmost_guard_started", False):
+                    try:
+                        self._topmost_guard_started = True
+                        self._run_page_task(self._topmost_guard_loop)
+                    except Exception:
+                        self._topmost_guard_started = False
         except Exception:
             pass
 
@@ -4328,14 +4337,51 @@ class FletDesktopRendererWindow:
 
     async def _topmost_guard_loop(self) -> None:
         """Periodic self-heal: whatever demotes the overlay, it recovers
-        within a few seconds instead of staying buried under the game."""
+        within about a second instead of staying buried under the game.
+
+        Every tick checks whether any VISIBLE window sits above the overlay
+        in z-order AND overlaps its rectangle — only then does it re-sort.
+        SetWindowPos(HWND_TOPMOST) puts the overlay at the TOP of the
+        topmost band, so this also wins against other always-on-top windows
+        (volume popups, picture-in-picture, mini players); being below
+        windows that do not cover the subtitles costs nothing and is left
+        alone."""
         import asyncio as _aio
+        import ctypes
+        import ctypes.wintypes as _wt
+        u32 = ctypes.windll.user32
+        GW_HWNDPREV = 3
         while True:
-            await _aio.sleep(4.0)
+            await _aio.sleep(1.0)
             try:
+                hwnd = getattr(self, "_native_hwnd", 0)
+                if hwnd and u32.IsWindow(hwnd):
+                    rect = _wt.RECT()
+                    u32.GetWindowRect(hwnd, ctypes.byref(rect))
+                    above = u32.GetWindow(hwnd, GW_HWNDPREV)
+                    buried = False
+                    r2, ri = _wt.RECT(), _wt.RECT()
+                    hops = 0
+                    while above and hops < 64:
+                        if u32.IsWindowVisible(above):
+                            u32.GetWindowRect(above, ctypes.byref(r2))
+                            if u32.IntersectRect(ctypes.byref(ri),
+                                                 ctypes.byref(rect),
+                                                 ctypes.byref(r2)):
+                                buried = True
+                                break
+                        above = u32.GetWindow(above, GW_HWNDPREV)
+                        hops += 1
+                    if not buried:
+                        continue
                 self._reassert_native_topmost()
             except Exception:
-                pass          # never let one failed call end the guard
+                # never let one failed check end the guard — fall back to a
+                # plain reassert
+                try:
+                    self._reassert_native_topmost()
+                except Exception:
+                    pass
 
     async def _set_interaction_mode(self, mode: str, *, emit_event: bool) -> None:
         if mode not in _DESKTOP_INTERACTION_MODES:

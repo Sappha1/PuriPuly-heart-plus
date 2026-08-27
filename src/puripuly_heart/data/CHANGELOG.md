@@ -2,6 +2,17 @@
 
 User-facing changes per build. The latest build's highlights also appear in-app when an update is ready.
 
+## r586 — 2026-08-26
+
+- Added: Steam-style image upload state — a sending spinner, automatic retries, and a Retry/Discard card on failure instead of a silently broken picture
+- Added: collapsible friends sidebar — one arrow, slim edge strip when collapsed, same style on both tabs and in the pop-out window
+- Added: "Last online ..." times for offline friends, localized in every UI language
+- Added: the pop-out chat window shows the app header and flashes its taskbar button on new messages until focused
+- Changed: Steam chat tabs moved onto the Chat | Steam bar as compact one-line chips that always fit the window (avatar-only when many are open)
+- Changed: clicking the Steam tab while the chat is popped out focuses the pop-out window; the tab hides until that window closes
+- Fixed: the subtitle overlay could end up under other windows — it now reasserts always-on-top within a second whenever something covers it
+- Fixed: turning the Steam module off and on reliably restarts its helper
+
 ## r563 — 2026-08-21
 
 - Added: Japanese text in pasted images is now recognized — kana lines previously came back empty (dedicated recognition model, OCR module build 301)

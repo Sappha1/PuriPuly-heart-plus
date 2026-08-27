@@ -1,12 +1,9 @@
 {
-  "build": 586,
-  "tag": "r586",
+  "build": 589,
+  "tag": "r589",
   "date": "2026-08-26",
   "notes": [
-    "Added: Steam-style image upload state with automatic retries and a Retry/Discard card on failure",
-    "Added: collapsible friends sidebar; Last online times for offline friends (all languages)",
-    "Changed: Steam chat tabs moved to the Chat | Steam bar - compact chips that always fit the window",
-    "Fixed: the subtitle overlay stays on top - reasserts within a second when covered",
-    "Fixed: pop-out window flashes on new messages; Steam module toggle reliably restarts its helper"
+    "Added: live game details for in-game friends - mode, map and score, updating in real time",
+    "Changed: friends-list status lines auto-fit the sidebar - nothing truncates in any language"
   ]
 }

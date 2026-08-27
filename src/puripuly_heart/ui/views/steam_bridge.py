@@ -289,6 +289,29 @@ _STATE_LABEL = {0: "Offline", 1: "Online", 2: "Busy", 3: "Away", 4: "Snooze",
                 5: "Looking to Trade", 6: "Looking to Play"}
 
 
+def _fit_size(t: str, base: float, max_px: float = 150.0,
+              floor: float = 8.0) -> float:
+    """Largest font size <= base whose estimated width fits max_px — the
+    sidebar must NEVER truncate a status line (user rule: no ellipses)."""
+    size = base
+    while size > floor:
+        est = sum((size if ord(ch) > 0x2e80 else size * 0.52) for ch in t)
+        if est <= max_px:
+            break
+        size -= 0.5
+    return size
+
+
+def _compact_presence(t: str) -> str:
+    """Steam pads scores as '[ 4 : 3 ]' — compact to '[4:3]' so the line
+    fits the 220px sidebar without truncating."""
+    import re as _re
+    t = _re.sub(r"\[\s+", "[", t)
+    t = _re.sub(r"\s+\]", "]", t)
+    t = _re.sub(r"\s*:\s*", ":", t)
+    return _re.sub(r"\s{2,}", " ", t).strip()
+
+
 def _avatar(url: str, size: int = 30) -> ft.Control:
     if url:
         return ft.Image(src=url, width=size, height=size, border_radius=6,
@@ -2470,7 +2493,8 @@ class SteamBridgeView(ft.Container):
         name_row = ft.Row([
             ft.Text(_disp_name(f) or "Steam friend", size=13, weight=ft.FontWeight.W_500,
                     color=_name_color(state, ingame), max_lines=1,
-                    overflow=ft.TextOverflow.ELLIPSIS),
+                    overflow=ft.TextOverflow.ELLIPSIS,
+                    style=ft.TextStyle(height=1.1)),
             *([ft.Container(
                     content=ft.Text("*", size=15, color=_TEXT_FAINT),
                     margin=ft.margin.only(left=-2, bottom=5),
@@ -2483,8 +2507,18 @@ class SteamBridgeView(ft.Container):
             left.append(self._game_icon(lead_icon, 22))
         left.append(_avatar(f.get("avatar", ""), 30))
         children = left + [
-            ft.Column([name_row, ft.Text(sub, size=11, color=sub_color, max_lines=1,
-                                         overflow=ft.TextOverflow.ELLIPSIS)],
+            # Steam's hierarchy: game name and detail line share the SAME
+            # size and weight — only the green shade differs — packed tight
+            ft.Column([name_row,
+                       ft.Text(sub, size=_fit_size(sub, 10.5),
+                               color=sub_color, max_lines=1,
+                               style=ft.TextStyle(height=1.1))]
+                      + ([(lambda _x: ft.Text(
+                              _x, size=_fit_size(_x, 10.5),
+                              color="#7a9e6e", max_lines=1,
+                              style=ft.TextStyle(height=1.1)))(
+                            _compact_presence(str(f.get("extra"))))]
+                         if (ingame and f.get("extra")) else []),
                       spacing=0, tight=True, expand=True),
         ]
         if int(f.get("unread", 0)) > 0:

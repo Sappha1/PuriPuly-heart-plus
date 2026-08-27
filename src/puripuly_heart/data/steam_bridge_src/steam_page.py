@@ -189,6 +189,24 @@ async () => {
     let fav = false; try { fav = !!fs.m_FavoritesStore.BIsFavorited(acct); } catch (e) {}
     let nick = "";
     try { nick = f.m_strNickname || (p && p.m_strNickname) || ""; } catch (e) {}
+    let extra = "";
+    try {
+      // the friend object exposes current_game_rich_presence — the SAME
+      // localized, composed line the real Steam UI renders (resolves the
+      // steam_display token with map/score params). Raw map "status" is a
+      // different, unlocalized string — only a fallback.
+      if (ingame) {
+        try { extra = String(f.current_game_rich_presence || ""); }
+        catch (e) {}
+        if (!extra || extra[0] === "#") {
+          const m = p && p.m_mapRichPresence;
+          let st = "";
+          try { st = (m && m.get && m.get("status")) || ""; } catch (e) {}
+          if (st && st[0] !== "#" && st !== game) extra = st; else extra = "";
+        }
+        if (extra === game) extra = "";
+      }
+    } catch (e) {}
     let lastSeen = 0;
     try {
       // field names vary across FriendsUI builds — scan for any plausible
@@ -211,7 +229,8 @@ async () => {
                flags: p ? (p.m_unPersonaStateFlags || 0) : 0,
                nick, real: (p && p.m_strPlayerName) || "",
                fav, groups: groupOf[acct] || [], last_chat: lastChat[acct] || 0,
-               unread: unread[acct] || 0, last_seen: lastSeen });
+               unread: unread[acct] || 0, last_seen: lastSeen,
+               extra });
   }
   return out;
 }
@@ -388,11 +407,27 @@ class SteamPage:
                         const v = o[k];
                         if (typeof v === "number" || typeof v === "string"
                             || typeof v === "boolean") r[k] = v;
+                        else if (v && typeof v === "object")
+                          r[k] = "<" + (v.constructor ? v.constructor.name
+                                        : "obj") + ">";
                       } catch (e) {}
                     }
                     return r;
                   };
-                  return JSON.stringify({f: rep(f || {}), p: rep(p || {})});
+                  let rp = {};
+                  try {
+                    const m = p && p.m_mapRichPresence;
+                    const ent = {};
+                    if (m && m.forEach)
+                      m.forEach((v, k) => { ent[String(k)] = String(v); });
+                    rp.map = ent;
+                    rp.protoP = Object.getOwnPropertyNames(
+                      Object.getPrototypeOf(p || {}));
+                    rp.protoF = Object.getOwnPropertyNames(
+                      Object.getPrototypeOf(f || {}));
+                  } catch (e) { rp.err = String(e); }
+                  return JSON.stringify({f: rep(f || {}), p: rep(p || {}),
+                                         rp});
                 }""", acct)
         except Exception as exc:
             return f"dump failed: {exc}"

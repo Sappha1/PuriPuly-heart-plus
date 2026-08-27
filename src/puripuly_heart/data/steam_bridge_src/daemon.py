@@ -332,7 +332,8 @@ class Daemon:
         recent = tuple(sorted(self.convos, key=lambda a: -(self.convos[a].get("last_chat") or 0))[:6])
         return (recent, tuple(sorted(
             (a, v.get("state"), v.get("ingame"), v.get("game"), v.get("fav"),
-             v.get("name"), v.get("unread"), tuple(v.get("groups") or ()))
+             v.get("name"), v.get("unread"), v.get("extra"),
+             tuple(v.get("groups") or ()))
             for a, v in self.convos.items())))
 
     async def push_state(self, only: asyncio.StreamWriter | None = None) -> None:
@@ -563,12 +564,13 @@ class Daemon:
                         # last-seen property can be identified for real
                         self._persona_dumped = True
                         with contextlib.suppress(Exception):
-                            _off = next((a for a, i in self.convos.items()
-                                         if not i.get("state")
-                                         and not i.get("ingame")), None)
-                            if _off:
+                            _tg = next((a for a, i in self.convos.items()
+                                        if i.get("ingame")), None) or next(
+                                (a for a, i in self.convos.items()
+                                 if not i.get("state")), None)
+                            if _tg:
                                 _diag("PERSONA-KEYS "
-                                      + str(await self.steam.dump_persona_keys(_off)))
+                                      + str(await self.steam.dump_persona_keys(_tg)))
                     sig = self._friends_sig()
                     if sig != self._last_sig:
                         self._last_sig = sig

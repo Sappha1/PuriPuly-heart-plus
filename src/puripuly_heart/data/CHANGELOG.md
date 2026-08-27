@@ -2,6 +2,11 @@
 
 User-facing changes per build. The latest build's highlights also appear in-app when an update is ready.
 
+## r589 — 2026-08-26
+
+- Added: live game details for in-game friends — match mode, map and score under the game name, updating in real time like Steam
+- Changed: friends-list status lines auto-fit the sidebar (compact scores, adaptive text size) — nothing truncates in any UI language
+
 ## r586 — 2026-08-26
 
 - Added: Steam-style image upload state — a sending spinner, automatic retries, and a Retry/Discard card on failure instead of a silently broken picture

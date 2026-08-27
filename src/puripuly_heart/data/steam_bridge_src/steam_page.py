@@ -207,6 +207,26 @@ async () => {
         if (extra === game) extra = "";
       }
     } catch (e) {}
+    // the composed line often omits the live score — it sits in a separate
+    // map value ("[ 13 : 5 ]" shaped); carry the full form separately so
+    // the UI can show it in a tooltip without breaking the row fit
+    let extraFull = extra;
+    try {
+      if (ingame && extra && extra.indexOf("[") === -1) {
+        const m2 = p && p.m_mapRichPresence;
+        let sc = "";
+        if (m2 && m2.forEach)
+          m2.forEach((v) => {
+            try {
+              if (!sc && typeof v === "string") {
+                const mm = v.match(/\[\s*\d+\s*:\s*\d+\s*\]/);
+                if (mm) sc = mm[0];
+              }
+            } catch (e) {}
+          });
+        if (sc) extraFull = extra + " " + sc;
+      }
+    } catch (e) {}
     let lastSeen = 0;
     try {
       // field names vary across FriendsUI builds — scan for any plausible
@@ -230,7 +250,7 @@ async () => {
                nick, real: (p && p.m_strPlayerName) || "",
                fav, groups: groupOf[acct] || [], last_chat: lastChat[acct] || 0,
                unread: unread[acct] || 0, last_seen: lastSeen,
-               extra });
+               extra, extra_full: extraFull });
   }
   return out;
 }

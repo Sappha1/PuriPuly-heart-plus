@@ -333,6 +333,7 @@ class Daemon:
         return (recent, tuple(sorted(
             (a, v.get("state"), v.get("ingame"), v.get("game"), v.get("fav"),
              v.get("name"), v.get("unread"), v.get("extra"),
+             v.get("extra_full"),
              tuple(v.get("groups") or ()))
             for a, v in self.convos.items())))
 

@@ -2,6 +2,10 @@
 
 User-facing changes per build. The latest build's highlights also appear in-app when an update is ready.
 
+## r591 — 2026-08-26
+
+- Added: hovering a friend's game-status line briefly shows the full detail with the live score (short hold delay so it never pops instantly)
+
 ## r589 — 2026-08-26
 
 - Added: live game details for in-game friends — match mode, map and score under the game name, updating in real time like Steam

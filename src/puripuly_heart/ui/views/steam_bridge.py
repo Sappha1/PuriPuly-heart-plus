@@ -2513,11 +2513,17 @@ class SteamBridgeView(ft.Container):
                        ft.Text(sub, size=_fit_size(sub, 10.5),
                                color=sub_color, max_lines=1,
                                style=ft.TextStyle(height=1.1))]
-                      + ([(lambda _x: ft.Text(
+                      + ([(lambda _x, _fx: ft.Text(
                               _x, size=_fit_size(_x, 10.5),
                               color="#7a9e6e", max_lines=1,
-                              style=ft.TextStyle(height=1.1)))(
-                            _compact_presence(str(f.get("extra"))))]
+                              style=ft.TextStyle(height=1.1),
+                              # Tooltip is a PROPERTY object in this flet,
+                              # not a wrapper control (a wrapper raised and
+                              # killed the whole friends rebuild)
+                              tooltip=ft.Tooltip(message=_fx,
+                                                 wait_duration=700)))(
+                            _compact_presence(str(f.get("extra"))),
+                            str(f.get("extra_full") or f.get("extra")))]
                          if (ingame and f.get("extra")) else []),
                       spacing=0, tight=True, expand=True),
         ]

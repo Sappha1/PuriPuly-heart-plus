@@ -1,9 +1,8 @@
 {
-  "build": 589,
-  "tag": "r589",
+  "build": 591,
+  "tag": "r591",
   "date": "2026-08-26",
   "notes": [
-    "Added: live game details for in-game friends - mode, map and score, updating in real time",
-    "Changed: friends-list status lines auto-fit the sidebar - nothing truncates in any language"
+    "Added: hover a friend's game-status line for the full detail with the live score"
   ]
 }

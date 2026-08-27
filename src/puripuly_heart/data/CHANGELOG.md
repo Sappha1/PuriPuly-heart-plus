@@ -2,6 +2,14 @@
 
 User-facing changes per build. The latest build's highlights also appear in-app when an update is ready.
 
+## r601 — 2026-08-27
+
+- Fixed: rapidly closing chat tabs could freeze the whole window until an app restart
+- Fixed: chat tabs now size to the space the bar really has — names shrink gracefully, tight tabs become avatar chips with a corner close button, and tabs that can't fit collapse into a "+N" menu
+- Fixed: the recently-messaged section refreshes the moment you send or receive a message
+- Fixed: the Steam chat popout enforces its minimum size and remembers its position again
+- Changed: friend rows hug their text tighter, like Steam
+
 ## r591 — 2026-08-26
 
 - Added: hovering a friend's game-status line briefly shows the full detail with the live score (short hold delay so it never pops instantly)

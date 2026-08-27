@@ -1000,6 +1000,7 @@
   "settings.module.steam_needs_python": "Installing this module needs Python installed on this PC (python.org or the Microsoft Store), because it creates its own isolated environment.",
   "settings.module.install_failed": "Install failed: {err}",
   "steam.loading_history": "Loading chat history",
+  "steam.more_tabs": "{n} more tabs",
   "steam.not_delivered": "Connection to Steam was down — your message will be sent automatically once it reconnects.",
   "steam.redelivered": "Reconnected — your queued messages were sent.",
   "steam.no_messages": "No messages here yet",

@@ -260,3 +260,6 @@ dist-dev/
 # Steam bridge helper (daemon + Playwright venv + Edge login profile) — local beta only
 steam-helper/
 dist-dev/
+
+# OCR overlay screen captures - personal data, never commit
+puripuly_ocr_shots/

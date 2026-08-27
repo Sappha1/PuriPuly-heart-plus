@@ -1,8 +1,12 @@
 {
-  "build": 591,
-  "tag": "r591",
-  "date": "2026-08-26",
+  "build": 601,
+  "tag": "r601",
+  "date": "2026-08-27",
   "notes": [
-    "Added: hover a friend's game-status line for the full detail with the live score"
+    "Fixed: rapidly closing chat tabs could freeze the whole window until an app restart",
+    "Fixed: chat tabs size to the real bar width \u2014 graceful name shrink, avatar chips with a corner close, \"+N\" overflow menu",
+    "Fixed: the recently-messaged section refreshes the moment you send or receive a message",
+    "Fixed: the Steam chat popout enforces its minimum size and remembers its position again",
+    "Changed: friend rows hug their text tighter, like Steam"
   ]
 }

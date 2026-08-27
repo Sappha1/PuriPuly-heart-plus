@@ -19,7 +19,7 @@ from puripuly_heart.ui.fonts import font_for_language
 from puripuly_heart.ui.i18n import get_locale, language_name, t
 from puripuly_heart.ui.overlay_peer_contract import OverlayPeerConsumerContract
 
-_BUILD_TAG = "r591"  #increment each build so user can confirm version
+_BUILD_TAG = "r601"  #increment each build so user can confirm version
 
 # ── VRCT-style dark palette ──────────────────────────────────────────────────
 _BG_MAIN = "#2e2f32"
@@ -1597,6 +1597,8 @@ class DashboardView(ft.Row):
             vertical_alignment=ft.CrossAxisAlignment.CENTER)
         self._steam_tabs_wrap = ft.Container(
             visible=False, expand=20,   # dominant share vs the width-8 spacer
+            clip_behavior=ft.ClipBehavior.HARD_EDGE,  # tabs can NEVER paint
+            # over the popout/gear buttons, whatever the count
             # (two expand=True siblings would SPLIT the bar and clip the tabs)
             content=ft.Row([
                 ft.Container(width=1, height=20, bgcolor=_DIVIDER,
@@ -1976,6 +1978,11 @@ class DashboardView(ft.Row):
 
     # ── beta/steam-bridge: chat tab strip (VRChat | Steam) ───────────────────
     def _on_steam_friends_collapse(self, collapsed: bool) -> None:
+        if self._ui_hop(self._on_steam_friends_collapse_now, collapsed):
+            return
+        self._on_steam_friends_collapse_now(collapsed)
+
+    def _on_steam_friends_collapse_now(self, collapsed: bool) -> None:
         # rail mode, mirroring the Chat sidebar: slim strip that keeps the
         # single arrow so it can always expand back
         with contextlib.suppress(Exception):
@@ -2012,7 +2019,32 @@ class DashboardView(ft.Row):
                     u32.ShowWindow(hwnd, 9)     # SW_RESTORE
                 u32.SetForegroundWindow(hwnd)
 
+    def _ui_hop(self, fn, *a) -> bool:
+        """Reschedule fn onto the page event loop when called from a worker
+        thread (single-writer rule — see steam_bridge._on_ui_thread).
+        Returns True when rescheduled."""
+        pg = self.page
+        loop = getattr(pg, "loop", None) if pg else None
+        if loop is None or not loop.is_running():
+            return False
+        try:
+            if asyncio.get_running_loop() is loop:
+                return False
+        except RuntimeError:
+            pass
+
+        async def _hop():
+            fn(*a)
+        pg.run_task(_hop)
+        return True
+
     def _select_chat_tab(self, which: str) -> None:
+        # the whole pane flip mutates mounted trees — event loop only
+        if self._ui_hop(self._select_chat_tab_now, which):
+            return
+        self._select_chat_tab_now(which)
+
+    def _select_chat_tab_now(self, which: str) -> None:
         if which == "steam":
             _sv = getattr(self, "_steam_view", None)
             if _sv is not None and getattr(_sv, "_popped_out", False):
@@ -4074,6 +4106,13 @@ class DashboardView(ft.Row):
 
         def _close() -> None:
             try:
+                # give back the resize hook we hijacked — leaving ours
+                # installed permanently unhooks the steam tab-strip re-fit
+                if getattr(self.page, "on_resized", None) is holder.get("hook"):
+                    self.page.on_resized = holder.get("prev_resize")
+            except Exception:
+                pass
+            try:
                 self.page.overlay.remove(holder["root"])
                 self.page.update()
             except Exception:
@@ -4143,11 +4182,20 @@ class DashboardView(ft.Row):
         _prev_resize = getattr(self.page, "on_resized", None)
 
         def _on_resize(_ev):
-            _close()
-            self.page.on_resized = _prev_resize
+            _close()           # restores _prev_resize via the holder
             if callable(_prev_resize):
-                _prev_resize(_ev)
+                try:
+                    # the steam tab-strip hook is async — a bare call would
+                    # just create a never-awaited coroutine
+                    if asyncio.iscoroutinefunction(_prev_resize):
+                        self.page.run_task(_prev_resize, _ev)
+                    else:
+                        _prev_resize(_ev)
+                except Exception:
+                    pass
 
+        holder["prev_resize"] = _prev_resize
+        holder["hook"] = _on_resize
         self.page.on_resized = _on_resize
         self.page.update()
         return _close

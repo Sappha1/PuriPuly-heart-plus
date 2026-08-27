@@ -12,6 +12,7 @@ from __future__ import annotations
 
 import asyncio
 import contextlib
+import functools
 import json
 import os
 import re
@@ -78,6 +79,34 @@ def _send_fmt_labels() -> dict:
 import logging
 
 _vlog = logging.getLogger("puripuly_heart.steam_view")
+
+
+def _on_ui_thread(fn):
+    """Single-writer guard: run the wrapped handler on the page event loop.
+
+    Flet dispatches sync event handlers on executor threads while daemon
+    pushes render on the page loop; .controls lists are unlocked, so a
+    worker-thread flush racing a loop-side render commits controls the
+    frontend never received — the next page.update() asserts (uid None)
+    and every later update aborts before sending: a permanently frozen
+    window. Hopping every mutating handler onto the loop removes the race.
+    """
+    @functools.wraps(fn)
+    def wrap(self, *a, **k):
+        pg = getattr(self, "page", None)
+        loop = getattr(pg, "loop", None) if pg is not None else None
+        if loop is None or not loop.is_running():
+            return fn(self, *a, **k)
+        try:
+            if asyncio.get_running_loop() is loop:
+                return fn(self, *a, **k)
+        except RuntimeError:
+            pass
+
+        async def _hop():
+            fn(self, *a, **k)
+        pg.run_task(_hop)
+    return wrap
 
 # Emote names may START with a digit (e.g. 8bitheart) — but require at least
 # one letter somewhere so time strings ("12:34:56") never read as emotes.
@@ -584,6 +613,7 @@ class SteamBridgeView(ft.Container):
         top_bar = ft.Container(
             content=ft.Row([
                 ft.Container(content=self._tab_strip, expand=True,
+                             clip_behavior=ft.ClipBehavior.HARD_EDGE,
                              padding=ft.padding.only(bottom=2)),
                 popout_btn, settings_btn,
             ], spacing=8,
@@ -848,6 +878,7 @@ class SteamBridgeView(ft.Container):
                 return s
         return _LANG_LABEL.get(code, code)
 
+    @_on_ui_thread
     def _pick_lang(self, which: str, code: str) -> None:
         """Set a chat language. Applies to FUTURE messages immediately; history
         changes only via Retranslate (so no surprise DeepL spend)."""
@@ -866,6 +897,7 @@ class SteamBridgeView(ft.Container):
                 self._settings_panel.update()
         self._notice(_T("steam.applies_new", default="Applies to new messages — Retranslate history converts this chat."))
 
+    @_on_ui_thread
     def _notice(self, msg: str) -> None:
         if self.page:
             with contextlib.suppress(Exception):
@@ -923,6 +955,27 @@ class SteamBridgeView(ft.Container):
                 self, "external_tab_strip", None) is None
             self._steam_topbar.visible = _tb
             self._steam_topbar_div.visible = _tb
+        if (self.page is not None and not self._is_popout
+                and not getattr(self, "_resize_hooked", False)):
+            # chip widths are computed from the window width, so a resize
+            # must re-run the math (debounced; chains any prior handler)
+            self._resize_hooked = True
+            _prev = getattr(self.page, "on_resized", None)
+
+            async def _tabs_resized(e=None):
+                self._resize_gen = getattr(self, "_resize_gen", 0) + 1
+                _g = self._resize_gen
+                await asyncio.sleep(0.2)
+                if _g != self._resize_gen:
+                    return
+                with contextlib.suppress(Exception):
+                    self._rebuild_tabs()
+                if callable(_prev):
+                    with contextlib.suppress(Exception):
+                        _r = _prev(e)
+                        if asyncio.iscoroutine(_r):
+                            await _r
+            self.page.on_resized = _tabs_resized
         if not self._module_on:
             self._show_state_overlay("off")
             return
@@ -997,6 +1050,7 @@ class SteamBridgeView(ft.Container):
                    getattr(self, "_last_pixels_acct", None) == self._active)
         self._mount_guard = time.time()
 
+    @_on_ui_thread
     def _show_state_overlay(self, mode: str) -> None:
         if mode == "idle" and self._messages.controls:
             # r556: a restored chat already painted (a 50ms cold-start race)
@@ -1083,6 +1137,7 @@ class SteamBridgeView(ft.Container):
                 with contextlib.suppress(Exception):
                     self.page.update()
 
+    @_on_ui_thread
     def _state_action(self) -> None:
         if self._state_mode == "popped":
             if callable(self.on_popout_restore):
@@ -1134,6 +1189,26 @@ class SteamBridgeView(ft.Container):
             if self.page:
                 self.page.run_task(self._cmd, {"cmd": "login"})
 
+    @_on_ui_thread
+    def _dlg_close(self, dlg) -> None:
+        with contextlib.suppress(Exception):
+            self.page.close(dlg)
+
+    @_on_ui_thread
+    def _signout_go(self, dlg) -> None:
+        with contextlib.suppress(Exception):
+            self.page.close(dlg)
+        self._toggle_settings(False)
+        self.page.run_task(self._cmd, {"cmd": "signout"})
+        self._show_state_overlay("signedout")
+
+    @_on_ui_thread
+    def _retranslate_go(self, dlg) -> None:
+        with contextlib.suppress(Exception):
+            self.page.close(dlg)
+        self.page.run_task(self._retranslate_all)
+
+    @_on_ui_thread
     def _signout_prompt(self) -> None:
         dlg = ft.AlertDialog(
             modal=True,
@@ -1142,12 +1217,9 @@ class SteamBridgeView(ft.Container):
                 "steam.signout_body",
                 default="This disconnects the Steam tab and clears the saved login. Signing back in opens a Steam window."), size=13),
             actions=[
-                ft.TextButton(_T("steam.cancel", default="Cancel"), on_click=lambda e: self.page.close(dlg)),
-                ft.TextButton(_T("steam.sign_out", default="Sign out"), on_click=lambda e: (
-                    self.page.close(dlg),
-                    self._toggle_settings(False),
-                    self.page.run_task(self._cmd, {"cmd": "signout"}),
-                    self._show_state_overlay("signedout"))),
+                ft.TextButton(_T("steam.cancel", default="Cancel"), on_click=lambda e: self._dlg_close(dlg)),
+                ft.TextButton(_T("steam.sign_out", default="Sign out"),
+                              on_click=lambda e: self._signout_go(dlg)),
             ])
         with contextlib.suppress(Exception):
             self.page.open(dlg)
@@ -1186,6 +1258,7 @@ class SteamBridgeView(ft.Container):
         if self.page and self._module_on:
             self.page.run_task(_bounce)
 
+    @_on_ui_thread
     def _module_off(self) -> None:
         self._module_on = False
         self._save_prefs()
@@ -1324,6 +1397,7 @@ class SteamBridgeView(ft.Container):
             return parts[0], parts[1]
         return None
 
+    @_on_ui_thread
     def _play_effect_burst(self, icon: str) -> None:
         """A light in-app approximation of Steam's fullscreen effect."""
         row = ft.Row([ft.Text(icon, size=44) for _ in range(7)],
@@ -1427,12 +1501,14 @@ class SteamBridgeView(ft.Container):
                               [x for x in self._recent_picks if x != item])[:24]
         self._save_prefs()
 
+    @_on_ui_thread
     def _on_picker_search(self, e) -> None:
         self._picker_query = (e.control.value or "").strip().lower()
         self._fill_picker_grid()
         with contextlib.suppress(Exception):
             self._picker_grid.update()
 
+    @_on_ui_thread
     def _set_picker_tab(self, tab: str) -> None:
         self._picker_tab = tab
         self._build_emoji_panel()
@@ -1543,6 +1619,7 @@ class SteamBridgeView(ft.Container):
              self._picker_grid, self._picker_search],
             spacing=6, tight=True)
 
+    @_on_ui_thread
     def _toggle_emoji(self, show=None) -> None:
         show = (not self._emoji_panel.visible) if show is None else show
         if not show:
@@ -1555,6 +1632,7 @@ class SteamBridgeView(ft.Container):
             self.page.update()
 
     # ── Steam-tab settings (gear) ────────────────────────────────────────────
+    @_on_ui_thread
     def _toggle_settings(self, show=None) -> None:
         show = (not self._settings_panel.visible) if show is None else show
         if show:
@@ -1765,6 +1843,7 @@ class SteamBridgeView(ft.Container):
             self._settings_panel.padding = 8
 
 
+    @_on_ui_thread
     def _set_pinyin(self, v) -> None:
         self._show_pinyin = bool(v)
         self._pinyin_from_prefs = True
@@ -1775,6 +1854,7 @@ class SteamBridgeView(ft.Container):
             self._build_settings_panel()
             with contextlib.suppress(Exception):
                 self._settings_panel.update()
+    @_on_ui_thread
     def _set_show_original(self, v) -> None:
         self._show_original = bool(v)
         self._save_prefs()
@@ -1791,6 +1871,7 @@ class SteamBridgeView(ft.Container):
                 return str(cb())
         return self._tr_provider or "Bing"
 
+    @_on_ui_thread
     def _set_tr_provider(self, prov: str) -> None:
         self._tr_provider = prov
         self._save_prefs()
@@ -1800,6 +1881,7 @@ class SteamBridgeView(ft.Container):
             with contextlib.suppress(Exception):
                 self._settings_panel.update()
 
+    @_on_ui_thread
     def _toggle_fmt_expanded(self) -> None:
         self._fmt_expanded = not self._fmt_expanded
         if self._settings_panel.visible:
@@ -1807,6 +1889,7 @@ class SteamBridgeView(ft.Container):
             with contextlib.suppress(Exception):
                 self._settings_panel.update()
 
+    @_on_ui_thread
     def _toggle_style_expanded(self) -> None:
         self._style_expanded = not self._style_expanded
         if self._settings_panel.visible:
@@ -1814,6 +1897,7 @@ class SteamBridgeView(ft.Container):
             with contextlib.suppress(Exception):
                 self._settings_panel.update()
 
+    @_on_ui_thread
     def _set_orig_style(self, style: str) -> None:
         self._orig_style = style if style in _ORIG_STYLES else "none"
         self._save_prefs()
@@ -1822,6 +1906,7 @@ class SteamBridgeView(ft.Container):
             with contextlib.suppress(Exception):
                 self._settings_panel.update()
 
+    @_on_ui_thread
     def _set_read_flag(self, name: str, v) -> None:
         setattr(self, name, bool(v))
         self._save_prefs()
@@ -1831,6 +1916,7 @@ class SteamBridgeView(ft.Container):
             with contextlib.suppress(Exception):
                 self._settings_panel.update()
 
+    @_on_ui_thread
     def _set_pinyin_grouped(self, v) -> None:
         self._set_read_flag("_pinyin_grouped", v)
 
@@ -1846,6 +1932,7 @@ class SteamBridgeView(ft.Container):
     def _set_read_latin(self, v) -> None:
         self._set_read_flag("_read_latin", v)
 
+    @_on_ui_thread
     def _set_send_fmt(self, fmt: str) -> None:
         self._send_fmt = fmt
         self._save_prefs()
@@ -1854,6 +1941,7 @@ class SteamBridgeView(ft.Container):
             with contextlib.suppress(Exception):
                 self._settings_panel.update()
 
+    @_on_ui_thread
     def _set_tr_incoming(self, v) -> None:
         self._tr_incoming = bool(v)
         self._save_prefs()
@@ -1863,6 +1951,7 @@ class SteamBridgeView(ft.Container):
             self._build_settings_panel()
             with contextlib.suppress(Exception):
                 self._settings_panel.update()
+    @_on_ui_thread
     def _set_tr_outgoing(self, e) -> None:
         # accepts a plain bool (settings pill) or a switch event
         ctrl = getattr(e, "control", None)
@@ -1874,6 +1963,7 @@ class SteamBridgeView(ft.Container):
             with contextlib.suppress(Exception):
                 self._settings_panel.update()
 
+    @_on_ui_thread
     def _rerender_chat(self) -> None:
         """Restyle IN PLACE from the blocks already in memory — used by the display
         toggles (pinyin / originals / translations). No helper round-trip, so the
@@ -1922,6 +2012,7 @@ class SteamBridgeView(ft.Container):
             with contextlib.suppress(Exception):
                 self.page.run_task(self._cmd, {"cmd": "open", "acct": self._active})
 
+    @_on_ui_thread
     def _retranslate_prompt(self) -> None:
         chars = 0
         for b in self._hist_blocks:
@@ -1953,10 +2044,9 @@ class SteamBridgeView(ft.Container):
                         f"chat. Tip: pick a free model (e.g. Bing) under "
                         f"Translator to do this at no cost."), size=13),
             actions=[
-                ft.TextButton(_T("steam.cancel", default="Cancel"), on_click=lambda e: self.page.close(dlg)),
+                ft.TextButton(_T("steam.cancel", default="Cancel"), on_click=lambda e: self._dlg_close(dlg)),
                 ft.TextButton(_T("steam.retranslate", default="Retranslate"),
-                              on_click=lambda e: (self.page.close(dlg),
-                                                  self.page.run_task(self._retranslate_all))),
+                              on_click=lambda e: self._retranslate_go(dlg)),
             ])
         with contextlib.suppress(Exception):
             self.page.open(dlg)
@@ -1970,6 +2060,7 @@ class SteamBridgeView(ft.Container):
             self.page.open(ft.SnackBar(ft.Text("History retranslated."), duration=1600))
 
     # ── input right-click menu (paste/copy/cut/clear) ────────────────────────
+    @_on_ui_thread
     def _show_input_menu(self, e) -> None:
         def item(label, cb):
             def handler(ev):
@@ -2014,6 +2105,7 @@ class SteamBridgeView(ft.Container):
         if self.page:
             self.page.update()
 
+    @_on_ui_thread
     def _hide_input_menu(self) -> None:
         if self._input_menu.visible:
             self._input_menu.visible = False
@@ -2061,11 +2153,13 @@ class SteamBridgeView(ft.Container):
                 allow_multiple=False,
                 allowed_extensions=["png", "jpg", "jpeg", "gif", "webp"])
 
+    @_on_ui_thread
     def _on_pick_file(self, e) -> None:
         with contextlib.suppress(Exception):
             if e.files:
                 self._attach_image(e.files[0].path)
 
+    @_on_ui_thread
     def _attach_image(self, path: str) -> None:
         # Steam-style upload dialog: preview, filename, Upload, Tag as Spoiler.
         name = Path(path).name
@@ -2080,7 +2174,7 @@ class SteamBridgeView(ft.Container):
                                   tooltip=_T("steam.cancel", default="Cancel"),
                                   width=28, height=28,
                                   style=ft.ButtonStyle(padding=ft.padding.all(0)),
-                                  on_click=lambda e: self.page.close(dlg)),
+                                  on_click=lambda e: self._dlg_close(dlg)),
                 ], spacing=0, tight=True),
                 ft.Image(src=path, width=380, height=280, fit=ft.ImageFit.CONTAIN,
                          border_radius=6),
@@ -2189,6 +2283,7 @@ class SteamBridgeView(ft.Container):
                     return True
         return False
 
+    @_on_ui_thread
     def _retry_img(self, b: dict) -> None:
         b["_send_failed"] = False
         b["_sending"] = True
@@ -2203,6 +2298,7 @@ class SteamBridgeView(ft.Container):
                 "path": b.get("_send_path"),
                 "spoiler": bool(b.get("_send_spoiler")), "sid": sid})
 
+    @_on_ui_thread
     def _discard_img(self, b: dict) -> None:
         self._pending_imgs.pop(str(b.get("_send_sid") or ""), None)
         with contextlib.suppress(Exception):
@@ -2221,6 +2317,7 @@ class SteamBridgeView(ft.Container):
                         col.update()
                     return
 
+    @_on_ui_thread
     def _not_yet(self, label: str) -> None:
         with contextlib.suppress(Exception):
             self.page.open(ft.SnackBar(ft.Text(f"{label} aren't wired up yet in the beta.")))
@@ -2233,6 +2330,7 @@ class SteamBridgeView(ft.Container):
         if acct:
             self._launch(f"https://steamcommunity.com/profiles/{acct + _STEAMID64_BASE}")
 
+    @_on_ui_thread
     def _on_search(self, q: str) -> None:
         self._filter = (q or "").strip().lower()
         self._rebuild_friends()
@@ -2269,6 +2367,7 @@ class SteamBridgeView(ft.Container):
         with contextlib.suppress(Exception):
             self.page.set_clipboard(text)
 
+    @_on_ui_thread
     def _show_ctx(self, e, f: dict) -> None:
         rows = []
         for label, cb in self._menu_actions(f):
@@ -2284,13 +2383,14 @@ class SteamBridgeView(ft.Container):
         self._ctx_menu.content = ft.Column(rows, spacing=1, tight=True)
         gx = float(getattr(e, "global_x", 0) or getattr(e, "local_x", 0) or 60)
         gy = float(getattr(e, "global_y", 0) or getattr(e, "local_y", 0) or 60)
-        self._ctx_menu.left = max(4.0, gx - self._ctx_offset_x - 8)
+        self._ctx_menu.left = self._clamp_menu_left(gx)
         self._ctx_menu.top = max(40.0, gy - 44)
         self._ctx_menu.visible = True
         self._ctx_backdrop.visible = True
         if self.page:
             self.page.update()
 
+    @_on_ui_thread
     def _hide_ctx(self) -> None:
         if self._ctx_menu.visible or self._ctx_backdrop.visible or self._input_menu.visible:
             self._ctx_menu.visible = False
@@ -2380,6 +2480,7 @@ class SteamBridgeView(ft.Container):
                      lambda e: self._open_profile(self._own)),
             ])
 
+    @_on_ui_thread
     def _toggle_dnd(self) -> None:
         self._dnd = not self._dnd
         self._save_prefs()
@@ -2394,6 +2495,7 @@ class SteamBridgeView(ft.Container):
             self._launch("https://steamcommunity.com/profiles/"
                          f"{self._own + _STEAMID64_BASE}/edit/info")
 
+    @_on_ui_thread
     def _update_own_header(self) -> None:
         # Matches real Steam: in-game → green game name (name goes green via
         # _status_menu using _name_color); invisible → crossed eye BEFORE the
@@ -2494,10 +2596,12 @@ class SteamBridgeView(ft.Container):
             ft.Text(_disp_name(f) or "Steam friend", size=13, weight=ft.FontWeight.W_500,
                     color=_name_color(state, ingame), max_lines=1,
                     overflow=ft.TextOverflow.ELLIPSIS,
-                    style=ft.TextStyle(height=1.1)),
+                    style=ft.TextStyle(height=1.0)),
             *([ft.Container(
-                    content=ft.Text("*", size=15, color=_TEXT_FAINT),
-                    margin=ft.margin.only(left=-2, bottom=5),
+                    # the old size-15 star with a 5px lift inflated the row
+                    # ~9px — the visible "random padding" under every name
+                    content=ft.Text("*", size=12, color=_TEXT_FAINT),
+                    margin=ft.margin.only(left=-2, bottom=2),
                     tooltip=f.get("real") or f.get("name") or "")]
               if f.get("nick") else []),
             *self._status_badges(f),
@@ -2512,11 +2616,11 @@ class SteamBridgeView(ft.Container):
             ft.Column([name_row,
                        ft.Text(sub, size=_fit_size(sub, 10.5),
                                color=sub_color, max_lines=1,
-                               style=ft.TextStyle(height=1.1))]
+                               style=ft.TextStyle(height=1.0))]
                       + ([(lambda _x, _fx: ft.Text(
                               _x, size=_fit_size(_x, 10.5),
                               color="#7a9e6e", max_lines=1,
-                              style=ft.TextStyle(height=1.1),
+                              style=ft.TextStyle(height=1.0),
                               # Tooltip is a PROPERTY object in this flet,
                               # not a wrapper control (a wrapper raised and
                               # killed the whole friends rebuild)
@@ -2586,6 +2690,7 @@ class SteamBridgeView(ft.Container):
             on_hover=_hov,
             on_click=lambda e, l=label: self._toggle_section(l))
 
+    @_on_ui_thread
     def _toggle_section(self, label: str) -> None:
         if label in self._collapsed_sections:
             self._collapsed_sections.discard(label)
@@ -2596,6 +2701,7 @@ class SteamBridgeView(ft.Container):
             with contextlib.suppress(Exception):
                 self._friends_list.update()
 
+    @_on_ui_thread
     def _toggle_game(self, game: str) -> None:
         if game in self._expanded_games:
             self._expanded_games.discard(game)
@@ -2800,7 +2906,7 @@ class SteamBridgeView(ft.Container):
         return
 
     # ── chat tabs (act as the header) ────────────────────────────────────────
-    def _tab_chip(self, acct: int, flex: bool = False,
+    def _tab_chip(self, acct: int, width: int = 170,
                   mini: bool = False) -> ft.Control:
         f = self._friends.get(acct, {})
         if not f and acct and acct == self._own:
@@ -2811,43 +2917,58 @@ class SteamBridgeView(ft.Container):
         active = (acct == self._active)
         state, ingame = int(f.get("state", 0)), bool(f.get("ingame"))
         sub = (f.get("game") or "In-Game") if ingame else _state_labels().get(state, "Offline")
-        # Unread dot: a background tab whose chat has a newer message than we've
-        # shown gets Steam's amber dot (cleared by opening the tab).
-        unread = (not active and not self._dnd
-                  and (acct in self._unread_live
-                       or int(f.get("last_chat") or 0)
-                       > self._seen_chat_ts.get(acct, 1 << 62)))
+        unread = (not active) and self._tab_unread(acct)
         _nm = _disp_name(f) or "Chat"
-        _name_txt = ft.Text(
-            _nm, size=12.5, weight=ft.FontWeight.W_500,
-            color=(_name_color(state, ingame) if (state or ingame)
-                   else (_TEXT_PRIMARY if active else _TEXT_FAINT)),
-            max_lines=1, overflow=ft.TextOverflow.ELLIPSIS)
         if mini:
-            # avatar-only chips once shares get too tight for readable
-            # names — the tooltip still carries name and status
-            row_items = [_avatar(f.get("avatar", ""), 18)]
+            # avatar-only chip: the X rides the avatar's top-right corner
+            # and the unread dot its bottom-right, so close/unread cost no
+            # width — nothing can clip off
+            row_items = [ft.Stack([
+                ft.Container(content=_avatar(f.get("avatar", ""), 22),
+                             left=0, top=0),
+                ft.Container(
+                    right=0, top=0, width=12, height=12,
+                    border_radius=6, bgcolor="#2b2d31",
+                    alignment=ft.alignment.center,
+                    content=ft.Icon(ft.Icons.CLOSE, size=8,
+                                    color=_TEXT_FAINT),
+                    tooltip="Close",
+                    on_click=lambda e, a=acct: self._close_tab(a)),
+                *([ft.Container(width=7, height=7, border_radius=4,
+                                bgcolor="#e0b400", right=0, bottom=0)]
+                  if unread else []),
+            ], width=22, height=22)]
         else:
+            _name_txt = ft.Text(
+                _nm, size=12.5, weight=ft.FontWeight.W_500,
+                color=(_name_color(state, ingame) if (state or ingame)
+                       else (_TEXT_PRIMARY if active else _TEXT_FAINT)),
+                max_lines=1, overflow=ft.TextOverflow.ELLIPSIS)
             row_items = [
                 _avatar(f.get("avatar", ""), 18),
-                # in flex mode the name takes the chip's leftover width and
-                # ellipsizes naturally — no width estimation anywhere
-                (ft.Container(content=_name_txt, expand=True,
-                              alignment=ft.alignment.center_left)
-                 if flex else _name_txt),
+                # the name takes the chip's leftover width — the chip width
+                # is explicit, so the text can never push past the strip
+                ft.Container(content=_name_txt, expand=True,
+                             alignment=ft.alignment.center_left),
             ]
-        if unread:
-            row_items.append(ft.Container(width=7, height=7, border_radius=4,
-                                          bgcolor="#e0b400"))
-        row_items.append(
-            ft.IconButton(ft.Icons.CLOSE, icon_size=11, icon_color=_TEXT_FAINT,
-                          tooltip="Close", width=16, height=16,
-                          on_click=lambda e, a=acct: self._close_tab(a),
-                          style=ft.ButtonStyle(padding=ft.padding.all(0))))
+            if unread:
+                row_items.append(ft.Container(width=7, height=7,
+                                              border_radius=4,
+                                              bgcolor="#e0b400"))
+            row_items.append(
+                ft.IconButton(ft.Icons.CLOSE, icon_size=11,
+                              icon_color=_TEXT_FAINT,
+                              tooltip="Close", width=16, height=16,
+                              on_click=lambda e, a=acct: self._close_tab(a),
+                              style=ft.ButtonStyle(padding=ft.padding.all(0))))
         chip = ft.Container(
-            content=ft.Row(row_items, spacing=6, tight=not flex,
+            content=ft.Row(row_items, spacing=6, tight=False,
+                           alignment=(ft.MainAxisAlignment.CENTER if mini
+                                      else ft.MainAxisAlignment.START),
                            vertical_alignment=ft.CrossAxisAlignment.CENTER),
-            padding=ft.padding.only(left=6, right=4, top=3, bottom=3),
+            width=width,
+            padding=(ft.padding.symmetric(horizontal=4, vertical=3) if mini
+                     else ft.padding.only(left=6, right=4, top=3, bottom=3)),
             border_radius=6, bgcolor=_BG_SEL if active else _BG_MENU,
             # the nickname star is dropped from chips to save space — the
             # real name rides the tooltip instead
@@ -2856,42 +2977,170 @@ class SteamBridgeView(ft.Container):
                         if f.get("nick") else "")),
             on_click=lambda e, a=acct: self.page.run_task(self._open, a))
         # Right-click opens a small menu (Close tab / Close all), like Steam.
-        gd = ft.GestureDetector(
+        return ft.GestureDetector(
             content=chip,
             on_secondary_tap_down=lambda e, a=acct: self._show_tab_menu(e, a))
-        if flex:
-            gd.expand = True     # equal share of the bar — can never overflow
-        return gd
+
+    def _tab_unread(self, acct: int) -> bool:
+        f = self._friends.get(acct, {})
+        return (not self._dnd
+                and (acct in self._unread_live
+                     or int(f.get("last_chat") or 0)
+                     > self._seen_chat_ts.get(acct, 1 << 62)))
+
+    def _overflow_chip(self, n: int) -> ft.Control:
+        dot = any(self._tab_unread(a) for a in self._overflow_tabs)
+        return ft.Container(
+            width=30, height=28, border_radius=6, bgcolor=_BG_MENU,
+            tooltip=_T("steam.more_tabs", n=str(n),
+                       default=f"{n} more tabs"),
+            content=ft.Stack([
+                ft.Container(content=ft.Text(
+                                 f"+{n}", size=10.5,
+                                 weight=ft.FontWeight.W_600,
+                                 color=_TEXT_PRIMARY),
+                             alignment=ft.alignment.center,
+                             left=0, top=0, right=0, bottom=0),
+                *([ft.Container(width=7, height=7, border_radius=4,
+                                bgcolor="#e0b400", right=1, bottom=1)]
+                  if dot else []),
+            ]),
+            on_click=lambda e: self._show_overflow_menu(e))
+
+    @_on_ui_thread
+    def _show_overflow_menu(self, e) -> None:
+        rows = []
+        for a in list(getattr(self, "_overflow_tabs", []) or []):
+            f = self._friends.get(a, {})
+            nm = _disp_name(f) or "Chat"
+
+            def make(a=a):
+                def handler(ev):
+                    self._hide_ctx()
+                    if self.page:
+                        self.page.run_task(self._open, a)
+                return handler
+            rows.append(ft.Container(
+                content=ft.Row([
+                    ft.Container(content=ft.Text(
+                                     nm, size=_fit_size(nm, 13, max_px=162,
+                                                        floor=9),
+                                     max_lines=1, color=_TEXT_PRIMARY),
+                                 width=167),
+                    *([ft.Container(width=7, height=7, border_radius=4,
+                                    bgcolor="#e0b400")]
+                      if self._tab_unread(a) else []),
+                ], spacing=6, tight=True,
+                   vertical_alignment=ft.CrossAxisAlignment.CENTER),
+                padding=ft.padding.symmetric(horizontal=10, vertical=7),
+                border_radius=6, ink=True, on_click=make()))
+        if not rows:
+            return
+        self._ctx_menu.content = ft.Column(
+            rows, spacing=1,
+            scroll=ft.ScrollMode.AUTO,
+            height=min(400, 33 * len(rows) + 6))
+        gx = float(getattr(e, "global_x", 0) or getattr(e, "local_x", 0) or 60)
+        gy = float(getattr(e, "global_y", 0) or getattr(e, "local_y", 0) or 60)
+        self._ctx_menu.left = self._clamp_menu_left(gx)
+        self._ctx_menu.top = max(40.0, gy - 24)
+        self._ctx_menu.visible = True
+        self._ctx_backdrop.visible = True
+        if self.page:
+            self.page.update()
 
     def _rebuild_tabs(self) -> None:
-        # 1-2 tabs render tight; 3+ become equal flex shares of the bar —
-        # Flutter does the division, so overflow is impossible at any
-        # window size. When the estimated share drops below readable-name
-        # territory, chips fall back to avatar-only.
-        _n = max(1, len(self._tabs))
+        # Explicit chip widths everywhere. Flutter flex let chips shrink
+        # below their content and the spill crossed the strip's HARD_EDGE
+        # clip (the sliced X). Now every chip gets a width that provably
+        # fits, and tabs that can't fit collapse into a "+N" chip whose
+        # menu lists them — nothing can ever clip again.
+        _n = len(self._tabs)
         try:
             _pw = float(self.page.width or 1200)
         except Exception:
             _pw = 1200.0
-        _side = 22 if getattr(self, "_friends_collapsed", False) else (
-            230 if self._is_popout else 220)
-        _share = (max(200.0, _pw - _side
-                      - (110 if self._is_popout else 270))
-                  - 6 * (_n - 1)) / _n
-        _mini = _share < 70
-        _flex = (not _mini) and _n >= 3
-        chips = [self._tab_chip(a, flex=_flex, mini=_mini)
-                 for a in self._tabs]
+        _collapsed = bool(getattr(self, "_friends_collapsed", False))
+        if self._is_popout:
+            avail = _pw - (22 if _collapsed else 230) - 36
+        else:
+            # fixed header content WHILE the Steam tab is active is just
+            # the Chat/Steam pills + divider + two icon buttons (~205px —
+            # the ~150px language slot is hidden on this tab; r599 diag
+            # logs proved the strip really gets pw-240-~180); 225 keeps a
+            # slice-safety margin for localized pill labels
+            avail = ((_pw - (42 if _collapsed else 240) - 225)
+                     * 20.0 / 21.0 - 21)
+        avail = max(66.0, avail)
+        show = list(self._tabs)
+        hidden: list[int] = []
+        mini = False
+        width = 170
+        if _n:
+            share = (avail - 6 * (_n - 1)) / _n
+            # ladder: named chip (right-side X, per user preference)
+            # down to a 20px name slot -> >=76; then avatar-only chips
+            # with the corner X; then the "+N" chip
+            if share >= 76:
+                width = int(min(170, share))
+            else:
+                mini = True
+                if _n * 36 - 6 <= avail:
+                    width = int(min(44, share))
+                else:
+                    width = 30
+                    vis = max(1, int((avail + 6) // 36) - 1)
+                    show = list(self._tabs[:vis])
+                    if (self._active in self._tabs
+                            and self._active not in show):
+                        show[-1] = self._active
+                    hidden = [a for a in self._tabs if a not in show]
+        self._overflow_tabs = hidden
+        try:
+            _ww = getattr(getattr(self.page, "window", None), "width", None)
+        except Exception:
+            _ww = None
+        _sig = (_n, int(_pw), _ww and int(_ww), int(avail), int(width),
+                mini, len(hidden))
+        if _sig != getattr(self, "_tabs_diag_sig", None):
+            # one line per changed decision — page.width vs the OS window
+            # width is the key comparison when chips look mis-fit
+            self._tabs_diag_sig = _sig
+            _vlog.info(
+                "[SteamView] tabs: n=%d pw=%.0f win=%s collapsed=%s "
+                "popout=%s avail=%.0f share=%.1f mode=%s w=%d hidden=%d",
+                _n, _pw, _ww, _collapsed, self._is_popout, avail,
+                (avail - 6 * (_n - 1)) / _n if _n else 0.0,
+                ("mini" if mini else "full"),
+                width, len(hidden))
+        chips: list[ft.Control] = [self._tab_chip(a, width=width, mini=mini)
+                                   for a in show]
+        if hidden:
+            chips.append(self._overflow_chip(len(hidden)))
         host = getattr(self, "external_tab_strip", None)
         if host is not None and not self._is_popout:
             host.controls = chips
             self._tab_strip.controls = []
-            with contextlib.suppress(Exception):
-                if host.page:
+            if host.page:
+                try:
                     host.update()
+                except Exception:
+                    # a failed flush here poisons the whole page — LOUD; a
+                    # silent suppress hid the true first failure before
+                    _vlog.exception("[SteamView] tab-host update failed")
         else:
             self._tab_strip.controls = chips
 
+    def _clamp_menu_left(self, gx: float) -> float:
+        # keep context menus inside the window — a right-edge tab's menu
+        # used to run past the program border
+        try:
+            _maxx = float(self.page.width or 1200) - self._ctx_offset_x - 210
+        except Exception:
+            _maxx = 900.0
+        return min(max(4.0, gx - self._ctx_offset_x - 8), max(4.0, _maxx))
+
+    @_on_ui_thread
     def _show_tab_menu(self, e, acct: int) -> None:
         rows = []
         for label, cb in (
@@ -2914,7 +3163,7 @@ class SteamBridgeView(ft.Container):
         self._ctx_menu.content = ft.Column(rows, spacing=1, tight=True)
         gx = float(getattr(e, "global_x", 0) or getattr(e, "local_x", 0) or 60)
         gy = float(getattr(e, "global_y", 0) or getattr(e, "local_y", 0) or 60)
-        self._ctx_menu.left = max(4.0, gx - self._ctx_offset_x - 8)
+        self._ctx_menu.left = self._clamp_menu_left(gx)
         self._ctx_menu.top = max(40.0, gy - 44)
         self._ctx_menu.visible = True
         self._ctx_backdrop.visible = True
@@ -2936,6 +3185,7 @@ class SteamBridgeView(ft.Container):
         if warm and self._active is not None and self._writer:
             await self._cmd({"cmd": "open", "acct": self._active})
 
+    @_on_ui_thread
     def _close_tabs_right(self, acct: int) -> None:
         if acct not in self._tabs:
             return
@@ -2953,12 +3203,14 @@ class SteamBridgeView(ft.Container):
                 with contextlib.suppress(Exception):
                     self._messages_stack.controls.remove(_ce[0])
         if self._active in removed and self.page:
-            self.page.run_task(self._open, acct)
+            self._active = None
+            self.page.run_task(self._open_kept, acct)
         self._rebuild_tabs()
         self._save_prefs()
         if self.page:
             self.page.update()
 
+    @_on_ui_thread
     def _close_all_tabs(self) -> None:
         self._tabs = []
         self._scroll_pos.clear()
@@ -2981,6 +3233,7 @@ class SteamBridgeView(ft.Container):
         if self.page:
             self.page.update()
 
+    @_on_ui_thread
     def _close_tab(self, acct: int) -> None:
         if acct in self._tabs:
             self._tabs.remove(acct)
@@ -2998,10 +3251,14 @@ class SteamBridgeView(ft.Container):
         if acct == self._active:
             self._last_block = None
             self._hist_blocks = []
-            if self._tabs:
-                self.page.run_task(self._open, self._tabs[-1])
-                return
+            # active clears NOW: a queued inbound push must not resurrect
+            # the closed chat through the _messages property
             self._active = None
+            if self._tabs:
+                # the successor is picked when the task RUNS — a second
+                # queued close may have shrunk the list by then
+                self.page.run_task(self._open_successor)
+                return
             self._show_msg_list(None)
             self._set_chat_head(None)
             self._entry.disabled = True
@@ -3011,6 +3268,32 @@ class SteamBridgeView(ft.Container):
         self._save_prefs()
         if self.page:
             self.page.update()
+
+    async def _open_successor(self) -> None:
+        if self._active is not None:
+            return   # the user already opened something while this queued
+        if self._tabs:
+            await self._open(self._tabs[-1])
+            return
+        self._active = None
+        self._show_msg_list(None)
+        self._set_chat_head(None)
+        self._entry.disabled = True
+        if self._module_on:
+            self._show_state_overlay("idle")
+        self._rebuild_tabs()
+        self._save_prefs()
+        if self.page:
+            self.page.update()
+
+    async def _open_kept(self, acct: int) -> None:
+        if self._active is not None:
+            return   # the user already opened something while this queued
+        # open only if still open — a close queued meanwhile wins
+        if acct in self._tabs:
+            await self._open(acct)
+        else:
+            await self._open_successor()
 
     # ── messages ─────────────────────────────────────────────────────────────
     @property
@@ -3408,11 +3691,13 @@ class SteamBridgeView(ft.Container):
             fi = _FLASHWINFO(ctypes.sizeof(_FLASHWINFO), hwnd, 0xF, 0, 0)
             u32.FlashWindowEx(ctypes.byref(fi))
 
+    @_on_ui_thread
     def _on_friends_toggle(self) -> None:
         self._friends_collapsed = not getattr(self, "_friends_collapsed", False)
         self._apply_friends_collapsed()
         self._save_prefs()
 
+    @_on_ui_thread
     def _apply_friends_collapsed(self) -> None:
         c = bool(getattr(self, "_friends_collapsed", False))
         # collapsed: EVERYTHING hides (friends included) — only the slim
@@ -3433,6 +3718,9 @@ class SteamBridgeView(ft.Container):
                 with contextlib.suppress(Exception):
                     cb(c)
         self._rebuild_friends()
+        # the sidebar width feeds the chip-width math — without a re-fit,
+        # expanding clips the strip (and its X) until an unrelated rebuild
+        self._rebuild_tabs()
         with contextlib.suppress(Exception):
             if self.page:
                 self.page.update()
@@ -3942,7 +4230,7 @@ class SteamBridgeView(ft.Container):
         ], spacing=1, tight=True)
         gx = float(getattr(e, "global_x", 0) or getattr(e, "local_x", 0) or 60)
         gy = float(getattr(e, "global_y", 0) or getattr(e, "local_y", 0) or 60)
-        self._ctx_menu.left = max(4.0, gx - self._ctx_offset_x - 8)
+        self._ctx_menu.left = self._clamp_menu_left(gx)
         self._ctx_menu.top = max(40.0, gy - 44)
         self._ctx_menu.visible = True
         self._ctx_backdrop.visible = True
@@ -3978,6 +4266,7 @@ class SteamBridgeView(ft.Container):
                 on_secondary_tap_down=lambda e, u=url: self._copy_link(u)),
             padding=ft.padding.only(top=2))
 
+    @_on_ui_thread
     def _show_image_viewer(self, url: str) -> None:
         # Lightbox, not a dialog: an AlertDialog's (invisible) surface swallows
         # clicks in a large rectangle around the image, which made closing feel
@@ -4096,6 +4385,7 @@ class SteamBridgeView(ft.Container):
             with contextlib.suppress(Exception):
                 self.page.update()
 
+    @_on_ui_thread
     def _close_viewer(self) -> None:
         self._viewer.visible = False
         self._viewer_overlay.visible = False
@@ -4133,6 +4423,7 @@ class SteamBridgeView(ft.Container):
         except Exception:
             self._notice(_T("steam.copy_failed", default="Copy failed"))
 
+    @_on_ui_thread
     def _copy_link(self, url: str) -> None:
         if not self.page:
             return
@@ -4680,6 +4971,15 @@ class SteamBridgeView(ft.Container):
         try:
             self._writer.write((json.dumps(obj, ensure_ascii=False) + "\n").encode("utf-8"))
             await self._writer.drain()
+            if obj.get("cmd") == "send":
+                # surface the RECENT section right away — the helper only
+                # re-pushes friends when its signature changes, which a
+                # message to the already-top chat never does
+                with contextlib.suppress(Exception):
+                    fr = self._friends.get(int(obj.get("acct") or 0))
+                    if fr is not None:
+                        fr["last_chat"] = int(time.time())
+                        self._rebuild_friends()
             return True
         except Exception:
             self._writer = None
@@ -5140,6 +5440,11 @@ class SteamBridgeView(ft.Container):
             _im = ev.get("message") or {}
             if _im and not _im.get("from_me"):
                 self._flash_popout_taskbar()
+            with contextlib.suppress(Exception):
+                _fr = self._friends.get(_in_acct)
+                if _fr is not None and _im:
+                    _fr["last_chat"] = int(_im.get("ts") or time.time())
+                    self._rebuild_friends()
             if _in_acct == self._active:
                 self._set_typing("")
                 await self._append_message(ev.get("message", {}))

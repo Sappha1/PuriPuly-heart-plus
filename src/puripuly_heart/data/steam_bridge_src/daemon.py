@@ -328,8 +328,11 @@ class Daemon:
             self.convos = {i["acct"]: i for i in items}
 
     def _friends_sig(self):
-        # top-6 recently-messaged order, so RECENT re-orders on new messages
-        recent = tuple(sorted(self.convos, key=lambda a: -(self.convos[a].get("last_chat") or 0))[:6])
+        # top-6 recently-messaged accts WITH their timestamps — order alone
+        # missed messages to the already-top chat, so RECENT never refreshed
+        # in a quiet session (no status churn to piggyback on)
+        recent = tuple((a, self.convos[a].get("last_chat") or 0) for a in
+                       sorted(self.convos, key=lambda a: -(self.convos[a].get("last_chat") or 0))[:6])
         return (recent, tuple(sorted(
             (a, v.get("state"), v.get("ingame"), v.get("game"), v.get("fav"),
              v.get("name"), v.get("unread"), v.get("extra"),

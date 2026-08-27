@@ -12,6 +12,7 @@ User-facing changes per build. The latest build's highlights also appear in-app 
 - Changed: clicking the Steam tab while the chat is popped out focuses the pop-out window; the tab hides until that window closes
 - Fixed: the subtitle overlay could end up under other windows — it now reasserts always-on-top within a second whenever something covers it
 - Fixed: turning the Steam module off and on reliably restarts its helper
+- Fixed: pasted-image translation keeps already-correct lines as-is instead of romanizing them, never mistranslates bare unit labels, and reads stylized Japanese lines more reliably (OCR module build 302)
 
 ## r563 — 2026-08-21
 

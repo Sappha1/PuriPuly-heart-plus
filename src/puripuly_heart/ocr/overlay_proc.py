@@ -639,13 +639,30 @@ def _paste_rows(detector, bgr) -> list:
                   + (b[4] - b[2]) * (b[5] - b[3]) - inter)
             return inter / ua if ua > 0 else 0.0
 
+        # a small ya/yu/yo that does not follow an i-row kana is not a
+        # possible Japanese mora — it is a misread glyph (the "1" of
+        # "レベル 1" came back as "レベルュ"); drop it
+        _bad_yoon = _re.compile(
+            "(?<![キシチニヒミリギジヂビピ"
+            "きしちにひみりぎじぢびぴ])"
+            "[ャュョゃゅょ]")
+        ja = [(_bad_yoon.sub("", r[0]).strip(), *r[1:]) for r in ja]
         for jr in ja:
-            overlap = max((_iou(jr, r) for r in rows), default=0.0)
-            # only lines the ch pass missed entirely, and only when they
-            # actually contain kana — a re-read of Latin/hanzi the ch model
-            # already handled must not duplicate or degrade it
-            if overlap < 0.3 and jr[1] >= 0.35 and _kana.search(jr[0]):
-                rows.append(jr)
+            if not jr[0] or not _kana.search(jr[0]):
+                continue       # a re-read of Latin/hanzi the ch model already
+                               # handled must not duplicate or degrade it
+            best, best_r = 0.0, None
+            for r in rows:
+                o = _iou(jr, r)
+                if o > best:
+                    best, best_r = o, r
+            if best < 0.3:
+                if jr[1] >= 0.35:
+                    rows.append(jr)      # a line the ch pass missed entirely
+            elif best_r is not None and jr[1] >= best_r[1] - 0.05:
+                # the ch model garbles kana lines it can't read ("L 丁石率"
+                # for レア鉱石率) — a kana read that scores as well wins
+                rows[rows.index(best_r)] = jr
     if not rows:
         return []
     rows = [r for r in rows if r[1] >= 0.30 and r[0] != "?"]
@@ -1243,8 +1260,18 @@ def _paste_handle(detector, rid: str, path: str, auto=None) -> None:
     # when the configured target is English is pure ASCII "already readable"
     # (an EN->ZH user needs their English screenshots translated as ever).
     _skip_ascii = str(_XLAT_TARGET[0] or "").lower().startswith("en")
+
+    def _unit_like(t):
+        # bare unit abbreviations ("m/s2", "km/h", "ms") — translators
+        # hallucinate on these (m -> the word for "male"); they are the same
+        # in every language, so never send them
+        import re as _re
+        return bool(_re.fullmatch(
+            r"[A-Za-z]{1,2}(/[A-Za-z]{1,2})?[\u00b2\u00b3]?\d{0,2}", t.strip()))
+
     texts = [r[0] for r in rows
-             if (not _skip_ascii) or any(ord(ch) > 127 for ch in r[0])]
+             if ((not _skip_ascii) or any(ord(ch) > 127 for ch in r[0]))
+             and not _unit_like(r[0])]
     trs = _paste_translate_many(texts)
     trs = {k: v for k, v in trs.items()
            if _norm_cmp(v) and _norm_cmp(v) != _norm_cmp(k)}
@@ -1265,8 +1292,14 @@ def _paste_handle(detector, rid: str, path: str, auto=None) -> None:
     # translation only); the pinyin fallback below still covers names the
     # translator returns unchanged. Flip this to re-enable two-line boxes.
     _want_reading = False
+    # the pinyin fallback only helps a reader who CANNOT read CJK — for a
+    # Chinese/Japanese/Korean "Your language" an unchanged box is already
+    # readable (kanji == hanzi), so it keeps its original pixels instead of
+    # being repainted as romanization
+    _roman_ok = not str(_XLAT_TARGET[0] or "").lower().startswith(
+        ("zh", "ja", "ko"))
     boxes = [(r[2], r[3], r[4], r[5], r[0],
-              trs.get(r[0], "") or _roman_fallback(r[0]),
+              trs.get(r[0], "") or (_roman_fallback(r[0]) if _roman_ok else ""),
               _roman_fallback(r[0]) if _want_reading else "")
              for r in rows]
     rendered = ""
@@ -1316,7 +1349,7 @@ def _paste_handle(detector, rid: str, path: str, auto=None) -> None:
     grouped = _uniq
 
     def _eff(t):
-        return trs.get(t) or _roman_fallback(t) or t
+        return trs.get(t) or (_roman_fallback(t) if _roman_ok else "") or t
 
     # the image reads left-to-right: a tag box detected 2px above its
     # row's time box must not push the time to the END of the text line

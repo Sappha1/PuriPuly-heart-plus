@@ -1,12 +1,12 @@
 {
-  "build": 601,
-  "tag": "r601",
+  "build": 615,
+  "tag": "r615",
   "date": "2026-08-27",
   "notes": [
-    "Fixed: rapidly closing chat tabs could freeze the whole window until an app restart",
-    "Fixed: chat tabs size to the real bar width \u2014 graceful name shrink, avatar chips with a corner close, \"+N\" overflow menu",
-    "Fixed: the recently-messaged section refreshes the moment you send or receive a message",
-    "Fixed: the Steam chat popout enforces its minimum size and remembers its position again",
-    "Changed: friend rows hug their text tighter, like Steam"
+    "Added: \"Ignore filler sounds\" \u2014 grunt-only voice lines are skipped before translation, saving translator usage",
+    "Added: speaker ID reads the VRChat room roster \u2014 in-room people match first; confirmed names show green",
+    "Added: PEER audio-source selector with real app icons; capture pauses visibly and auto-resumes with the app",
+    "Changed: redesigned sidebar \u2014 MIC/PEER/TRANS cards, translation controls merged into the TRANS card",
+    "Fixed: the translation toggle re-verifies your key instead of sticking on a stale warning"
   ]
 }

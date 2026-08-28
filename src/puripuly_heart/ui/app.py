@@ -189,6 +189,14 @@ class TranslatorApp:
         self.view_dashboard.on_chat_log_format_change = self._on_chat_log_format_change
         self.view_dashboard.on_chat_reading_flag_change = self._on_chat_reading_flag_change
         self.view_dashboard.on_auto_detect_ignore_own_change = self._on_auto_detect_ignore_own_change
+        self.view_dashboard.on_ignore_fillers_change = self._on_ignore_fillers_change
+        self.view_dashboard.on_speaker_in_room = self._speaker_in_room
+        self.view_dashboard.on_peer_source_click = self._on_peer_source_click
+        self._peer_source_options_cache = None
+        with contextlib.suppress(Exception):
+            self._sync_peer_source_display()
+        with contextlib.suppress(Exception):
+            self._refresh_peer_source_options_async()
         self.view_dashboard.on_request_current_translator = self._current_translator_model_value
         self.view_dashboard.on_request_deepl_usage_refresh = self._on_request_deepl_usage_refresh
         self.view_dashboard.on_request_stt_download = self._on_request_stt_download
@@ -2076,6 +2084,17 @@ class TranslatorApp:
             f"dashboard_state={getattr(getattr(self, 'view_dashboard', None), 'is_translation_on', None)} "
             f"overlay_state={getattr(self, 'overlay_state', 'unknown')}"
         )
+        _dash = getattr(self, "view_dashboard", None)
+        if (not enabled and _dash is not None
+                and getattr(_dash, "translation_needs_key", False)
+                and getattr(_dash, "_translation_showing_warning", False)
+                and not getattr(self, "_key_heal_busy", False)):
+            # r603: the click bounced off a (possibly stale) needs-key flag.
+            # Re-verify saved keys in the background and finish the user's
+            # intent — a transient verification failure used to wedge the
+            # toggle until an app restart.
+            self._key_heal_busy = True
+            self.page.run_task(self._self_heal_translation_key)
         if enabled:
             managed_auth_action = self._dashboard_managed_auth_action()
             if managed_auth_action in {"prompt", "in_progress"}:
@@ -2089,6 +2108,166 @@ class TranslatorApp:
 
         self.page.run_task(_task)
         return True
+
+    def _speaker_in_room(self, name: str) -> bool:
+        try:
+            roster = getattr(self.controller, "_vrc_roster", None)
+            names = roster.active_names() if roster is not None else None
+            if not names:
+                return False
+            from puripuly_heart.core.vrchat_roster import norm_name
+
+            return norm_name(name) in names
+        except Exception:
+            return False
+
+    async def _self_heal_translation_key(self) -> None:
+        try:
+            await self._startup_heal_key_verification()
+            verify = getattr(self.controller, "_verify_and_update_status", None)
+            if callable(verify):
+                await verify()
+            dash = getattr(self, "view_dashboard", None)
+            if dash is not None and not getattr(dash, "translation_needs_key", True):
+                await self.controller.set_translation_enabled(True)
+                self._set_dashboard_translation_visual_state(True)
+        except Exception:
+            logger.exception("Translation key self-heal failed")
+        finally:
+            self._key_heal_busy = False
+
+    def _peer_source_display_args(self, value: str) -> tuple[str, str]:
+        """(label, kind) for the PEER source pill from the stored setting."""
+        try:
+            from puripuly_heart.config.process_capture_target import (
+                parse_process_capture_target,
+            )
+            target = parse_process_capture_target(value)
+        except Exception:
+            target = None
+        if target is not None:
+            import ntpath
+            base = ntpath.basename(
+                getattr(target, "executable_identity", "") or "")
+            if not base:
+                # kinds without an executable path (e.g. Discord channels)
+                # fall back to the friendly display name
+                try:
+                    from puripuly_heart.config.process_capture_target import (
+                        process_capture_display_name,
+                    )
+                    base = process_capture_display_name(value) or str(
+                        getattr(target, "kind", "app"))
+                except Exception:
+                    base = str(getattr(target, "kind", "app"))
+            return base, str(getattr(target, "kind", "generic"))
+        if (value or "").strip():
+            return value, "device"
+        # same word the Settings picker uses for the empty selection
+        return t("settings.default_option", default="Auto"), "device"
+
+    def _peer_source_icon_src(self, value: str) -> str | None:
+        try:
+            from puripuly_heart.config.process_capture_target import (
+                parse_process_capture_target,
+            )
+            target = parse_process_capture_target(value)
+            if target is not None:
+                from puripuly_heart.ui.win_icons import (
+                    exe_icon_png, target_exe_path,
+                )
+                ident = target_exe_path(target)
+                if ident:
+                    return exe_icon_png(ident)
+        except Exception:
+            pass
+        return None
+
+    def _sync_peer_source_display(self, available: bool = True) -> None:
+        dash = getattr(self, "view_dashboard", None)
+        settings = getattr(self.controller, "settings", None)
+        if dash is None or settings is None:
+            return
+        value = str(getattr(settings.desktop_audio, "output_device", "") or "")
+        label, kind = self._peer_source_display_args(value)
+        with contextlib.suppress(Exception):
+            dash.set_peer_source_display(
+                label, kind, available=available,
+                icon_src=self._peer_source_icon_src(value))
+
+    def _build_peer_source_options(self):
+        audio = getattr(self.view_settings, "_audio_settings", None)
+        return audio._get_desktop_output_options() if audio else []
+
+    def _refresh_peer_source_options_async(self) -> None:
+        # r609: device + process enumeration takes a beat — build it off
+        # the click path so the picker opens instantly from cache
+        import threading
+
+        def _work():
+            try:
+                self._peer_source_options_cache =                     self._build_peer_source_options()
+            except Exception:
+                logger.debug("peer source prefetch failed", exc_info=True)
+        threading.Thread(target=_work, name="peer-src-prefetch",
+                         daemon=True).start()
+
+    def _on_peer_source_click(self) -> None:
+        try:
+            options = getattr(self, "_peer_source_options_cache", None)
+            if not options:
+                options = self._build_peer_source_options()
+        except Exception:
+            logger.exception("peer source options failed")
+            return
+        # a fresh list for the NEXT open (apps launch/close between opens)
+        self._refresh_peer_source_options_async()
+        if not options or not self.page:
+            return
+        from puripuly_heart.ui.components.settings import SettingsModal
+        modal = SettingsModal(
+            self.page,
+            t("settings.section.loopback_audio"),
+            options,
+            self._on_peer_source_selected,
+            show_description=False,
+        )
+        current = str(getattr(self.controller.settings.desktop_audio,
+                              "output_device", "") or "")
+        modal.open(current)
+
+    def _on_peer_source_selected(self, value: str) -> None:
+        import copy
+        # keep the Settings view's draft in sync so its next save can't
+        # stomp this pick back (its _audio_settings owns a local copy)
+        with contextlib.suppress(Exception):
+            audio = getattr(self.view_settings, "_audio_settings", None)
+            if audio is not None:
+                audio.desktop_output_device = value
+        with contextlib.suppress(Exception):
+            # the view's own draft too — any later non-audio Settings save
+            # emits that draft wholesale and would revert this pick
+            draft = getattr(self.view_settings, "_settings", None)
+            if draft is not None:
+                draft.desktop_audio.output_device = str(value or "")
+        with contextlib.suppress(Exception):
+            self.view_settings._sync_general_audio_card_texts()
+        dash = getattr(self, "view_dashboard", None)
+        if dash is not None:
+            label, kind = self._peer_source_display_args(str(value or ""))
+            with contextlib.suppress(Exception):
+                dash.set_peer_source_display(
+                    label, kind, available=True,
+                    icon_src=self._peer_source_icon_src(str(value or "")))
+
+        async def _task():
+            settings = self.controller.settings
+            if settings is None:
+                return
+            updated = copy.deepcopy(settings)
+            updated.desktop_audio.output_device = str(value or "")
+            await self.controller.apply_settings(updated)
+        self._queue_settings_mutation_task(_task)
 
     def _on_stt_toggle(self, enabled: bool) -> None:
         self._log_basic(f"[Dashboard] STT toggle requested: enabled={enabled}")
@@ -2299,6 +2478,17 @@ class TranslatorApp:
             return {}
 
     def _on_settings_changed(self, settings) -> None:
+        with contextlib.suppress(Exception):
+            # derive from the INCOMING settings — controller.settings is
+            # still the pre-apply value at this point (review defect #6)
+            value = str(getattr(settings.desktop_audio,
+                                "output_device", "") or "")
+            label, kind = self._peer_source_display_args(value)
+            dash = getattr(self, "view_dashboard", None)
+            if dash is not None:
+                dash.set_peer_source_display(
+                    label, kind, available=True,
+                    icon_src=self._peer_source_icon_src(value))
         # For values that can be toggled from the dashboard (not just settings view),
         # merge the live controller state so a stale settings-view draft can't overwrite
         # a dashboard toggle the user just made.
@@ -2417,6 +2607,8 @@ class TranslatorApp:
         self._queue_settings_mutation_task(_task)
 
     def _sync_dashboard_from_controller_settings(self) -> None:
+        with contextlib.suppress(Exception):
+            self._sync_peer_source_display()
         """Sync dashboard button states from the loaded controller settings on startup."""
         s = getattr(self.controller, "settings", None)
         if s is None:
@@ -2648,6 +2840,17 @@ class TranslatorApp:
                 return
             updated = copy.deepcopy(settings)
             updated.languages.auto_detect_ignore_own = bool(value)
+            await self.controller.apply_settings(updated)
+        self._queue_settings_mutation_task(_task)
+
+    def _on_ignore_fillers_change(self, value: bool) -> None:
+        import copy
+        async def _task():
+            settings = self.controller.settings
+            if settings is None:
+                return
+            updated = copy.deepcopy(settings)
+            updated.languages.ignore_fillers = bool(value)
             await self.controller.apply_settings(updated)
         self._queue_settings_mutation_task(_task)
 

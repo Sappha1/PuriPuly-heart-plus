@@ -118,6 +118,21 @@ CLUSTER_MARGIN = 0.12
 CLUSTER_CONSOLIDATE_THRESHOLD = 0.62
 
 
+# r603: presence-aware matching. When the VRChat log roster is live, an
+# enrolled name that is NOT in the room must clear a higher similarity bar
+# (absolute and sticky) before claiming a line — the classic failure was an
+# absent friend's voiceprint stealing a present friend's words. Soft rule
+# only: with the roster inactive (VRChat closed, Discord call) nothing
+# changes, and in-room candidates additionally break refuse-to-guess ties.
+ROSTER_OUT_PENALTY = 0.06
+
+
+def _roster_norm(name: str) -> str:
+    # keep in sync with core.vrchat_roster.norm_name (local copy so this
+    # module stays dependency-free)
+    return "".join(ch for ch in (name or "") if ch.isalnum()).casefold()
+
+
 def _normalize(vector: np.ndarray) -> np.ndarray:
     norm = float(np.linalg.norm(vector))
     if norm <= 0.0:
@@ -165,6 +180,9 @@ class SpeakerRegistry:
         # "this speaker is NOT that person". Anchored to the print, not the
         # cluster id, because reset_session renumbers clusters every session.
         self._denied: list[tuple[np.ndarray, str]] = []
+        # r603: optional callable returning a frozenset of NORMALIZED
+        # in-room names, or None while VRChat is idle (rules disabled).
+        self.roster_provider = None
         self._load()
 
     # ── persistence ──────────────────────────────────────────────────────
@@ -337,6 +355,25 @@ class SpeakerRegistry:
                 )
                 best_name, best_name_sim, best_variant_index = "", -1.0, -1
 
+            # r603: consult the room roster once per match. None = roster
+            # inactive -> every _in_room() answers None and no rule applies.
+            roster = None
+            _rp = getattr(self, "roster_provider", None)
+            if callable(_rp):
+                try:
+                    roster = _rp()
+                except Exception:
+                    roster = None
+
+            def _in_room(name: str):
+                if roster is None or not name:
+                    return None
+                return _roster_norm(name) in roster
+
+            named_bar = NAMED_MATCH_THRESHOLD
+            if _in_room(best_name) is False:
+                named_bar = NAMED_MATCH_THRESHOLD + ROSTER_OUT_PENALTY
+
             # r351: two enrolled people this close to one voice means the
             # evidence does not pick between them. Leaving the line unnamed is
             # recoverable; putting one person's name on another person's words
@@ -345,7 +382,33 @@ class SpeakerRegistry:
                 runner_up_sim < 0.0
                 or (best_name_sim - runner_up_sim) >= NAMED_MARGIN
             )
-            if best_name and best_name_sim >= NAMED_MATCH_THRESHOLD and not decisive:
+            if best_name and not decisive and len(ranked) > 1:
+                # r603: presence breaks the tie before we refuse to guess —
+                # when exactly one of the two candidates is in the room and
+                # the chosen one clears the NORMAL threshold, it wins (the
+                # absent-friend mislabel fix). Gated on the chosen candidate,
+                # not the absent one's raised bar.
+                _r_sim, _r_name = ranked[1][0], ranked[1][1]
+                _b_in, _r_in = _in_room(best_name), _in_room(_r_name)
+                if (_b_in is True and _r_in is False
+                        and best_name_sim >= NAMED_MATCH_THRESHOLD):
+                    logger.info(
+                        "[SpeakerID] roster tiebreak: keeping %r (in room, "
+                        "%.3f) over %r (absent, %.3f)",
+                        best_name, best_name_sim, _r_name, _r_sim,
+                    )
+                    decisive = True
+                elif (_b_in is False and _r_in is True
+                        and _r_sim >= NAMED_MATCH_THRESHOLD):
+                    logger.info(
+                        "[SpeakerID] roster tiebreak: %r (in room, %.3f) "
+                        "over %r (absent, %.3f)",
+                        _r_name, _r_sim, best_name, best_name_sim,
+                    )
+                    best_name_sim, best_name, best_variant_index = ranked[1]
+                    named_bar = NAMED_MATCH_THRESHOLD
+                    decisive = True
+            if best_name and best_name_sim >= named_bar and not decisive:
                 logger.info(
                     "[SpeakerID] refusing to guess between %r (%.3f) and the "
                     "next closest (%.3f) - margin %.3f < %.2f",
@@ -354,7 +417,7 @@ class SpeakerRegistry:
                 )
                 best_name, best_name_sim, best_variant_index = "", -1.0, -1
 
-            if best_name and best_name_sim >= NAMED_MATCH_THRESHOLD:
+            if best_name and best_name_sim >= named_bar:
                 # Nudge ONLY the variant that matched, so a call-channel print
                 # never drags the VRChat one (or vice versa) toward it.
                 variants = self._named[best_name]
@@ -406,8 +469,13 @@ class SpeakerRegistry:
                 # together. Deciding WHICH stranger a voice is needs a margin;
                 # confirming the person a cluster already belongs to does not.
                 session_name_sim = sim_by_name.get(session_name, -1.0)
+                _sticky_bar = STICKY_NAME_THRESHOLD
+                if _in_room(session_name) is False:
+                    # r603: an absent person's name needs more evidence to
+                    # stay stuck to a live cluster
+                    _sticky_bar = STICKY_NAME_THRESHOLD + ROSTER_OUT_PENALTY
                 if session_name and (
-                    session_name_sim >= STICKY_NAME_THRESHOLD
+                    session_name_sim >= _sticky_bar
                     and not self._denied_locked(vector, session_name, session_name_sim)
                 ):
                     return SpeakerMatch(

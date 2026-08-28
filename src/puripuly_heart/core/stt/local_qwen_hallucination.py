@@ -233,8 +233,54 @@ def is_known_local_qwen_hallucination(
     return False
 
 
+# ── Filler / grunt detection (provider-agnostic) ───────────────────────────
+# "hmm", "uh...", "嗯嗯", "うーん", "음..." — non-lexical sounds that waste
+# translator tokens and spam the chat log. Whole-utterance match ONLY: a
+# transcript is filler when EVERY token/character of it is filler, so one
+# real word anywhere keeps the line. Meaningful acknowledgements ("yes",
+# "はい", "네", "好") deliberately do NOT count as filler.
+
+_FILLER_STRIP_RE = re.compile(
+    "[\\s.。,，!！?？;；:：、…·~〜～\\-—–_'\"“”‘’"
+    "「」『』()（）\\[\\]♪ー]+")
+
+_LATIN_FILLER_TOKEN_RE = re.compile(
+    r"^(?:h+m+|m+h+m*|m{2,}|u+h+m*|u+m+|e+r+m*|e+h+|a+h+|o+h+|o+o+|huh+|"
+    r"mhm+|(?:ha){2,}h*|(?:he){2,}h*|(?:ho){2,}h*|ugh+|hmph+|tsk+|pf+t*|"
+    r"whew+|phew+|uhhuh|aha+)$")
+
+_CJK_FILLER_CHARS = frozenset(
+    # zh interjections / laughter / sighs
+    "嗯呃啊哦噢喔唔哈嘿呵哎唉欸诶咦哟唷呦嚯呀嗷噗唏咳呜嘤"
+    # ja kana grunts ("い" is excluded so はい/yes always passes; the
+    # elongation mark ー is stripped by _FILLER_STRIP_RE)
+    "あぁうぅえぇおぉんっはへほふ"
+    "アァウゥエェオォンッハヘホフ"
+    # ko grunts / laughter
+    "음응어아으흠하허헤호후흐엇앗"
+)
+
+
+def is_filler_utterance(text: str) -> bool:
+    """True when the WHOLE utterance is non-lexical filler (grunts,
+    hesitation sounds, bare laughter) in any supported script."""
+    stripped = _FILLER_STRIP_RE.sub(" ", (text or "").lower()).strip()
+    if not stripped:
+        return False   # empty / punctuation-only is handled elsewhere
+    for token in stripped.split(" "):
+        if not token:
+            continue
+        if token.isascii():
+            if not _LATIN_FILLER_TOKEN_RE.fullmatch(token):
+                return False
+        elif not all(ch in _CJK_FILLER_CHARS for ch in token):
+            return False
+    return True
+
+
 __all__ = [
     "KNOWN_LOCAL_QWEN_HALLUCINATIONS",
+    "is_filler_utterance",
     "is_known_local_qwen_hallucination",
     "is_repetition_loop",
 ]

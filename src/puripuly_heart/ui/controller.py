@@ -4469,6 +4469,7 @@ class GuiController:
             self.hub.typed_in_overlay = bool(getattr(settings.ui, "typed_in_overlay", True))
             self.hub.filter_peer_by_target_languages = bool(getattr(settings.ui, "filter_peer_by_target_languages", False))
             self.hub.auto_detect_ignore_own = bool(getattr(settings.languages, "auto_detect_ignore_own", False))
+            self.hub.ignore_fillers = bool(getattr(settings.languages, "ignore_fillers", True))
             self.hub.speaker_registry = (
                 self._speaker_registry() if getattr(settings.stt, "speaker_id", True) else None
             )
@@ -4733,6 +4734,7 @@ class GuiController:
                 else None
             )
             self.hub.auto_detect_ignore_own = bool(getattr(next_settings.languages, "auto_detect_ignore_own", False))
+            self.hub.ignore_fillers = bool(getattr(next_settings.languages, "ignore_fillers", True))
             self.hub.chatbox_send_peer = bool(getattr(next_settings.ui, "chatbox_send_peer", False))
             self.hub.chatbox_send_peer_translation_only = bool(
                 getattr(next_settings.ui, "chatbox_send_peer_translation_only", False)
@@ -5194,6 +5196,13 @@ class GuiController:
         self.log_detailed("[AudioDiag][DebugFault] capture_profile=none stt_profile=none")
 
     _speaker_registry_instance: object | None = None
+    # r605: slots class — the roster attribute must be DECLARED here or the
+    # r603/r604 wiring dies with "no __dict__ for setting new attributes"
+    _vrc_roster: object | None = None
+    # r606: background task that relatches app-audio capture when the
+    # target process (VRChat) comes back after exiting
+    _peer_repoll_task: object | None = None
+    _peer_target_missing: bool = False
     # r341: MUST be declared — GuiController is @dataclass(slots=True), so an
     # undeclared attribute raises AttributeError on assignment (this is what
     # crashed every launch in r325).
@@ -5207,6 +5216,20 @@ class GuiController:
 
             store = self.config_path.parent / "voices.json"
             self._speaker_registry_instance = SpeakerRegistry(store)
+            # r603: feed the matcher the live in-room roster so absent
+            # people need more evidence to claim a line
+            try:
+                from puripuly_heart.core.vrchat_roster import VRChatRoster
+
+                if getattr(self, "_vrc_roster", None) is None:
+                    self._vrc_roster = VRChatRoster()
+                    self._vrc_roster.start()
+                self._speaker_registry_instance.roster_provider = (
+                    self._vrc_roster.active_names
+                )
+                logger.info("[SpeakerID] room roster wired")
+            except Exception:
+                logger.exception("[SpeakerID] roster wiring failed")
         return self._speaker_registry_instance
 
     def speaker_name_for_cluster(self, cluster_id: int) -> str:
@@ -5402,7 +5425,87 @@ class GuiController:
             log_detailed=lambda message: self.log_detailed(message),
         )
 
+    async def _peer_target_repoll_loop(self) -> None:
+        """r606: while peer capture is detached (faulted) and the configured
+        source is an app target, watch for the app to come back and relatch
+        automatically — closing VRChat used to silently kill capture with
+        the pill left green, and reopening it never resumed."""
+        from puripuly_heart.config.process_capture_resolution import (
+            ProcessCaptureResolver,
+        )
+        from puripuly_heart.config.process_capture_target import (
+            parse_process_capture_target,
+        )
+        from puripuly_heart.core.audio.process_identity import (
+            PsutilCurrentUserProcessSnapshots,
+        )
+        from puripuly_heart.core.runtime.peer_channel import (
+            PeerChannelRuntimeState,
+        )
+        while True:
+            await asyncio.sleep(8.0)
+            try:
+                settings = self.settings
+                if self.hub is None or settings is None:
+                    continue
+                value = str(getattr(settings.desktop_audio,
+                                    "output_device", "") or "")
+                try:
+                    target = parse_process_capture_target(value)
+                except Exception:
+                    target = None
+                if target is None:
+                    if self._peer_target_missing:
+                        self._peer_target_missing = False
+                        self._push_peer_source_available(True)
+                    continue
+                runtime = getattr(self, "_peer_runtime", None)
+                faulted = (
+                    runtime is not None
+                    and getattr(runtime, "state", None)
+                    == PeerChannelRuntimeState.FAULTED
+                )
+                if not faulted or not self._peer_runtime_should_be_active(
+                        settings):
+                    # healthy, intentionally off, or a non-capture fault
+                    # handled elsewhere — clear any stale "not running" mark
+                    if self._peer_target_missing and getattr(
+                            self.hub, "peer_stt", None) is not None:
+                        self._peer_target_missing = False
+                        self._push_peer_source_available(True)
+                    continue
+                resolver = ProcessCaptureResolver(
+                    snapshots=PsutilCurrentUserProcessSnapshots())
+                resolution = resolver.resolve_for_start(target)
+                if not getattr(resolution, "available", False):
+                    # app still gone — reflect it on the PEER pill once
+                    if not self._peer_target_missing:
+                        self._peer_target_missing = True
+                        self._push_peer_source_available(False)
+                    continue
+                self.log_basic(
+                    "[Capture][peer] app-audio target is back — relatching")
+                self._peer_target_missing = False
+                self._push_peer_source_available(True)
+                await self._refresh_peer_stt_runtime()
+            except asyncio.CancelledError:
+                raise
+            except Exception:
+                logger.debug("[Capture][peer] repoll error", exc_info=True)
+
+    def _push_peer_source_available(self, available: bool) -> None:
+        try:
+            app = getattr(self, "app", None)
+            sync = getattr(app, "_sync_peer_source_display", None)
+            if callable(sync):
+                sync(available=available)
+        except Exception:
+            pass
+
     async def _refresh_peer_stt_runtime(self) -> None:
+        if self._peer_repoll_task is None:
+            self._peer_repoll_task = asyncio.create_task(
+                self._peer_target_repoll_loop())
         if self.settings is None or self.hub is None or self._peer_runtime is None:
             return
 

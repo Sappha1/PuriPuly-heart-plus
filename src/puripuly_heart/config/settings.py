@@ -490,6 +490,9 @@ class LanguageSettings:
     # With auto-detect on, drop peer speech detected as the user's OWN source
     # language (their own voice bleeding through the call). Opt-in (r295).
     auto_detect_ignore_own: bool = False
+    # Drop non-lexical filler speech ("hmm", "uh", "嗯") from both voice
+    # channels before translation. Default ON (r602).
+    ignore_fillers: bool = True
     # Last target the user picked while "Separate text translation" was ON.
     # The unified mirror overwrites target_language, so this remembers the
     # separate-mode preference and restores it when the user switches back.
@@ -1673,6 +1676,7 @@ def to_dict(settings: AppSettings) -> dict[str, Any]:
             "peer_target_language": settings.languages.peer_target_language,
             "auto_detect_peer_voice": settings.languages.auto_detect_peer_voice,
             "auto_detect_ignore_own": settings.languages.auto_detect_ignore_own,
+            "ignore_fillers": settings.languages.ignore_fillers,
             "separate_target_language": settings.languages.separate_target_language,
             "recent_source_languages": settings.languages.recent_source_languages,
             "recent_target_languages": settings.languages.recent_target_languages,
@@ -3903,6 +3907,8 @@ def from_dict(data: dict[str, Any]) -> AppSettings:
                 data.get("languages", {}).get("auto_detect_peer_voice", False)),
             auto_detect_ignore_own=bool(
                 data.get("languages", {}).get("auto_detect_ignore_own", False)),
+            ignore_fillers=bool(
+                data.get("languages", {}).get("ignore_fillers", True)),
             separate_target_language=str(
                 data.get("languages", {}).get("separate_target_language", "")),
             recent_source_languages=list(

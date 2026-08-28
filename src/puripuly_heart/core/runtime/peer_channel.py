@@ -260,6 +260,16 @@ class PeerChannelRuntime:
             raise
         except Exception as exc:
             await self._on_runtime_failure(exc, generation=generation)
+        else:
+            # r606: a process-capture source whose target app EXITED ends
+            # the loop with a CLEAN return — before this, the pill stayed
+            # green over dead capture and nothing ever retried. Surface it
+            # as a fault (orange) so the controller's repoll can relatch.
+            if getattr(source, "terminal_reason", None) == "target_exited":
+                await self._on_runtime_failure(
+                    RuntimeError("peer capture target exited"),
+                    generation=generation,
+                )
 
     async def _on_runtime_failure(self, exc: Exception, *, generation: int) -> None:
         _ = exc

@@ -302,7 +302,8 @@ class AudioSettings(ft.Column):
         return options
 
     def _get_desktop_output_options(self) -> list[OptionItem]:
-        options = [OptionItem(value="", label=self._default_option_label)]
+        options = [OptionItem(value="", label=self._default_option_label,
+                              icon_name="speaker_outlined")]
 
         manager = None
         try:
@@ -315,7 +316,8 @@ class AudioSettings(ft.Column):
                 if not name or name in seen:
                     continue
                 seen.add(name)
-                options.append(OptionItem(value=name, label=name))
+                options.append(OptionItem(value=name, label=name,
+                                           icon_name="headphones"))
         except Exception as e:
             logger.warning(f"Failed to enumerate desktop loopback outputs: {e}")
         finally:
@@ -354,8 +356,20 @@ class AudioSettings(ft.Column):
                     listed.add(value)
                     name = process_capture_display_name(value) or value
                     ambiguous = not bool(getattr(candidate, "enabled", True))
+                    _icon = None
+                    try:
+                        # r609/r610: each app row shows its real exe icon
+                        # (Discord's path comes from the running process)
+                        from puripuly_heart.ui.win_icons import (
+                            exe_icon_png, target_exe_path,
+                        )
+                        _icon = exe_icon_png(
+                            target_exe_path(candidate.target) or "")
+                    except Exception:
+                        _icon = None
                     options.append(OptionItem(
                         value=value,
+                        icon_src=_icon,
                         label=t("capture.app_option", name=name,
                                 default=f"App audio: {name}"),
                         description=(t("capture.app_multiple",
@@ -368,8 +382,23 @@ class AudioSettings(ft.Column):
                 saved = self._current_desktop_output_device
                 if saved.startswith("process:") and saved not in listed:
                     name = process_capture_display_name(saved) or saved
+                    _sicon = None
+                    try:
+                        from puripuly_heart.config.process_capture_target import (
+                            parse_process_capture_target,
+                        )
+                        from puripuly_heart.ui.win_icons import (
+                            exe_icon_png, target_exe_path,
+                        )
+                        _st = parse_process_capture_target(saved)
+                        _sicon = exe_icon_png(
+                            target_exe_path(_st) or "") if _st else None
+                    except Exception:
+                        _sicon = None
                     options.append(OptionItem(
                         value=saved,
+                        icon_src=_sicon,
+                        icon_name=None if _sicon else "apps",
                         label=t("capture.app_option", name=name,
                                 default=f"App audio: {name}"),
                         description=t("capture.app_not_running",

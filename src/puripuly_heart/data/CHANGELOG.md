@@ -2,6 +2,14 @@
 
 User-facing changes per build. The latest build's highlights also appear in-app when an update is ready.
 
+## r615 — 2026-08-27
+
+- Added: "Ignore filler sounds" — voice lines that are only grunts or hesitation sounds ("hmm", "嗯", "うーん") are skipped before translation, saving translator usage (on by default; Translation options menu)
+- Added: speaker identification now reads the VRChat room roster — voices match people who are actually in the room first, and a speaker tag turns green when the name is confirmed in-game
+- Added: the PEER card has an audio-source selector with each app's real icon; if the captured app closes, capture pauses visibly and resumes automatically when the app returns
+- Changed: redesigned sidebar — MIC, PEER and TRANS as cards, translation controls merged into the TRANS card, tighter layout and refreshed colors
+- Fixed: the translation toggle re-verifies your key in the background instead of getting stuck on a stale key warning
+
 ## r601 — 2026-08-27
 
 - Fixed: rapidly closing chat tabs could freeze the whole window until an app restart

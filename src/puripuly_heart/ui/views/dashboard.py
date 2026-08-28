@@ -19,11 +19,11 @@ from puripuly_heart.ui.fonts import font_for_language
 from puripuly_heart.ui.i18n import get_locale, language_name, t
 from puripuly_heart.ui.overlay_peer_contract import OverlayPeerConsumerContract
 
-_BUILD_TAG = "r601"  #increment each build so user can confirm version
+_BUILD_TAG = "r615"  #increment each build so user can confirm version
 
 # ── VRCT-style dark palette ──────────────────────────────────────────────────
-_BG_MAIN = "#2e2f32"
-_BG_SIDEBAR = "#3a3b3e"
+_BG_MAIN = "#292b2e"
+_BG_SIDEBAR = "#343639"
 _BG_CHAT = "#292a2d"
 _BG_INPUT = "#323336"
 _BG_ROW_HOVER = "#4b4c4f"
@@ -100,9 +100,12 @@ class _ToggleRow(ft.Container):
         self._warning = False
         self._loading = False
         self._loading_since = 0.0
+        # r607: rows now live inside bordered cards — hover must restore
+        # whatever base the parent gave them, not the sidebar color
+        self._base_bg = _BG_SIDEBAR
 
     def _on_hover(self, e):
-        self.bgcolor = _BG_ROW_HOVER if e.data == "true" else _BG_SIDEBAR
+        self.bgcolor = _BG_ROW_HOVER if e.data == "true" else self._base_bg
         self.update()
 
     def set_loading(self, loading: bool, progress: float | None = None) -> None:
@@ -418,6 +421,8 @@ class DashboardView(ft.Row):
         self.on_auto_detect_voice_change: object = None  # callback(value: bool)
         self._auto_detect_ignore_own = False
         self.on_auto_detect_ignore_own_change: object = None  # callback(value: bool)
+        self._ignore_fillers = True
+        self.on_ignore_fillers_change: object = None  # callback(value: bool)
         # "Separate text translation" pill (same options menu) — mirrors the
         # Settings row; ON = separate Text Translation box (unified OFF).
         self.on_separate_text_translation_change: object = None  # callback(value: bool)
@@ -512,6 +517,9 @@ class DashboardView(ft.Row):
         # Callbacks
         self.on_send_message = None
         self.on_toggle_translation = None
+        # r603: callback(name) -> bool; True = the speaker's name is in the
+        # live VRChat room roster (tag renders green as corroboration)
+        self.on_speaker_in_room = None
         self.on_toggle_stt = None
         self.on_toggle_overlay = None
         self.on_toggle_peer_translation = None
@@ -549,6 +557,8 @@ class DashboardView(ft.Row):
                 _sd.get("languages", {}).get("auto_detect_peer_voice", False))
             self._auto_detect_ignore_own = bool(
                 _sd.get("languages", {}).get("auto_detect_ignore_own", False))
+            self._ignore_fillers = bool(
+                _sd.get("languages", {}).get("ignore_fillers", True))
             self._separate_target_pref = str(
                 _sd.get("languages", {}).get("separate_target_language", ""))
             self._chat_log_format = str(
@@ -659,6 +669,34 @@ class DashboardView(ft.Row):
         self._row_stt = _ToggleRow(ft.Icons.MIC, t("dashboard.stt_label"), on_click=self._on_stt_click)
         self._row_stt.tooltip = t("dashboard.tooltip.stt_row")
         self._row_peer = _ToggleRow(ft.Icons.RECORD_VOICE_OVER, t("dashboard.peer_label"), on_click=self._on_peer_click)
+        # r606: in-card audio-source pill (user request) — shows what PEER
+        # is listening to and opens the same picker Settings uses
+        self.on_peer_source_click = None      # callback() -> open picker
+        self._peer_source_label = ft.Text(
+            t("settings.default_option", default="Auto"),
+            size=11, color=_TEXT_MUTED, no_wrap=True,
+            overflow=ft.TextOverflow.ELLIPSIS, expand=True)
+        self._peer_source_icon = ft.Icon(ft.Icons.SPEAKER_OUTLINED, size=14,
+                                         color=_TEXT_MUTED)
+        self._peer_source_icon_slot = ft.Container(
+            content=self._peer_source_icon, width=18, height=18,
+            alignment=ft.alignment.center)
+        self._peer_source_row = ft.Container(
+            content=ft.Row([
+                self._peer_source_icon_slot,
+                self._peer_source_label,
+                ft.Icon(ft.Icons.KEYBOARD_ARROW_DOWN, size=14,
+                        color=_TEXT_FAINT),
+            ], spacing=8,
+               vertical_alignment=ft.CrossAxisAlignment.CENTER),
+            bgcolor="#2b2d30", border_radius=6,
+            border=ft.border.all(1, "#3f4246"),
+            padding=ft.padding.symmetric(horizontal=10, vertical=6),
+            margin=ft.margin.only(left=16, right=16, top=2, bottom=2),
+            on_click=lambda e: (self.on_peer_source_click()
+                                if callable(self.on_peer_source_click)
+                                else None),
+        )
         self._row_peer.tooltip = t("dashboard.tooltip.peer_row")
         self._row_trans = _ToggleRow(ft.Icons.TRANSLATE, t("dashboard.trans_label"), on_click=self._on_trans_click)
         self._row_overlay = _ToggleRow(ft.Icons.SUBTITLES, t("dashboard.overlay_label"), on_click=self._on_overlay_click)
@@ -685,8 +723,8 @@ class DashboardView(ft.Row):
             return ft.Container(
                 content=txt,
                 expand=True,
-                height=28,
-                bgcolor=_TOGGLE_ON if is_active else "#333537",
+                height=22,
+                bgcolor=_TOGGLE_ON if is_active else "#33363a",
                 border_radius=6,
                 alignment=ft.alignment.center,
                 on_click=lambda _, i=idx: self._on_preset_tab_click(i),
@@ -715,9 +753,9 @@ class DashboardView(ft.Row):
                     spacing=2,
                     vertical_alignment=ft.CrossAxisAlignment.CENTER,
                 ),
-                bgcolor="#2a2b2e",
+                bgcolor="#2b2d30",
                 border_radius=6,
-                border=ft.border.all(1, "#3a3b3e"),
+                border=ft.border.all(1, "#3f4246"),
                 padding=ft.padding.symmetric(horizontal=8, vertical=5),
                 on_click=on_click,
                 on_hover=lambda e, l=lbl: (
@@ -979,8 +1017,12 @@ class DashboardView(ft.Row):
             content=ft.Column(
                 [
                     # "Your language" first, then "Target language" below.
+                    # r608: the swap arrow rides this row right-aligned, so
+                    # it sits directly above the (+) beside the picker
                     ft.Row(
-                        [self._lbl_you_speak, _you_speak_info],
+                        [self._lbl_you_speak, _you_speak_info,
+                         ft.Container(expand=True),
+                         self._build_lang_swap_btn()],
                         spacing=0,
                         vertical_alignment=ft.CrossAxisAlignment.CENTER,
                     ),
@@ -1239,8 +1281,8 @@ class DashboardView(ft.Row):
         # ── Sidebar ──────────────────────────────────────────────────────────
         # Middle section is scrollable so the gear icon always stays visible
         # even when Target Language 2 is added.
-        _CARD_BG = "#2a2b2e"
-        _CARD_BORDER = "#454648"
+        _CARD_BG = "#2b2d30"
+        _CARD_BORDER = "#43464a"
         _CARD_ICON_COLOR = "#c8c9cc"
 
         self._section_header_labels: list[tuple[ft.Text, str]] = []
@@ -1275,7 +1317,7 @@ class DashboardView(ft.Row):
 
         _preset_row = ft.Container(
             content=self._preset_tabs_row,
-            padding=ft.padding.symmetric(horizontal=10, vertical=4),
+            padding=ft.padding.only(left=10, right=10, top=2, bottom=0),
         )
         # Both cards are ALWAYS built so the unified/separate layouts can swap
         # live (settings toggle) without rebuilding the sidebar. Unified view:
@@ -1305,22 +1347,72 @@ class DashboardView(ft.Row):
             _cards = [self._voice_section_card, self._text_section_card]
         else:
             _cards = [self._text_section_card, self._voice_section_card]
+        # r606/r607: TRANS merges with the translation section (user
+        # mock) — the toggle row is the card's header and the language
+        # panel flows directly inside (no inner bordered card, no
+        # duplicate "Translation" title).
+        self._trans_gd = ft.GestureDetector(
+            content=self._row_trans,
+            on_secondary_tap=self._on_trans_right_click)
+        # flatten the voice card: TRANS above is its title now; keep the
+        # header Row alive for its trailing swap button
+        self._voice_section_card.bgcolor = None
+        self._voice_section_card.border = None
+        self._voice_section_card.margin = ft.margin.symmetric(
+            horizontal=0, vertical=0)
+        self._voice_section_card.padding = ft.padding.symmetric(
+            horizontal=4, vertical=2)
+        _vhdr = self._voice_section_card.content.controls[0]
+        _vhdr.visible = False   # r608: swap moved beside "Your language"
+        self._trans_card = ft.Container(
+            content=ft.Column(
+                [self._trans_gd, _preset_row, *_cards], spacing=0,
+                horizontal_alignment=ft.CrossAxisAlignment.STRETCH),
+            bgcolor=_CARD_BG,
+            border=ft.border.all(1, _CARD_BORDER),
+            border_radius=10,
+            padding=ft.padding.all(4),
+            margin=ft.margin.symmetric(horizontal=6, vertical=3),
+        )
         self._middle_section = ft.Column(
-            [_preset_row, *_cards],
+            [self._trans_card],
             scroll=ft.ScrollMode.AUTO,
             expand=True,
             spacing=0,
         )
+        # r607: MIC and PEER get the same bordered-card treatment as the
+        # translation block (user mock); the source pill rides inside the
+        # PEER card
+        for _r in (self._row_stt, self._row_peer, self._row_trans):
+            _r.bgcolor = _CARD_BG
+            _r._base_bg = _CARD_BG
+        self._peer_source_row.margin = ft.margin.only(
+            left=8, right=8, top=2, bottom=4)
+
+        def _toggle_card(*children):
+            return ft.Container(
+                content=ft.Column(
+                    list(children), spacing=0,
+                    horizontal_alignment=ft.CrossAxisAlignment.STRETCH),
+                bgcolor=_CARD_BG, border=ft.border.all(1, _CARD_BORDER),
+                border_radius=10, padding=ft.padding.all(4),
+                margin=ft.margin.symmetric(horizontal=6, vertical=3))
+
         self._toggles_section = ft.Container(
             content=ft.Column(
                 [
-                    ft.GestureDetector(content=self._row_stt, on_secondary_tap=self._on_stt_right_click),
-                    ft.GestureDetector(content=self._row_peer, on_secondary_tap=self._on_peer_right_click),
-                    ft.GestureDetector(content=self._row_trans, on_secondary_tap=self._on_trans_right_click),
+                    _toggle_card(ft.GestureDetector(
+                        content=self._row_stt,
+                        on_secondary_tap=self._on_stt_right_click)),
+                    _toggle_card(
+                        ft.GestureDetector(
+                            content=self._row_peer,
+                            on_secondary_tap=self._on_peer_right_click),
+                        self._peer_source_row),
                 ],
-                spacing=4,
+                spacing=0,
             ),
-            padding=ft.padding.symmetric(horizontal=8, vertical=4),
+            padding=ft.padding.symmetric(horizontal=2, vertical=4),
         )
         self._full_div1 = ft.Divider(height=1, color=_DIVIDER, thickness=1)
         self._full_div2 = ft.Divider(height=1, color=_DIVIDER, thickness=1)
@@ -5711,10 +5803,19 @@ class DashboardView(ft.Row):
             else:
                 # Identified as somebody, just not as anybody known.
                 tag_text = t("dashboard.speaker_unknown")
+            _tag_color = label_color
+            if speaker_name and callable(self.on_speaker_in_room):
+                try:
+                    if self.on_speaker_in_room(speaker_name):
+                        # corroborated by the VRChat room roster — the
+                        # in-game presence green
+                        _tag_color = "#7a9e6e"
+                except Exception:
+                    pass
             tag_control = ft.Text(
                 tag_text,
                 size=11,
-                color=label_color,
+                color=_tag_color,
                 weight=ft.FontWeight.W_700,
             )
             # r357/r360: three cases, and the tooltip should tell the truth
@@ -6379,7 +6480,7 @@ class DashboardView(ft.Row):
             arrow = ft.Icon(ft.Icons.CHEVRON_RIGHT, size=12, color=_TEXT_FAINT)
             card = ft.Container(
                 content=ft.Row([lbl, arrow], spacing=2, vertical_alignment=ft.CrossAxisAlignment.CENTER),
-                bgcolor="#2a2b2e", border_radius=6, border=ft.border.all(1, "#3a3b3e"),
+                bgcolor="#2b2d30", border_radius=6, border=ft.border.all(1, "#3f4246"),
                 padding=ft.padding.symmetric(horizontal=8, vertical=5), expand=True,
                 tooltip=self._lang_card_tooltip(lang_code, kind="target"),
                 on_click=lambda _, idx=i: self._open_extra_target_dialog(idx),
@@ -6417,7 +6518,7 @@ class DashboardView(ft.Row):
             arrow = ft.Icon(ft.Icons.CHEVRON_RIGHT, size=12, color=_TEXT_FAINT)
             card = ft.Container(
                 content=ft.Row([lbl, arrow], spacing=2, vertical_alignment=ft.CrossAxisAlignment.CENTER),
-                bgcolor="#2a2b2e", border_radius=6, border=ft.border.all(1, "#3a3b3e"),
+                bgcolor="#2b2d30", border_radius=6, border=ft.border.all(1, "#3f4246"),
                 padding=ft.padding.symmetric(horizontal=8, vertical=5), expand=True,
                 tooltip=self._lang_card_tooltip(lang_code, kind="peer_target"),
                 on_click=lambda _, idx=i: self._open_extra_peer_target_dialog(idx),
@@ -6487,7 +6588,7 @@ class DashboardView(ft.Row):
         # Update tab button appearances
         for i, tab in enumerate(self._preset_tab_containers):
             is_active = (i == self._active_preset)
-            tab.bgcolor = _TOGGLE_ON if is_active else "#333537"
+            tab.bgcolor = _TOGGLE_ON if is_active else "#33363a"
             txt = tab.content
             txt.color = "#ffffff" if is_active else _TEXT_FAINT
             txt.weight = ft.FontWeight.W_700 if is_active else ft.FontWeight.NORMAL
@@ -6748,6 +6849,32 @@ class DashboardView(ft.Row):
             tip += "\n" + t("dashboard.tooltip.device", device=self._stt_input_device)
         tip += "\n" + t("dashboard.tooltip.right_click_change")
         self._row_stt.set_tooltip(tip)
+
+    def set_peer_source_display(self, label: str, kind: str,
+                                available: bool = True,
+                                icon_src: str | None = None) -> None:
+        """r606: the PEER card's source pill. kind: vrchat|discord|generic|device."""
+        if icon_src:
+            # r609: the app's real exe icon, like the Steam module's game art
+            self._peer_source_icon_slot.content = ft.Image(
+                src=icon_src, width=18, height=18,
+                fit=ft.ImageFit.CONTAIN, border_radius=3)
+        else:
+            icon = {"vrchat": ft.Icons.SPORTS_ESPORTS,
+                    "discord": ft.Icons.HEADSET_MIC,
+                    "generic": ft.Icons.APPS}.get(kind, ft.Icons.SPEAKER_OUTLINED)
+            self._peer_source_icon_slot.content = ft.Icon(
+                icon, size=14, color=_TEXT_MUTED)
+        txt = label
+        if not available:
+            txt = label + " — " + t("capture.app_not_running",
+                                    default="App not running right now")
+        self._peer_source_label.value = txt
+        self._peer_source_label.color = (_TEXT_MUTED if available
+                                         else _TOGGLE_WARNING)
+        with contextlib.suppress(Exception):
+            if self._peer_source_row.page:
+                self._peer_source_row.update()
 
     def set_peer_stt_provider_label(self, label: str, provider_value: str = "") -> None:
         if provider_value:
@@ -7325,7 +7452,20 @@ class DashboardView(ft.Row):
                 or (e.control.update() if e.control.page else None)
             ),
         )
-        _adv_row = ft.Column([_adv_row, _adio_row], spacing=0, tight=True)
+        # "Ignore filler sounds" — skip grunt-only voice lines ("hmm")
+        # before they cost translator tokens; typed chat is never filtered.
+        _igf_ref = [bool(self._ignore_fillers)]
+
+        def _on_igf(v: bool) -> None:
+            self._ignore_fillers = bool(v)
+            if callable(self.on_ignore_fillers_change):
+                self.on_ignore_fillers_change(bool(v))
+
+        _igf_row = _row_tt("dashboard.menu.ignore_fillers",
+                           _bool_pill(_igf_ref, _on_igf))
+
+        _adv_row = ft.Column([_adv_row, _adio_row, _igf_row],
+                             spacing=0, tight=True)
 
         # ── separate text translation: mirrors the Settings row, applies live.
         _sep_ref = [not bool(self._unified_translation)]
@@ -7457,8 +7597,8 @@ class DashboardView(ft.Row):
         icon.name = ft.Icons.CHECK_BOX if is_now_on else ft.Icons.CHECK_BOX_OUTLINE_BLANK
         icon.color = _TOGGLE_ON if is_now_on else _TEXT_FAINT
         lbl.color = _TEXT_MUTED if is_now_on else _TEXT_FAINT
-        chip.bgcolor = "#2a2b2e"
-        chip.border = ft.border.all(1, _TOGGLE_ON if is_now_on else "#3a3b3e")
+        chip.bgcolor = "#2b2d30"
+        chip.border = ft.border.all(1, _TOGGLE_ON if is_now_on else "#3f4246")
         chip.update()
         callback(is_now_on)
 
@@ -7713,7 +7853,11 @@ class DashboardView(ft.Row):
                 order = [self._voice_section_card, self._text_section_card]
             else:
                 order = [self._text_section_card, self._voice_section_card]
-            self._middle_section.controls = [self._preset_row_container, *order]
+            # r606/r607: everything lives INSIDE the trans card — reorder
+            # its children, never reparent them out of it
+            self._trans_card.content.controls = [
+                self._trans_gd, self._preset_row_container, *order]
+            self._middle_section.controls = [self._trans_card]
         except Exception:
             pass
         self._apply_unified_target_sync()
@@ -7828,7 +7972,7 @@ class DashboardView(ft.Row):
             arrow = ft.Icon(ft.Icons.CHEVRON_RIGHT, size=12, color=_TEXT_FAINT)
             card = ft.Container(
                 content=ft.Row([lbl, arrow], spacing=2, vertical_alignment=ft.CrossAxisAlignment.CENTER),
-                bgcolor="#2a2b2e", border_radius=6, border=ft.border.all(1, "#3a3b3e"),
+                bgcolor="#2b2d30", border_radius=6, border=ft.border.all(1, "#3f4246"),
                 padding=ft.padding.symmetric(horizontal=8, vertical=5), expand=True,
                 on_click=lambda _, idx=i: self._open_extra_peer_source_dialog(idx),
                 on_hover=lambda e, l=lbl: (

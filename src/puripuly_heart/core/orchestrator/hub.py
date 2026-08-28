@@ -147,6 +147,10 @@ class ClientHub:
     # r318: SpeakerRegistry set by the controller when speaker ID is enabled;
     # None = feature off, captions stay unlabeled.
     speaker_registry: object | None = None
+    # Drop non-lexical filler utterances ("hmm", "嗯", "うーん") from BOTH
+    # voice channels before they cost translator tokens. Typed chat is
+    # never filtered. Default ON (r602).
+    ignore_fillers: bool = True
     _speaker_by_utterance: dict = field(default_factory=dict)
     chatbox_send_peer: bool = False
     chatbox_send_peer_translation_only: bool = False
@@ -1138,6 +1142,24 @@ class ClientHub:
                 return
             if runtime.channel == "self":
                 self._send_stt_connected_notification()
+            if self._drop_as_filler(event.transcript.text):
+                # self-channel grunt: nothing is translated, shown, or sent.
+                # Also release the chatbox typing state SpeechEnd turned on
+                # (normally _enqueue_osc clears it after the send).
+                self._emit_detailed(
+                    f"[Hub] Filler skipped (self): '{event.transcript.text[:40]}'",
+                    fallback_level=logging.INFO)
+                self._utterance_start_times.pop(event.transcript.utterance_id, None)
+                self._speech_ended_ids.discard(event.transcript.utterance_id)
+                with contextlib.suppress(Exception):
+                    self.osc.send_typing(False)
+                await self._emit_overlay_utterance_closed(
+                    utterance_id=event.transcript.utterance_id,
+                    channel="self",
+                    is_final=True,
+                    finalize_latency=True,
+                )
+                return
             if self.low_latency_mode and runtime.channel == "self":
                 await self._handle_low_latency_final(event.transcript)
                 return
@@ -1219,6 +1241,14 @@ class ClientHub:
                     is_final=True,
                 )
 
+    def _drop_as_filler(self, text: str) -> bool:
+        if not self.ignore_fillers:
+            return False
+        from puripuly_heart.core.stt.local_qwen_hallucination import (
+            is_filler_utterance,
+        )
+        return is_filler_utterance(text)
+
     async def _handle_peer_final_transcript(
         self,
         transcript: Transcript,
@@ -1228,6 +1258,19 @@ class ClientHub:
     ) -> None:
         _ = parent_utterance_id
         runtime = self.peer_runtime
+        if self._drop_as_filler(transcript.text):
+            # non-lexical grunt ("hmm") — not worth translator tokens or a
+            # chat line; close the overlay utterance like the other drops
+            self._emit_detailed(
+                f"[Hub] Filler skipped (peer): '{transcript.text[:40]}'",
+                fallback_level=logging.INFO)
+            await self._emit_overlay_utterance_closed(
+                utterance_id=transcript.utterance_id,
+                channel="peer",
+                is_final=True,
+                finalize_latency=True,
+            )
+            return
         if self._peer_language_filter_active() and not self._peer_passes_source_language_filter(
             transcript.text
         ):

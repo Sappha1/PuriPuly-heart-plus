@@ -27,6 +27,12 @@ class OptionItem:
     label: str
     description: str = ""
     disabled: bool = False
+    # r609: optional leading image (e.g. an app's real exe icon); rows
+    # without one render exactly as before
+    icon_src: str | None = None
+    # r610: optional Flet icon-name glyph when no image applies (devices,
+    # the Auto row) so mixed lists stay aligned with no blank slots
+    icon_name: str | None = None
 
 
 class SettingsModal:
@@ -93,6 +99,17 @@ class SettingsModal:
             # see what's selected.
             is_selected = option.value == current
 
+            _icon_ctrl = None
+            if getattr(option, "icon_src", None):
+                _icon_ctrl = ft.Container(
+                    content=ft.Image(src=option.icon_src, width=18,
+                                     height=18, fit=ft.ImageFit.CONTAIN),
+                    width=20, height=20, alignment=ft.alignment.center)
+            elif getattr(option, "icon_name", None):
+                _icon_ctrl = ft.Container(
+                    content=ft.Icon(option.icon_name, size=16,
+                                    color=COLOR_NEUTRAL),
+                    width=20, height=20, alignment=ft.alignment.center)
             if self._show_description and option.description:
                 content = ft.Column(
                     controls=[
@@ -115,6 +132,7 @@ class SettingsModal:
             else:
                 content = ft.Row(
                     [
+                        *([_icon_ctrl] if _icon_ctrl is not None else []),
                         ft.Text(
                             option.label,
                             size=14,

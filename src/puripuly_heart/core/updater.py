@@ -29,6 +29,14 @@ RELEASE_TAG = "v2.2.0"
 JSDELIVR_VERSION_URL = (
     f"https://cdn.jsdelivr.net/gh/{GITHUB_REPO}@master/version.json"
 )
+# r616: each jsDelivr host has its OWN cache pool, and a stale edge told a
+# mainland user "already latest" for hours after a release. Probe several
+# and trust the NEWEST build any of them reports.
+JSDELIVR_VERSION_URLS = (
+    JSDELIVR_VERSION_URL,
+    f"https://fastly.jsdelivr.net/gh/{GITHUB_REPO}@master/version.json",
+    f"https://gcore.jsdelivr.net/gh/{GITHUB_REPO}@master/version.json",
+)
 
 
 def _remote_build_from_version_payload(data: object) -> "RemoteBuild | None":
@@ -58,10 +66,18 @@ def _remote_build_from_version_payload(data: object) -> "RemoteBuild | None":
 async def _fetch_remote_build_via_jsdelivr() -> "RemoteBuild | None":
     try:
         async with httpx.AsyncClient(timeout=6.0, follow_redirects=True) as client:
-            resp = await client.get(JSDELIVR_VERSION_URL)
-            if resp.status_code != 200:
-                return None
-            remote = _remote_build_from_version_payload(resp.json())
+            remote = None
+            for url in JSDELIVR_VERSION_URLS:
+                try:
+                    resp = await client.get(url)
+                    if resp.status_code != 200:
+                        continue
+                    cand = _remote_build_from_version_payload(resp.json())
+                except Exception:
+                    continue
+                if cand is not None and (
+                        remote is None or cand.build > remote.build):
+                    remote = cand
             if remote is not None:
                 logger.info(
                     "[Updater] GitHub API unreachable — using jsDelivr mirror "

@@ -192,6 +192,12 @@ class TranslatorApp:
         self.view_dashboard.on_ignore_fillers_change = self._on_ignore_fillers_change
         self.view_dashboard.on_speaker_in_room = self._speaker_in_room
         self.view_dashboard.on_peer_source_click = self._on_peer_source_click
+        self.view_dashboard.on_get_speaker_policy = (
+            lambda name: self.controller.speaker_voice_policy(name))
+        self.view_dashboard.on_set_speaker_policy = (
+            lambda name, muted=None, language=None:
+                self.controller.set_speaker_voice_policy(
+                    name, muted=muted, language=language))
         self._peer_source_options_cache = None
         with contextlib.suppress(Exception):
             self._sync_peer_source_display()

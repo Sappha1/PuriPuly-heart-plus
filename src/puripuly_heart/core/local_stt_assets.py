@@ -70,6 +70,11 @@ class LocalSTTAssetFile:
     sha256: str
     size_bytes: int | None = None
     source_path_overrides: dict[str, str] | None = None
+    # r617: a mirror may host a re-uploaded (validated) variant of a file —
+    # per-source expected sha/size; install verification accepts whichever
+    # source it came from, local validation accepts any known-good sha
+    source_sha256_overrides: dict[str, str] | None = None
+    source_size_overrides: dict[str, int] | None = None
 
     def to_dict(self) -> dict[str, object]:
         payload: dict[str, object] = {
@@ -80,6 +85,10 @@ class LocalSTTAssetFile:
             payload["size_bytes"] = self.size_bytes
         if self.source_path_overrides:
             payload["source_path_overrides"] = dict(self.source_path_overrides)
+        if self.source_sha256_overrides:
+            payload["source_sha256_overrides"] = dict(self.source_sha256_overrides)
+        if self.source_size_overrides:
+            payload["source_size_overrides"] = dict(self.source_size_overrides)
         return payload
 
     @classmethod
@@ -105,12 +114,38 @@ class LocalSTTAssetFile:
             sha256=str(data["sha256"]).lower(),
             size_bytes=int(size_bytes) if size_bytes is not None else None,
             source_path_overrides=source_path_overrides,
+            source_sha256_overrides=(
+                dict(data["source_sha256_overrides"])
+                if isinstance(data.get("source_sha256_overrides"), dict)
+                else None),
+            source_size_overrides=(
+                {k: int(v) for k, v in data["source_size_overrides"].items()}
+                if isinstance(data.get("source_size_overrides"), dict)
+                else None),
         )
 
     def remote_path_for_source(self, source_name: str) -> str:
         if self.source_path_overrides and source_name in self.source_path_overrides:
             return self.source_path_overrides[source_name]
         return self.relative_path
+
+    def sha256_for_source(self, source_name: str) -> str:
+        if (self.source_sha256_overrides
+                and source_name in self.source_sha256_overrides):
+            return self.source_sha256_overrides[source_name]
+        return self.sha256
+
+    def size_for_source(self, source_name: str) -> int | None:
+        if (self.source_size_overrides
+                and source_name in self.source_size_overrides):
+            return self.source_size_overrides[source_name]
+        return self.size_bytes
+
+    def all_known_sha256(self) -> frozenset:
+        shas = {self.sha256}
+        if self.source_sha256_overrides:
+            shas.update(self.source_sha256_overrides.values())
+        return frozenset(shas)
 
 
 @dataclass(frozen=True, slots=True)
@@ -333,7 +368,8 @@ def _validate_required_model_files(
             raise LocalSTTManifestInvalidError(
                 f"required model path is not a file: {asset.relative_path}"
             )
-        if verify_checksums and _sha256_file(asset_path) != asset.sha256:
+        if (verify_checksums
+                and _sha256_file(asset_path) not in asset.all_known_sha256()):
             raise LocalSTTManifestInvalidError(
                 f"checksum mismatch for required model file: {asset.relative_path}"
             )

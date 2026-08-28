@@ -2,6 +2,12 @@
 
 User-facing changes per build. The latest build's highlights also appear in-app when an update is ready.
 
+## r617 — 2026-08-28
+
+- Added: per-person voice controls — tap a speaker's name to ignore their voice entirely, or pin their primary language so mis-heard cross-language lines are dropped automatically
+- Fixed: speech-model downloads in China — the ModelScope source works again, the download mirror now covers every model file, VPN/proxy certificates are trusted, and one unavailable model no longer blocks the rest
+- Fixed: update checks can no longer be hidden by a stale mirror cache
+
 ## r615 — 2026-08-27
 
 - Added: "Ignore filler sounds" — voice lines that are only grunts or hesitation sounds ("hmm", "嗯", "うーん") are skipped before translation, saving translator usage (on by default; Translation options menu)

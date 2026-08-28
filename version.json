@@ -1,12 +1,10 @@
 {
-  "build": 615,
-  "tag": "r615",
-  "date": "2026-08-27",
+  "build": 617,
+  "tag": "r617",
+  "date": "2026-08-28",
   "notes": [
-    "Added: \"Ignore filler sounds\" \u2014 grunt-only voice lines are skipped before translation, saving translator usage",
-    "Added: speaker ID reads the VRChat room roster \u2014 in-room people match first; confirmed names show green",
-    "Added: PEER audio-source selector with real app icons; capture pauses visibly and auto-resumes with the app",
-    "Changed: redesigned sidebar \u2014 MIC/PEER/TRANS cards, translation controls merged into the TRANS card",
-    "Fixed: the translation toggle re-verifies your key instead of sticking on a stale warning"
+    "Added: per-person voice controls \u2014 ignore a voice, or pin a primary language to drop mis-heard cross-language lines",
+    "Fixed: speech-model downloads in China \u2014 ModelScope restored, mirror covers all files, VPN certificates trusted",
+    "Fixed: update checks can no longer be hidden by a stale mirror cache"
   ]
 }

@@ -1,5 +1,9 @@
 from __future__ import annotations
 
+import logging
+import os
+import ssl
+
 import asyncio
 import hashlib
 import inspect
@@ -12,6 +16,30 @@ from typing import Awaitable, Callable, Literal
 from uuid import uuid4
 
 import httpx
+
+logger = logging.getLogger(__name__)
+
+
+def _download_ssl_verify():
+    """r617: trust the WINDOWS certificate store, not only certifi — VPN /
+    corporate proxies in China MITM TLS with locally-installed roots, and
+    the frozen app rejected them (CERTIFICATE_VERIFY_FAILED loops)."""
+    try:
+        import truststore
+
+        return truststore.SSLContext(ssl.PROTOCOL_TLS_CLIENT)
+    except Exception:
+        return True
+
+
+def _apply_hf_mirror(url: str) -> str:
+    """r617: the manifest's huggingface URLs went DIRECT even when the
+    model mirror was active (it only covered huggingface_hub downloads)."""
+    endpoint = (os.environ.get("HF_ENDPOINT") or "").rstrip("/")
+    if endpoint and "huggingface.co" not in endpoint and url.startswith(
+            "https://huggingface.co/"):
+        return endpoint + url[len("https://huggingface.co"):]
+    return url
 
 from puripuly_heart.core.local_stt_assets import (
     InstalledLocalSTTManifest,
@@ -109,16 +137,17 @@ def _download_source_into_staging(
     try:
         _raise_if_cancelled(cancel_event)
         source = manifest.sources[source_name]
-        with httpx.Client(timeout=30.0, follow_redirects=True) as client:
+        with httpx.Client(timeout=30.0, follow_redirects=True,
+                          verify=_download_ssl_verify()) as client:
             for asset in manifest.files:
                 _raise_if_cancelled(cancel_event)
                 asset_path = staging_dir / asset.relative_path
                 asset_path.parent.mkdir(parents=True, exist_ok=True)
                 digest = hashlib.sha256()
                 size_bytes = 0
-                url = source.download_url_template.format(
+                url = _apply_hf_mirror(source.download_url_template.format(
                     path=asset.remote_path_for_source(source_name)
-                )
+                ))
                 with client.stream("GET", url) as response:
                     response.raise_for_status()
                     with asset_path.open("wb") as handle:
@@ -131,11 +160,13 @@ def _download_source_into_staging(
                             size_bytes += len(chunk)
                             if progress is not None:
                                 progress.add(len(chunk))
-                if digest.hexdigest() != asset.sha256:
+                expected_sha = asset.sha256_for_source(source_name)
+                if digest.hexdigest() != expected_sha:
                     raise LocalSTTRuntimeInstallError(
                         f"checksum mismatch for required model file: {asset.relative_path}"
                     )
-                if asset.size_bytes is not None and size_bytes != asset.size_bytes:
+                expected_size = asset.size_for_source(source_name)
+                if expected_size is not None and size_bytes != expected_size:
                     raise LocalSTTRuntimeInstallError(
                         f"size mismatch for required model file: {asset.relative_path}"
                     )
@@ -225,6 +256,8 @@ async def ensure_local_stt_installed(
         locale=locale,
     ):
         _raise_if_cancelled(cancel_event)
+        logger.info("[Models] %s: trying source %r",
+                    resolved_manifest.model_id, source_name)
         staging_dir = resolved_root / f"{resolved_manifest.install_dirname}.staging-{uuid4().hex}"
         shutil.rmtree(staging_dir, ignore_errors=True)
         progress = _DownloadProgress(total_bytes)
@@ -273,4 +306,6 @@ async def ensure_local_stt_installed(
             shutil.rmtree(staging_dir, ignore_errors=True)
 
     await _emit_status(on_status, "download_failed", percent=None)
-    raise LocalSTTRuntimeInstallError("; ".join(failures) or "runtime local STT install failed")
+    raise LocalSTTRuntimeInstallError(
+        f"{resolved_manifest.model_id}: "
+        + ("; ".join(failures) or "runtime local STT install failed"))

@@ -3888,17 +3888,28 @@ class GuiController:
                 load_local_stt_asset_manifest,
             )
 
+            _model_failures: list[str] = []
             for model_id in self._required_local_stt_model_ids() or (
                 LOCAL_STT_MODEL_ID,
             ):
                 self._local_stt_download_percent = 0
                 self._sync_local_stt_notice()
-                await ensure_local_stt_installed(
-                    manifest=load_local_stt_asset_manifest(model_id),
-                    locale=self.settings.ui.locale,
-                    on_status=self._handle_local_stt_download_status,
-                    cancel_event=cancel_event,
-                )
+                try:
+                    await ensure_local_stt_installed(
+                        manifest=load_local_stt_asset_manifest(model_id),
+                        locale=self.settings.ui.locale,
+                        on_status=self._handle_local_stt_download_status,
+                        cancel_event=cancel_event,
+                    )
+                except (asyncio.CancelledError, LocalSTTRuntimeInstallCancelled):
+                    raise
+                except LocalSTTRuntimeInstallError as exc:
+                    # r617: one unreachable model must not block the rest —
+                    # a huggingface-only manifest failing first used to
+                    # abort before other models got their (working) mirror
+                    _model_failures.append(str(exc))
+            if _model_failures:
+                raise LocalSTTRuntimeInstallError(" | ".join(_model_failures))
         except (asyncio.CancelledError, LocalSTTRuntimeInstallCancelled):
             return
         except LocalSTTRuntimeInstallError as exc:
@@ -5276,6 +5287,20 @@ class GuiController:
             return [int(c) for c in self._speaker_registry().clusters_for_name(str(name))]
         except Exception:
             return []
+
+    def speaker_voice_policy(self, name: str):
+        try:
+            return self._speaker_registry().voice_policy(str(name))
+        except Exception:
+            return (False, "")
+
+    def set_speaker_voice_policy(self, name: str, *, muted=None,
+                                 language=None) -> bool:
+        try:
+            return bool(self._speaker_registry().set_voice_policy(
+                str(name), muted=muted, language=language))
+        except Exception:
+            return False
 
     def rename_speaker(self, old_name: str, new_name: str) -> bool:
         """Rename an enrolled voice everywhere, merging if the target exists."""

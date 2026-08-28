@@ -180,6 +180,10 @@ class SpeakerRegistry:
         # "this speaker is NOT that person". Anchored to the print, not the
         # cluster id, because reset_session renumbers clusters every session.
         self._denied: list[tuple[np.ndarray, str]] = []
+        # r616: per-person policy — {"muted": bool, "language": code}.
+        # muted voices are dropped whole; a primary language drops lines
+        # whose script contradicts it (mis-heard cross-language audio).
+        self._policies: dict[str, dict] = {}
         # r603: optional callable returning a frozenset of NORMALIZED
         # in-room names, or None while VRChat is idle (rules disabled).
         self.roster_provider = None
@@ -228,6 +232,13 @@ class SpeakerRegistry:
                 continue
             self._named[name] = variants[:MAX_VARIANTS_PER_NAME]
             self._named_counts[name] = int(entry.get("count", 1))
+            _pol = {}
+            if entry.get("muted"):
+                _pol["muted"] = True
+            if str(entry.get("language") or "").strip():
+                _pol["language"] = str(entry["language"]).strip()
+            if _pol:
+                self._policies[name] = _pol
 
     def _load_denials(self, data: dict) -> None:
         """r350: restore the user's 'not that person' corrections."""
@@ -262,6 +273,9 @@ class SpeakerRegistry:
                         [round(float(x), 6) for x in variant] for variant in variants
                     ],
                     "count": self._named_counts.get(name, 1),
+                    "muted": bool((self._policies.get(name) or {}).get("muted")),
+                    "language": str(
+                        (self._policies.get(name) or {}).get("language") or ""),
                 }
                 for name, variants in self._named.items()
             ]
@@ -837,6 +851,29 @@ class SpeakerRegistry:
             self._save()
             return True
 
+    def voice_policy(self, name: str) -> tuple[bool, str]:
+        """(muted, primary_language) for an enrolled name; (False, "") when
+        unmanaged."""
+        with self._lock:
+            pol = self._policies.get(str(name or "").strip()) or {}
+            return bool(pol.get("muted")), str(pol.get("language") or "")
+
+    def set_voice_policy(self, name: str, *, muted=None,
+                         language=None) -> bool:
+        name = str(name or "").strip()
+        with self._lock:
+            if name not in self._named:
+                return False
+            pol = self._policies.setdefault(name, {})
+            if muted is not None:
+                pol["muted"] = bool(muted)
+            if language is not None:
+                pol["language"] = str(language or "")
+            if not pol.get("muted") and not pol.get("language"):
+                self._policies.pop(name, None)
+            self._save()
+            return True
+
     def rename(self, old_name: str, new_name: str) -> bool:
         """Rename an enrolled voice, merging into an existing name if taken.
 
@@ -853,6 +890,11 @@ class SpeakerRegistry:
                 return False
             moving = self._named.pop(old_name)
             moving_count = self._named_counts.pop(old_name, 1)
+            # r616: the person's policy follows their name (merge keeps the
+            # target's existing policy if it has one)
+            _moving_pol = self._policies.pop(old_name, None)
+            if _moving_pol and new_name not in self._policies:
+                self._policies[new_name] = _moving_pol
             if new_name in self._named:
                 # Merging two names for one person: keep every distinct
                 # voiceprint, drop near-duplicates so the variant budget is
@@ -909,6 +951,7 @@ class SpeakerRegistry:
                 return False
             del self._named[name]
             self._named_counts.pop(name, None)
+            self._policies.pop(name, None)
             # r338: drop the session mapping too. Without this the cluster
             # keeps the deleted name for the rest of the session and the very
             # next utterance re-labels with a voice the user just removed.

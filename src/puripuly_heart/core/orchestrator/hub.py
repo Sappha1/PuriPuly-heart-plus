@@ -1271,6 +1271,36 @@ class ClientHub:
                 finalize_latency=True,
             )
             return
+        if transcript.speaker_name and self.speaker_registry is not None:
+            # r616: per-person policy — a muted voice is dropped whole; a
+            # pinned primary language drops lines whose script contradicts
+            # it (the recognizer mis-hearing an English friend as Chinese)
+            try:
+                _muted, _plang = self.speaker_registry.voice_policy(
+                    transcript.speaker_name)
+            except Exception:
+                _muted, _plang = False, ""
+            _reason = ""
+            if _muted:
+                _reason = "muted"
+            elif _plang:
+                _det = self._detect_text_script(transcript.text)
+                _want = self._expected_script_for_language(_plang)
+                if _det is not None and _want is not None and _det != _want:
+                    _reason = f"script={_det} but primary={_plang}"
+            if _reason:
+                self._emit_detailed(
+                    f"[Hub] Speaker policy drop ({_reason}) for "
+                    f"{transcript.speaker_name!r}: "
+                    f"'{transcript.text[:40]}'",
+                    fallback_level=logging.INFO)
+                await self._emit_overlay_utterance_closed(
+                    utterance_id=transcript.utterance_id,
+                    channel="peer",
+                    is_final=True,
+                    finalize_latency=True,
+                )
+                return
         if self._peer_language_filter_active() and not self._peer_passes_source_language_filter(
             transcript.text
         ):

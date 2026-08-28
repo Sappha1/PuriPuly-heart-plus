@@ -19,7 +19,7 @@ from puripuly_heart.ui.fonts import font_for_language
 from puripuly_heart.ui.i18n import get_locale, language_name, t
 from puripuly_heart.ui.overlay_peer_contract import OverlayPeerConsumerContract
 
-_BUILD_TAG = "r615"  #increment each build so user can confirm version
+_BUILD_TAG = "r617"  #increment each build so user can confirm version
 
 # ── VRCT-style dark palette ──────────────────────────────────────────────────
 _BG_MAIN = "#292b2e"
@@ -520,6 +520,9 @@ class DashboardView(ft.Row):
         # r603: callback(name) -> bool; True = the speaker's name is in the
         # live VRChat room roster (tag renders green as corroboration)
         self.on_speaker_in_room = None
+        # r616: per-voice policy plumbing (mute / primary language)
+        self.on_get_speaker_policy = None   # (name) -> (muted, lang)
+        self.on_set_speaker_policy = None   # (name, muted=, language=)
         self.on_toggle_stt = None
         self.on_toggle_overlay = None
         self.on_toggle_peer_translation = None
@@ -5473,6 +5476,41 @@ class DashboardView(ft.Row):
             mouse_cursor=ft.MouseCursor.CLICK,
         )
 
+        policy_rows: list[ft.Control] = []
+        if known_name:
+            _muted0, _plang0 = (False, "")
+            _get_pol = getattr(self, "on_get_speaker_policy", None)
+            if callable(_get_pol):
+                with contextlib.suppress(Exception):
+                    _muted0, _plang0 = _get_pol(known_name)
+
+            def _on_mute_change(e):
+                cb = getattr(self, "on_set_speaker_policy", None)
+                if callable(cb):
+                    with contextlib.suppress(Exception):
+                        cb(known_name, muted=bool(e.control.value))
+
+            def _on_plang_change(e):
+                cb = getattr(self, "on_set_speaker_policy", None)
+                if callable(cb):
+                    with contextlib.suppress(Exception):
+                        cb(known_name, language=str(e.control.value or ""))
+
+            policy_rows.append(ft.Checkbox(
+                label=t("dashboard.speaker_policy.mute"),
+                value=bool(_muted0), on_change=_on_mute_change))
+            policy_rows.append(ft.Dropdown(
+                label=t("dashboard.speaker_policy.primary_lang"),
+                value=_plang0 or "",
+                dense=True, text_size=12,
+                tooltip=t("dashboard.speaker_policy.primary_lang.tooltip"),
+                options=[ft.dropdown.Option(
+                             "", t("dashboard.speaker_policy.any_lang"))]
+                        + [ft.dropdown.Option(cc, language_name(cc))
+                           for cc in ("en", "zh-CN", "ja", "ko", "es", "ru",
+                                      "fr", "de", "pt", "id", "vi", "th")],
+                on_change=_on_plang_change))
+
         name_field.on_submit = _save
         save_button.on_click = _save
         _refresh_merge_state()
@@ -5481,7 +5519,8 @@ class DashboardView(ft.Row):
             title=ft.Text(t("dashboard.speaker_name_dialog.title"), size=14),
             content=ft.Container(
                 content=ft.Column(
-                    [name_field, scope, merge_warning, manage_link],
+                    [name_field, scope, merge_warning, *policy_rows,
+                     manage_link],
                     spacing=8,
                     tight=True,
                 ),

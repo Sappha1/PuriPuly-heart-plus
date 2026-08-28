@@ -220,7 +220,9 @@ class UpdateFlow:
                 self._set(progress=frac, status=f"Downloading update… {int(frac * 100)}%")
 
         try:
-            await download_update_zip(remote.zip_url, zip_path, remote.zip_size, _progress)
+            await download_update_zip(
+                remote.zip_url, zip_path, remote.zip_size, _progress,
+                expected_sha256=getattr(remote, "zip_sha256", "") or None)
             self._set(progress=1.0, status="Unpacking…")
             staged = await asyncio.to_thread(
                 extract_update_zip, zip_path, update_staging_dir() / "stage"

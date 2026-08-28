@@ -2,6 +2,10 @@
 
 User-facing changes per build. The latest build's highlights also appear in-app when an update is ready.
 
+## r618 — 2026-08-28
+
+- Fixed: update downloads now work through GitHub accelerators and VPNs that use their own certificates, and automatically fall back to mirrors when GitHub is unreachable
+
 ## r617 — 2026-08-28
 
 - Added: per-person voice controls — tap a speaker's name to ignore their voice entirely, or pin their primary language so mis-heard cross-language lines are dropped automatically

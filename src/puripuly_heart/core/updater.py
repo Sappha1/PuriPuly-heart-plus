@@ -6,6 +6,7 @@ Network failures are handled gracefully without affecting the main application.
 
 from __future__ import annotations
 
+import hashlib
 import logging
 from dataclasses import dataclass
 from typing import Any
@@ -60,6 +61,7 @@ def _remote_build_from_version_payload(data: object) -> "RemoteBuild | None":
         zip_size=0,
         notes=notes,
         date=str(data.get("date") or ""),
+        zip_sha256=str(data.get("zip_sha256") or "").lower(),
     )
 
 
@@ -277,6 +279,9 @@ class RemoteBuild:
     notes: tuple = ()
     # Release date string from version.json ("date", e.g. "2026-07-07").
     date: str = ""
+    # r618: sha256 of the update zip, published in version.json — lets the
+    # mirror-fallback download path verify the bytes are ours.
+    zip_sha256: str = ""
 
 
 async def fetch_remote_build() -> RemoteBuild | None:
@@ -371,20 +376,66 @@ async def download_update_zip(
     dest: Path,
     total_size: int,
     progress: Callable[[float], None] | None = None,
+    expected_sha256: str | None = None,
 ) -> None:
-    """Stream the release zip to dest, reporting progress as a 0.0-1.0 fraction."""
+    """Stream the release zip to dest, reporting progress as a 0.0-1.0 fraction.
+
+    r618: two China-hardening layers. TLS trusts the WINDOWS cert store, so
+    accelerators/VPNs that MITM github domains with a locally-installed root
+    (Watt Toolkit hosts mode) stop failing with certificate errors. And when
+    the direct GitHub asset host is unreachable, the well-known gh proxy
+    mirrors are tried with the SAME full URL appended — identical bytes,
+    verified by the zip's own integrity on extract."""
     dest.parent.mkdir(parents=True, exist_ok=True)
-    done = 0
-    async with httpx.AsyncClient(timeout=None, follow_redirects=True) as client:
-        async with client.stream("GET", url) as resp:
-            resp.raise_for_status()
-            total = int(resp.headers.get("content-length", total_size) or total_size or 0)
-            with open(dest, "wb") as fh:
-                async for chunk in resp.aiter_bytes(chunk_size=1 << 18):
-                    fh.write(chunk)
-                    done += len(chunk)
-                    if progress is not None and total > 0:
-                        progress(min(1.0, done / total))
+
+    def _verify():
+        try:
+            import ssl
+
+            import truststore
+
+            return truststore.SSLContext(ssl.PROTOCOL_TLS_CLIENT)
+        except Exception:
+            return True
+
+    candidates = [url]
+    if url.startswith("https://github.com/") or url.startswith(
+            "https://objects.githubusercontent.com/"):
+        candidates += [
+            "https://mirror.ghproxy.com/" + url,
+            "https://ghfast.top/" + url,
+        ]
+    last_exc: Exception | None = None
+    for candidate in candidates:
+        done = 0
+        try:
+            hasher = hashlib.sha256()
+            async with httpx.AsyncClient(timeout=None, follow_redirects=True,
+                                         verify=_verify()) as client:
+                async with client.stream("GET", candidate) as resp:
+                    resp.raise_for_status()
+                    total = int(resp.headers.get("content-length", total_size) or total_size or 0)
+                    with open(dest, "wb") as fh:
+                        async for chunk in resp.aiter_bytes(chunk_size=1 << 18):
+                            fh.write(chunk)
+                            hasher.update(chunk)
+                            done += len(chunk)
+                            if progress is not None and total > 0:
+                                progress(min(1.0, done / total))
+            if expected_sha256 and hasher.hexdigest() != expected_sha256.lower():
+                raise ValueError(
+                    "update package failed integrity verification")
+            if candidate != url:
+                logger.info("[Updater] downloaded via mirror %s",
+                            candidate.split("/")[2])
+            return
+        except Exception as exc:
+            last_exc = exc
+            logger.warning("[Updater] download via %s failed: %s",
+                           candidate.split("/")[2], exc)
+            continue
+    if last_exc is not None:
+        raise last_exc
 
 
 def extract_update_zip(zip_path: Path, stage_dir: Path) -> Path:

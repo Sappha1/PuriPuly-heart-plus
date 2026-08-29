@@ -21,6 +21,7 @@
   "dashboard.language.peer": "ターゲット言語",
   "language_modal.recent": "最近",
   "language_modal.search_hint": "言語を検索...",
+  "settings.search_hint": "検索...",
   "language_modal.all_languages": "すべての言語",
   "display.connected": "準備できました！",
   "display.connecting": "接続中...",

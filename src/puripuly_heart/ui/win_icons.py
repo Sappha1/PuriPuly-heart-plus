@@ -44,6 +44,26 @@ def target_exe_path(target) -> str | None:
     return None
 
 
+def true_cased_basename(path: str) -> str:
+    """The file's real on-disk name casing (VRChat.exe, VRCX.exe) — stored
+    identities are often lowercased and read wrong in the UI."""
+    import ntpath
+
+    base = ntpath.basename(str(path or ""))
+    if not base:
+        return base
+    try:
+        parent = ntpath.dirname(str(path))
+        if parent and os.path.isdir(parent):
+            low = base.lower()
+            for entry in os.scandir(parent):
+                if entry.name.lower() == low:
+                    return entry.name
+    except Exception:
+        pass
+    return base
+
+
 class _SHFILEINFOW(ctypes.Structure):
     _fields_ = [
         ("hIcon", wintypes.HICON),

@@ -752,6 +752,7 @@
   "dashboard.translit.show.tooltip": "앱과 오버레이에서 텍스트 위에 {system}(로마자 표기)을(를) 표시합니다.",
   "dashboard.translit.send.tooltip": "VRChat 채팅박스로 보내는 메시지에 {system}(로마자 표기)을(를) 포함합니다.",
   "language_modal.search_hint": "언어 검색...",
+  "settings.search_hint": "검색...",
   "settings.whisper_model": "Whisper 모델",
   "settings.deepl_api_key": "DeepL API 키",
   "settings.translation_connection.free_web": "무료 웹",

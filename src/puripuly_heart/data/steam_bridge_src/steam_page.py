@@ -283,6 +283,10 @@ class SteamPage:
             "--disable-background-timer-throttling",
             "--disable-renderer-backgrounding",
             "--disable-backgrounding-occluded-windows",
+            # steamcommunity.com holds notification permission in this
+            # profile — without this the hidden browser surfaces Steam's
+            # "friend is playing..." web pushes as real Windows toasts
+            "--disable-notifications",
         ]
         hidden = (mode == "hidden")
         if hidden:

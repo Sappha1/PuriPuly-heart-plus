@@ -7,6 +7,7 @@ from typing import Callable, Sequence
 
 import flet as ft
 
+from puripuly_heart.ui.i18n import t
 from puripuly_heart.ui.theme import (
     COLOR_DIVIDER,
     COLOR_NEUTRAL,
@@ -17,6 +18,12 @@ from puripuly_heart.ui.theme import (
 
 _BG_MODAL = "#292a2d"
 _BG_ITEM_SELECTED = "#1a3a36"
+# r624: same search-field palette as the language selector
+_TEXT_FAINT = "#7f8084"
+_BORDER_INPUT = "#4b4c4f"
+_FOCUSED_BORDER = "#48a495"
+# short lists don't need a search bar — it would just be clutter
+_SEARCH_MIN_OPTIONS = 8
 
 
 @dataclass
@@ -53,9 +60,17 @@ class SettingsModal:
         self._on_select = on_select
         self._show_description = show_description
         self._dialog: ft.AlertDialog | None = None
+        self._option_rows: list[tuple[str, ft.Container]] = []
+        self._list_view: ft.ListView | None = None
 
     def open(self, current: str) -> None:
-        option_list = self._build_option_list(current)
+        self._option_rows = self._build_option_rows(current)
+        self._list_view = ft.ListView(
+            controls=[row for _, row in self._option_rows],
+            expand=True,
+            spacing=2,
+            padding=ft.padding.only(right=4, bottom=8),
+        )
 
         content_controls: list[ft.Control] = [
             ft.Text(
@@ -64,9 +79,25 @@ class SettingsModal:
                 weight=ft.FontWeight.W_600,
                 color=COLOR_NEUTRAL,
             ),
-            ft.Divider(height=1, color=COLOR_DIVIDER),
-            option_list,
         ]
+        if len(self._option_rows) >= _SEARCH_MIN_OPTIONS:
+            content_controls.append(ft.TextField(
+                hint_text=t("settings.search_hint", default="Search..."),
+                border=ft.InputBorder.OUTLINE,
+                border_color=_BORDER_INPUT,
+                focused_border_color=_FOCUSED_BORDER,
+                bgcolor="#2a2b2e",
+                color="#f2f2f2",
+                hint_style=ft.TextStyle(color=_TEXT_FAINT, italic=True),
+                text_size=13,
+                height=40,
+                content_padding=ft.padding.symmetric(horizontal=12, vertical=6),
+                prefix_icon=ft.Icons.SEARCH,
+                on_change=self._on_search_change,
+                autofocus=True,
+            ))
+        content_controls.append(ft.Divider(height=1, color=COLOR_DIVIDER))
+        content_controls.append(self._list_view)
 
         modal_content = ft.Container(
             content=ft.Column(
@@ -91,8 +122,25 @@ class SettingsModal:
         )
         self._page.open(self._dialog)
 
-    def _build_option_list(self, current: str) -> ft.ListView:
-        items = []
+    def _on_search_change(self, e) -> None:
+        query = (e.control.value or "").lower().strip()
+        if self._list_view is None:
+            return
+        if query:
+            self._list_view.controls = [
+                row for text, row in self._option_rows if query in text]
+        else:
+            self._list_view.controls = [row for _, row in self._option_rows]
+        try:
+            self._list_view.update()
+        except Exception:
+            pass
+
+    def _build_option_rows(
+        self, current: str
+    ) -> list[tuple[str, ft.Container]]:
+        """(search_text, row) pairs — search matches label + description."""
+        items: list[tuple[str, ft.Container]] = []
         for option in self._options:
             # The currently-active option is highlighted even if it's temporarily
             # disabled (e.g. its API key needs re-verifying), so the user can always
@@ -163,14 +211,10 @@ class SettingsModal:
                     lambda e, is_sel=is_selected: self._on_item_hover(e, is_sel)
                 ),
             )
-            items.append(item)
+            items.append(
+                ((option.label + " " + option.description).lower(), item))
 
-        return ft.ListView(
-            controls=items,
-            expand=True,
-            spacing=2,
-            padding=ft.padding.only(right=4, bottom=8),
-        )
+        return items
 
     def _on_item_hover(self, e: ft.ControlEvent, is_selected: bool) -> None:
         if is_selected:

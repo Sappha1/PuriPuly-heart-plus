@@ -19,7 +19,7 @@ from puripuly_heart.ui.fonts import font_for_language
 from puripuly_heart.ui.i18n import get_locale, language_name, t
 from puripuly_heart.ui.overlay_peer_contract import OverlayPeerConsumerContract
 
-_BUILD_TAG = "r619"  #increment each build so user can confirm version
+_BUILD_TAG = "r625"  #increment each build so user can confirm version
 
 # ── VRCT-style dark palette ──────────────────────────────────────────────────
 _BG_MAIN = "#292b2e"
@@ -6904,13 +6904,15 @@ class DashboardView(ft.Row):
                     "generic": ft.Icons.APPS}.get(kind, ft.Icons.SPEAKER_OUTLINED)
             self._peer_source_icon_slot.content = ft.Icon(
                 icon, size=14, color=_TEXT_MUTED)
-        txt = label
-        if not available:
-            txt = label + " — " + t("capture.app_not_running",
-                                    default="App not running right now")
-        self._peer_source_label.value = txt
+        # r621: no textual "(not running)" marker — the warning color plus
+        # the row tooltip carry the offline state without eating pill width
+        self._peer_source_label.value = label
         self._peer_source_label.color = (_TEXT_MUTED if available
                                          else _TOGGLE_WARNING)
+        self._peer_source_row.tooltip = (
+            None if available
+            else t("capture.app_not_running",
+                   default="App not running right now"))
         with contextlib.suppress(Exception):
             if self._peer_source_row.page:
                 self._peer_source_row.update()

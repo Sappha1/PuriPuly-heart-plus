@@ -2,6 +2,13 @@
 
 User-facing changes per build. The latest build's highlights also appear in-app when an update is ready.
 
+## r625 — 2026-08-28
+
+- Added: a search box in long selection menus (audio sources, capture windows) to quickly filter the list
+- Fixed: the Steam module could surface Steam's own "friend is playing" desktop notifications; it no longer can
+- Fixed: the Steam helper now closes together with the app instead of staying in the background
+- Changed: captured-app names show their real capitalization without the ".exe", and an unavailable source is marked by color and tooltip instead of extra text
+
 ## r619 — 2026-08-28
 
 - Fixed: if the captured app (e.g. VRChat) is closed and reopened while the program keeps running, voice capture now pauses visibly and reattaches automatically instead of staying silently connected to the old instance

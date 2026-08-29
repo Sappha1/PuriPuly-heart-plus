@@ -209,7 +209,25 @@ def _run_gui(config_path: Path, *, debug_ui_preview: bool) -> int:
     boot_stealth.start()
     ft.app(target=_target, assets_dir=str(assets_dir()),
            view=ft.AppView.FLET_APP_HIDDEN)
+    _stop_steam_helper()
     return 0
+
+
+def _stop_steam_helper() -> None:
+    """The Steam helper daemon + its hidden browser are separate processes:
+    nothing stopped them when the app itself exited, so they kept the Steam
+    web session alive after close (r624 — it was still pushing 'friend is
+    playing' toasts). quit makes the daemon close its browser and exit."""
+    import socket
+
+    try:
+        s = socket.create_connection(("127.0.0.1", 8791), timeout=0.5)
+        try:
+            s.sendall(b'{"cmd": "quit"}\n')
+        finally:
+            s.close()
+    except Exception:
+        pass
 
 
 _SINGLE_INSTANCE_MUTEX_HANDLE = None

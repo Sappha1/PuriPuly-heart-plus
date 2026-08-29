@@ -752,6 +752,7 @@
   "dashboard.translit.show.tooltip": "在应用和叠加层中，于文本上方显示{system}（罗马音／拼音转写）。",
   "dashboard.translit.send.tooltip": "在发送到 VRChat 聊天框的消息中包含{system}（罗马音／拼音转写）。",
   "language_modal.search_hint": "搜索语言...",
+  "settings.search_hint": "搜索...",
   "settings.whisper_model": "Whisper 模型",
   "settings.deepl_api_key": "DeepL API 密钥",
   "settings.translation_connection.free_web": "免费网页",

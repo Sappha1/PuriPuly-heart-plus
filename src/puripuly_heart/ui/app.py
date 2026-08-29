@@ -2152,8 +2152,8 @@ class TranslatorApp:
         except Exception:
             target = None
         if target is not None:
-            import ntpath
-            base = ntpath.basename(
+            from puripuly_heart.ui.win_icons import true_cased_basename
+            base = true_cased_basename(
                 getattr(target, "executable_identity", "") or "")
             if not base:
                 # kinds without an executable path (e.g. Discord channels)
@@ -2166,6 +2166,10 @@ class TranslatorApp:
                         getattr(target, "kind", "app"))
                 except Exception:
                     base = str(getattr(target, "kind", "app"))
+            # r623: every capture target IS an exe — the extension says
+            # nothing, so labels show "VRCX", not "VRCX.exe"
+            if base.lower().endswith(".exe"):
+                base = base[:-4]
             return base, str(getattr(target, "kind", "generic"))
         if (value or "").strip():
             return value, "device"

@@ -21,6 +21,7 @@
   "dashboard.language.peer": "Target language",
   "language_modal.recent": "Recent",
   "language_modal.search_hint": "Search languages...",
+  "settings.search_hint": "Search...",
   "language_modal.all_languages": "All Languages",
   "display.connected": "Ready!",
   "display.connecting": "Connecting...",

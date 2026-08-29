@@ -1,9 +1,11 @@
 {
-  "build": 619,
-  "tag": "r619",
+  "build": 625,
+  "tag": "r625",
   "date": "2026-08-28",
   "notes": [
-    "Fixed: restarting the captured app (e.g. VRChat) mid-session now pauses capture visibly and reattaches automatically"
+    "Added: a search box in long selection menus to quickly filter the list",
+    "Fixed: the Steam module could surface Steam's own desktop notifications, and its helper now closes with the app",
+    "Changed: captured-app names show their real capitalization without the .exe"
   ],
-  "zip_sha256": "61571e405fd69c4f9f3a4b9513a708f3aec4f641d2bb5b700e0cd7c156c3f0ec"
+  "zip_sha256": "33c3e2659f0be3ce83c2a2ecc936ce8f2cc50c68a15d4af22dac53dfe9ebe485"
 }

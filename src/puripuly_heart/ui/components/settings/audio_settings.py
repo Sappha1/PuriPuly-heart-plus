@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import contextlib
 import logging
 from typing import Callable
 
@@ -362,16 +363,25 @@ class AudioSettings(ft.Column):
                         # (Discord's path comes from the running process)
                         from puripuly_heart.ui.win_icons import (
                             exe_icon_png, target_exe_path,
+                            true_cased_basename,
                         )
-                        _icon = exe_icon_png(
-                            target_exe_path(candidate.target) or "")
+                        _path = target_exe_path(candidate.target) or ""
+                        _icon = exe_icon_png(_path)
+                        # r621: stored identities are lowercased — show the
+                        # exe's real on-disk casing (VRCX.exe, not vrcx.exe)
+                        if _path and name.lower().endswith(".exe"):
+                            name = true_cased_basename(_path) or name
                     except Exception:
                         _icon = None
+                    # r623: all app targets are exes — drop the extension
+                    if name.lower().endswith(".exe"):
+                        name = name[:-4]
                     options.append(OptionItem(
                         value=value,
                         icon_src=_icon,
-                        label=t("capture.app_option", name=name,
-                                default=f"App audio: {name}"),
+                        # r620: the row's real app icon already says "app" —
+                        # the "App audio:" prefix just ate width
+                        label=name,
                         description=(t("capture.app_multiple",
                                        default="Multiple instances running — close the extras first")
                                      if ambiguous else ""),
@@ -389,18 +399,24 @@ class AudioSettings(ft.Column):
                         )
                         from puripuly_heart.ui.win_icons import (
                             exe_icon_png, target_exe_path,
+                            true_cased_basename,
                         )
                         _st = parse_process_capture_target(saved)
-                        _sicon = exe_icon_png(
-                            target_exe_path(_st) or "") if _st else None
+                        _spath = (target_exe_path(_st) or "") if _st else ""
+                        _sicon = exe_icon_png(_spath) if _spath else None
+                        # r621: true casing works while the app is closed too
+                        # (the exe file is still on disk)
+                        if _spath and name.lower().endswith(".exe"):
+                            name = true_cased_basename(_spath) or name
                     except Exception:
                         _sicon = None
+                    if name.lower().endswith(".exe"):
+                        name = name[:-4]
                     options.append(OptionItem(
                         value=saved,
                         icon_src=_sicon,
                         icon_name=None if _sicon else "apps",
-                        label=t("capture.app_option", name=name,
-                                default=f"App audio: {name}"),
+                        label=name,
                         description=t("capture.app_not_running",
                                       default="App not running right now"),
                     ))
@@ -461,6 +477,23 @@ class AudioSettings(ft.Column):
             name = process_capture_display_name(value)
         except Exception:
             name = None
+        # r622: same true-casing as the picker rows — the stored identity
+        # is lowercased (vrcx.exe), the disk name is not; never let this
+        # cosmetic pass cost us an already-resolved name
+        if name and name.lower().endswith(".exe"):
+            with contextlib.suppress(Exception):
+                from puripuly_heart.config.process_capture_target import (
+                    parse_process_capture_target,
+                )
+                from puripuly_heart.ui.win_icons import (
+                    target_exe_path, true_cased_basename,
+                )
+                _tgt = parse_process_capture_target(value)
+                _path = (target_exe_path(_tgt) or "") if _tgt else ""
+                if _path:
+                    name = true_cased_basename(_path) or name
+        if name and name.lower().endswith(".exe"):
+            name = name[:-4]
         if name:
             return t("capture.app_option", name=name, default=f"App audio: {name}")
         return value

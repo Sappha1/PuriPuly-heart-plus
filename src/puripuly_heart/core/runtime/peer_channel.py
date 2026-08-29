@@ -261,11 +261,21 @@ class PeerChannelRuntime:
         except Exception as exc:
             await self._on_runtime_failure(exc, generation=generation)
         else:
-            # r606: a process-capture source whose target app EXITED ends
-            # the loop with a CLEAN return — before this, the pill stayed
-            # green over dead capture and nothing ever retried. Surface it
-            # as a fault (orange) so the controller's repoll can relatch.
-            if getattr(source, "terminal_reason", None) == "target_exited":
+            # r606/r619: a process-capture source whose target app EXITED
+            # ends the loop with a CLEAN return. r606 read terminal_reason
+            # off the OUTER pipeline wrapper where it never exists — the
+            # flag lives on the raw process source two wrappers down
+            # (DesktopPeerPipeline -> DiagnosticAudioSource -> process
+            # source), so closing VRChat mid-session still left a green
+            # pill over dead capture. Walk the .source chain.
+            probe, hops, reason = source, 0, None
+            while probe is not None and hops < 5:
+                reason = getattr(probe, "terminal_reason", None)
+                if reason:
+                    break
+                probe = getattr(probe, "source", None)
+                hops += 1
+            if reason == "target_exited":
                 await self._on_runtime_failure(
                     RuntimeError("peer capture target exited"),
                     generation=generation,

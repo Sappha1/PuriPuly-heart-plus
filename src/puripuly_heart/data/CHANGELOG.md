@@ -2,6 +2,10 @@
 
 User-facing changes per build. The latest build's highlights also appear in-app when an update is ready.
 
+## r619 — 2026-08-28
+
+- Fixed: if the captured app (e.g. VRChat) is closed and reopened while the program keeps running, voice capture now pauses visibly and reattaches automatically instead of staying silently connected to the old instance
+
 ## r618 — 2026-08-28
 
 - Fixed: update downloads now work through GitHub accelerators and VPNs that use their own certificates, and automatically fall back to mirrors when GitHub is unreachable

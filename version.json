@@ -1,9 +1,9 @@
 {
-  "build": 618,
-  "tag": "r618",
+  "build": 619,
+  "tag": "r619",
   "date": "2026-08-28",
   "notes": [
-    "Fixed: update downloads work through GitHub accelerators/VPN certificates and fall back to mirrors when GitHub is unreachable"
+    "Fixed: restarting the captured app (e.g. VRChat) mid-session now pauses capture visibly and reattaches automatically"
   ],
-  "zip_sha256": "a06bf77e0d612c51bb44a18d383663273b119b036923fc1d110ff2db24a37db6"
+  "zip_sha256": "61571e405fd69c4f9f3a4b9513a708f3aec4f641d2bb5b700e0cd7c156c3f0ec"
 }

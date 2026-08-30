@@ -2,6 +2,8 @@ from __future__ import annotations
 
 import argparse
 import asyncio
+import logging
+import os
 import sys
 from pathlib import Path
 from typing import TYPE_CHECKING, Any
@@ -213,6 +215,31 @@ def _run_gui(config_path: Path, *, debug_ui_preview: bool) -> int:
     return 0
 
 
+def _exit_without_finalization(rc: int, logging_sinks) -> int:
+    """Frozen builds: end the process NOW, skipping interpreter finalization.
+
+    r626: closing the app while a local-STT utterance was mid-decode froze
+    the process until force-kill. The decode runs on an abandoned daemon
+    thread inside native onnxruntime; interpreter finalization then tears
+    down the sherpa/ORT objects that thread is still executing in, and the
+    native destructor blocks holding the GIL — freezing every thread, the
+    logging included. Nothing in this app relies on finalization (no atexit
+    hooks; settings persist on change; log records flush per-emit), so once
+    the GUI/mic loop has returned and the sinks are closed, os._exit is the
+    only exit that cannot be taken hostage by a wedged native call.
+
+    Source runs (tests, dev) keep normal returns — PURIPULY_NO_HARD_EXIT=1
+    forces that even when frozen, for exit-path diagnosis.
+    """
+    if not getattr(sys, "frozen", False) or os.environ.get("PURIPULY_NO_HARD_EXIT"):
+        return rc
+    try:
+        logging_sinks.close(force=True)
+    except Exception:
+        pass
+    os._exit(rc)
+
+
 def _stop_steam_helper() -> None:
     """The Steam helper daemon + its hidden browser are separate processes:
     nothing stopped them when the app itself exited, so they kept the Steam
@@ -367,9 +394,12 @@ def main(argv: list[str] | None = None) -> int:
             return _run_desktop_overlay_preview()
 
         if args.command == "run-gui":
-            return _run_gui(
-                args.config,
-                debug_ui_preview=bool(getattr(args, "debug_ui_preview", False)),
+            return _exit_without_finalization(
+                _run_gui(
+                    args.config,
+                    debug_ui_preview=bool(getattr(args, "debug_ui_preview", False)),
+                ),
+                logging_sinks,
             )
 
         if args.command == "local-qwen-runtime-check":
@@ -417,15 +447,18 @@ def main(argv: list[str] | None = None) -> int:
                 use_llm=args.use_llm,
             )
             try:
-                return asyncio.run(runner.run())
+                return _exit_without_finalization(asyncio.run(runner.run()), logging_sinks)
             except HeadlessMicInitializationError as exc:
                 return _print_initialization_error("headless mic runner", exc)
 
         # Default: run GUI when no command specified (e.g., double-clicking EXE)
         if args.command is None:
-            return _run_gui(
-                args.config,
-                debug_ui_preview=bool(getattr(args, "debug_ui_preview", False)),
+            return _exit_without_finalization(
+                _run_gui(
+                    args.config,
+                    debug_ui_preview=bool(getattr(args, "debug_ui_preview", False)),
+                ),
+                logging_sinks,
             )
 
         parser.print_help()

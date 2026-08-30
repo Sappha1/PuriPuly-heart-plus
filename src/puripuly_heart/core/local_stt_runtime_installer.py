@@ -29,6 +29,15 @@ def _download_ssl_verify():
 
         return truststore.SSLContext(ssl.PROTOCOL_TLS_CLIENT)
     except Exception:
+        # r626: loud, not silent — a build missing truststore quietly
+        # reverts to certifi-only trust and every VPN/proxy-MITM'd install
+        # is back to CERTIFICATE_VERIFY_FAILED with no clue in the log.
+        logger.warning(
+            "[Models] truststore unavailable — TLS verification falls back "
+            "to the bundled certifi store (VPN/proxy-injected roots will "
+            "not be trusted)",
+            exc_info=True,
+        )
         return True
 
 

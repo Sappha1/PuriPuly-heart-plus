@@ -380,12 +380,10 @@ async def download_update_zip(
 ) -> None:
     """Stream the release zip to dest, reporting progress as a 0.0-1.0 fraction.
 
-    r618: two China-hardening layers. TLS trusts the WINDOWS cert store, so
-    accelerators/VPNs that MITM github domains with a locally-installed root
-    (Watt Toolkit hosts mode) stop failing with certificate errors. And when
-    the direct GitHub asset host is unreachable, the well-known gh proxy
-    mirrors are tried with the SAME full URL appended — identical bytes,
-    verified by the zip's own integrity on extract."""
+    TLS trusts the WINDOWS cert store (r618), so accelerators/VPNs that MITM
+    github domains with a locally-installed root (Watt Toolkit hosts mode)
+    stop failing with certificate errors. The download itself is checked
+    against the release's published sha256 before it is ever applied."""
     dest.parent.mkdir(parents=True, exist_ok=True)
 
     def _verify():
@@ -396,15 +394,22 @@ async def download_update_zip(
 
             return truststore.SSLContext(ssl.PROTOCOL_TLS_CLIENT)
         except Exception:
+            # r626: loud, not silent — without truststore, VPN/proxy-MITM'd
+            # networks fail cert verification with no clue in the log.
+            logger.warning(
+                "[Updater] truststore unavailable — TLS verification falls "
+                "back to the bundled certifi store",
+                exc_info=True,
+            )
             return True
 
+    # r628: downloads go to GitHub ONLY. The third-party "gh accelerator"
+    # proxies this used to fall back to are not trustworthy infrastructure:
+    # they relay arbitrary repos, so the hosts get flagged as malware
+    # distributors (browsers block them outright), and they disappear without
+    # notice — one shipped here was already dead worldwide. Users behind a
+    # blocked network use their own VPN, which is the path they already have.
     candidates = [url]
-    if url.startswith("https://github.com/") or url.startswith(
-            "https://objects.githubusercontent.com/"):
-        candidates += [
-            "https://mirror.ghproxy.com/" + url,
-            "https://ghfast.top/" + url,
-        ]
     last_exc: Exception | None = None
     for candidate in candidates:
         done = 0

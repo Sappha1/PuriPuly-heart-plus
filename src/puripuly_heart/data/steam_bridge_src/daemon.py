@@ -1001,9 +1001,26 @@ class Daemon:
         server = await asyncio.start_server(self.handle, sock=lsock)
         # Pre-warm: load Steam now so the first tab open is instant.
         asyncio.create_task(self._prewarm())
-        asyncio.create_task(self.poll_loop())
+        asyncio.create_task(self._poll_supervisor())
         async with server:
             await server.serve_forever()
+
+    async def _poll_supervisor(self) -> None:
+        """poll_loop is the ONLY live-message path while the real Steam
+        client is primary; one uncaught per-tick exception used to kill it
+        silently (typing + inbound BOTH stop, the chat just looks frozen).
+        Restart it forever and log what killed it."""
+        import traceback
+
+        while True:
+            try:
+                await self.poll_loop()
+            except asyncio.CancelledError:
+                raise
+            except Exception:
+                _diag("POLL-LOOP CRASH, restarting:\n"
+                      + traceback.format_exc(limit=6))
+                await asyncio.sleep(2.0)
 
     async def _prewarm(self) -> None:
         try:

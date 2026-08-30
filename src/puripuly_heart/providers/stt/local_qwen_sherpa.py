@@ -29,6 +29,7 @@ from puripuly_heart.core.stt.backend import (
     STTBackendSession,
     STTBackendTranscriptEvent,
 )
+from puripuly_heart.core.shutdown import is_shutting_down
 from puripuly_heart.core.stt.local_qwen_hallucination import (
     is_known_local_qwen_hallucination,
 )
@@ -468,6 +469,14 @@ class LocalQwenSherpaSTTBackend(STTBackend):
             # fall through to a fresh build.
             self._recognizer = None
 
+        # r626: never START a 1.15GB / 7-9s model build once the app is
+        # closing (a retry or late warmup racing shutdown would otherwise
+        # hold teardown for the whole load).
+        if is_shutting_down():
+            raise LocalQwenSherpaLoadError(
+                "app is shutting down — refusing to load the speech model"
+            )
+
         async with self._load_lock:
             recognizer = self._recognizer
             if recognizer is not None:
@@ -588,6 +597,16 @@ class LocalQwenSherpaSTTBackend(STTBackend):
         return await self.decode_f32(pcm16le_bytes_to_float32(pcm16le))  # -> (text, lang)
 
     async def decode_f32(self, samples_f32: np.ndarray) -> tuple[str, str | None]:
+        # r626: the window is closing — a transcript decoded now can never be
+        # shown, and a native decode started now is up to 30s of teardown
+        # hostage (or a process wedge if the recognizer's destruction races
+        # it). Stand down instead.
+        if is_shutting_down():
+            logger.info(
+                "%s decode skipped: app is shutting down",
+                _log_prefix(self.stream_label),
+            )
+            return "", None
         recognizer = await self._ensure_recognizer()
         async with self._decode_lock:
             if _recognizer_is_poisoned(recognizer):

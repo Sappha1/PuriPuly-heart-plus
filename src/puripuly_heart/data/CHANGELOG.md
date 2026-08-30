@@ -2,6 +2,12 @@
 
 User-facing changes per build. The latest build's highlights also appear in-app when an update is ready.
 
+## r628 - 2026-08-30
+
+- Fixed: closing the app while speech was still being transcribed could leave it frozen or running invisibly in the background
+- Fixed: Steam chat could silently stop showing new messages and typing indicators until the app was restarted
+- Changed: updates now download from GitHub only - third-party download accelerators have been removed, so use your own VPN on restricted networks
+
 ## r625 — 2026-08-28
 
 - Added: a search box in long selection menus (audio sources, capture windows) to quickly filter the list

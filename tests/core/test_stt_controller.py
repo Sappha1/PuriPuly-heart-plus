@@ -1338,7 +1338,16 @@ async def test_managed_stt_provider_peer_channel_produces_final_event():
 
 @pytest.mark.parametrize(
     ("channel", "text"),
-    [("self", "leşme"), ("peer", "acia")],
+    [
+        ("self", "leşme"),
+        ("peer", "acia"),
+        # r615 filler filter: these stock near-silence inventions moved from
+        # the allowed list to the blocklist.
+        ("self", "的答案"),
+        ("self", "虚构"),
+        ("peer", "夫"),
+        ("peer", "格力"),
+    ],
 )
 async def test_managed_stt_provider_suppresses_known_local_qwen_final_and_notifies_without_text(
     channel,
@@ -1478,7 +1487,9 @@ async def test_managed_stt_provider_allows_known_text_from_non_local_provider_in
 
 @pytest.mark.parametrize(
     "text",
-    ["的答案", "虚构", "夫", "夫夫", "格力", "Leşme", "xleşmex", "AcIa", "acia."],
+    # r615 filler filter: 的答案/虚构/夫/格力 became known hallucinations and
+    # moved to the suppression test above.
+    ["夫夫", "Leşme", "xleşmex", "AcIa", "acia."],
 )
 async def test_managed_stt_provider_allows_non_matching_local_qwen_finals(text: str) -> None:
     notifications: list[object] = []

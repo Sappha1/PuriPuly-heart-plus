@@ -4091,6 +4091,27 @@ async def main_gui(page: ft.Page, *, config_path, debug_ui_preview: bool = False
         config_path=config_path,
         debug_ui_preview=debug_ui_preview,
     )
+
+    # r626: the desktop client disconnecting IS the window closing — there is
+    # no orderly stop() on this path, flet just cancels everything. Mark
+    # shutdown so in-flight/queued local decodes stand down instead of holding
+    # teardown (providers/stt/local_qwen_sherpa.py checks the flag), and arm a
+    # watchdog so a wedged native call can never leave a zombie process the
+    # user has to force-kill (observed 2026-08-28: peer utterance mid-decode
+    # at close froze the process until task-manager kill).
+    #
+    # MUST be async: flet 0.28.3 awaits coroutine handlers inline, but hands
+    # a SYNC handler to page.run_thread — a loop callback onto the pool
+    # executor that FletSocketServer.close() has already shut down by the
+    # time disconnect dispatches, so a sync handler here silently never runs.
+    async def _on_page_disconnect(_event: object) -> None:
+        from puripuly_heart.core.shutdown import arm_exit_watchdog, begin_shutdown
+
+        begin_shutdown("flet page disconnected (window closed)")
+        arm_exit_watchdog(15.0)
+
+    page.on_disconnect = _on_page_disconnect
+
     await app.controller.start()
 
     # Sync dashboard button states from loaded settings (mute sync, loopback, STT label)

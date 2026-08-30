@@ -20,6 +20,7 @@ from puripuly_heart.core.audio.format import float32_to_pcm16le_bytes
 from puripuly_heart.core.audio.ring_buffer import RingBufferF32
 from puripuly_heart.core.clock import Clock, SystemClock
 from puripuly_heart.core.runtime_logging import SessionLoggingMode, SessionRuntimeLoggingService
+from puripuly_heart.core.shutdown import is_shutting_down
 from puripuly_heart.core.stt.backend import (
     STTBackend,
     STTBackendFloat32Session,
@@ -593,7 +594,12 @@ class ManagedSTTProvider:
             f"[STT] DRAIN: Starting drain (timeout={self.drain_timeout_s}s)...",
             fallback_level=logging.DEBUG,
         )
-        if allow_finalize and self._should_finalize_before_stop():
+        # r626: finalizing at APP SHUTDOWN decodes an utterance nobody will
+        # ever see — for the local backend that is a full native decode
+        # awaited inline, holding teardown up to the 30s decode timeout.
+        # Normal drains (MIC toggle-off, provider swaps) still finalize so
+        # the tail utterance is never lost.
+        if allow_finalize and not is_shutting_down() and self._should_finalize_before_stop():
             await self._finalize_before_stop(session)
         with contextlib.suppress(Exception):
             await session.stop()

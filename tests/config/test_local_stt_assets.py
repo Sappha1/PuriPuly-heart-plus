@@ -334,13 +334,26 @@ def test_packaged_local_stt_manifest_matches_modelscope_fallback_contract() -> N
 
     modelscope = manifest.sources["modelscope"]
     assert modelscope.repo_id == "zengshuishui/Qwen3-ASR-onnx"
-    assert modelscope.revision == "c69fb1666ccb59a82c09840c511a6c894e6a2482"
+    # r617: the upstream repo was force re-uploaded; the old pinned revision
+    # (c69fb1666...) stopped resolving. Re-pinned to the live revision with
+    # the /resolve/ URL form (size-verified against the live host 2026-08-28).
+    assert modelscope.revision == "de9e449eb376dcb472c1ce8141fbae8d524fabbd"
     assert (
         modelscope.download_url_template
-        == "https://www.modelscope.cn/api/v1/models/zengshuishui/Qwen3-ASR-onnx/repo?Revision=c69fb1666ccb59a82c09840c511a6c894e6a2482&FilePath={path}"
+        == "https://www.modelscope.cn/models/zengshuishui/Qwen3-ASR-onnx/resolve/de9e449eb376dcb472c1ce8141fbae8d524fabbd/{path}"
     )
 
     files = {asset.relative_path: asset for asset in manifest.files}
+    # The re-upload REPLACED the decoder (different bytes than the pinned
+    # huggingface copy) — the manifest must carry the modelscope copy's own
+    # sha/size, end-to-end validated in r617.
+    decoder = files["decoder.int8.onnx"]
+    assert decoder.sha256_for_source("modelscope") == (
+        "4f6885be5959ae26af3089d38ee7972c5fafbeeb1cf8d5e76eab6d8b61ca5771"
+    )
+    assert decoder.size_for_source("modelscope") == 755914231
+    assert decoder.sha256_for_source("huggingface") == decoder.sha256
+    assert decoder.size_for_source("huggingface") == decoder.size_bytes
     assert (
         files["conv_frontend.onnx"].remote_path_for_source("modelscope")
         == "model_0.6B/conv_frontend.onnx"

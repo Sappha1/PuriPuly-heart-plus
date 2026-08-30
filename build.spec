@@ -177,6 +177,10 @@ hiddenimports = [
     "httpx",
     "keyring.backends.Windows",
     "onnxruntime",
+    # r617: Windows-cert-store TLS for model/update downloads behind VPN/proxy
+    # MITM roots. Imported lazily inside try/except — a build that drops it
+    # silently regresses every mainland-China install.
+    "truststore",
     # NumPy's C-extension is required before the packaged CLI can even boot.
     "numpy._core._multiarray_umath",
     "soxr",

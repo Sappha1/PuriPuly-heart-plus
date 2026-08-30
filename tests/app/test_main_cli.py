@@ -8,7 +8,7 @@ import logging
 import sys
 from logging.handlers import QueueHandler
 from pathlib import Path
-from types import ModuleType
+from types import ModuleType, SimpleNamespace
 
 import pytest
 
@@ -23,6 +23,18 @@ from puripuly_heart.config.settings import (
 )
 from puripuly_heart.core.runtime_logging import SessionRuntimeLoggingService, configure_main_logging
 from puripuly_heart.core.storage.secrets import InMemorySecretStore
+
+
+def _patch_gui_environment(monkeypatch, fake_flet) -> None:
+    """r626: the GUI-path tests were stale two ways — the fake ft.app predates
+    r455's view=ft.AppView.FLET_APP_HIDDEN kwarg, and the real single-instance
+    mutex short-circuited main() whenever the developer's actual app was
+    running. Also neutralize _stop_steam_helper: the real one would send
+    {"cmd": "quit"} to a LIVE Steam helper daemon on this machine."""
+    fake_flet.AppView = SimpleNamespace(FLET_APP_HIDDEN="flet_app_hidden")
+    monkeypatch.setitem(sys.modules, "flet", fake_flet)
+    monkeypatch.setattr(main_module, "_acquire_single_instance_lock", lambda: True)
+    monkeypatch.setattr(main_module, "_stop_steam_helper", lambda: None, raising=False)
 
 
 def _patch_headless_mic_types(monkeypatch, runner_cls, error_cls=None) -> None:
@@ -299,12 +311,13 @@ def test_main_run_gui_invokes_flet_app(monkeypatch, tmp_path) -> None:
 
     fake_flet = ModuleType("flet")
 
-    def fake_app(*, target, assets_dir):
+    def fake_app(*, target, assets_dir, view=None):
+        _ = view
         calls["target"] = target
         calls["assets_dir"] = assets_dir
 
     fake_flet.app = fake_app
-    monkeypatch.setitem(sys.modules, "flet", fake_flet)
+    _patch_gui_environment(monkeypatch, fake_flet)
 
     fake_ui_app = ModuleType("puripuly_heart.ui.app")
 
@@ -336,12 +349,13 @@ def test_main_default_invokes_gui(monkeypatch, tmp_path) -> None:
 
     fake_flet = ModuleType("flet")
 
-    def fake_app(*, target, assets_dir):
+    def fake_app(*, target, assets_dir, view=None):
+        _ = view
         calls["target"] = target
         calls["assets_dir"] = assets_dir
 
     fake_flet.app = fake_app
-    monkeypatch.setitem(sys.modules, "flet", fake_flet)
+    _patch_gui_environment(monkeypatch, fake_flet)
 
     fake_ui_app = ModuleType("puripuly_heart.ui.app")
 
@@ -373,12 +387,13 @@ def test_main_run_gui_passes_debug_ui_preview_flag(monkeypatch, tmp_path) -> Non
 
     fake_flet = ModuleType("flet")
 
-    def fake_app(*, target, assets_dir):
+    def fake_app(*, target, assets_dir, view=None):
+        _ = view
         calls["target"] = target
         calls["assets_dir"] = assets_dir
 
     fake_flet.app = fake_app
-    monkeypatch.setitem(sys.modules, "flet", fake_flet)
+    _patch_gui_environment(monkeypatch, fake_flet)
 
     fake_ui_app = ModuleType("puripuly_heart.ui.app")
 
@@ -421,12 +436,12 @@ def test_main_run_gui_force_closes_logging_when_gui_runtime_logging_leaks(
 
     fake_flet = ModuleType("flet")
 
-    def fake_app(*, target, assets_dir):
-        _ = assets_dir
+    def fake_app(*, target, assets_dir, view=None):
+        _ = assets_dir, view
         asyncio.run(target(object()))
 
     fake_flet.app = fake_app
-    monkeypatch.setitem(sys.modules, "flet", fake_flet)
+    _patch_gui_environment(monkeypatch, fake_flet)
 
     fake_ui_app = ModuleType("puripuly_heart.ui.app")
 
@@ -459,12 +474,13 @@ def test_main_default_gui_passes_debug_ui_preview_flag(monkeypatch, tmp_path) ->
 
     fake_flet = ModuleType("flet")
 
-    def fake_app(*, target, assets_dir):
+    def fake_app(*, target, assets_dir, view=None):
+        _ = view
         calls["target"] = target
         calls["assets_dir"] = assets_dir
 
     fake_flet.app = fake_app
-    monkeypatch.setitem(sys.modules, "flet", fake_flet)
+    _patch_gui_environment(monkeypatch, fake_flet)
 
     fake_ui_app = ModuleType("puripuly_heart.ui.app")
 
@@ -922,3 +938,45 @@ def test_load_settings_or_default_loads_when_exists(monkeypatch, tmp_path) -> No
     monkeypatch.setattr(main_module, "load_settings", lambda _path: sentinel)
 
     assert main_module._load_settings_or_default(settings_path) is sentinel
+
+
+# r626: frozen builds skip interpreter finalization at exit — finalization
+# destroys the sherpa/onnxruntime native objects an abandoned decode thread
+# may still be executing in, wedging the process with the GIL held.
+def test_exit_without_finalization_returns_rc_when_not_frozen(monkeypatch) -> None:
+    closed: list[bool] = []
+
+    class _Sinks:
+        def close(self, force: bool = False) -> None:
+            closed.append(force)
+
+    monkeypatch.delattr(sys, "frozen", raising=False)
+    assert main_module._exit_without_finalization(3, _Sinks()) == 3
+    # main()'s finally owns sink closing on the normal-return path.
+    assert closed == []
+
+
+def test_exit_without_finalization_hard_exits_when_frozen(monkeypatch) -> None:
+    closed: list[bool] = []
+    exited: list[int] = []
+
+    class _Sinks:
+        def close(self, force: bool = False) -> None:
+            closed.append(force)
+
+    monkeypatch.setattr(sys, "frozen", True, raising=False)
+    monkeypatch.delenv("PURIPULY_NO_HARD_EXIT", raising=False)
+    monkeypatch.setattr(main_module.os, "_exit", lambda code: exited.append(code))
+    main_module._exit_without_finalization(0, _Sinks())
+    assert exited == [0]
+    assert closed == [True]  # sinks flushed BEFORE the hard exit
+
+
+def test_exit_without_finalization_honors_escape_hatch(monkeypatch) -> None:
+    monkeypatch.setattr(sys, "frozen", True, raising=False)
+    monkeypatch.setenv("PURIPULY_NO_HARD_EXIT", "1")
+    monkeypatch.setattr(
+        main_module.os, "_exit",
+        lambda code: pytest.fail("os._exit must not fire with the escape hatch set"),
+    )
+    assert main_module._exit_without_finalization(7, object()) == 7

@@ -5404,6 +5404,7 @@ class GuiController:
         def extra_fields() -> dict[str, object]:
             return {
                 "queue_drops": getattr(source, "queue_drop_count", 0),
+                "queue_depth": getattr(source, "queue_depth", None),
                 "callback_statuses": getattr(source, "callback_status_count", 0),
                 "last_callback_status": getattr(source, "last_callback_status", None),
                 "resolved_device_name": getattr(source, "resolved_device_name", None),

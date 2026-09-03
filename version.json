@@ -1,11 +1,12 @@
 {
-  "build": 628,
-  "tag": "r628",
-  "date": "2026-08-30",
+  "build": 631,
+  "tag": "r631",
+  "date": "2026-09-02",
   "notes": [
-    "Fixed: closing the app during transcription could leave it frozen or running in the background",
-    "Fixed: Steam chat could stop showing new messages until the app was restarted",
-    "Changed: updates download from GitHub only; use your own VPN on restricted networks"
+    "Fixed: the captions overlay stays above the game on its own instead of needing a toggle",
+    "Fixed: short or soft speech from the other person was sometimes never detected",
+    "Fixed: the other person's audio could be discarded during transcription; capture now buffers through busy moments",
+    "Fixed: the overlay could come back compressed after a toggle"
   ],
-  "zip_sha256": "31f82ed70c60f877b13e39a0a31e64b06396865c483f4acbda05133394127716"
+  "zip_sha256": "2d897a447fe8d90a53475b9020502430f694eb74dcfc3c6e4ace9ae148fe438e"
 }

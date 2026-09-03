@@ -2,6 +2,13 @@
 
 User-facing changes per build. The latest build's highlights also appear in-app when an update is ready.
 
+## r631 - 2026-09-02
+
+- Fixed: the captions overlay now stays above the game on its own instead of getting buried until it was toggled off and on
+- Fixed: short or soft speech from the other person was sometimes never picked up; detection now tolerates brief dips right after speech starts
+- Fixed: the other person's audio could be discarded while a transcription was running; capture now buffers through busy moments
+- Fixed: the overlay could come back compressed after a toggle; the resize is now verified against the real window size
+
 ## r628 - 2026-08-30
 
 - Fixed: closing the app while speech was still being transcribed could leave it frozen or running invisibly in the background

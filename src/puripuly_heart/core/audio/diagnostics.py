@@ -348,12 +348,16 @@ class DiagnosticAudioSource(AudioSource):
                 return
             ratio = self._pace_audio_s / wall if wall > 0 else 0.0
             fields = self._extra_fields_safe()
-            self._log_basic_safe(
+            pace_line = (
                 f"[Audio][{self.channel_label}] Pace: audio_s={self._pace_audio_s:.1f} "
                 f"wall_s={wall:.1f} ratio={ratio:.2f} "
                 f"queue_drops={fields.get('queue_drops')} "
                 f"callback_statuses={fields.get('callback_statuses')}"
             )
+            if fields.get("queue_depth") is not None:
+                # r629: backlog gauge — how far behind real time the consumer is
+                pace_line += f" queue_depth={fields['queue_depth']}"
+            self._log_basic_safe(pace_line)
             self._maybe_report_pace_collapse(ratio, fields)
             self._pace_audio_s = 0.0
             self._pace_wall_start_s = now

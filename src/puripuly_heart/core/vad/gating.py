@@ -62,6 +62,9 @@ class VadGating:
     chunk_samples: int
     start_debounce_chunks: int
     start_commit_chunks: int
+    start_hold_threshold: float | None
+    start_max_pending_chunks: int | None
+    start_sustained_min_hits: int
     max_segment_ms: int | None
     candidate_log_label: str | None
     diagnostic_event_callback: Callable[[str], object] | None
@@ -76,6 +79,8 @@ class VadGating:
     _pending_start_prob: float | None
     _pending_start_chunks: list[np.ndarray]
     _pending_debounce_reached: bool
+    _pending_start_hits: int
+    _pending_start_min_prob: float | None
     _speech_chunk_count: int
     _speech_sample_count: int
 
@@ -91,6 +96,9 @@ class VadGating:
         chunk_samples: int | None = None,
         start_debounce_chunks: int = 1,
         start_commit_chunks: int = 1,
+        start_hold_threshold: float | None = None,
+        start_max_pending_chunks: int | None = None,
+        start_sustained_min_hits: int = 2,
         candidate_log_label: str | None = None,
         diagnostic_event_callback: Callable[[str], object] | None = None,
         diagnostics_enabled: Callable[[], bool] | None = None,
@@ -108,6 +116,18 @@ class VadGating:
             raise ValueError("start_commit_chunks must be > 0")
         if start_commit_chunks < start_debounce_chunks:
             raise ValueError("start_commit_chunks must be >= start_debounce_chunks")
+        if start_hold_threshold is not None and not (
+            0.0 <= start_hold_threshold < speech_threshold
+        ):
+            raise ValueError("start_hold_threshold must be in 0.0..speech_threshold")
+        if start_max_pending_chunks is not None and start_max_pending_chunks < start_commit_chunks:
+            raise ValueError("start_max_pending_chunks must be >= start_commit_chunks")
+        if start_sustained_min_hits <= 0:
+            raise ValueError("start_sustained_min_hits must be > 0")
+        if start_hold_threshold is not None and start_max_pending_chunks is None:
+            # the hold band needs a bounded window, or a candidate could
+            # buffer hold-level audio forever without ever deciding
+            start_max_pending_chunks = start_commit_chunks + 2
         if max_segment_ms is not None and max_segment_ms <= 0:
             raise ValueError("max_segment_ms must be > 0")
 
@@ -117,6 +137,9 @@ class VadGating:
         self.chunk_samples = chunk_samples or default_chunk_samples(sample_rate_hz)
         self.start_debounce_chunks = start_debounce_chunks
         self.start_commit_chunks = start_commit_chunks
+        self.start_hold_threshold = start_hold_threshold
+        self.start_max_pending_chunks = start_max_pending_chunks
+        self.start_sustained_min_hits = start_sustained_min_hits
         self.max_segment_ms = max_segment_ms
         self.candidate_log_label = candidate_log_label
         self.diagnostic_event_callback = diagnostic_event_callback
@@ -137,6 +160,8 @@ class VadGating:
         self._pending_start_prob = None
         self._pending_start_chunks = []
         self._pending_debounce_reached = False
+        self._pending_start_hits = 0
+        self._pending_start_min_prob = None
         self._speech_chunk_count = 0
         self._speech_sample_count = 0
 
@@ -170,8 +195,16 @@ class VadGating:
         if not self._in_speech:
             if prob >= self.speech_threshold:
                 events.extend(self._handle_pending_start(chunk, prob))
+            elif (
+                self._pending_start_id is not None
+                and self.start_hold_threshold is not None
+                and prob >= self.start_hold_threshold
+            ):
+                # r629: a single dip inside the commit window no longer kills
+                # the candidate; keep buffering while the probability holds
+                events.extend(self._handle_pending_start(chunk, prob, hit=False))
             else:
-                self._drop_pending_start()
+                self._drop_pending_start(prob)
             self._ring.append(chunk)
             return events
 
@@ -236,16 +269,24 @@ class VadGating:
         self._speech_chunk_count = 0
         self._speech_sample_count = 0
 
-    def _handle_pending_start(self, chunk: np.ndarray, prob: float) -> list[VadEvent]:
+    def _handle_pending_start(
+        self, chunk: np.ndarray, prob: float, *, hit: bool = True
+    ) -> list[VadEvent]:
         if self._pending_start_id is None:
             self._pending_start_id = uuid.uuid4()
             self._pending_start_pre_roll = self._ring.get_last_samples(self._ring.capacity_samples)
             self._pending_start_prob = prob
             self._pending_start_chunks = [chunk.copy()]
+            self._pending_start_hits = 1
+            self._pending_start_min_prob = prob
             self._pending_debounce_reached = self.start_debounce_chunks <= 1
             self._log_candidate("start", prob=prob)
         else:
             self._pending_start_chunks.append(chunk.copy())
+            if hit:
+                self._pending_start_hits += 1
+            floor = self._pending_start_min_prob
+            self._pending_start_min_prob = prob if floor is None else min(floor, prob)
 
         if (
             not self._pending_debounce_reached
@@ -253,8 +294,22 @@ class VadGating:
         ):
             self._pending_debounce_reached = True
 
-        if len(self._pending_start_chunks) < self.start_commit_chunks:
-            return []
+        # r629: commit on enough confident chunks, OR (sustained) on a candidate
+        # with at least start_sustained_min_hits confident chunks that held above
+        # the hold floor for the whole window: a confident onset followed by
+        # softer syllables is speech, and used to be dropped whole. A lone blip
+        # over a hold-level bed (music, room tone) is NOT: the window closes on
+        # it and the candidate is dropped, so the buffer never grows past it.
+        if self._pending_start_hits < self.start_commit_chunks:
+            window_full = (
+                self.start_max_pending_chunks is not None
+                and len(self._pending_start_chunks) >= self.start_max_pending_chunks
+            )
+            if not window_full:
+                return []
+            if self._pending_start_hits < self.start_sustained_min_hits:
+                self._drop_pending_start(prob)
+                return []
 
         utterance_id = self._pending_start_id
         if utterance_id is None:
@@ -269,7 +324,12 @@ class VadGating:
             pre_roll = np.empty((0,), dtype=np.float32)
         start_prob = self._pending_start_prob if self._pending_start_prob is not None else prob
         buffered_chunks = list(self._pending_start_chunks)
-        self._log_candidate("committed", buffered_chunks=len(buffered_chunks))
+        self._log_candidate(
+            "committed",
+            buffered_chunks=len(buffered_chunks),
+            hits=self._pending_start_hits,
+            min_prob=self._pending_start_min_prob,
+        )
         logger.info("[VAD] SpeechStart: id=%s, prob=%.2f", str(utterance_id)[:8], start_prob)
         self._speech_chunk_count = len(buffered_chunks)
         self._speech_sample_count = sum(int(buffered.size) for buffered in buffered_chunks)
@@ -329,10 +389,16 @@ class VadGating:
         events.append(SpeechEnd(utterance_id, trailing_silence_ms=0, reason="max_duration"))
         self._reset_active_segment()
 
-    def _drop_pending_start(self) -> None:
+    def _drop_pending_start(self, prob: float | None = None) -> None:
         if self._pending_start_id is None:
             return
-        self._log_candidate("dropped", buffered_chunks=len(self._pending_start_chunks))
+        self._log_candidate(
+            "dropped",
+            buffered_chunks=len(self._pending_start_chunks),
+            hits=self._pending_start_hits,
+            prob=prob,
+            min_prob=self._pending_start_min_prob,
+        )
         self._reset_pending_start()
 
     def _reset_pending_start(self) -> None:
@@ -341,6 +407,8 @@ class VadGating:
         self._pending_start_prob = None
         self._pending_start_chunks = []
         self._pending_debounce_reached = False
+        self._pending_start_hits = 0
+        self._pending_start_min_prob = None
 
     def _log_candidate(
         self,
@@ -348,6 +416,8 @@ class VadGating:
         *,
         prob: float | None = None,
         buffered_chunks: int | None = None,
+        hits: int | None = None,
+        min_prob: float | None = None,
     ) -> None:
         if not self.candidate_log_label:
             return
@@ -364,18 +434,25 @@ class VadGating:
             return
         if action == "dropped":
             logger.info(
-                "[VAD][TEST] %s candidate dropped: id=%s, buffered_chunks=%s",
+                "[VAD][TEST] %s candidate dropped: id=%s, buffered_chunks=%s, hits=%s, "
+                "prob=%s, min_prob=%s",
                 self.candidate_log_label,
                 utterance,
                 buffered_chunks,
+                hits,
+                "n/a" if prob is None else f"{prob:.2f}",
+                "n/a" if min_prob is None else f"{min_prob:.2f}",
             )
             return
         if action == "committed":
             logger.info(
-                "[VAD][TEST] %s candidate committed: id=%s, buffered_chunks=%s",
+                "[VAD][TEST] %s candidate committed: id=%s, buffered_chunks=%s, hits=%s, "
+                "min_prob=%s",
                 self.candidate_log_label,
                 utterance,
                 buffered_chunks,
+                hits,
+                "n/a" if min_prob is None else f"{min_prob:.2f}",
             )
 
     def _diagnostics_enabled(self) -> bool:
@@ -391,6 +468,18 @@ class VadGating:
 PEER_VAD_SPEECH_THRESHOLD = 0.60
 PEER_VAD_START_DEBOUNCE_CHUNKS = 3
 PEER_VAD_START_COMMIT_CHUNKS = 3
+# r629: tolerance inside the commit window. A peer candidate used to die on
+# ONE chunk (32 ms) below the speech threshold. Chinese onsets and softer
+# speakers dip right after a confident start, and whole sentences were lost
+# (28 orphaned drops in one evening's log at the 0.8 threshold). Chunks
+# between the hold floor and the threshold keep the candidate alive; one
+# with TWO confident chunks that holds for the whole window commits even
+# without three in a row. A single blip over a hold-level bed is dropped
+# when the window closes, so music/room tone cannot open a segment.
+PEER_VAD_START_HOLD_MARGIN = 0.20
+PEER_VAD_START_HOLD_FLOOR = 0.35
+PEER_VAD_START_MAX_PENDING_CHUNKS = 6
+PEER_VAD_START_SUSTAINED_MIN_HITS = 2
 PEER_MAX_SEGMENT_MS = 7000
 
 
@@ -405,6 +494,9 @@ def create_peer_vad_gating(
     diagnostics_enabled: Callable[[], bool] | None = None,
     diagnostic_label: str = "peer",
 ) -> VadGating:
+    hold = max(PEER_VAD_START_HOLD_FLOOR, speech_threshold - PEER_VAD_START_HOLD_MARGIN)
+    # a threshold already at/below the floor is lenient enough: no band
+    hold_threshold = hold if hold < speech_threshold else None
     return VadGating(
         engine=engine,
         sample_rate_hz=sample_rate_hz,
@@ -414,6 +506,9 @@ def create_peer_vad_gating(
         max_segment_ms=PEER_MAX_SEGMENT_MS,
         start_debounce_chunks=PEER_VAD_START_DEBOUNCE_CHUNKS,
         start_commit_chunks=PEER_VAD_START_COMMIT_CHUNKS,
+        start_hold_threshold=hold_threshold,
+        start_max_pending_chunks=PEER_VAD_START_MAX_PENDING_CHUNKS,
+        start_sustained_min_hits=PEER_VAD_START_SUSTAINED_MIN_HITS,
         candidate_log_label="Peer",
         diagnostic_event_callback=diagnostic_event_callback,
         diagnostics_enabled=diagnostics_enabled,

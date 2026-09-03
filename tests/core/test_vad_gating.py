@@ -479,3 +479,126 @@ def test_vad_gating_skips_diagnostic_metrics_when_disabled(
     gating.process_chunk(chunk_samples(1.0, n=gating.chunk_samples))
 
     assert lines == []
+
+
+def _tolerant_gating(probs: list[float]) -> VadGating:
+    return VadGating(
+        SequenceVadEngine(probs=probs),
+        sample_rate_hz=16000,
+        ring_buffer_ms=64,
+        speech_threshold=0.8,
+        hangover_ms=64,
+        start_debounce_chunks=3,
+        start_commit_chunks=3,
+        start_hold_threshold=0.5,
+        start_max_pending_chunks=5,
+    )
+
+
+def test_vad_gating_tolerates_dip_above_hold_inside_commit_window():
+    # confident start, one dip that stays above the hold floor, two more hits
+    probs = [0.0, 0.9, 0.7, 0.85, 0.9, 0.9]
+    gating = _tolerant_gating(probs)
+    per_chunk = [
+        gating.process_chunk(chunk_samples(float(i), n=gating.chunk_samples))
+        for i in range(len(probs))
+    ]
+    assert all(not events for events in per_chunk[:4])
+    events = per_chunk[4]
+    assert isinstance(events[0], SpeechStart)
+    chunks = [events[0].chunk] + [e.chunk for e in events[1:] if isinstance(e, SpeechChunk)]
+    # the dip chunk (2.0) is kept: it was speech, not a new utterance
+    assert [float(chunk[0]) for chunk in chunks] == [1.0, 2.0, 3.0, 4.0]
+
+
+def test_vad_gating_commits_sustained_hold_level_candidate():
+    # two confident chunks inside a window that otherwise holds above the floor
+    probs = [0.0, 0.85, 0.6, 0.85, 0.6, 0.6, 0.6]
+    gating = _tolerant_gating(probs)
+    per_chunk = [
+        gating.process_chunk(chunk_samples(float(i), n=gating.chunk_samples))
+        for i in range(len(probs))
+    ]
+    assert all(not events for events in per_chunk[:5])
+    events = per_chunk[5]
+    assert isinstance(events[0], SpeechStart)
+    assert len(events) == 5   # start + the four held chunks
+
+
+def test_vad_gating_drops_candidate_below_hold_floor():
+    probs = [0.0, 0.9, 0.4, 0.0]
+    gating = _tolerant_gating(probs)
+    events: list[object] = []
+    for i in range(len(probs)):
+        events.extend(gating.process_chunk(chunk_samples(float(i), n=gating.chunk_samples)))
+    assert events == []
+    assert gating.in_speech is False
+
+
+def test_vad_gating_without_hold_threshold_keeps_zero_tolerance():
+    probs = [0.0, 0.9, 0.7, 0.9, 0.9, 0.9]
+    gating = VadGating(
+        SequenceVadEngine(probs=probs),
+        sample_rate_hz=16000,
+        ring_buffer_ms=64,
+        speech_threshold=0.8,
+        hangover_ms=64,
+        start_debounce_chunks=3,
+        start_commit_chunks=3,
+    )
+    per_chunk = [
+        gating.process_chunk(chunk_samples(float(i), n=gating.chunk_samples))
+        for i in range(len(probs))
+    ]
+    # the 0.7 kills the first candidate; a fresh one commits on chunks 3, 4, 5
+    assert all(not events for events in per_chunk[:5])
+    events = per_chunk[5]
+    chunks = [events[0].chunk] + [e.chunk for e in events[1:] if isinstance(e, SpeechChunk)]
+    assert [float(chunk[0]) for chunk in chunks] == [3.0, 4.0, 5.0]
+
+
+def test_create_peer_vad_gating_enables_hold_tolerance():
+    gating = create_peer_vad_gating(
+        SequenceVadEngine(probs=[0.0]), sample_rate_hz=16000, ring_buffer_ms=64,
+        speech_threshold=0.8, hangover_ms=64,
+    )
+    assert gating.start_hold_threshold == pytest.approx(0.6)
+    assert gating.start_max_pending_chunks == 6
+    assert gating.start_sustained_min_hits == 2
+    default = create_peer_vad_gating(
+        SequenceVadEngine(probs=[0.0]), sample_rate_hz=16000, ring_buffer_ms=64,
+        speech_threshold=0.6, hangover_ms=64,
+    )
+    assert default.start_hold_threshold == pytest.approx(0.4)
+    lenient = create_peer_vad_gating(
+        SequenceVadEngine(probs=[0.0]), sample_rate_hz=16000, ring_buffer_ms=64,
+        speech_threshold=0.3, hangover_ms=64,
+    )
+    assert lenient.start_hold_threshold is None
+
+
+def test_vad_gating_lone_blip_over_hold_bed_is_dropped_at_window_end():
+    # one 0.85 excursion over a 0.6 bed: not speech; the window (5) closes and
+    # the candidate is dropped, never committed, never grown past the window
+    probs = [0.0, 0.85, 0.6, 0.6, 0.6, 0.6, 0.6, 0.6, 0.6]
+    gating = _tolerant_gating(probs)
+    events: list[object] = []
+    for i in range(len(probs)):
+        events.extend(gating.process_chunk(chunk_samples(float(i), n=gating.chunk_samples)))
+    assert events == []
+    assert gating.in_speech is False
+    assert gating.utterance_id is None
+
+
+def test_vad_gating_hold_threshold_derives_a_bounded_window():
+    gating = VadGating(
+        SequenceVadEngine(probs=[0.0]),
+        sample_rate_hz=16000,
+        ring_buffer_ms=64,
+        speech_threshold=0.8,
+        hangover_ms=64,
+        start_debounce_chunks=3,
+        start_commit_chunks=3,
+        start_hold_threshold=0.5,
+    )
+    assert gating.start_max_pending_chunks == 5

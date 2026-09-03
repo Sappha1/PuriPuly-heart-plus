@@ -67,7 +67,7 @@ def test_the_guard_reports_when_it_cannot_find_a_window() -> None:
 def test_the_guard_still_runs_on_a_timer() -> None:
     text = SOURCE.read_text(encoding="utf-8")
     assert "_topmost_guard_loop" in text
-    loop = text[text.index("async def _topmost_guard_loop"):][:600]
+    loop = text[text.index("async def _topmost_guard_loop"):][:4000]
     assert "_reassert_native_topmost" in loop
     sleep = re.search(r"sleep\(([\d.]+)\)", loop)
     assert sleep and float(sleep.group(1)) <= 10.0, (

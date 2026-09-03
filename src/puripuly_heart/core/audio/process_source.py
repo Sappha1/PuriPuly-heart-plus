@@ -108,7 +108,15 @@ def verify_proctap_process_specific(capture: object) -> bool:
 class ProcessAudioCaptureSource:
     identity: ResolvedProcessCaptureIdentity
     watcher: ProcessIdentityWatcher
-    max_queue_frames: int = 64
+    # r629: 64 frames was 0.64 s of audio (10 ms WASAPI packets). The consumer
+    # runs on the event loop, so every stall longer than that — a local
+    # speech decode, a UI update burst — DISCARDED the friend's audio: 300-900
+    # dropped packets per minute during conversation, up to 9 s lost per
+    # minute. ~10 s of buffer turns a stall into a moment of latency that
+    # drains once the loop is free, instead of words that never existed;
+    # when it does fill, the OLDEST packet is shed (see _on_data) so a
+    # consumer that is chronically behind still hears the most recent audio.
+    max_queue_frames: int = 1000
     capture_factory: ProcessAudioCaptureFactory = field(
         default_factory=ProcTapProcessAudioCaptureFactory
     )
@@ -166,6 +174,13 @@ class ProcessAudioCaptureSource:
     def queue_drop_count(self) -> int:
         return self._queue_drop_count
 
+    @property
+    def queue_depth(self) -> int:
+        """Packets waiting for the consumer — a backlog gauge for the Pace log."""
+        with contextlib.suppress(Exception):
+            return int(self._queue.sync_q.qsize())
+        return 0
+
     async def frames(self) -> AsyncIterator[AudioFrameF32]:
         while True:
             samples = await self._queue.async_q.get()
@@ -201,7 +216,27 @@ class ProcessAudioCaptureSource:
         try:
             self._queue.sync_q.put_nowait(samples)
         except queue.Full:
+            # r630: shed the OLDEST packet, not the newest. A consumer that is
+            # chronically slower than real time then stays at most one buffer
+            # behind and always hears the most recent audio, instead of
+            # serving a stale window while everything new is discarded.
             self._queue_drop_count += 1
+            try:
+                shed = self._queue.sync_q.get_nowait()
+            except queue.Empty:
+                return          # nothing to shed: this packet is the drop
+            except Exception:
+                return          # queue closed between Full and shed: drop quietly
+            if shed is None:
+                # r631: we popped the terminal sentinel that _signal_terminal
+                # enqueued a moment ago. Put it back and drop THIS packet, or the
+                # consumer never learns the target exited (silent hang, green
+                # pill over a dead capture).
+                with contextlib.suppress(Exception):
+                    self._queue.sync_q.put_nowait(None)
+                return
+            with contextlib.suppress(Exception):
+                self._queue.sync_q.put_nowait(samples)
         except Exception:
             self._signal_terminal_failure("source_failure")
 
@@ -226,6 +261,15 @@ class ProcessAudioCaptureSource:
                 capture.close()
 
     def _signal_terminal(self) -> None:
+        # r630: the sentinel used to queue BEHIND up to a full buffer of stale
+        # audio, delaying FAULTED and the relatch by however long that took to
+        # drain; nothing captured after a terminal event is worth decoding.
+        with contextlib.suppress(Exception):
+            while True:
+                try:
+                    self._queue.sync_q.get_nowait()
+                except queue.Empty:
+                    break
         try:
             self._queue.sync_q.put_nowait(None)
             return

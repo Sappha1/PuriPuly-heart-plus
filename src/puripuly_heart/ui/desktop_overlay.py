@@ -2368,6 +2368,60 @@ def _flet_font_weight(ft: Any, weight: str) -> Any:
 # The Flutter window class. flet.exe hosts the actual window; the Python process
 # only runs the flet server, which is why an own-pid window search finds nothing.
 _FLUTTER_WINDOW_CLASS = "FLUTTER_RUNNER_WIN32_WINDOW"
+_USER32_TYPED = None
+
+
+def _typed_user32():
+    """A private user32 binding with argument/return types declared.
+
+    r629: every native call in the topmost/click-through path went through
+    the shared untyped ``ctypes.windll.user32``. On 64-bit Windows that
+    truncates pointer-sized arguments to 32 bits: HWND_TOPMOST (-1) reached
+    SetWindowPos as 0x00000000FFFFFFFF, an invalid handle, so the re-assert
+    failed with error 1400 on EVERY tick. Measured live: 46k "handle
+    resolved" lines in one session (the failure discards the handle each
+    time), the overlay never once re-sorted itself above the game, and the
+    user toggled it off/on to get it back. The typed call succeeds on the
+    very same window."""
+    global _USER32_TYPED
+    if _USER32_TYPED is not None:
+        return _USER32_TYPED
+    import ctypes
+    from ctypes import wintypes
+
+    u32 = ctypes.WinDLL("user32", use_last_error=True)
+    long_ptr = ctypes.c_ssize_t
+    u32.IsWindow.argtypes = [wintypes.HWND]
+    u32.IsWindow.restype = wintypes.BOOL
+    u32.IsWindowVisible.argtypes = [wintypes.HWND]
+    u32.IsWindowVisible.restype = wintypes.BOOL
+    u32.SetWindowPos.argtypes = [
+        wintypes.HWND, wintypes.HWND, ctypes.c_int, ctypes.c_int,
+        ctypes.c_int, ctypes.c_int, wintypes.UINT,
+    ]
+    u32.SetWindowPos.restype = wintypes.BOOL
+    u32.GetWindowLongPtrW.argtypes = [wintypes.HWND, ctypes.c_int]
+    u32.GetWindowLongPtrW.restype = long_ptr
+    u32.SetWindowLongPtrW.argtypes = [wintypes.HWND, ctypes.c_int, long_ptr]
+    u32.SetWindowLongPtrW.restype = long_ptr
+    u32.GetWindowRect.argtypes = [wintypes.HWND, ctypes.POINTER(wintypes.RECT)]
+    u32.GetWindowRect.restype = wintypes.BOOL
+    u32.GetWindow.argtypes = [wintypes.HWND, wintypes.UINT]
+    u32.GetWindow.restype = wintypes.HWND
+    u32.IntersectRect.argtypes = [ctypes.POINTER(wintypes.RECT)] * 3
+    u32.IntersectRect.restype = wintypes.BOOL
+    u32.GetWindowThreadProcessId.argtypes = [wintypes.HWND, ctypes.POINTER(wintypes.DWORD)]
+    u32.GetWindowThreadProcessId.restype = wintypes.DWORD
+    u32.GetClassNameW.argtypes = [wintypes.HWND, wintypes.LPWSTR, ctypes.c_int]
+    u32.GetClassNameW.restype = ctypes.c_int
+    with contextlib.suppress(AttributeError):
+        u32.GetDpiForWindow.argtypes = [wintypes.HWND]
+        u32.GetDpiForWindow.restype = wintypes.UINT
+    with contextlib.suppress(AttributeError):
+        u32.SetThreadDpiAwarenessContext.argtypes = [ctypes.c_void_p]
+        u32.SetThreadDpiAwarenessContext.restype = ctypes.c_void_p
+    _USER32_TYPED = u32
+    return u32
 
 
 def process_family(root_pid: int, pairs) -> set:
@@ -3088,9 +3142,22 @@ class FletDesktopRendererWindow:
             # the feedback, and captions render fine (continuous frame stream).
             self._render_page()
             self._apply_interaction_window_chrome()
-            # 1px size pulse: guarantees the first post-reveal frame lays out and
-            # composites (invisible; runs on the transparent idle window).
-            self._run_page_task(self._composite_nudge_after_reveal)
+            if self._startup_relayout_pending:
+                # No caption yet, so the settle relayout stays armed for the first
+                # one. 1px size pulse: guarantees the first post-reveal frame lays
+                # out and composites (invisible; runs on the transparent idle
+                # window).
+                self._run_page_task(self._composite_nudge_after_reveal)
+            else:
+                # r629: _render_page found content and already scheduled the
+                # settle relayout (+48px perturb WITH content, 120 ms out).
+                # Running the 1px pulse on top of it interleaved two resize
+                # sequences on the same window, and the layout came back
+                # compressed ("smushed") after a toggle. One mechanism at a time.
+                logger.info(
+                    "[DesktopOverlay][Reveal] settle relayout scheduled; "
+                    "skipping the 1px pulse"
+                )
         else:
             self._suppress_content = True
             # Invalidate any in-flight banner fade so a stale fade task from a previous
@@ -3501,6 +3568,7 @@ class FletDesktopRendererWindow:
             if plan.surface_visible:
                 content_kind = "caption_surface"
                 content = caption_surface
+                settle_scheduled = False
                 # First real caption while locked: Flutter laid it out compressed
                 # ("smashed") and only a forced resize re-lays-it-out. Trigger the
                 # one-time corrective relayout now that a caption actually exists.
@@ -3508,6 +3576,7 @@ class FletDesktopRendererWindow:
                     self._startup_relayout_pending = False
                     logger.info("[DesktopOverlay][Startup] first caption — scheduling relayout")
                     self._run_page_task(self._startup_relayout_after_settle)
+                    settle_scheduled = True
                 # r385: the empty -> content edge, at INFO. A caption that renders
                 # into an idle locked transparent window has been reported as not
                 # appearing until the overlay was toggled; the delivery half is
@@ -3528,10 +3597,13 @@ class FletDesktopRendererWindow:
                     # re-lay-out and Windows to composite. Locked mode only —
                     # in edit mode the window is interactive and repaints
                     # normally.
+                    # r630: never on the render that just scheduled the settle
+                    # relayout: two resize games on one window is the smush
                     if (
                         self._interaction_mode == _DESKTOP_INTERACTION_MODE_PASS_THROUGH
                         and not self._relayout_in_progress
                         and not self._composite_kick_in_flight
+                        and not settle_scheduled
                     ):
                         self._composite_kick_in_flight = True
                         self._run_page_task(self._composite_nudge_after_reveal)
@@ -4224,7 +4296,7 @@ class FletDesktopRendererWindow:
             import ctypes
             from ctypes import wintypes
 
-            user32 = ctypes.windll.user32
+            user32 = _typed_user32()
             own_pid = int(ctypes.windll.kernel32.GetCurrentProcessId())
             family = _own_process_family(own_pid)
 
@@ -4269,11 +4341,12 @@ class FletDesktopRendererWindow:
         try:
             import ctypes
 
+            u32 = _typed_user32()
             hwnd = getattr(self, "_native_hwnd", 0)
             # A fullscreen/DPI mode bounce can RECREATE the native window; a
             # cached handle then points at a corpse and every re-assert
             # silently no-ops until the user toggles the overlay. Revalidate.
-            if hwnd and not ctypes.windll.user32.IsWindow(hwnd):
+            if hwnd and not u32.IsWindow(hwnd):
                 hwnd = 0
                 self._native_hwnd = 0
                 logger.info(
@@ -4284,7 +4357,11 @@ class FletDesktopRendererWindow:
                 hwnd = self._resolve_native_hwnd()
                 self._native_hwnd = hwnd
                 if hwnd:
-                    logger.info("[DesktopOverlay][Topmost] window handle resolved")
+                    # once per distinct handle: the failing re-assert used to
+                    # re-resolve (and log this) every second
+                    if hwnd != getattr(self, "_native_hwnd_logged", 0):
+                        self._native_hwnd_logged = hwnd
+                        logger.info("[DesktopOverlay][Topmost] window handle resolved")
                 elif not getattr(self, "_topmost_unresolved_logged", False):
                     self._topmost_unresolved_logged = True
                     logger.warning(
@@ -4293,8 +4370,30 @@ class FletDesktopRendererWindow:
                     )
             if hwnd:
                 # HWND_TOPMOST(-1), SWP_NOMOVE|SWP_NOSIZE|SWP_NOACTIVATE
-                if not ctypes.windll.user32.SetWindowPos(hwnd, -1, 0, 0, 0, 0, 0x13):
+                if not u32.SetWindowPos(hwnd, -1, 0, 0, 0, 0, 0x13):
+                    err = ctypes.get_last_error()
                     self._native_hwnd = 0   # failed — re-resolve next pass
+                    now = time.monotonic()
+                    if now - getattr(self, "_topmost_fail_logged_at", 0.0) > 60.0:
+                        self._topmost_fail_logged_at = now
+                        logger.warning(
+                            "[DesktopOverlay][Topmost] SetWindowPos(HWND_TOPMOST) "
+                            "failed (error=%s); the overlay cannot re-sort itself "
+                            "above the game", err,
+                        )
+                else:
+                    buried_by = getattr(self, "_topmost_buried_by", None)
+                    if buried_by:
+                        self._topmost_buried_by = None
+                        # same (window, 60 s) limiter as the buried line: a
+                        # window in a higher band keeps winning every tick
+                        now = time.monotonic()
+                        last_desc, last_at = getattr(
+                            self, "_topmost_resorted_logged", (None, 0.0))
+                        if last_desc != buried_by or now - last_at > 60.0:
+                            self._topmost_resorted_logged = (buried_by, now)
+                            logger.info(
+                                "[DesktopOverlay][Topmost] re-sorted above %s", buried_by)
                 self._reassert_native_click_through(hwnd)
                 # the guard loop must run no matter WHICH path first got a
                 # handle — startup-reveal was the only starter before, and
@@ -4322,8 +4421,9 @@ class FletDesktopRendererWindow:
             GWL_EXSTYLE = -20
             WS_EX_TRANSPARENT = 0x20
             WS_EX_LAYERED = 0x80000
-            get_style = ctypes.windll.user32.GetWindowLongPtrW
-            set_style = ctypes.windll.user32.SetWindowLongPtrW
+            u32 = _typed_user32()
+            get_style = u32.GetWindowLongPtrW
+            set_style = u32.SetWindowLongPtrW
             current = get_style(hwnd, GWL_EXSTYLE)
             wanted = current | WS_EX_TRANSPARENT | WS_EX_LAYERED
             if current != wanted:
@@ -4349,7 +4449,7 @@ class FletDesktopRendererWindow:
         import asyncio as _aio
         import ctypes
         import ctypes.wintypes as _wt
-        u32 = ctypes.windll.user32
+        u32 = _typed_user32()
         GW_HWNDPREV = 3
         while True:
             await _aio.sleep(1.0)
@@ -4369,6 +4469,7 @@ class FletDesktopRendererWindow:
                                                  ctypes.byref(rect),
                                                  ctypes.byref(r2)):
                                 buried = True
+                                self._note_buried_by(above)
                                 break
                         above = u32.GetWindow(above, GW_HWNDPREV)
                         hops += 1
@@ -4382,6 +4483,29 @@ class FletDesktopRendererWindow:
                     self._reassert_native_topmost()
                 except Exception:
                     pass
+
+    def _note_buried_by(self, above: int) -> None:
+        """Remember (and log, rate-limited) what is covering the overlay so
+        the re-sort's outcome reads back in the log. Class + pid only:
+        window titles can carry other people's names."""
+        try:
+            import ctypes
+            from ctypes import wintypes
+
+            u32 = _typed_user32()
+            cls = ctypes.create_unicode_buffer(128)
+            u32.GetClassNameW(above, cls, 128)
+            pid = wintypes.DWORD()
+            u32.GetWindowThreadProcessId(above, ctypes.byref(pid))
+            desc = f"{cls.value or '?'} (pid {pid.value})"
+        except Exception:
+            desc = "an unknown window"
+        self._topmost_buried_by = desc
+        now = time.monotonic()
+        last_desc, last_at = getattr(self, "_topmost_buried_logged", (None, 0.0))
+        if last_desc != desc or now - last_at > 60.0:
+            self._topmost_buried_logged = (desc, now)
+            logger.info("[DesktopOverlay][Topmost] buried under %s; re-sorting", desc)
 
     async def _set_interaction_mode(self, mode: str, *, emit_event: bool) -> None:
         if mode not in _DESKTOP_INTERACTION_MODES:
@@ -4520,10 +4644,36 @@ class FletDesktopRendererWindow:
                 "[DesktopOverlay][Resize] force-resize perturb width=%s height=%s",
                 perturbed["width"], perturbed["height"],
             )
+            # r629: wait for the perturb to actually LAND natively instead of a
+            # fixed 120 ms guess. If it never lands, the restore below is a
+            # no-op for Flutter and the layout stays compressed ("smushed"):
+            # retry once with a bigger nudge before giving up.
             try:
-                await asyncio.sleep(0.12)
+                landed = await self._wait_native_size(perturbed, timeout_s=0.4)
             except asyncio.CancelledError:
                 return
+            if landed is None:
+                try:
+                    await asyncio.sleep(0.12)
+                except asyncio.CancelledError:
+                    return
+            elif not landed:
+                logger.warning(
+                    "[DesktopOverlay][Resize] perturb never landed natively "
+                    "(native=%s); retrying with a larger nudge",
+                    self._native_window_size(),
+                )
+                if self._bounds_apply_generation != my_generation:
+                    return
+                if self._closed.is_set() or self._page is None:
+                    return
+                perturbed["width"] = max(1.0, float(bounds["width"]) + 96)
+                perturbed["height"] = max(1.0, float(bounds["height"]) + 96)
+                self._apply_window_bounds(perturbed)
+                try:
+                    await self._wait_native_size(perturbed, timeout_s=0.4)
+                except asyncio.CancelledError:
+                    return
             if self._bounds_apply_generation != my_generation:
                 return
         for attempt_index, attempt_delay in enumerate((0.0, 0.2), start=1):
@@ -4547,6 +4697,84 @@ class FletDesktopRendererWindow:
                 "force_resize=%s",
                 attempt_index, bounds["width"], bounds["height"], force_resize,
             )
+        # r629: confirm the target size landed natively; a silent mismatch is
+        # exactly the "smushed" overlay. Say so in the log and re-apply once.
+        if force_resize:
+            try:
+                landed = await self._wait_native_size(bounds, timeout_s=0.3)
+            except asyncio.CancelledError:
+                return
+            if landed is False and self._bounds_apply_generation == my_generation:
+                logger.warning(
+                    "[DesktopOverlay][Resize] native size mismatch after force-resize "
+                    "(native=%s target=%sx%s); re-applying",
+                    self._native_window_size(), bounds["width"], bounds["height"],
+                )
+                if not (self._closed.is_set() or self._page is None):
+                    self._apply_window_bounds(dict(bounds))
+
+    def _native_window_size(self) -> tuple[float, float] | None:
+        """The overlay window's size as Windows reports it, in the logical
+        pixels the bounds use (GetWindowRect / the window's DPI scale). None
+        when the native handle is unknown."""
+        hwnd = getattr(self, "_native_hwnd", 0)
+        if not hwnd:
+            return None
+        try:
+            import ctypes
+            from ctypes import wintypes
+
+            u32 = _typed_user32()
+            if not u32.IsWindow(hwnd):
+                return None
+            rect = wintypes.RECT()
+            # This process is DPI-UNAWARE (no dpiAware manifest) while flet.exe
+            # is PerMonitorV2: from the default context GetWindowRect comes back
+            # already divided by the system scale, so dividing by the window's
+            # DPI again halved the size on a 200% display and the landed check
+            # could never pass. Read the rect in a PerMonitorV2 thread context
+            # (physical pixels) and THEN scale by the window's DPI; where that
+            # API is missing, the virtualized rect is already logical.
+            previous = None
+            with contextlib.suppress(Exception):
+                previous = u32.SetThreadDpiAwarenessContext(ctypes.c_void_p(-4))
+            try:
+                if not u32.GetWindowRect(hwnd, ctypes.byref(rect)):
+                    return None
+                scale = 1.0
+                if previous is not None:
+                    with contextlib.suppress(Exception):
+                        dpi = int(u32.GetDpiForWindow(hwnd))
+                        if dpi > 0:
+                            scale = dpi / 96.0
+            finally:
+                if previous is not None:
+                    with contextlib.suppress(Exception):
+                        u32.SetThreadDpiAwarenessContext(ctypes.c_void_p(previous))
+            return ((rect.right - rect.left) / scale, (rect.bottom - rect.top) / scale)
+        except Exception:
+            return None
+
+    async def _wait_native_size(
+        self, bounds: dict[str, int | float], *, timeout_s: float
+    ) -> bool | None:
+        """Poll until the native window reports ``bounds``' size (within 2 px).
+        True = landed, False = timed out, None = no native handle to ask;
+        callers fall back to the old fixed delays in that case. Cancellation
+        propagates: a cancelled relayout must stop, not read as a timeout."""
+        if not getattr(self, "_native_hwnd", 0):
+            return None
+        target_w, target_h = float(bounds["width"]), float(bounds["height"])
+        deadline = time.monotonic() + timeout_s
+        while True:
+            size = self._native_window_size()
+            if size is None:
+                return None
+            if abs(size[0] - target_w) <= 2.0 and abs(size[1] - target_h) <= 2.0:
+                return True
+            if time.monotonic() >= deadline:
+                return False
+            await asyncio.sleep(0.02)
 
     def _apply_window_bounds_without_rerender(self, bounds: dict[str, int | float]) -> None:
         page = self._page

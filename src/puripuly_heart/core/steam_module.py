@@ -79,11 +79,97 @@ def size_bytes() -> int:
     return total
 
 
+def _wait_port_closed(port: int = 8791, timeout_s: float = 5.0) -> bool:
+    """r636: True once nothing accepts connections on 127.0.0.1:port (polled,
+    bounded) — a killed daemon takes a moment to release its files, and
+    uninstall's rmtree used to race that."""
+    import socket
+    import time
+
+    deadline = time.monotonic() + timeout_s
+    while True:
+        try:
+            s = socket.create_connection(("127.0.0.1", int(port)), timeout=0.3)
+        except OSError:
+            return True
+        try:
+            s.close()
+        except Exception:
+            pass
+        if time.monotonic() >= deadline:
+            return False
+        time.sleep(0.25)
+
+
+# r636: the command-line patterns stop_helper_processes kills on, as ordered
+# parts (mirrors '*steam_bridge*daemon.py*' / '*steamprobe-profile*'); the
+# drain below polls the same set
+_HELPER_NEEDLES = (("steamprobe-profile",), ("steam_bridge", "daemon.py"))
+
+
+def _cmdline_matches(cl: str, needles=_HELPER_NEEDLES) -> bool:
+    for parts in needles:
+        pos = 0
+        for part in parts:
+            pos = cl.find(part, pos)
+            if pos < 0:
+                break
+            pos += len(part)
+        else:
+            return True
+    return False
+
+
+def _helper_processes_alive(needles=_HELPER_NEEDLES) -> bool:
+    """r636: True while any python*/msedge/chrome process (this one excluded)
+    still carries one of `needles` on its command line. Edge's renderer /
+    GPU / network children inherit --user-data-dir, so the whole browser
+    tree counts — the port drain alone only proved the DAEMON was gone while
+    Edge could still hold Default/* open. psutil missing = 'gone' (never
+    block an uninstall on the check itself)."""
+    try:
+        import psutil
+    except Exception:
+        return False
+    me = os.getpid()
+    for p in psutil.process_iter(["pid", "name", "cmdline"]):
+        try:
+            if p.info["pid"] == me:
+                continue
+            name = (p.info["name"] or "").lower()
+            if not (name.startswith("python") or name in ("msedge.exe", "chrome.exe")):
+                continue
+            if _cmdline_matches(" ".join(p.info["cmdline"] or []).lower(), needles):
+                return True
+        except Exception:
+            continue
+    return False
+
+
+def _wait_helper_gone(timeout_s: float = 5.0, needles=_HELPER_NEEDLES) -> bool:
+    """r636: poll (bounded) until no helper process is left; False on timeout."""
+    import time
+
+    deadline = time.monotonic() + timeout_s
+    while _helper_processes_alive(needles):
+        if time.monotonic() >= deadline:
+            return False
+        time.sleep(0.25)
+    return True
+
+
 def stop_helper_processes() -> None:
     """Kill the daemon + its browser, matched by command line (never broad)."""
+    # r636: the venv's pythonw.exe is only a launcher when the system Python
+    # is the Store build — the process that really runs daemon.py is named
+    # pythonw3.11.exe, which the exact-name list missed (uninstall then
+    # raced a live daemon). Any python*.exe / Edge / Chrome whose command
+    # line names the helper; never this PowerShell itself (its own command
+    # line carries the patterns).
     ps = (
         "Get-CimInstance Win32_Process | Where-Object { "
-        "$_.Name -in @('pythonw.exe','python.exe','msedge.exe','chrome.exe') -and ( "
+        "$_.ProcessId -ne $PID -and "
+        "($_.Name -like 'python*' -or $_.Name -in @('msedge.exe','chrome.exe')) -and ( "
         "$_.CommandLine -like '*steam_bridge*daemon.py*' -or "
         "$_.CommandLine -like '*steamprobe-profile*' ) } | "
         "ForEach-Object { Stop-Process -Id $_.ProcessId -Force -ErrorAction SilentlyContinue }"
@@ -94,6 +180,8 @@ def stop_helper_processes() -> None:
                        creationflags=_CREATE_NO_WINDOW)
     except Exception:
         pass
+    _wait_port_closed()   # r636: let the dying daemon release its files first
+    _wait_helper_gone()   # r636: ...and the Edge tree its profile handles
 
 
 def uninstall() -> int:

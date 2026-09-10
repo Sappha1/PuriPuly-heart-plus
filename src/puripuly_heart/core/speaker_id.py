@@ -18,9 +18,11 @@ wrong name on a line is worse than an anonymous label.
 """
 from __future__ import annotations
 
+import contextlib
 import json
 import logging
 import threading
+import time
 from dataclasses import dataclass, field
 from pathlib import Path
 
@@ -126,6 +128,17 @@ CLUSTER_CONSOLIDATE_THRESHOLD = 0.62
 # changes, and in-room candidates additionally break refuse-to-guess ties.
 ROSTER_OUT_PENALTY = 0.06
 
+# r636: reset_reason -> the string the Settings "saved voices" list should show
+# when it comes up empty. Declared here, next to the code that SETS the reason,
+# so a new reason cannot be added without its copy. settings.py still only
+# special-cases "model_changed" and falls back to the generic empty-list line
+# for anything else, which is what "unreadable" gets today; wiring that view to
+# this map is a one-line follow-up (see the note in _load).
+RESET_REASON_I18N_KEYS = {
+    "model_changed": "settings.saved_voices.model_reset",
+    "unreadable": "speaker.reset_unreadable",
+}
+
 
 def _roster_norm(name: str) -> str:
     # keep in sync with core.vrchat_roster.norm_name (local copy so this
@@ -197,7 +210,26 @@ class SpeakerRegistry:
         except FileNotFoundError:
             return
         except Exception:
-            logger.warning("[SpeakerID] voices store unreadable — starting empty")
+            # r636: quarantine instead of silently starting empty. The old
+            # path left reset_reason blank, so nothing told the user, and the
+            # next _save overwrote the unreadable file -- every enrolled voice
+            # gone with no trace. Keep the bytes under a .corrupt-<ts> name.
+            # The reason reaches the UI through the controller's
+            # saved_voices_reset_reason(); until settings.py learns this case
+            # the list shows its generic empty line, and the copy is already
+            # waiting at RESET_REASON_I18N_KEYS above.
+            self.reset_reason = "unreadable"
+            corrupt_path = self._store_path.with_name(
+                f"{self._store_path.name}.corrupt-{int(time.time())}"
+            )
+            with contextlib.suppress(Exception):
+                self._store_path.replace(corrupt_path)
+            logger.warning(
+                "[SpeakerID] voices store unreadable - starting empty; the old "
+                "file was kept as %s",
+                corrupt_path.name,
+                exc_info=True,
+            )
             return
         stored_model = str(data.get("model") or "")
         if data.get("voices") and stored_model != SPEAKER_MODEL_ID:
@@ -281,9 +313,16 @@ class SpeakerRegistry:
             ]
         }
         try:
+            # r636: tmp + replace, same helper settings.json uses. write_text
+            # truncated first, so a crash or a locked disk mid-write left a
+            # half file that _load could not parse.
+            from puripuly_heart.config.settings import _atomic_write_text
+
             self._store_path.parent.mkdir(parents=True, exist_ok=True)
-            self._store_path.write_text(
-                json.dumps(payload, ensure_ascii=False), encoding="utf-8"
+            _atomic_write_text(
+                self._store_path,
+                json.dumps(payload, ensure_ascii=False),
+                encoding="utf-8",
             )
         except Exception:
             logger.warning("[SpeakerID] could not persist voices store", exc_info=True)

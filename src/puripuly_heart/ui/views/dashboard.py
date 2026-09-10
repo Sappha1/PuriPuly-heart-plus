@@ -2,6 +2,7 @@ import asyncio
 import contextlib
 import weakref
 import datetime
+import functools
 import logging
 import time
 from typing import Any, Callable
@@ -19,7 +20,7 @@ from puripuly_heart.ui.fonts import font_for_language
 from puripuly_heart.ui.i18n import get_locale, language_name, t
 from puripuly_heart.ui.overlay_peer_contract import OverlayPeerConsumerContract
 
-_BUILD_TAG = "r631"  #increment each build so user can confirm version
+_BUILD_TAG = "r650"  #increment each build so user can confirm version
 
 # ── VRCT-style dark palette ──────────────────────────────────────────────────
 _BG_MAIN = "#292b2e"
@@ -51,6 +52,65 @@ _SCROLLBAR = "#4b4c4f"
 
 CHAT_MAX_ENTRIES = 200
 OVERLAY_FAILURE_REASON_ONLY_NOTICE_REASONS = {"steamvr_not_running"}
+
+
+class _IsolatedEntry(ft.Container):
+    """A chat entry the chat Column's diff walk does not descend into.
+
+    r636: every appended transcript ran Column.update() over the whole capped
+    log - ~1,800 controls for 200 entries, 18-19 ms per append (twice with
+    extra-language lines), all to discover nothing inside the old entries had
+    changed. Flet 0.28 skips the children of a control whose is_isolated() is
+    True, so the walk touches 200 entries instead of 1,800 controls.
+
+    The price: a change INSIDE an entry after it was added (extra-language
+    lines, the pending->final rewrite, find highlights, speaker relabels) is no
+    longer picked up by a list-level update - the mutated control, or the
+    entry itself, must call its own .update(). entry.update() still walks the
+    entry's subtree (isolation only applies when reached from a parent)."""
+
+    def is_isolated(self) -> bool:
+        return True
+
+
+_CLIPBOARD_TYPED = None
+
+
+def _typed_clipboard():
+    """Private kernel32/user32 bindings for the CF_DIB image copy, argument and
+    return types declared (mirrors desktop_overlay._typed_user32).
+
+    r636: the copy went through the shared untyped ``ctypes.windll``, which on
+    x64 truncates the HGLOBAL and the GlobalLock pointer to 32 bits. Verified
+    live: GlobalLock returned NULL, memmove raised inside the suppress - AFTER
+    EmptyClipboard - so the clipboard was left empty, the ~1 s PowerShell
+    fallback refilled it, and the ~1 MB block leaked on every copy."""
+    global _CLIPBOARD_TYPED
+    if _CLIPBOARD_TYPED is not None:
+        return _CLIPBOARD_TYPED
+    import ctypes
+    from ctypes import wintypes
+
+    k32 = ctypes.WinDLL("kernel32", use_last_error=True)
+    k32.GlobalAlloc.restype = wintypes.HGLOBAL
+    k32.GlobalAlloc.argtypes = [wintypes.UINT, ctypes.c_size_t]
+    k32.GlobalLock.restype = ctypes.c_void_p
+    k32.GlobalLock.argtypes = [wintypes.HGLOBAL]
+    k32.GlobalUnlock.restype = wintypes.BOOL
+    k32.GlobalUnlock.argtypes = [wintypes.HGLOBAL]
+    k32.GlobalFree.restype = wintypes.HGLOBAL
+    k32.GlobalFree.argtypes = [wintypes.HGLOBAL]
+    u32 = ctypes.WinDLL("user32", use_last_error=True)
+    u32.OpenClipboard.restype = wintypes.BOOL
+    u32.OpenClipboard.argtypes = [wintypes.HWND]
+    u32.EmptyClipboard.restype = wintypes.BOOL
+    u32.EmptyClipboard.argtypes = []
+    u32.SetClipboardData.restype = wintypes.HANDLE
+    u32.SetClipboardData.argtypes = [wintypes.UINT, wintypes.HANDLE]
+    u32.CloseClipboard.restype = wintypes.BOOL
+    u32.CloseClipboard.argtypes = []
+    _CLIPBOARD_TYPED = (k32, u32)
+    return _CLIPBOARD_TYPED
 
 
 class _ToggleRow(ft.Container):
@@ -459,6 +519,12 @@ class DashboardView(ft.Row):
         self._find_matches: list = []
         self._find_index = -1
         self._find_originals: dict = {}
+        # r636: entries are isolated, so highlighted Texts are pushed per
+        # ENTRY: _find_lit_entries = entries carrying highlights right now,
+        # _find_dirty_entries = entries whose texts changed since the last
+        # _flush_find_highlights (both id(entry) -> entry).
+        self._find_lit_entries: dict = {}
+        self._find_dirty_entries: dict = {}
         self._find_bar = None
         self._find_field = None
         self._find_count = None
@@ -1596,7 +1662,7 @@ class DashboardView(ft.Row):
                 vertical_alignment=ft.CrossAxisAlignment.CENTER,
                 tight=True,
             ),
-            border_radius=10,
+            border_radius=6,  # r635: square-ish like the Chat/Steam tab pills, not an oval
             bgcolor=ft.Colors.TRANSPARENT,
             border=_pill_border_off,
             padding=0,
@@ -1644,6 +1710,7 @@ class DashboardView(ft.Row):
         # beta/steam-bridge (local only): tab strip — VRChat chat (default) and a
         # Steam chat, swapped in the body below.
         self._chat_tab = "vrc"
+        self._steam_tab_unread = False  # r635: any open Steam chat has unread (tab goes orange)
         self._tab_vrc = ft.Container(
             content=ft.Text(t("dashboard.chat"), size=11, weight=ft.FontWeight.W_600, color=_TOGGLE_ON),
             padding=ft.padding.symmetric(horizontal=10, vertical=5), border_radius=6,
@@ -1716,6 +1783,7 @@ class DashboardView(ft.Row):
             vertical_alignment=ft.CrossAxisAlignment.CENTER,
             spacing=0,
         )
+        self._chat_header_row = chat_header  # r636: targeted tab-switch updates
         # Floating "jump to latest" button (Discord-style), shown only when the user has
         # scrolled up. Clicking it returns to the newest message and resumes following.
         self._chat_jump_btn = ft.Container(
@@ -1997,6 +2065,9 @@ class DashboardView(ft.Row):
                 self._steam_view.on_module_state = self._set_steam_chip_active
                 with contextlib.suppress(Exception):
                     self._set_steam_chip_active(bool(self._steam_view._module_on))
+            if hasattr(self._steam_view, "on_unread_change"):
+                # r635: the Steam tab turns orange while a message waits behind Chat
+                self._steam_view.on_unread_change = self._set_steam_tab_unread
         self.controls = [sidebar, right_panel]
 
     def _steam_header_popout(self) -> None:
@@ -2022,6 +2093,28 @@ class DashboardView(ft.Row):
         with contextlib.suppress(Exception):
             self._tab_steam.opacity = 1.0 if active else 0.45
             self._tab_steam.update()
+
+    def _steam_tab_label_color(self) -> str:
+        """r635: Steam tab label — ON while it is the selected tab, the app's
+        orange while a Steam message is waiting behind the Chat tab, faint
+        otherwise."""
+        if getattr(self, "_chat_tab", None) == "steam":
+            return _TOGGLE_ON
+        if getattr(self, "_steam_tab_unread", False):
+            return _TOGGLE_WARNING
+        return _TEXT_FAINT
+
+    def _set_steam_tab_unread(self, flag: bool) -> None:
+        """Steam view callback (on_unread_change): remember the flag and
+        recolour the tab. Normally reached from the page loop; a worker
+        caller is hopped there first (single-writer rule)."""
+        with contextlib.suppress(Exception):
+            if self._ui_hop(self._set_steam_tab_unread, flag):
+                return
+            self._steam_tab_unread = bool(flag)
+            self._tab_steam.content.color = self._steam_tab_label_color()
+            if self._tab_steam.page is not None:
+                self._tab_steam.update()
 
     def _toggle_app_sidebar(self) -> None:
         """Show/hide the app's left sidebar (the Steam friends column lives in its
@@ -2081,15 +2174,22 @@ class DashboardView(ft.Row):
         # rail mode, mirroring the Chat sidebar: slim strip that keeps the
         # single arrow so it can always expand back
         with contextlib.suppress(Exception):
-            # collapsed = a bare 22px edge strip: no brand, no divider, no
-            # friends — just the view's full-height centered-arrow strip
-            self._steam_side.width = 22 if collapsed else 220
-            self._steam_brand_box.visible = not collapsed
-            _dv = getattr(self, "_steam_side_div", None)
-            if _dv is not None:
-                _dv.visible = not collapsed
+            self._apply_steam_friends_collapse(collapsed)
             if getattr(self, "_chat_tab", "") == "steam":
-                self.update()
+                # r636: everything that changed lives inside the sidebar
+                # slot - no whole-dashboard walk for a 22px/220px flip
+                self._steam_side.update()
+
+    def _apply_steam_friends_collapse(self, collapsed: bool) -> None:
+        # r636: split from the handler so the tab switch can fold the same
+        # state into its one batched update instead of a second self.update()
+        # collapsed = a bare 22px edge strip: no brand, no divider, no
+        # friends — just the view's full-height centered-arrow strip
+        self._steam_side.width = 22 if collapsed else 220
+        self._steam_brand_box.visible = not collapsed
+        _dv = getattr(self, "_steam_side_div", None)
+        if _dv is not None:
+            _dv.visible = not collapsed
 
     def _set_steam_tab_hidden(self, hidden: bool) -> None:
         # while the chat lives in its own window the tab chip disappears
@@ -2102,7 +2202,9 @@ class DashboardView(ft.Row):
             self._tab_steam_wrap.visible = show
             if hidden:
                 self._steam_tabs_wrap.visible = False
-            self.update()
+            # r636: the chip, its wrapper and the tabs strip all sit in the
+            # header Row - update that, not the whole dashboard
+            self._safe_update(self._chat_header_row)
 
     def _focus_steam_popout(self) -> None:
         with contextlib.suppress(Exception):
@@ -2133,6 +2235,18 @@ class DashboardView(ft.Row):
         pg.run_task(_hop)
         return True
 
+    def _update_together(self, *controls) -> None:
+        """r636: one page.update(*controls) for several mounted controls, so
+        the pieces of a pane flip (Stack opacity/offset, tab chips, sidebar
+        slots) reach Flutter in the same frame - a control-by-control series
+        can paint half-flipped. Unmounted controls (and None) are skipped."""
+        live = [c for c in controls
+                if c is not None and getattr(c, "page", None) is not None]
+        if not live:
+            return
+        with contextlib.suppress(Exception):
+            live[0].page.update(*live)
+
     def _select_chat_tab(self, which: str) -> None:
         # the whole pane flip mutates mounted trees — event loop only
         if self._ui_hop(self._select_chat_tab_now, which):
@@ -2158,7 +2272,8 @@ class DashboardView(ft.Row):
         on, off = _TOGGLE_ON, _TEXT_FAINT
         self._tab_vrc.content.color = on if which == "vrc" else off
         self._tab_vrc.bgcolor = "#243447" if which == "vrc" else ft.Colors.TRANSPARENT
-        self._tab_steam.content.color = on if which == "steam" else off
+        # r635: recomputed on every switch — orange again when leaving Steam with unread left
+        self._tab_steam.content.color = self._steam_tab_label_color()
         self._tab_steam.bgcolor = "#243447" if which == "steam" else ft.Colors.TRANSPARENT
         # The Stack is built at construction (see _chat_body) so nothing is
         # ever reparented; the inactive pane is hidden with opacity 0 and
@@ -2185,6 +2300,7 @@ class DashboardView(ft.Row):
         # in the app sidebar's exact place (same 220px width, brand header at the
         # very top, divider, then the friends list) — true Chat-tab parity: nothing
         # shifts, no floating strip, no grey bands.
+        _side_inserted = False  # r636: only that first insert needs the Row itself
         if not hasattr(self, "_steam_side"):
             with contextlib.suppress(Exception):
                 lp = self._steam_view.detach_left_panel()
@@ -2252,6 +2368,7 @@ class DashboardView(ft.Row):
                          self._steam_side_capture], expand=True))
                 self.controls.insert(self.controls.index(self._app_sidebar) + 1,
                                      self._steam_side)
+                _side_inserted = True
                 self._steam_view.on_modal_change = self._set_steam_modal
         with contextlib.suppress(Exception):
             self._app_sidebar.visible = (which != "steam")
@@ -2263,13 +2380,26 @@ class DashboardView(ft.Row):
             self._steam_side.visible = (which == "steam")
         if which == "steam":
             with contextlib.suppress(Exception):
-                self._on_steam_friends_collapse(bool(getattr(
+                # r636: state only - the batched update below carries it
+                # (the handler's own update would flip the sidebar a frame
+                # ahead of the Stack)
+                self._apply_steam_friends_collapse(bool(getattr(
                     self._steam_view, "_friends_collapsed", False)))
         # Update FIRST so the Steam view is mounted (its .page is set) BEFORE
         # activate() runs — otherwise activate can't schedule the connect and it
         # sits on "connecting" forever.
+        # r636: targeted instead of self.update() (the whole dashboard, ~2k
+        # controls). One batched page.update so the Stack's opacity/offset
+        # flips, the tab chips, the header actions and both sidebar slots land
+        # in the same frame. The very first Steam select inserted _steam_side
+        # into THIS Row's children, so that one still needs the Row itself.
         with contextlib.suppress(Exception):
-            self.update()
+            if _side_inserted:
+                self.update()
+            else:
+                self._update_together(
+                    self._chat_header_row, self._chat_stack,
+                    self._app_sidebar, getattr(self, "_steam_side", None))
         if which == "steam":
             with contextlib.suppress(Exception):
                 self._steam_view.activate()
@@ -2432,6 +2562,9 @@ class DashboardView(ft.Row):
         """Set the OCR pill state programmatically (module download flow:
         revert the optimistic flip when the module is missing, light it up
         after the download completes and OCR actually starts)."""
+        # r635: reached from a startup Timer thread — mutate the pill on the loop
+        if self._ui_hop(functools.partial(self.set_ocr_on, on)):
+            return
         self._ocr_on = bool(on)
         self._ocr_btn.border = ft.border.all(1, _TOGGLE_ON if on else "#3a3b3f")
         self._ocr_btn.content.color = _TOGGLE_ON if on else _TEXT_FAINT
@@ -4697,9 +4830,10 @@ class DashboardView(ft.Row):
         clipboard."""
         def _work() -> None:
             ok = False
-            with contextlib.suppress(Exception):
+            try:
                 import ctypes
                 import io as _io
+                import time as _time
 
                 from PIL import Image as _Img
 
@@ -4707,26 +4841,45 @@ class DashboardView(ft.Row):
                 buf = _io.BytesIO()
                 img.save(buf, "BMP")
                 data = buf.getvalue()[14:]        # drop BITMAPFILEHEADER
-                u32 = ctypes.windll.user32
-                k32 = ctypes.windll.kernel32
+                # r636: typed bindings (see _typed_clipboard) - the untyped
+                # windll path truncated the 64-bit HGLOBAL/pointer, GlobalLock
+                # came back NULL and memmove raised AFTER EmptyClipboard had
+                # already wiped the clipboard. The DIB block is built first
+                # now, so nothing below can empty the clipboard and then fail.
+                k32, u32 = _typed_clipboard()
+                h = k32.GlobalAlloc(0x2042, len(data))
+                if not h:
+                    raise OSError("GlobalAlloc failed (error %d)"
+                                  % ctypes.get_last_error())
+                ptr = k32.GlobalLock(h)
+                if not ptr:
+                    err = ctypes.get_last_error()
+                    k32.GlobalFree(h)
+                    raise OSError("GlobalLock failed (error %d)" % err)
+                ctypes.memmove(ptr, data, len(data))
+                k32.GlobalUnlock(h)
                 for _try in range(6):             # clipboard can be busy
-                    if u32.OpenClipboard(0):
+                    if u32.OpenClipboard(None):
                         break
-                    import time as _time
                     _time.sleep(0.05)
                 else:
-                    raise OSError("clipboard busy")
+                    err = ctypes.get_last_error()
+                    k32.GlobalFree(h)
+                    raise OSError("clipboard busy (error %d)" % err)
                 try:
                     u32.EmptyClipboard()
-                    h = k32.GlobalAlloc(0x2042, len(data))
-                    ptr = k32.GlobalLock(h)
-                    ctypes.memmove(ptr, data, len(data))
-                    k32.GlobalUnlock(h)
                     if not u32.SetClipboardData(8, h):    # CF_DIB
-                        raise OSError("SetClipboardData failed")
+                        # the block is still ours until the clipboard takes it
+                        err = ctypes.get_last_error()
+                        k32.GlobalFree(h)
+                        raise OSError("SetClipboardData failed (error %d)" % err)
                 finally:
                     u32.CloseClipboard()
                 ok = True
+            except Exception as exc:
+                # r636: loud - the silent suppress hid a copy that failed on
+                # EVERY use for several builds behind the slow fallback
+                logger.warning("Clipboard image copy failed in-process: %s", exc)
             if not ok:
                 with contextlib.suppress(Exception):
                     import subprocess as _sp
@@ -4826,7 +4979,9 @@ class DashboardView(ft.Row):
         if reg is None:
             reg = self._paste_entries = {}
         with contextlib.suppress(Exception):
-            entry = ft.Container(
+            # r636: isolated like the finished entries (it is swapped out
+            # whole on resolve, never mutated in place)
+            entry = _IsolatedEntry(
                 content=ft.Column([
                     ft.Row([
                         # r549: the head is built EXACTLY like the finished
@@ -4957,14 +5112,25 @@ class DashboardView(ft.Row):
     def resolve_paste_entry(self, rid: str, src: str, dst: str,
                             status: str = "", rendered: str = "",
                             colors: "list | None" = None,
-                            colseg: "list | None" = None) -> bool:
+                            colseg: "list | None" = None,
+                            _item: "tuple | None" = None) -> bool:
         """The OCR result for a pasted image arrived: swap the placeholder for
         the finished entry (picture + recognized text + translation)."""
-        reg = getattr(self, "_paste_entries", None) or {}
-        item = reg.pop(rid, None)
-        if item is None:
-            return False
-        entry, path = item
+        # r635: entered from the OCR feed thread and the 120s Timer — the list
+        # swap below must run on the page loop (single-writer rule). The entry
+        # is claimed HERE, on the calling thread, so the bool reflects real
+        # consumption: the timeout Timer and a late feed line racing for the
+        # same id can't both report True (only the claimant's swap runs).
+        if _item is None:
+            reg = getattr(self, "_paste_entries", None) or {}
+            _item = reg.pop(rid, None)
+            if _item is None:
+                return False
+        if self._ui_hop(functools.partial(self.resolve_paste_entry, rid, src, dst, status,
+                                          rendered=rendered, colors=colors, colseg=colseg,
+                                          _item=_item)):
+            return True
+        entry, path = _item
         pos = None
         with contextlib.suppress(Exception):
             if entry in self._chat_list_view.controls:
@@ -5034,9 +5200,17 @@ class DashboardView(ft.Row):
                 req.write_text("", encoding="utf-8")
 
     def _on_chat_clear(self, e) -> None:
+        # r635: sync handler = executor thread; the list mutation goes to the loop
+        if self._ui_hop(self._on_chat_clear, e):
+            return
         if self._chat_list_view is None:
             return
-        self._clear_ocr_paste_temp()
+        # r635: the hop above put this handler on the loop, so the temp-folder
+        # wipe (rmtree + req-file truncate) goes to a worker — a fat ocr_paste
+        # folder on a slow disk must not stall rendering
+        import threading as _th
+
+        _th.Thread(target=self._clear_ocr_paste_temp, daemon=True).start()
         self._chat_list_view.controls.clear()
         # r340: the speaker-tag registries point at those entries; without
         # this they keep dead controls for the rest of the session.
@@ -5054,6 +5228,10 @@ class DashboardView(ft.Row):
         self._find_matches = []
         self._find_index = -1
         self._find_originals = {}
+        # r636: the entries that carried highlights went with the log - nothing
+        # left to push on the next _flush_find_highlights
+        self._find_lit_entries = {}
+        self._find_dirty_entries = {}
         self.refresh_find_for_chat_change()
         self._update_find_count()
 
@@ -5934,9 +6112,11 @@ class DashboardView(ft.Row):
             _find_dirty = True
             self._last_chat_content_col = col
             try:
-                if self._chat_list_view.page:
-                    self._chat_list_view.update()
-                    self._follow_chat_if_following()
+                # r636: the pending entry is isolated - a list-level update
+                # no longer sees the rewritten column; update the column
+                if col.page:
+                    col.update()
+                self._follow_chat_if_following()
             except Exception:
                 pass
             if _find_dirty:
@@ -5986,7 +6166,9 @@ class DashboardView(ft.Row):
                     content_rows = [_toggle, _body]
                 content_rows = [self._chat_image_thumb(image_path, image_alt),
                                 *content_rows]
-        entry = ft.Container(
+        # r636: isolated - the chat Column's diff walk stops at the entry (see
+        # _IsolatedEntry); anything changed INSIDE later must update itself
+        entry = _IsolatedEntry(
             content=ft.Column(
                 [header, *content_rows],
                 spacing=1,
@@ -6062,7 +6244,11 @@ class DashboardView(ft.Row):
                 col.controls.append(ft.Text(translit, size=11, color=_TRANSLIT_COLOR, italic=True))
             col.controls.append(ft.Text(text.strip(), size=13, color=_TEXT_PRIMARY, weight=ft.FontWeight.W_500))
         try:
-            self._chat_list_view.update()
+            # r636: the lines arrive as their own UI event after the entry was
+            # drawn, so this stays a separate update - but of the entry's
+            # column only (isolated entry: the list walk can't see inside,
+            # and it cost a second 18 ms walk of the whole log)
+            col.update()
             self._follow_chat_if_following()
         except Exception:
             pass
@@ -6071,6 +6257,10 @@ class DashboardView(ft.Row):
 
         self.refresh_find_for_chat_change()
     def _on_submit(self, text: str):
+        # r635: Enter/Send arrive on an executor thread; the pending echo
+        # mutates the mounted chat list, so run the whole thing on the loop
+        if self._ui_hop(self._on_submit, text):
+            return
         self.set_display_text(text, language_code=self._source_lang_code)
         if self._chat_list_view is not None and self._show_pending_echo:
             import datetime as _dt
@@ -6089,7 +6279,21 @@ class DashboardView(ft.Row):
                 ],
                 spacing=1, tight=True,
             )
-            entry = ft.Container(
+            if (self.is_translation_on
+                    and getattr(self, "_unified_translation", True)
+                    and not self._peer_source_lang_code
+                    and self._same_lang_family(self._target_lang_code, self._source_lang_code)):
+                # r635: nothing will be translated — say why right under the
+                # echo instead of letting it read like a normal send. Only for
+                # the case the hint describes (partner on Auto Detect, TRANS
+                # on): a deliberately same-language partner or TRANS off sends
+                # raw text for a different, legitimate reason.
+                pending_col.controls.append(ft.Text(
+                    t("dashboard.chat.same_language_hint"),
+                    size=10, color=_TOGGLE_WARNING, italic=True))
+            # r636: isolated too - it is rewritten in place on finalize and
+            # by the timeout below, both of which update pending_col itself
+            entry = _IsolatedEntry(
                 content=pending_col,
                 padding=ft.padding.only(left=10, top=6, bottom=6, right=8),
                 # No border_radius — see the note on the finalized entry above (avoids
@@ -6131,8 +6335,10 @@ class DashboardView(ft.Row):
                 )
                 pending_text.color = "#888888"
                 try:
-                    if self._chat_list_view and self._chat_list_view.page:
-                        self._chat_list_view.update()
+                    # r636: isolated entry - the column must push its own
+                    # new line and the greyed echo
+                    if pending_col.page:
+                        pending_col.update()
                 except Exception:
                     pass
 
@@ -6207,7 +6413,7 @@ class DashboardView(ft.Row):
         if self._find_count is not None:
             self._find_count.value = ""
         self._safe_update(self._find_bar)
-        self._safe_update(self._chat_list_view)
+        self._flush_find_highlights()
         return True
 
     def is_find_bar_open(self) -> bool:
@@ -6252,6 +6458,7 @@ class DashboardView(ft.Row):
             # Nothing searched yet, but stale highlights could still be sitting
             # on controls that were just replaced.
             self._clear_find_highlights()
+            self._flush_find_highlights()
             return
         try:
             self._run_find(self._find_query, keep_position=True, scroll=False)
@@ -6313,6 +6520,27 @@ class DashboardView(ft.Row):
             except Exception:
                 pass
         self._find_originals = {}
+        # r636: the entries that carried those highlights need their own
+        # update now (isolated) - queue them for the next flush
+        lit = getattr(self, "_find_lit_entries", None)
+        if lit:
+            dirty = getattr(self, "_find_dirty_entries", None)
+            if dirty is None:
+                dirty = self._find_dirty_entries = {}
+            dirty.update(lit)
+        self._find_lit_entries = {}
+
+    def _flush_find_highlights(self) -> None:
+        """r636: chat entries are isolated Containers, so the list-level
+        update that used to follow a highlight change no longer reaches the
+        Text controls inside them. Push every entry whose texts changed since
+        the last flush - one page.update for all of them, evicted (unmounted)
+        entries skipped."""
+        dirty = getattr(self, "_find_dirty_entries", None)
+        if not dirty:
+            return
+        self._find_dirty_entries = {}
+        self._update_together(*dirty.values())
 
     def _run_find(
         self, query: str, *, keep_position: bool = False, scroll: bool = True
@@ -6325,7 +6553,7 @@ class DashboardView(ft.Row):
         self._find_index = -1
         if not query:
             self._update_find_count()
-            self._safe_update(self._chat_list_view)
+            self._flush_find_highlights()
             return
 
         lowered = query.lower()
@@ -6384,7 +6612,7 @@ class DashboardView(ft.Row):
     def _refresh_find_view(self, *, scroll: bool = True) -> None:
         self._apply_find_highlights()
         self._update_find_count()
-        self._safe_update(self._chat_list_view)
+        self._flush_find_highlights()
         if scroll:
             self._scroll_to_current_match()
 
@@ -6392,13 +6620,23 @@ class DashboardView(ft.Row):
         self._clear_find_highlights()
         grouped: dict = {}
         for position, (_entry, text, start, end) in enumerate(self._find_matches):
-            grouped.setdefault(id(text), (text, []))[1].append((start, end, position))
+            grouped.setdefault(id(text), (text, [], _entry))[1].append((start, end, position))
 
-        for control, ranges in grouped.values():
+        # r636: isolated entries - remember which entry each highlighted Text
+        # sits in, so _flush_find_highlights can update exactly those
+        lit = getattr(self, "_find_lit_entries", None)
+        if lit is None:
+            lit = self._find_lit_entries = {}
+        dirty = getattr(self, "_find_dirty_entries", None)
+        if dirty is None:
+            dirty = self._find_dirty_entries = {}
+        for control, ranges, entry in grouped.values():
             original = getattr(control, "value", None) or ""
             if not original:
                 continue
             self._find_originals[id(control)] = (control, original)
+            lit[id(entry)] = entry
+            dirty[id(entry)] = entry
             spans = []
             cursor = 0
             for start, end, position in sorted(ranges):
@@ -7609,8 +7847,16 @@ class DashboardView(ft.Row):
         children.append(ft.Container(height=4))
         content = ft.Container(content=ft.Column(
             children, spacing=0, tight=True, horizontal_alignment=ft.CrossAxisAlignment.STRETCH))
+        # r650: the height estimate drives whether the popover caps to the window
+        # and scrolls. A fixed 500 was far below the full Output Format menu
+        # (~800, with the toggles + reading checkboxes + chat actions), so on a
+        # window taller than 500 but shorter than the menu it neither capped nor
+        # scrolled and the bottom rows (Clear chat / Settings) were clipped.
+        # Scale the estimate with the actual rows (generous, so it caps a touch
+        # early rather than clipping).
+        _est_height = 130.0 + len(children) * 46.0
         self._translit_popover_close = self._open_popover_at(
-            x, y, content, width=280.0, est_height=500.0)
+            x, y, content, width=280.0, est_height=_est_height)
 
     def set_chatbox_format_state(self, include_source: bool, reading_only: bool) -> None:
         self._chatbox_include_source = bool(include_source)
@@ -7840,7 +8086,37 @@ class DashboardView(ft.Row):
         typed-output language themselves."""
         if getattr(self, "_unified_translation", True) and self._peer_source_lang_code:
             self._target_lang_code = self._peer_source_lang_code
+        elif (getattr(self, "_unified_translation", True)
+              and self._same_lang_family(self._target_lang_code, self._source_lang_code)
+              and self._lang_key(self._source_lang_code).split("-")[0] != "en"):
+            # r635 (friend safeguard): with the partner on Auto Detect the typed
+            # target silently fell back to the stored text target, which on a
+            # fresh install is often the user's OWN language — typed text then
+            # went out to VRChat untranslated. English is the one universal
+            # fallback; an English speaker has none, so that case is left alone.
+            logger.info("[Lang] unified typed target equalled the source (%s) with "
+                        "Auto Detect partner - falling back to English",
+                        self._source_lang_code)
+            self._target_lang_code = "en"
         self._refresh_unified_text_card()
+
+    @staticmethod
+    def _lang_key(code: str | None) -> str:
+        """r635: comparison form of a language code — lower-case, '_' and '-'
+        alike ('zh_CN' == 'zh-cn')."""
+        return (code or "").strip().lower().replace("_", "-")
+
+    @classmethod
+    def _same_lang_family(cls, a: str | None, b: str | None) -> bool:
+        """r635: True when two codes name the same language for the typed-
+        target safeguard. Exact match after normalising, plus zh-CN / zh-TW /
+        zh read as one family (only when BOTH are zh); empty never matches."""
+        ka, kb = cls._lang_key(a), cls._lang_key(b)
+        if not ka or not kb:
+            return False
+        if ka == kb:
+            return True
+        return ka.split("-")[0] == "zh" and kb.split("-")[0] == "zh"
 
     def _refresh_unified_text_card(self) -> None:
         """Show the Text Translation card when it is meaningful: always in the
@@ -8700,6 +8976,11 @@ class DashboardView(ft.Row):
 
     def set_local_stt_notice(self, status: str | None, percent: int | None = None,
                              channel: str = "self") -> None:
+        # r635: called from the STT model-load thread — the notice strip and the
+        # peer loading ring are mounted controls, so the whole call hops to the loop
+        if self._ui_hop(functools.partial(self.set_local_stt_notice, status, percent,
+                                          channel=channel)):
+            return
         previous_status = self._local_stt_notice_status
         self._local_stt_notice_status = status
         self._local_stt_notice_percent = percent if status == "downloading" else None

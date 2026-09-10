@@ -28,7 +28,12 @@ class VrcMicState:
             try:
                 self.on_state_changed(muted)
             except Exception:
-                pass
+                # r636: was a bare pass. A broken callback silently stopped the
+                # mic gate from following VRChat's mute. VRChat only sends
+                # MuteSelf on CHANGE, so this cannot spam the log - no throttle.
+                logger.exception(
+                    "[OSC Receiver] VRChat mute state callback failed (muted=%s)", muted
+                )
         return True
 
     def reset(self) -> None:
@@ -37,7 +42,8 @@ class VrcMicState:
             try:
                 self.on_state_changed(None)
             except Exception:
-                pass
+                # r636: was a bare pass (reset runs on pipeline rebuild only)
+                logger.exception("[OSC Receiver] VRChat mute state reset callback failed")
 
 
 class VrcOscReceiver:

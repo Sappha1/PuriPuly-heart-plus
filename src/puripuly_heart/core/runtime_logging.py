@@ -3,6 +3,7 @@ from __future__ import annotations
 import contextlib
 import logging
 import queue
+import sys
 from dataclasses import dataclass
 from enum import Enum
 from logging.handlers import QueueHandler, QueueListener, RotatingFileHandler
@@ -14,6 +15,11 @@ from puripuly_heart.config.paths import user_config_dir
 
 MAIN_LOG_FILENAME = "puripuly_heart.log"
 MAIN_LOG_BACKUP_FILENAME = "puripuly_heart.backup.log"
+# r636: the desktop-overlay renderer is a second process of the same exe. Two
+# RotatingFileHandlers on ONE file made every rollover fail on Windows
+# (PermissionError renaming a file the other process holds), dropping every
+# record of the rolling side until the other side rotated. One file per process.
+OVERLAY_LOG_FILENAME = "puripuly_heart.overlay.log"
 _MAIN_STREAM_HANDLER_NAME = "puripuly_heart.main.stream"
 _MAIN_FILE_HANDLER_NAME = "puripuly_heart.main.file"
 _MAIN_FILE_QUEUE_HANDLER_NAME = "puripuly_heart.main.file.queue"
@@ -192,16 +198,21 @@ class RuntimeLoggingSinks:
         _close_file_handler(self.file_handler)
 
 
-def default_main_log_file(*, log_dir: Path | None = None) -> Path:
+def default_main_log_file(
+    *, log_dir: Path | None = None, log_filename: str | None = None
+) -> Path:
     resolved_log_dir = log_dir or user_config_dir()
     resolved_log_dir.mkdir(parents=True, exist_ok=True)
-    return resolved_log_dir / MAIN_LOG_FILENAME
+    return resolved_log_dir / (log_filename or MAIN_LOG_FILENAME)
 
 
 def _main_log_backup_namer(default_name: str) -> str:
     backup_path = Path(default_name)
-    if backup_path.name == f"{MAIN_LOG_FILENAME}.1":
-        return str(backup_path.with_name(MAIN_LOG_BACKUP_FILENAME))
+    # r636: "<stem>.log.1" -> "<stem>.backup.log" for every per-process file
+    # (puripuly_heart.log keeps its puripuly_heart.backup.log name).
+    if backup_path.name.endswith(".log.1"):
+        stem = backup_path.name[: -len(".log.1")]
+        return str(backup_path.with_name(f"{stem}.backup.log"))
     return default_name
 
 
@@ -209,13 +220,20 @@ def configure_main_logging(
     *,
     root_logger: logging.Logger | None = None,
     log_dir: Path | None = None,
+    log_filename: str | None = None,
 ) -> RuntimeLoggingSinks:
     target_logger = root_logger or logging.getLogger()
-    log_file = default_main_log_file(log_dir=log_dir)
+    log_file = default_main_log_file(log_dir=log_dir, log_filename=log_filename)
 
     stream_handler = _find_main_stream_handler(target_logger)
     if stream_handler is None:
-        stream_handler = logging.StreamHandler()
+        if sys.stderr is None:
+            # r636: the windowed (console-less) frozen build has no stderr; a
+            # StreamHandler built on it raised into handleError on EVERY
+            # record. A NullHandler keeps the sinks contract at zero cost.
+            stream_handler = logging.NullHandler()
+        else:
+            stream_handler = logging.StreamHandler()
         stream_handler.set_name(_MAIN_STREAM_HANDLER_NAME)
         target_logger.addHandler(stream_handler)
     stream_handler.setFormatter(_main_formatter())
@@ -261,6 +279,9 @@ def configure_main_logging(
         file_handler.setFormatter(_main_formatter())
 
     target_logger.setLevel(logging.INFO)
+    # r636: the deepl SDK logs two INFO lines per request with the full URL;
+    # that is noise in a support log, so only its warnings get through.
+    logging.getLogger("deepl").setLevel(logging.WARNING)
     return RuntimeLoggingSinks(
         stream_handler=stream_handler,
         file_handler=file_handler,
@@ -399,11 +420,13 @@ def _new_session_logger_name() -> str:
 def _find_main_stream_handler(logger: logging.Logger) -> logging.Handler | None:
     fallback: logging.Handler | None = None
     for handler in logger.handlers:
+        # r636: matched by name first so the stderr-less NullHandler
+        # placeholder is reused instead of stacking one per configure call.
+        if handler.get_name() == _MAIN_STREAM_HANDLER_NAME:
+            return handler
         if isinstance(handler, logging.StreamHandler) and not isinstance(
             handler, RotatingFileHandler
         ):
-            if handler.get_name() == _MAIN_STREAM_HANDLER_NAME:
-                return handler
             fallback = fallback or handler
     if fallback is not None:
         fallback.set_name(_MAIN_STREAM_HANDLER_NAME)

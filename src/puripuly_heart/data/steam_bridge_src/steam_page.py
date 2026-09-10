@@ -81,11 +81,14 @@ async () => {
     try { st_self = (self.m_persona && self.m_persona.m_ePersonaState) || 0; } catch (e) {}
     try { st_fp = (((fs.GetFriend && fs.GetFriend(self.m_unAccountID)) || {}).m_persona || {}).m_ePersonaState || 0; } catch (e) {}
     try { binvis = fs.BIsInvisibleMode ? !!fs.BIsInvisibleMode() : false; } catch (e) {}
+    // r636: both HTTPS round trips are bounded (a stalled one used to hang
+    // the caller for the browser's full network timeout)
+    const tmo = () => { try { return AbortSignal.timeout(2500); } catch (e) { return undefined; } };
     try {
       const sid64 = (76561197960265728n + BigInt(self.m_unAccountID || 0)).toString();
       const r2 = await fetch(
           "https://steamcommunity.com/profiles/" + sid64 + "/?xml=1&cb=" + Date.now(),
-          {credentials: "omit", cache: "no-store"});
+          {credentials: "omit", cache: "no-store", signal: tmo()});
       if (r2.ok) {
         const t2 = await r2.text();
         pub = ((t2.match(/<onlineState>([^<]+)<\/onlineState>/) || [])[1]) || "err";
@@ -103,7 +106,7 @@ async () => {
       const r = await fetch(
           "https://steamcommunity.com/miniprofile/" + (self.m_unAccountID || 0)
               + "/json?cb=a" + Date.now(),
-          {credentials: "include", cache: "no-store"});
+          {credentials: "include", cache: "no-store", signal: tmo()});
       if (r.ok) {
         const mini = await r.json();
         const ig = mini && mini.in_game;
@@ -244,13 +247,30 @@ async () => {
       };
       lastSeen = (p ? scan(p) : 0) || scan(f) || 0;
     } catch (e) {}
-    out.push({ acct, name: nameOf(f), avatar: avatarOf(f), state, ingame, game,
-               appid, icon: ingame ? appIcon(appid) : "",
-               flags: p ? (p.m_unPersonaStateFlags || 0) : 0,
-               nick, real: (p && p.m_strPlayerName) || "",
-               fav, groups: groupOf[acct] || [], last_chat: lastChat[acct] || 0,
-               unread: unread[acct] || 0, last_seen: lastSeen,
-               extra, extra_full: extraFull });
+    const row = { acct, name: nameOf(f), avatar: avatarOf(f), state, ingame, game,
+                  flags: p ? (p.m_unPersonaStateFlags || 0) : 0,
+                  fav, groups: groupOf[acct] || [], last_chat: lastChat[acct] || 0,
+                  unread: unread[acct] || 0, last_seen: lastSeen };
+    // r636: the friends event carried ~400 B of empty fields per friend.
+    // icon / extra / extra_full / nick / real are omitted when empty, appid
+    // when 0, extra_full only when it differs from extra. Contract with the
+    // app view (steam_bridge.py): it reads every one of these with .get()
+    // defaults (f["appid"] only behind an f.get("appid") guard); acct, name,
+    // avatar, state, ingame, game, flags, fav, groups, last_chat, unread and
+    // last_seen stay unconditional.
+    if (appid) {
+      row.appid = appid;
+      const ic = appIcon(appid);
+      if (ic) row.icon = ic;
+    }
+    if (nick) row.nick = nick;
+    const real = (p && p.m_strPlayerName) || "";
+    if (real) row.real = real;
+    if (extra) {
+      row.extra = extra;
+      if (extraFull && extraFull !== extra) row.extra_full = extraFull;
+    }
+    out.push(row);
   }
   return out;
 }
@@ -273,11 +293,18 @@ class SteamPage:
         self._ctx = None
         self._page = None
         self._own = 0
+        self._dead = False          # r635: page/context closed or crashed under us
+        self._restarting = False    # r635: a deliberate restart is tearing the page down
 
     async def start(self, mode: str = "hidden") -> None:
         from playwright.async_api import async_playwright
 
         self._mode = mode
+        import os as _os
+
+        def _flag(name: str) -> bool:
+            return _os.environ.get(name, "") not in ("", "0")
+
         args = [
             "--disable-blink-features=AutomationControlled",
             "--disable-background-timer-throttling",
@@ -287,13 +314,48 @@ class SteamPage:
             # profile — without this the hidden browser surfaces Steam's
             # "friend is playing..." web pushes as real Windows toasts
             "--disable-notifications",
+            # r636: footprint — nothing here plays sound, and the HTTP disk
+            # cache had grown to ~150 MB (32 MB cap from now on)
+            "--mute-audio",
+            "--disk-cache-size=33554432",
         ]
         hidden = (mode == "hidden")
+        launch_extra: dict = {}
         if hidden:
             # New headless (Chrome/Edge) behaves like a real browser — old headless
             # throttles background timers and the CM WebSocket, so LIVE incoming
             # messages never arrive. --headless=new keeps the socket fully alive.
             args = args + ["--headless=new"]
+            # r636: the hidden tree burned ~14% of a core + ~600 MB doing
+            # nothing (gpu-process 2258 CPU-s + renderer 1227 CPU-s / 6.8 h).
+            # Nothing reads pixels or the DOM: every read goes through the
+            # window.g_FriendsUIApp stores, avatars reach the app as URL
+            # strings, and send_image decodes via createImageBitmap on a
+            # Blob (ImageBitmapFactories -> ImageDecoder), an API decode that
+            # imagesEnabled does not gate (it gates document image LOADS:
+            # ImageLoader / the resource fetcher). Each cut is individually
+            # revertible for bisecting a regression without a code change:
+            #   PPH_STEAM_KEEP_IMAGES=1   keep loading document images
+            #   PPH_STEAM_KEEP_GPU=1      keep the GPU process (largest CPU user)
+            #   PPH_STEAM_FULL_VIEWPORT=1 keep Playwright's 1280x720 viewport
+            # Login mode is untouched: the visible window must render the QR
+            # code / captcha images at full size.
+            if not _flag("PPH_STEAM_KEEP_IMAGES"):
+                args = args + ["--blink-settings=imagesEnabled=false"]
+            if not _flag("PPH_STEAM_KEEP_GPU"):
+                args = args + ["--disable-gpu"]
+            if not _flag("PPH_STEAM_FULL_VIEWPORT"):
+                launch_extra["viewport"] = {"width": 480, "height": 320}
+        # r646: cache pruning is OPT-IN now (PPH_STEAM_PRUNE_CACHE). Deleting
+        # Default/Code Cache (compiled Steam JS) + Default/Cache every launch
+        # forced a COLD, slow reload of steamcommunity.com/chat - Steam connected
+        # noticeably slower than the pre-r636 release. Keeping the caches makes
+        # reconnects fast again; the profile grows a few hundred MB, which the
+        # disk-constrained can reclaim by setting the flag.
+        if _flag("PPH_STEAM_PRUNE_CACHE"):
+            with contextlib.suppress(Exception):
+                import asyncio as _aio
+                await _aio.to_thread(self._prune_profile_caches)
         self._pw = await async_playwright().start()
         # Edge is preinstalled on Windows 10/11; fall back to Chrome for the
         # rare machine without it (the login MUST happen inside THIS persistent
@@ -304,6 +366,7 @@ class SteamPage:
             headless=False,   # hidden mode is windowless via --headless=new; login = visible
             proxy=({"server": self._proxy} if self._proxy else None),
             args=args,
+            **launch_extra,
         )
         # CRITICAL for live messages: --headless=new reports the page as HIDDEN
         # (document.visibilityState==='hidden'), so Steam treats the tab as a
@@ -331,6 +394,18 @@ class SteamPage:
                 } catch (e) {}
                 """)
         self._page = self._ctx.pages[0] if self._ctx.pages else await self._ctx.new_page()
+        # r635: remember when the hidden browser dies (crash / killed / profile
+        # lock) — every evaluate then raises forever and the daemon restarts on
+        # is_dead(). Playwright's async API accepts plain sync callables here.
+        self._dead = False
+
+        def _mark_dead(*_a) -> None:
+            self._dead = True
+
+        with contextlib.suppress(Exception):
+            self._page.on("close", _mark_dead)
+            self._page.on("crash", _mark_dead)
+            self._ctx.on("close", _mark_dead)
         self._net_blocked = False
         try:
             await self._page.goto("https://steamcommunity.com/chat", timeout=60000)
@@ -356,6 +431,32 @@ class SteamPage:
                 self._net_blocked = True   # error page committed, not a login page
 
 
+    _CACHE_PRUNE_BYTES = 64 * 1024 * 1024
+
+    def _prune_profile_caches(self) -> None:
+        """r636: delete Default/Cache or Default/Code Cache when either exceeds
+        64 MB (both had reached ~150 MB). Pure caches, rebuilt by the browser;
+        only ever called from start(), i.e. while the browser is closed."""
+        import os as _os
+        import shutil as _shutil
+        limit = self._CACHE_PRUNE_BYTES
+        for sub in ("Cache", "Code Cache"):
+            d = _os.path.join(self._profile, "Default", sub)
+            with contextlib.suppress(Exception):
+                if not _os.path.isdir(d):
+                    continue
+                total = 0
+                for root, _dirs, files in _os.walk(d):
+                    for fn in files:
+                        with contextlib.suppress(OSError):
+                            total += _os.path.getsize(_os.path.join(root, fn))
+                        if total > limit:
+                            break
+                    if total > limit:
+                        break
+                if total > limit:
+                    _shutil.rmtree(d, ignore_errors=True)
+
     async def _launch_ctx_with_fallback(self, *args, **kwargs):
         try:
             return await self._pw.chromium.launch_persistent_context(*args, **kwargs)
@@ -366,9 +467,25 @@ class SteamPage:
             raise
 
     async def restart(self, mode: str) -> None:
-        await self.close()
-        self._pw = self._ctx = self._page = None
-        await self.start(mode=mode)
+        self._restarting = True   # r635: is_dead() stays quiet over the teardown
+        try:
+            await self.close()
+            self._pw = self._ctx = self._page = None
+            await self.start(mode=mode)
+        finally:
+            self._restarting = False
+
+    def is_dead(self) -> bool:
+        """r635: True once the page/context closed or crashed under us (or never
+        came up) — the daemon then restarts the hidden browser. False while a
+        deliberate restart is in flight, so the poll tick cannot race a second
+        Edge launch onto the same profile."""
+        if self._restarting:
+            return False
+        try:
+            return bool(self._dead or self._page is None or self._page.is_closed())
+        except Exception:
+            return True
 
     def net_blocked(self) -> bool:
         return self._net_blocked
@@ -634,6 +751,48 @@ class SteamPage:
         except Exception:
             return False
 
+    async def tick_state(self, acct: int, reactivate: bool = False) -> dict:
+        """r636: the poll loop's per-tick store reads in ONE evaluate —
+        is_typing(acct) + chat_activity() + (when `reactivate`) reactivate(acct),
+        JS bodies copied verbatim from those methods (kept for other callers).
+        Three round trips into the renderer per tick became one. Returns
+        {"typing": bool, "activity": {acct: ts}, "reactivated": bool}; acct 0 /
+        None skips the typing + reactivate halves (no chat open)."""
+        out = {"typing": False, "activity": {}, "reactivated": False}
+        try:
+            res = await self._page.evaluate(
+                r"""(args) => {
+                  const [acct, doReact] = args;
+                  const a = window.g_FriendsUIApp, cs = a.m_ChatStore;
+                  const rg = cs.m_FriendChatStore.m_rgFriendChats || [];
+                  const activity = [];
+                  try {
+                    rg.forEach(c => {
+                      activity.push([c.m_unAccountIDFriend || 0, c.m_rtLastMessageReceived || 0]);
+                    });
+                  } catch (e) {}
+                  let typing = false, reactivated = false;
+                  if (acct) {
+                    let c = rg.find(x => x.m_unAccountIDFriend === acct);
+                    typing = c ? !!c.m_bFriendIsTyping : false;
+                    if (doReact) {
+                      if (!c) { try { c = cs.GetFriendChat(acct); } catch (e) {} }
+                      try { if (c && c.OnActivate) c.OnActivate(); } catch (e) {}
+                      // Re-assert foreground so Steam never parks the CM socket.
+                      try { window.dispatchEvent(new Event('focus')); } catch (e) {}
+                      try { document.dispatchEvent(new Event('visibilitychange')); } catch (e) {}
+                      reactivated = true;
+                    }
+                  }
+                  return {typing, activity, reactivated};
+                }""", [int(acct or 0), bool(reactivate)]) or {}
+            out["typing"] = bool(res.get("typing"))
+            out["reactivated"] = bool(res.get("reactivated"))
+            out["activity"] = {int(k): int(v) for k, v in (res.get("activity") or []) if k}
+        except Exception:
+            pass
+        return out
+
     async def send(self, acct: int, text: str) -> bool:
         try:
             return bool(await self._page.evaluate(
@@ -652,11 +811,13 @@ class SteamPage:
             logger.warning("send failed: %s", exc)
             return False
 
-    async def list_emoticons(self) -> list[str]:
-        """The user's owned emoticon names (rendered as economy images by the app)."""
+    async def list_emoticons(self, wait: bool = True) -> list[str]:
+        """The user's owned emoticon names (rendered as economy images by the app).
+        r636: `wait` runs the up-to-4 s settle loop; relists pass False (the
+        loop still runs while the store array is empty)."""
         try:
             return await self._page.evaluate(
-                r"""async () => {
+                r"""async (wait) => {
                   const es = window.g_FriendsUIApp.m_ChatStore.m_EmoticonStore;
                   try { if (es.RequestEmoticonList) await es.RequestEmoticonList(); } catch (e) {}
                   const ai = window.g_FriendsUIApp.m_AppInfoStore;
@@ -667,11 +828,16 @@ class SteamPage:
                   };
                   // m_rgEmoticons is the full owned list (501 observed); the
                   // search API caps at ~25. Items carry name + appid.
-                  let arr = [];
-                  for (let i = 0; i < 10; i++) {
-                    arr = es.m_rgEmoticons || [];
-                    if (arr.length > 25) break;
-                    await new Promise(r => setTimeout(r, 400));
+                  let arr = es.m_rgEmoticons || [];
+                  // r636: a user with <= 25 emotes paid the full 4 s wait on
+                  // EVERY relist (inline on the poll task) — first call or
+                  // empty store only
+                  if (wait || !arr.length) {
+                    for (let i = 0; i < 10; i++) {
+                      arr = es.m_rgEmoticons || [];
+                      if (arr.length > 25) break;
+                      await new Promise(r => setTimeout(r, 400));
+                    }
                   }
                   const seen = new Set(), out = [];
                   for (const e of arr) {
@@ -681,7 +847,7 @@ class SteamPage:
                     out.push({ name: n, app: appName(e.appid || 0) });
                   }
                   return out;
-                }""") or []
+                }""", bool(wait)) or []
         except Exception:
             return []
 
@@ -1122,8 +1288,17 @@ class SteamPage:
                                      {method:'POST', body: mk(), credentials:'include'});
                     j1 = null; raw1 = '';
                     try { raw1 = await r1.text(); j1 = JSON.parse(raw1); } catch(e){}
-                    if (!j1 || j1.success !== 1)
-                      return { step:'begin', status: r1.status, resp: JSON.stringify(j1).slice(0,300) };
+                    if (!j1 || j1.success !== 1) {
+                      // r635: the request facts ride along so a failing begin
+                      // step is self-diagnosing (no image bytes, no text)
+                      const hdr = (n) => { try { return r1.headers.get(n) || ''; } catch (e) { return ''; } };
+                      return { step:'begin', status: r1.status, resp: JSON.stringify(j1).slice(0,300),
+                               w: w, h: h, bytes: bytes.length, mime: mime, fname: fname,
+                               sha: sha.slice(0, 12), sessionid_present: !!sessionid,
+                               cookie_len: (document.cookie || '').length,
+                               resp_content_type: hdr('content-type'),
+                               resp_x_eresult: hdr('x-eresult') };
+                    }
                     const idsHere = pickIds(raw1);
                     if (idsHere.some(i => !usedSet.has(i))) break;
                     await new Promise(rs => setTimeout(rs, 350));
@@ -1242,6 +1417,79 @@ class SteamPage:
         except Exception as exc:
             return {"error": str(exc)}
 
+    async def dump_upload_flow(self, acct: int) -> dict:
+        """r635 recon: locate the page's OWN upload implementation. Fetches the
+        loaded scripts and returns slices around the first script's
+        'beginfileupload' / 'GetBeginFileUploadURL()' hits, plus an
+        upload/file/attach/ugc member scan of the chat object (+ prototype
+        chain), the ChatStore and g_FriendsUIApp. Never message text."""
+        try:
+            return await self._page.evaluate(
+                r"""async (acct) => {
+                  const out = {};
+                  try {
+                    const urls = new Set();
+                    try {
+                      performance.getEntriesByType('resource').forEach(e => {
+                        if (/\.js(\?|$)/i.test(e.name || '')) urls.add(e.name);
+                      });
+                    } catch (e) {}
+                    try { for (const s of document.scripts) if (s.src) urls.add(s.src); } catch (e) {}
+                    out.scripts = urls.size;
+                    let fetched = 0, failed = 0;
+                    for (const u of [...urls].slice(0, 60)) {
+                      let txt = '';
+                      try {
+                        let r = null;
+                        try { r = await fetch(u, {credentials: 'include'}); } catch (e) { r = null; }
+                        // cross-origin CDN scripts answer ACAO:* which refuses
+                        // credentialed requests — fall back to an anonymous one
+                        if (!r || !r.ok) { try { r = await fetch(u, {credentials: 'omit'}); } catch (e) { r = null; } }
+                        if (!r || !r.ok) { failed++; continue; }
+                        txt = await r.text(); fetched++;
+                      } catch (e) { failed++; continue; }
+                      const hits = [];
+                      const re = /beginfileupload|GetBeginFileUploadURL\(\)/gi;
+                      let m;
+                      while ((m = re.exec(txt)) && hits.length < 3) {
+                        const s = Math.max(0, m.index - 1250);
+                        hits.push(txt.slice(s, s + 2500));
+                        re.lastIndex = s + 2500;
+                      }
+                      if (hits.length) { out.src = {url: u, hits: hits}; break; }
+                    }
+                    out.fetched = fetched; out.failed = failed;
+                  } catch (e) { out.script_err = String(e); }
+                  try {
+                    const a = window.g_FriendsUIApp, cs = a && a.m_ChatStore;
+                    let c = null;
+                    try { c = (cs.m_FriendChatStore.m_rgFriendChats || []).find(x => x.m_unAccountIDFriend === acct) || null; } catch (e) {}
+                    if (!c) { try { c = cs.GetFriendChat(acct); } catch (e) {} }
+                    const scan = (host) => {
+                      const r = {};
+                      if (!host) return r;
+                      let p = host, depth = 0;
+                      const seen = new Set();
+                      while (p && p !== Object.prototype && depth < 6) {
+                        for (const k of Object.getOwnPropertyNames(p)) {
+                          if (seen.has(k) || !/upload|file|attach|ugc/i.test(k)) continue;
+                          seen.add(k);
+                          try {
+                            const v = host[k];
+                            r[k] = (typeof v === 'function') ? 'fn:' + String(v).slice(0, 400) : typeof v;
+                          } catch (e) { r[k] = 'err'; }
+                        }
+                        p = Object.getPrototypeOf(p); depth++;
+                      }
+                      return r;
+                    };
+                    out.members = JSON.stringify({chat: scan(c), chatstore: scan(cs), app: scan(a)}).slice(0, 4000);
+                  } catch (e) { out.member_err = String(e); }
+                  return out;
+                }""", acct) or {}
+        except Exception as exc:
+            return {"error": str(exc)}
+
     async def poke(self) -> None:
         try:
             await self._page.evaluate("() => { try { window.dispatchEvent(new Event('focus')); } catch(e){} }")
@@ -1267,9 +1515,14 @@ class SteamPage:
             await self._page.reload()
 
     async def close(self) -> None:
+        # r635: each step in its own try — a dead context used to skip stopping
+        # the driver, leaking it (and its browser) across restarts
         try:
             if self._ctx:
                 await self._ctx.close()
+        except Exception:
+            pass
+        try:
             if self._pw:
                 await self._pw.stop()
         except Exception:

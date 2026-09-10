@@ -14,6 +14,17 @@ from puripuly_heart.config.settings import STTProviderName
 logger = logging.getLogger(__name__)
 MANAGED_STT_SAMPLE_RATE_HZ = 16000
 PENDING_FINAL_QUEUE_WARN_SIZE = 8
+# r635: every provider served by the shared local sherpa session
+# (_LocalQwenSherpaSession - the Parakeet backends subclass the Qwen backend
+# and inherit open_session). Only these report empty decodes as empty finals,
+# so only these get the empty-final drop in _consume_session_events.
+_LOCAL_SHERPA_PROVIDERS = frozenset(
+    {
+        STTProviderName.LOCAL_QWEN,
+        STTProviderName.LOCAL_PARAKEET_V3,
+        STTProviderName.LOCAL_PARAKEET_JAPANESE,
+    }
+)
 
 from puripuly_heart.core.audio.diagnostics import AudioFaultProfile, normalize_audio_fault_profile
 from puripuly_heart.core.audio.format import float32_to_pcm16le_bytes
@@ -760,6 +771,22 @@ class ManagedSTTProvider:
                         else None
                     )
                 if utterance_id is None:
+                    continue
+                if (
+                    ev.is_final
+                    and not (ev.text or "").strip()
+                    and self.stt_provider_name in _LOCAL_SHERPA_PROVIDERS
+                ):
+                    # r635: the local sherpa session (Qwen and both Parakeets)
+                    # reports an empty decode as an empty final so the
+                    # pending-id FIFO above stays in step with the SpeechEnds;
+                    # nothing downstream wants the empty transcript itself.
+                    # Other providers are untouched.
+                    self._emit_detailed(
+                        "[STT] Empty final for id=%s - pending id released",
+                        str(utterance_id)[:8],
+                        fallback_level=logging.DEBUG,
+                    )
                     continue
                 if ev.is_final and self._should_suppress_final_transcript(
                     ev.text, audio_ms=getattr(ev, "audio_ms", None)

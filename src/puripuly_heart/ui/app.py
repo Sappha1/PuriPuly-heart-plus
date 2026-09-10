@@ -59,6 +59,32 @@ from puripuly_heart.ui.views.settings import SettingsView
 
 logger = logging.getLogger(__name__)
 
+
+def _close_boot_splash() -> None:
+    """r639/r641: dismiss the PyInstaller boot splash the moment the real window
+    is shown (fills the bar to 100% first). Frozen-only, idempotent - every
+    reveal path calls it."""
+    with contextlib.suppress(Exception):
+        from puripuly_heart import boot_splash
+        boot_splash.close()
+
+
+async def _fade_window_in(page) -> None:
+    """r641: fade the main window from transparent to opaque over ~200 ms for a
+    soft hand-off from the splash instead of a hard pop. If the platform
+    ignores window opacity the window simply appears at full opacity - no worse
+    than before. Assumes opacity was set to 0 before the window was shown."""
+    for _op in (0.15, 0.35, 0.6, 0.85, 1.0):
+        with contextlib.suppress(Exception):
+            page.window.opacity = _op
+            page.update()
+        await asyncio.sleep(0.035)
+    with contextlib.suppress(Exception):
+        if page.window.opacity != 1.0:
+            page.window.opacity = 1.0
+            page.update()
+
+
 DEFAULT_WINDOW_WIDTH = 860
 DEFAULT_WINDOW_HEIGHT = 680
 MIN_WINDOW_WIDTH = 720
@@ -199,6 +225,7 @@ class TranslatorApp:
                 self.controller.set_speaker_voice_policy(
                     name, muted=muted, language=language))
         self._peer_source_options_cache = None
+        self._peer_source_last_available = True     # r635: see _relabel_peer_source_display
         with contextlib.suppress(Exception):
             self._sync_peer_source_display()
         with contextlib.suppress(Exception):
@@ -338,7 +365,9 @@ class TranslatorApp:
         self.page.window.min_height = MIN_WINDOW_HEIGHT
         self.page.window.icon = "icons/icon.ico"
         self.page.on_keyboard_event = self._on_keyboard_event
-        self.page.on_resize = self._on_page_resize
+        # r635: Flet 0.28 fires page.on_resized (on_resize never existed), so
+        # window size persistence had been dead since the handler was added
+        self.page.on_resized = self._on_page_resized
 
         async def _reveal_backstop() -> None:
             # safety net for the hidden start: if startup dies before the
@@ -347,9 +376,12 @@ class TranslatorApp:
             with contextlib.suppress(Exception):
                 from puripuly_heart import boot_stealth as _bs
                 _bs.finish()
+            with contextlib.suppress(Exception):
+                self.page.window.opacity = 1.0   # r641: clear any early fade
             self.page.window.visible = True
             with contextlib.suppress(Exception):
                 self.page.update()
+            _close_boot_splash()  # r639: never leave the splash stuck
 
         with contextlib.suppress(Exception):
             self.page.run_task(_reveal_backstop)
@@ -567,24 +599,43 @@ class TranslatorApp:
                 with contextlib.suppress(Exception):
                     if not getattr(_sv, "_pinyin_from_prefs", False):
                         _sv._show_pinyin = bool(getattr(self.view_dashboard, "_chat_show_pinyin", True))
-                # Pre-warm the Steam helper now so the tab has no "late load".
+                # Pre-warm the Steam helper so the tab has no "late load".
+                # r646: prewarm EARLY again (r631 behaviour). r636 deferred it
+                # behind the pipeline-settled gate to avoid spawning the browser
+                # during the model load, but that made Steam connect several
+                # seconds slower - the user noticed. Spawning the hidden browser
+                # in parallel with the model load is fine on any modern machine,
+                # and the Steam connection is what people wait on.
                 with contextlib.suppress(Exception):
                     _sv.prewarm()
 
         # r519: OCR used to come back OFF after every update. Restore the pill
         # to whatever the user left it on, and start the module to match.
         with contextlib.suppress(Exception):
-            if getattr(self.view_dashboard, "_ocr_want_on", False):
-                import threading as _th
+            _pg = getattr(self, "page", None)
+            if getattr(self.view_dashboard, "_ocr_want_on", False) and _pg is not None:
 
-                def _restore_ocr() -> None:
+                async def _restore_ocr() -> None:
+                    # r635: page task, not a threading.Timer - the pill flip
+                    # mutates mounted controls (single-writer rule). The
+                    # toggle spawns the OCR process, so it stays off the loop.
                     with contextlib.suppress(Exception):
-                        if self._on_toggle_ocr(True):
+                        from puripuly_heart.ocr.manager import ocr_engine_available
+
+                        # r636: the same gate as the Steam prewarm, instead of
+                        # a fixed 2 s that landed mid model load.
+                        await self._await_pipeline_settled()
+                        if not ocr_engine_available():
+                            # No engine: the toggle only reverts the pill and
+                            # opens the module-download dialog (page.overlay
+                            # + page.update) - UI work, so keep it ON the loop.
+                            self._on_toggle_ocr(True)
+                            return
+                        ok = await asyncio.to_thread(self._on_toggle_ocr, True)
+                        if ok:
                             self.view_dashboard.set_ocr_on(True)
 
-                _t = _th.Timer(2.0, _restore_ocr)
-                _t.daemon = True     # never block process exit
-                _t.start()
+                _pg.run_task(_restore_ocr)
 
         # Top nav bar for non-dashboard views (back + tab icons)
         _NAV_ICONS = [
@@ -1314,7 +1365,62 @@ class TranslatorApp:
     def _content_padding_for_index(self, index: int) -> int:
         return 0 if index == 0 else APP_CONTENT_PADDING
 
+    def _ui_hop(self, fn, *a) -> bool:
+        """Reschedule fn onto the page event loop when called from a worker
+        thread (single-writer rule - mirrors DashboardView._ui_hop).
+        Returns True when rescheduled."""
+        # r635: reads the APP's page, not the dashboard's - Control.page is
+        # None while the dashboard is unmounted (Settings/Logs/About showing),
+        # so hopping through it was inert for every return-to-dashboard swap.
+        pg = getattr(self, "page", None)
+        loop = getattr(pg, "loop", None) if pg is not None else None
+        if loop is None or not loop.is_running():
+            return False
+        try:
+            if asyncio.get_running_loop() is loop:
+                return False
+        except RuntimeError:
+            pass
+
+        async def _hop():
+            fn(*a)
+        pg.run_task(_hop)
+        return True
+
+    async def _await_pipeline_settled(self) -> None:
+        """r636: hold a non-critical startup warmup until the speech pipeline
+        is up, or the controller's gate times out (15 s). Safe to await before
+        start() has run - the gate is created lazily."""
+        waiter = getattr(self.controller, "await_pipeline_settled", None)
+        if not callable(waiter):
+            return
+        with contextlib.suppress(Exception):
+            await waiter()
+
+    def _run_after_pipeline_settled(self, fn) -> None:
+        """r636: same gate, for a plain callable. Runs fn inline when there is
+        no page loop to defer onto (headless tests)."""
+        pg = getattr(self, "page", None)
+
+        async def _later() -> None:
+            await self._await_pipeline_settled()
+            with contextlib.suppress(Exception):
+                fn()
+
+        if pg is not None:
+            try:
+                pg.run_task(_later)
+                return
+            except Exception:
+                pass
+        with contextlib.suppress(Exception):
+            fn()
+
     def _on_nav_change(self, index: int):
+        # r635: sync handler = executor thread, but the view swap below
+        # mutates mounted trees - hop to the page loop (single-writer rule)
+        if self._ui_hop(self._on_nav_change, index):
+            return
         # Track previous tab for Settings auto-apply
         previous_tab = getattr(self, "_current_tab", 0)
         if previous_tab != index:
@@ -1394,6 +1500,15 @@ class TranslatorApp:
         if _steam_live and previous_tab == 0 and index != 0:
             with contextlib.suppress(Exception):
                 _sv.deactivate()
+        # r636: the Logs view rebuilt and re-sent its whole text buffer to the
+        # client every 200 ms even while another tab was showing (its .page
+        # stays set after a swap). Tell it whether it is the visible tab -
+        # done BEFORE the swap so the text is already current when the view
+        # is serialised back onto the page.
+        _logs_on_screen = getattr(getattr(self, "view_logs", None), "set_on_screen", None)
+        if callable(_logs_on_screen):
+            with contextlib.suppress(Exception):
+                _logs_on_screen(index == 2)
         view_map = {0: self.view_dashboard, 1: self.view_settings, 2: self.view_logs,
                     3: self.view_about, 4: self.view_api_requests}
         self._inner_content.content = view_map.get(index, self.view_dashboard)
@@ -1439,12 +1554,13 @@ class TranslatorApp:
             self.page.run_task(_scroll_api)
 
     def _open_logs_tab(self) -> None:
+        # r635: _on_nav_change hops to the loop and already ends with
+        # _set_bottom_nav_selected - a second call here flushed the sidebar
+        # from the worker while the loop task was swapping the views.
         self._on_nav_change(2)
-        self._set_bottom_nav_selected(2)
 
     def _open_settings_tab(self) -> None:
         self._on_nav_change(1)
-        self._set_bottom_nav_selected(1)
 
     def _set_bottom_nav_selected(self, index: int) -> None:
         self._nav_selected = index
@@ -1455,6 +1571,8 @@ class TranslatorApp:
         self.page.title = t("app.title")
         self.page.theme = get_app_theme(font_family=font_for_language(get_locale()))
         self.view_dashboard.apply_locale()
+        with contextlib.suppress(Exception):
+            self._relabel_peer_source_display()     # r635
         self.view_settings.apply_locale()
         self.refresh_overlay_peer_contract()
         self.view_logs.apply_locale()
@@ -1917,8 +2035,17 @@ class TranslatorApp:
 
         self.page.run_task(_task)
 
-    def _on_page_resize(self, e) -> None:
+    async def _on_page_resized(self, e) -> None:
+        # r635: async + debounced (a drag fires dozens of events); the last
+        # one in a 0.5 s burst reads the size on the loop and writes the
+        # settings file on a worker thread. Later hooks chain onto this
+        # (dashboard popup / steam tab strip) and both handle a coroutine.
         try:
+            self._page_resize_gen = getattr(self, "_page_resize_gen", 0) + 1
+            gen = self._page_resize_gen
+            await asyncio.sleep(0.5)
+            if gen != self._page_resize_gen:
+                return
             settings = getattr(self.controller, "settings", None)
             if settings is None:
                 return
@@ -1927,7 +2054,8 @@ class TranslatorApp:
             if w >= MIN_WINDOW_WIDTH and h >= MIN_WINDOW_HEIGHT:
                 settings.ui.window_width = w
                 settings.ui.window_height = h
-                save_settings(self.controller.config_path, settings)
+                await asyncio.to_thread(
+                    save_settings, self.controller.config_path, settings)
         except Exception:
             pass
 
@@ -2198,12 +2326,23 @@ class TranslatorApp:
         settings = getattr(self.controller, "settings", None)
         if dash is None or settings is None:
             return
+        # r635: remember what was pushed so a locale switch can re-label the
+        # pill without resetting an "unavailable" mark
+        self._peer_source_last_available = bool(available)
         value = str(getattr(settings.desktop_audio, "output_device", "") or "")
         label, kind = self._peer_source_display_args(value)
         with contextlib.suppress(Exception):
             dash.set_peer_source_display(
                 label, kind, available=available,
                 icon_src=self._peer_source_icon_src(value))
+
+    def _relabel_peer_source_display(self) -> None:
+        # r635: the empty selection renders t("settings.default_option"), which
+        # the dashboard keeps as a literal string - after a UI language switch
+        # the PEER pill still read the old word. Re-run the label with the
+        # availability last pushed (never flips an "unavailable" pill back).
+        self._sync_peer_source_display(
+            available=getattr(self, "_peer_source_last_available", True))
 
     def _build_peer_source_options(self):
         audio = getattr(self.view_settings, "_audio_settings", None)
@@ -2265,6 +2404,7 @@ class TranslatorApp:
         dash = getattr(self, "view_dashboard", None)
         if dash is not None:
             label, kind = self._peer_source_display_args(str(value or ""))
+            self._peer_source_last_available = True     # r635: direct push
             with contextlib.suppress(Exception):
                 dash.set_peer_source_display(
                     label, kind, available=True,
@@ -2496,6 +2636,7 @@ class TranslatorApp:
             label, kind = self._peer_source_display_args(value)
             dash = getattr(self, "view_dashboard", None)
             if dash is not None:
+                self._peer_source_last_available = True     # r635: direct push
                 dash.set_peer_source_display(
                     label, kind, available=True,
                     icon_src=self._peer_source_icon_src(value))
@@ -4043,6 +4184,65 @@ class TranslatorApp:
                 except Exception:
                     pass
 
+    def _warn_if_loopback_restored(self) -> None:
+        """r643: warn only when peer audio is actually being LOOPED BACK INTO
+        VRCHAT from the last session - i.e. the peer channel is capturing AND
+        the Loopback toggle (chatbox_send_peer) is on, so the other person's
+        translated voice is being sent into VRChat's chatbox. Peer translation
+        alone (shown in-app/overlay only) is NOT flagged. One-tap turn-off
+        disables the loopback (stops the send to VRChat). Fires once at startup."""
+        try:
+            controller = getattr(self, "controller", None)
+            settings = getattr(controller, "settings", None)
+            ui_settings = getattr(settings, "ui", None)
+            if controller is None or ui_settings is None:
+                return
+            peer_active = False
+            with contextlib.suppress(Exception):
+                peer_active = bool(controller.effective_peer_translation_enabled)
+            loopback_on = bool(getattr(ui_settings, "chatbox_send_peer", False))
+            if not (peer_active and loopback_on):
+                return
+            from puripuly_heart.ui.i18n import t
+
+            def _turn_off(_e=None) -> None:
+                # r644 fix: drive the dashboard's OWN Loopback toggle so its
+                # pill + menu update too - calling _on_dashboard_chatbox_send_
+                # peer_toggle(False) alone changed the setting/hub but left the
+                # dashboard showing it ON. _on_chatbox_peer_btn_click flips the
+                # flag, refreshes the pill, and notifies the app to persist.
+                with contextlib.suppress(Exception):
+                    dv = self.view_dashboard
+                    if not bool(getattr(dv, "_chatbox_send_peer", False)):
+                        # already off (state changed since the warning showed)
+                        self._on_dashboard_chatbox_send_peer_toggle(False)
+                        return
+                    if not dv._ui_hop(dv._on_chatbox_peer_btn_click):
+                        dv._on_chatbox_peer_btn_click()
+
+            snackbar = ft.SnackBar(
+                ft.Text(
+                    t("startup.loopback_on_warning",
+                      default="Heads up: peer audio loopback is ON from your last "
+                              "session - the other person's voice is being captured, "
+                              "translated, and sent into VRChat's chatbox. Turn it "
+                              "off if you did not mean to leave it on."),
+                    size=15, color=ft.Colors.WHITE,
+                ),
+                bgcolor="#cf7b1b",   # _TOGGLE_WARNING orange
+                duration=12000,
+                behavior=ft.SnackBarBehavior.FLOATING,
+                margin=ft.margin.only(bottom=90),
+                padding=18,
+                action=t("startup.loopback_on_turn_off", default="Turn off"),
+                action_color=ft.Colors.WHITE,
+                on_action=_turn_off,
+            )
+            with contextlib.suppress(Exception):
+                self.page.open(snackbar)
+        except Exception:
+            pass
+
     def _show_snackbar(self, message: str, bgcolor, duration: int = 4000) -> None:
         """Show a snackbar above the bottom nav."""
         snackbar = ft.SnackBar(
@@ -4112,6 +4312,56 @@ async def main_gui(page: ft.Page, *, config_path, debug_ui_preview: bool = False
 
     page.on_disconnect = _on_page_disconnect
 
+    # r639: reveal the window as soon as it EXISTS and the dashboard is built
+    # (~2 s), not after the whole speech pipeline finishes inside start()
+    # (~10 s - the window sat hidden for 8 s while peer STT warmed to green).
+    # r636 tried this and failed: it called boot_stealth.finish() before the
+    # flet window had been parked, so finish() restored nothing yet latched
+    # its done-flag and disarmed the watchdog -> invisible window all session.
+    # The fix is to gate the early finish() on boot_stealth confirming it has
+    # actually parked a real window (parked_count() >= 1). finish() itself is
+    # unchanged from the proven r631 path; it just runs earlier, under the same
+    # precondition (a parked window present) that made it reliable at 10 s.
+    # The post-start finish() below stays as an idempotent fallback, and the
+    # 8 s backstop in _setup_page covers a start() that dies outright.
+    async def _early_reveal() -> None:
+        from puripuly_heart import boot_stealth as _bs
+
+        # Wait for a parked window AND loaded settings (start()'s first act),
+        # so the reveal uses the saved size. Cap ~7 s; if it never parks, the
+        # post-start reveal and the backstop still handle it.
+        parked = False
+        for _ in range(46):
+            _s = getattr(app.controller, "settings", None)
+            if _bs.parked_count() >= 1 and _s is not None:
+                parked = True
+                break
+            await asyncio.sleep(0.15)
+        if not parked:
+            logger.info("[Reveal] early reveal skipped: no parked window after ~7 s")
+            return
+        with contextlib.suppress(Exception):
+            _ui = getattr(getattr(app.controller, "settings", None), "ui", None)
+            if _ui is not None:
+                _w = getattr(_ui, "window_width", 0) or 0
+                _h = getattr(_ui, "window_height", 0) or 0
+                if _w >= MIN_WINDOW_WIDTH:
+                    app.page.window.width = _w
+                if _h >= MIN_WINDOW_HEIGHT:
+                    app.page.window.height = _h
+        with contextlib.suppress(Exception):
+            app.page.window.opacity = 0.0        # r641: start transparent
+            app.page.window.visible = True
+            app.page.update()
+            _bs.finish()                         # move on-screen (still at 0)
+        _close_boot_splash()
+        await _fade_window_in(app.page)          # r641: soft fade-in
+        logger.info("[Reveal] early reveal: window shown (parked=%d)",
+                    _bs.parked_count())
+
+    with contextlib.suppress(Exception):
+        app.page.run_task(_early_reveal)
+
     await app.controller.start()
 
     # Sync dashboard button states from loaded settings (mute sync, loopback, STT label)
@@ -4154,11 +4404,17 @@ async def main_gui(page: ft.Page, *, config_path, debug_ui_preview: bool = False
     # that size/icon/layout are final.
     try:
         from puripuly_heart import boot_stealth as _bs
+        app.page.window.opacity = 1.0   # r641: clear any early-fade transparency
         app.page.window.visible = True
         app.page.update()
         _bs.finish()
     except Exception:
         pass
+    _close_boot_splash()  # r639: also close the splash if the early path didn't
+
+    # r642: warn if peer-audio loopback auto-restored ON from last session.
+    with contextlib.suppress(Exception):
+        app._warn_if_loopback_restored()
 
     # Setup checkbox hand-off: the installer leaves a one-shot marker asking
     # the app to fetch optional modules on first launch — the in-app module

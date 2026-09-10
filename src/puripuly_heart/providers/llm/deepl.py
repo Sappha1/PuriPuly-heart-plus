@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import asyncio
+import contextlib
 import logging
 import re
 from dataclasses import dataclass, field
@@ -132,17 +133,62 @@ class DeepLTranslationProvider:
 
     api_key: str
     _executor: object = field(init=False, default=None, repr=False)
+    # r634: ONE client per provider. A new deepl.Translator per call meant a
+    # new requests.Session, i.e. a fresh TCP+TLS handshake to api.deepl.com
+    # on every utterance: ~580 ms of the ~950 ms translation step measured
+    # in real logs. Reusing the client keeps the connection alive.
+    _translator: object = field(init=False, default=None, repr=False)
+
+    def _client(self, *, fresh: bool = False):
+        import deepl  # type: ignore
+
+        if fresh or self._translator is None:
+            try:
+                self._translator = deepl.Translator(
+                    self.api_key, send_platform_info=False)
+            except TypeError:  # older SDK without the kwarg
+                self._translator = deepl.Translator(self.api_key)
+        return self._translator
+
+    # r635: only a transport failure justifies rebuilding the reused client.
+    # Auth, quota and bad-language errors would fail identically on a fresh
+    # session and must surface at once (and not cost a second request).
+    @staticmethod
+    def _is_transport_error(exc: BaseException) -> bool:
+        import deepl  # type: ignore
+
+        kinds: tuple[type[BaseException], ...] = (OSError, deepl.ConnectionException)
+        try:
+            import requests  # type: ignore
+        except Exception:
+            pass
+        else:
+            kinds += (requests.exceptions.ConnectionError, requests.exceptions.Timeout)
+        return isinstance(exc, kinds)
 
     def _translate_sync(self, text: str, source_lang: str | None,
                         target_lang: str) -> tuple[str, str | None]:
-        import deepl  # type: ignore
-
-        translator = deepl.Translator(self.api_key)
-        result = translator.translate_text(
-            text,
-            source_lang=source_lang,
-            target_lang=target_lang,
-        )
+        reused = self._translator is not None
+        translator = self._client()
+        try:
+            result = translator.translate_text(
+                text,
+                source_lang=source_lang,
+                target_lang=target_lang,
+            )
+        except Exception as exc:
+            if not reused or not self._is_transport_error(exc):
+                raise
+            # a long-lived session can go stale (idle keep-alive closed by
+            # the server, network change): rebuild the client once and retry
+            logger.info("[DeepL] request failed on the reused client; "
+                        "rebuilding the session and retrying once (%s)", exc)
+            translator = self._client(fresh=True)
+            result = translator.translate_text(
+                text,
+                source_lang=source_lang,
+                target_lang=target_lang,
+            )
         detected = getattr(result, "detected_source_lang", None)
         return str(result), detected
 
@@ -194,7 +240,14 @@ class DeepLTranslationProvider:
         pass
 
     async def close(self) -> None:
-        pass
+        # r635: release the keep-alive session behind the reused client
+        translator, self._translator = self._translator, None
+        if translator is None:
+            return
+        with contextlib.suppress(Exception):
+            close = getattr(translator, "close", None)
+            if callable(close):
+                close()
 
     @staticmethod
     async def verify_api_key(api_key: str) -> bool:

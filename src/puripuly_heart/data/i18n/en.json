@@ -727,6 +727,7 @@
   "dashboard.ocr.menu.region_set": "Set OCR region (drag)",
   "dashboard.ocr.menu.region_set.tooltip": "Restrict OCR to a screen region: drag to set it, the eye toggles the dashed border, the lock keeps scanning inside the region.",
   "dashboard.chat.translation_failed": "Translation failed — check model settings",
+  "dashboard.chat.same_language_hint": "Sent untranslated: the typed-message target is your own language. Set your partner's language in the Target language row.",
   "settings_modal.requires_api_key": "Requires API key — set it in Settings",
   "settings_modal.requires_api_key_short": "Requires API key",
   "dashboard.mute_sync.tooltip.off": "Mute Sync (off) — click to enable. When on, speech-to-text won't send a chatbox message while your mic is muted in VRChat.",
@@ -929,6 +930,7 @@
   "steam.their_language": "Their language",
   "steam.translator": "Translator",
   "steam.send_to_them": "Send to them",
+  "steam.send_failed": "Message not delivered - Steam rejected it, try again",
   "steam.show_pinyin": "Show Pinyin",
   "steam.grouped_pinyin": "Grouped Pinyin",
   "steam.show_original": "Show original text",
@@ -1144,5 +1146,10 @@
   "steam.unit_month_many": "{n} months",
   "steam.unit_year_one": "{n} year",
   "steam.unit_year_many": "{n} years",
-  "steam.unit_join": " and "
+  "steam.unit_join": " and ",
+  "speaker.reset_unreadable": "Saved voices could not be read and were reset; the old file was kept as voices.json.corrupt-<time>",
+  "startup.loopback_on_warning": "Heads up: peer audio loopback is ON from your last session - the other person's voice is being captured, translated, and sent into VRChat's chatbox. Turn it off if you did not mean to leave it on.",
+  "startup.loopback_on_turn_off": "Turn off",
+  "settings.show_boot_splash": "Boot splash screen",
+  "settings.show_boot_splash.tooltip": "Show the loading splash while the app starts. It is drawn by the installer's launcher before the app loads, so turning it off dismisses it immediately rather than preventing it entirely."
 }

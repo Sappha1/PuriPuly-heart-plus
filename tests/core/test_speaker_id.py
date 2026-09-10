@@ -101,6 +101,108 @@ def test_corrupt_store_starts_empty(tmp_path) -> None:
     assert registry.enrolled_names() == []
 
 
+# ── r636: the store is written atomically and quarantined when unreadable ──
+
+def test_save_goes_through_the_atomic_writer_and_leaves_no_tmp(
+    registry, tmp_path, monkeypatch
+) -> None:
+    import json
+
+    from puripuly_heart.config import settings as settings_module
+
+    real_writer = settings_module._atomic_write_text
+    seen: list[tuple[object, str, str]] = []
+
+    def spy(path, content, *, encoding):
+        seen.append((path, content, encoding))
+        real_writer(path, content, encoding=encoding)
+
+    monkeypatch.setattr(settings_module, "_atomic_write_text", spy)
+    registry.enroll_cluster(registry.match(_voice(300)).cluster_id, "Robin")
+
+    store = tmp_path / "voices.json"
+    assert [path for path, _, _ in seen] == [store]
+    assert seen[0][2] == "utf-8"
+    assert json.loads(seen[0][1])["voices"][0]["name"] == "Robin"
+    assert not (tmp_path / "voices.json.tmp").exists()
+    assert json.loads(store.read_text(encoding="utf-8"))["voices"][0]["name"] == "Robin"
+
+
+def test_failed_save_keeps_the_previous_store_intact(registry, tmp_path, monkeypatch) -> None:
+    """The point of tmp + replace: a write that dies half-way must not leave a
+    truncated voices.json behind (the next start would quarantine it and the
+    user would lose every name)."""
+    import json
+    from pathlib import Path
+
+    store = tmp_path / "voices.json"
+    registry.enroll_cluster(registry.match(_voice(310)).cluster_id, "Robin")
+    before = store.read_text(encoding="utf-8")
+
+    def exploding_replace(self, target):
+        raise OSError("disk went away")
+
+    monkeypatch.setattr(Path, "replace", exploding_replace)
+    # in-memory state still updates; only persistence fails (logged, swallowed)
+    assert registry.enroll_cluster(registry.match(_voice(311)).cluster_id, "Alex")
+
+    assert store.read_text(encoding="utf-8") == before
+    assert json.loads(before)["voices"][0]["name"] == "Robin"
+    assert not (tmp_path / "voices.json.tmp").exists()
+
+
+def test_unreadable_store_is_quarantined_not_overwritten(tmp_path) -> None:
+    """r636: an unparsable voices.json used to start an empty registry with no
+    reset_reason, and the next save overwrote it -- every enrolled voice gone
+    without a trace. Now the bytes move aside and the banner can say why."""
+    store = tmp_path / "voices.json"
+    store.write_text("{not json", encoding="utf-8")
+
+    registry = SpeakerRegistry(store)
+
+    assert registry.enrolled_names() == []
+    assert registry.reset_reason == "unreadable"
+    assert not store.exists()
+    quarantined = sorted(tmp_path.glob("voices.json.corrupt-*"))
+    assert len(quarantined) == 1
+    assert quarantined[0].name.rsplit("corrupt-", 1)[1].isdigit()
+    assert quarantined[0].read_text(encoding="utf-8") == "{not json"
+
+    # naming somebody writes a fresh, valid store, clears the banner reason
+    # and leaves the quarantined copy alone
+    registry.enroll_cluster(registry.match(_voice(320)).cluster_id, "Robin")
+    assert registry.reset_reason == ""
+    assert SpeakerRegistry(store).enrolled_names() == ["Robin"]
+    assert sorted(tmp_path.glob("voices.json.corrupt-*")) == quarantined
+
+
+def test_every_reset_reason_has_copy_in_every_locale() -> None:
+    """A reason with no string is an empty list the user cannot explain, so the
+    map and the four bundles have to move together."""
+    import json
+    from pathlib import Path
+
+    from puripuly_heart.core.speaker_id import RESET_REASON_I18N_KEYS
+
+    i18n_dir = (
+        Path(__file__).resolve().parents[2] / "src" / "puripuly_heart" / "data" / "i18n"
+    )
+    bundles = {
+        path.stem: json.loads(path.read_text(encoding="utf-8"))
+        for path in sorted(i18n_dir.glob("*.json"))
+    }
+    assert set(bundles) >= {"en", "ko", "zh-CN", "ja"}
+
+    for reason in ("model_changed", "unreadable"):
+        assert reason in RESET_REASON_I18N_KEYS
+    for locale, bundle in bundles.items():
+        for reason, key in RESET_REASON_I18N_KEYS.items():
+            assert key in bundle, (locale, reason, key)
+            assert bundle[key].strip() and bundle[key] != key, (locale, key)
+            # ASCII "..." only: the CJK fonts centre U+2026 as stray mid-dots.
+            assert "…" not in bundle[key], (locale, key)
+
+
 # ── end-to-end: embedding -> hub match -> UIEvent payload (r318) ──────────
 
 @pytest.mark.asyncio
@@ -263,12 +365,18 @@ def test_same_channel_refines_instead_of_multiplying(registry) -> None:
 
 
 def test_variants_are_capped(registry) -> None:
+    """r521 raised MAX_VARIANTS_PER_NAME from 4 to 8. This used to enroll
+    exactly 8 distinct channels and assert the OLD cap (<= 4), so it failed
+    the moment the cap moved without any regression in src. Drive past the
+    real cap and assert against the constant instead of a stale number."""
+    from puripuly_heart.core.speaker_id import MAX_VARIANTS_PER_NAME
+
     base = _voice(220)
-    for index in range(8):
+    for index in range(MAX_VARIANTS_PER_NAME + 4):
         registry.reset_session()
         far = _channel_shifted(base, 230 + index, 0.30)
         registry.enroll_cluster(registry.match(far).cluster_id, "Kai")
-    assert registry.variant_count("Kai") <= 4
+    assert registry.variant_count("Kai") <= MAX_VARIANTS_PER_NAME
 
 
 def test_legacy_single_centroid_store_still_loads(tmp_path) -> None:

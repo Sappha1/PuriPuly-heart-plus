@@ -19,15 +19,16 @@ Protocol
     {"cmd":"login"}                  open a VISIBLE window to sign in, then hide
     {"cmd":"list"}                   (re)send the conversation list
     {"cmd":"open","acct":123}        open that chat; load history; start bridging
-    {"cmd":"send","acct":123,"text":"..."}   send text to that chat
+    {"cmd":"send","acct":123,"text":"...","sid":"..."}   send text (sid optional)
   daemon -> app:
+    {"ev":"hello","app":"puripuly-steam","proto":1,"pid":N}   first line on connect (r636)
     {"ev":"status","signed_in":bool,"mode":"hidden|login|starting"}
     {"ev":"own","acct":123}
     {"ev":"conversations","items":[{"acct":123,"name":"...","avatar":"..."}]}
     {"ev":"opened","acct":123,"ok":bool}
     {"ev":"history","acct":123,"messages":[MSG,...]}
     {"ev":"inbound","acct":123,"message":MSG}
-    {"ev":"sent","ok":bool}
+    {"ev":"sent","ok":bool,"acct":123,"sid":"..."}   sid echoes the send's sid
     {"ev":"log","text":"..."}
   where MSG = {"from_me":bool,"text":"...","images":["url",...],
                "name":"...","avatar":"..."}
@@ -81,8 +82,18 @@ def _record_sent_ugcid(ugcid: str) -> list:
     return ids
 
 
+_DIAG_MAX = 512 * 1024   # r636: rotate past this (one generation: diag.log.1)
+
+
 def _diag(msg: str) -> None:
     try:
+        # r636: bounded — the file had passed 1 MB (43% of it recon dumps
+        # re-emitted on every boot); rename to diag.log.1 and start over
+        try:
+            if _DIAG.stat().st_size > _DIAG_MAX:
+                os.replace(_DIAG, _DIAG.with_name(_DIAG.name + ".1"))
+        except Exception:
+            pass
         with open(_DIAG, "a", encoding="utf-8") as f:
             f.write(time.strftime("%H:%M:%S ") + msg + "\n")
     except Exception:
@@ -94,6 +105,12 @@ _URLTAG_RE = re.compile(r"\[url=([^\]]+)\](.*?)\[/url\]", re.I | re.S)
 _STICKER_RE = re.compile(r'\[sticker[^\]]*type="([^"]+)"[^\]]*\](?:\[/sticker\])?', re.I)
 _IMGSRC_RE = re.compile(r'\[img\s+src=(?:"([^"]+)"|([^\s\]]+))[^\]]*\](?:\[/img\])?', re.I)
 _IMG_RE = re.compile(r"\[img[^\]]*\](.*?)\[/img\]", re.I | re.S)
+# r635: a friend's shared video arrives as [video src="URL" ...][/video]; _TAG_RE
+# used to strip the whole tag so the message never surfaced in the app (real
+# Steam shows a video card). Keep the URL as a link line — quoted or bare src.
+_VIDEO_RE = re.compile(
+    r'\[video\b[^\]]*?\bsrc=(?:"([^"]*)"|([^\s\]]+))[^\]]*\](?:\[/video\])?', re.I)
+_VIDEO_ANY_RE = re.compile(r"\[video\b[^\]]*\](?:\[/video\])?", re.I)
 _OG_RE = re.compile(r"\[og\b([^\]]*)\](?:\[/og\])?", re.I)
 _LOBBY_RE = re.compile(r"\[lobbyinvite[^\]]*\](?:\[/lobbyinvite\])?", re.I)
 _ROOMFX_RE = re.compile(r'\[roomeffect[^\]]*type="([^"]+)"[^\]]*\](?:\[/roomeffect\])?', re.I)
@@ -101,6 +118,10 @@ _ROOMFX_ICON = {"balloons": "🎈", "confetti": "🎉",
                 "firework": "🎆", "goldfetti": "🎊"}
 _EMOTICON_RE = re.compile(r"\[emoticon[^\]]*\]", re.I)
 _TAG_RE = re.compile(r"\[/?[a-z][^\]]*\]", re.I)
+# r635: Playwright's wording when the hidden Edge is gone (crash / killed /
+# profile lock) — every page.evaluate raises one of these forever.
+_DEAD_RE = re.compile(r"has been closed|Target closed|Connection closed|browser has been closed",
+                      re.I)
 # Bare image-host URLs in the TEXT (Steam includes the URL alongside the [img]
 # tag when an image is pasted) — show only the picture, never the raw URL.
 _IMGHOST_RE = re.compile(
@@ -119,6 +140,19 @@ def parse_bbcode(raw: str) -> tuple[str, list[str], list[str]]:
     images: list[str] = []
     stickers: list[str] = []
     text = raw or ""
+
+    # r635: park video URLs behind a placeholder FIRST so they survive the
+    # image-host folding below and _TAG_RE; restored as bare URL text at the
+    # end (the app auto-links any https URL). A src-less tag reads "[video]".
+    vids: list[str] = []
+
+    def _vid(m: "re.Match") -> str:
+        vids.append((m.group(1) or m.group(2) or "").strip() or "[video]")
+        return f" \x15{len(vids) - 1}\x16 "
+
+    text = _VIDEO_RE.sub(_vid, text)
+    text = _VIDEO_ANY_RE.sub(lambda m: (vids.append("[video]") or f" \x15{len(vids) - 1}\x16 "),
+                             text)
 
     text = _STICKER_RE.sub(
         lambda m: (stickers.append(_STICKER_URL.format(m.group(1))) or " "), text)
@@ -165,12 +199,16 @@ def parse_bbcode(raw: str) -> tuple[str, list[str], list[str]]:
     # (dedup) and drop it from the text so only the picture renders.
     for u in _IMGHOST_RE.findall(text):
         u = u.rstrip(".,);")
-        if _FILE_URL_RE.search(u):
-            continue            # a shared FILE: keep it in the text as a link
+        if _FILE_URL_RE.search(u) or u in vids:
+            continue            # a shared FILE (or a [video] src riding along
+            #                     as bare text): keep it in the text as a link
         if u not in images:
             images.append(u)
-    text = _IMGHOST_RE.sub(lambda m: (m.group(0) if _FILE_URL_RE.search(m.group(0))
+    text = _IMGHOST_RE.sub(lambda m: (m.group(0) if (_FILE_URL_RE.search(m.group(0))
+                                                     or m.group(0).rstrip(".,);") in vids)
                                       else " "), text)
+    for _i, _u in enumerate(vids):      # r635: video placeholders -> bare URL
+        text = text.replace(f"\x15{_i}\x16", _u)
     text = re.sub(r"[ \t]{2,}", " ", text)
     text = re.sub(r" ?\n ?", "\n", text)
     text = re.sub(r"\n{3,}", "\n\n", text).strip()
@@ -202,8 +240,18 @@ class Daemon:
         self._fetch_err = None                # last fetch failure (dedup diag spam)
         self._last_recv: dict[int, int] = {}  # acct -> last m_rtLastMessageReceived seen
         self._recv_baselined = False          # first sweep only records, never emits
-        self._seen_keys: set = set()          # (ts, from, text) already emitted, for dedup
+        self._seen_keys: set = set()          # (acct, ts, from, text) already emitted, for dedup
         self._emitted: dict = {}              # acct -> (ts, ordinal) high-water mark: never re-emit at/below
+        self._dead_hits = 0                   # r635: consecutive "browser closed" fetch errors
+        self._recovering = False              # r635: _recover_browser in flight
+        self._recovered_at: float | None = None   # r635: monotonic time the last recovery ended
+        self._recover_backoff = 30.0          # r635: seconds between recoveries (doubles while the launch keeps failing)
+        self._login_busy = False              # r635: do_login/do_retry own the browser (no auto-recover)
+        self._quitting = False                # r635: quit in progress (never relaunch Edge)
+        self._upload_flow_dumped = False      # r635: one-shot UPLOAD-FLOW recon per process
+        self._hot_at = 0.0                    # r636: monotonic time of the last typing /
+        #                                       inbound / own send / open on the active
+        #                                       chat — drives the adaptive fetch cadence
         self._sent_pending: list[str] = []   # texts we sent, for echo dedup
         self._img_pending = 0                # app image-sends awaiting their echo
         self.convos: dict[int, dict] = {}   # acct -> friend dict (name/avatar/status)
@@ -238,11 +286,11 @@ class Daemon:
             await self._load_own()
             if self.signed:
                 await self.refresh_list()
-                # Favorites arrive a beat after the friends list — retry briefly so
-                # the Favorites section isn't empty on first paint.
-                for _ in range(6):
-                    if any(v.get("fav") for v in self.convos.values()):
-                        break
+                # Favorites arrive a beat after the friends list — retry ONCE so
+                # the Favorites section isn't empty on first paint. r636: the
+                # old 6-round loop ran its full 6 s on 101/101 measured boots;
+                # the poll loop's signature diff pushes favorites when they land.
+                if not any(v.get("fav") for v in self.convos.values()):
                     await asyncio.sleep(1.0)
                     await self.refresh_list()
                 with contextlib.suppress(Exception):
@@ -252,10 +300,11 @@ class Daemon:
                         self.effects = await self.steam.list_effects()
                         _diag(f"STICKERS {len(self.stickers)} EMOTES {len(self.emoticons)}"
                               f" EFFECTS {self.effects}")
-                    with contextlib.suppress(Exception):
-                        import json as _json
-                        _diag("PICKER-RECON " + _json.dumps(
-                            await self.steam.dump_picker_recon())[:1800])
+                    if os.environ.get("PPH_STEAM_RECON"):   # r636: opt-in recon dump
+                        with contextlib.suppress(Exception):
+                            import json as _json
+                            _diag("PICKER-RECON " + _json.dumps(
+                                await self.steam.dump_picker_recon())[:1800])
                 # warm recent chats in the background so opening is instant
                 asyncio.create_task(self.steam.preload_recent(20))
             self._started = True
@@ -358,17 +407,24 @@ class Daemon:
         self._last_sig = self._friends_sig()
 
     async def do_login(self) -> None:
+        await self._wait_recovery()     # r635: never restart() over a recovery in
+        # flight — two Edge launches on one profile crash on the profile lock
         if self.signed:
             await self.push_state()     # spam-clicked sign-in: already done
             return
         await self.emit({"ev": "login_progress", "stage": "opening"})
-        await self.steam.restart(mode="login")
-        await self.emit({"ev": "status", "signed_in": False, "mode": "login"})
-        await self.emit({"ev": "login_progress", "stage": "waiting"})
-        ok = await self.steam.wait_until_signed_in(timeout_s=300)
-        if ok:
-            await self.emit({"ev": "login_progress", "stage": "finishing"})
-        await self.steam.restart(mode="hidden")
+        self._login_busy = True   # r635: the user closing the login window must
+        # not race _recover_browser into a second Edge launch on this profile
+        try:
+            await self.steam.restart(mode="login")
+            await self.emit({"ev": "status", "signed_in": False, "mode": "login"})
+            await self.emit({"ev": "login_progress", "stage": "waiting"})
+            ok = await self.steam.wait_until_signed_in(timeout_s=300)
+            if ok:
+                await self.emit({"ev": "login_progress", "stage": "finishing"})
+            await self.steam.restart(mode="hidden")
+        finally:
+            self._login_busy = False
         self._started = True
         self.signed = ok
         await self._load_own()
@@ -381,11 +437,16 @@ class Daemon:
         page load, picking up a proxy/VPN the user turned on after the fact.
         No status is emitted until the outcome is known — the view keeps its
         'retrying' overlay instead of flashing 'Not signed in'."""
+        await self._wait_recovery()     # r635: see do_login
         if self.signed:
             await self.push_state()
             return
-        with contextlib.suppress(Exception):
-            await self.steam.restart(mode="hidden")
+        self._login_busy = True   # r635: owns the browser over the restart (no auto-recover)
+        try:
+            with contextlib.suppress(Exception):
+                await self.steam.restart(mode="hidden")
+        finally:
+            self._login_busy = False
         self._started = True
         self.signed = await self.steam.is_signed_in()
         await self._load_own()
@@ -400,11 +461,14 @@ class Daemon:
     def _avatar(self, acct: int) -> str:
         return self.convos.get(acct, {}).get("avatar", "")
 
-    def _shape(self, m: dict) -> dict:
+    def _shape(self, m: dict, acct: int | None = None) -> dict:
         """Raw store message -> the app-facing MSG shape (parsed + avatars)."""
         from_me = (m["from"] == self.own)
         text, images, stickers = parse_bbcode(m["text"])
-        acct = self.active or 0
+        if acct is None:
+            # r635: background-chat deliveries pass their own acct — resolving
+            # from self.active tagged them with the ACTIVE friend's name/avatar
+            acct = self.active or 0
         return {
             "from_me": from_me,
             "text": text,
@@ -418,10 +482,13 @@ class Daemon:
 
     async def do_open(self, acct: int) -> None:
         self._typing = False
+        self._hot_at = time.monotonic()   # r636: an open snaps to the fast cadence
         ok = await self.steam.open_conversation(acct)
         # One-shot recon for image-send: dump the chat's file-upload internals to
         # diag.log so the upload flow can be implemented without a separate probe.
-        if not getattr(self, "_dumped_upload", False):
+        # r636: opt-in (PPH_STEAM_RECON=1) — the dumps were 43% of diag.log.
+        if (not getattr(self, "_dumped_upload", False)
+                and os.environ.get("PPH_STEAM_RECON")):
             self._dumped_upload = True
             with contextlib.suppress(Exception):
                 info = await self.steam.dump_upload_methods(acct)
@@ -436,22 +503,33 @@ class Daemon:
         # correct (possibly empty) history instead of leaving the PREVIOUS friend's
         # messages on screen (the "wrong chat under this tab" desync).
         self.active = acct
-        msgs = []
-        for _ in range(6):
-            msgs = await self.steam.read_messages(acct)
-            if msgs:
-                break
-            await asyncio.sleep(0.4)
+        # r636: ONE local read, then the server fetch right away. The local
+        # array is legitimately empty on the first open of a friend after a
+        # page load (the common case while the real Steam client is primary:
+        # friend lines only flow via GetMessagesFromTimeRange), and the old
+        # 6 x 0.4 s local retry made every such open sit on "Loading chat
+        # history" for 2.4 s before the fetch that actually has the history.
+        # The local retry (now 2 x 0.4 s) only runs when the server had
+        # nothing either.
+        msgs = await self.steam.read_messages(acct) or []
         # AUGMENT with a live server fetch: while the real Steam client is
         # primary the local array gets NO friend messages (they only flow via
         # GetMessagesFromTimeRange), so the array alone is missing every friend
         # line since this page loaded — and everything from app-closed gaps.
+        # Flat 48h window: even a FRESH page load's array lacks recent
+        # friend lines, so anchoring to page-load time fetched nothing.
+        # Dedup makes the overlap free; history is capped at 40 anyway.
+        _since = int(time.time()) - 48 * 3600
+        fresh: list = []
         with contextlib.suppress(Exception):
-            # Flat 48h window: even a FRESH page load's array lacks recent
-            # friend lines, so anchoring to page-load time fetched nothing.
-            # Dedup makes the overlap free; history is capped at 40 anyway.
-            _since = int(time.time()) - 48 * 3600
-            fresh = await self.steam.fetch_messages(acct, _since)
+            fresh = await self.steam.fetch_messages(acct, _since) or []
+        if not msgs and not fresh:
+            for _ in range(2):
+                await asyncio.sleep(0.4)
+                msgs = await self.steam.read_messages(acct) or []
+                if msgs:
+                    break
+        with contextlib.suppress(Exception):
             if fresh:
                 have = {(m.get("ts"), m.get("from"), m.get("text")) for m in msgs}
                 add = [m for m in fresh
@@ -469,23 +547,94 @@ class Daemon:
         # ADDITIVE: replacing this set wiped the sweep's dedup keys, and since
         # Steam withholds push the swept message was absent from local history
         # — every open re-emitted it as a duplicate
-        self._seen_keys |= {(m.get("ts"), m.get("from"), m.get("text")) for m in msgs}
+        self._seen_keys |= {(acct, m.get("ts"), m.get("from"), m.get("text")) for m in msgs}
         _mark = max((int(m.get("ts") or 0) for m in msgs), default=0)
         if _mark > self._emitted.get(acct, 0):
             self._emitted[acct] = _mark
         _diag(f"OPEN acct={acct} ok={ok} count={len(msgs)} last_ts={self._last_ts}")
-        history = [self._shape(m) for m in msgs[-40:]]
+        history = [self._shape(m, acct) for m in msgs[-40:]]
         await self.emit({"ev": "history", "acct": acct, "messages": history})
         await self.emit({"ev": "opened", "acct": acct, "ok": ok})
 
-    async def do_send(self, acct: int, text: str) -> None:
+    async def do_send(self, acct: int, text: str, sid: str | None = None) -> None:
         # Remember what we sent so the poll can tell an app-send (already shown
         # optimistically) from a message the user sent on another device.
         self._sent_pending.append(text)
         if len(self._sent_pending) > 20:
             self._sent_pending.pop(0)
+        self._hot_at = time.monotonic()   # r636: a send snaps to the fast cadence
         ok = await self.steam.send(acct, text)
-        await self.emit({"ev": "sent", "ok": ok})
+        if not ok and (self._recovering or self.steam.is_dead()):
+            # r635: a dead hidden browser failed every send silently — restart
+            # it and retry once; the app now shows the outcome per sid. A send
+            # landing DURING a recovery (is_dead() reads False over a deliberate
+            # restart) waits for that recovery instead of failing outright.
+            if self._recovering:
+                await self._wait_recovery()
+            else:
+                await self._recover_browser("send")
+            ok = await self.steam.send(acct, text)
+        await self.emit({"ev": "sent", "ok": ok, "acct": acct, "sid": sid})
+
+    async def _wait_recovery(self, timeout_s: float = 25.0) -> None:
+        """r635: block (bounded) while _recover_browser owns the browser."""
+        deadline = time.monotonic() + timeout_s
+        while self._recovering and time.monotonic() < deadline:
+            await asyncio.sleep(0.25)
+
+    async def _recover_browser(self, why: str) -> bool:
+        """r635: the hidden Edge died (crash / killed / profile lock) — every
+        page.evaluate then raises 'Target ... has been closed' forever while
+        the poll loop only logs 'fetch error' and sends fail: the chat LOOKS
+        alive but nothing flows. Restart hidden, re-open the active chat and
+        re-push state. The dedup/watermark clocks (_recv_baselined, _last_recv,
+        _emitted) are deliberately KEPT so the sweep catches up whatever
+        arrived meanwhile. Rate-limited to one attempt per 30 s — doubling up
+        to 10 min while the launch itself keeps failing (profile lock, missing
+        browser), so a Retry on a blocked network does not relaunch Edge every
+        30 s forever; a no-op while another recovery, a login or a quit owns
+        the browser."""
+        now = time.monotonic()
+        if (self._recovering or self._login_busy or self._quitting
+                or (self._recovered_at is not None
+                    and now - self._recovered_at < self._recover_backoff)):
+            return False
+        self._recovering = True
+        self._reloading = True   # pause the poll loop over the restart
+        try:
+            _diag(f"BROWSER-DEAD ({why}) -> restart hidden "
+                  f"(next attempt >= {self._recover_backoff:.0f}s later)")
+            try:
+                await self.steam.restart(mode="hidden")
+            except Exception as exc:
+                _diag(f"BROWSER-DEAD restart failed: {type(exc).__name__}: {exc}")
+            for _ in range(20):
+                if self.steam.is_dead():
+                    break        # the launch itself failed: nothing to wait for
+                if await self.steam.is_signed_in():
+                    break
+                await asyncio.sleep(1.0)
+            self.signed = await self.steam.is_signed_in()
+            with contextlib.suppress(Exception):
+                await self._load_own()
+            if self.signed:
+                with contextlib.suppress(Exception):
+                    await self.refresh_list()
+            if self.active:
+                with contextlib.suppress(Exception):
+                    await self.steam.open_conversation(self.active)
+            self._typing = False
+            with contextlib.suppress(Exception):
+                await self.push_state()
+            _diag(f"BROWSER-DEAD recovery done signed={self.signed}")
+            return self.signed
+        finally:
+            self._reloading = False
+            self._recovering = False
+            self._recovered_at = time.monotonic()
+            # still dead = the launch failed: back off; a live page resets it
+            self._recover_backoff = (min(self._recover_backoff * 2, 600.0)
+                                     if self.steam.is_dead() else 30.0)
 
     async def _sweep_deliver(self, acct: int, fresh: list, src: str) -> None:
         """Watermark/dedup/own-echo gate + emit for background-chat fetches —
@@ -495,7 +644,7 @@ class Daemon:
             mk = int(m.get("ts") or 0)
             if mk < self._emitted.get(acct, 0):
                 continue
-            key = (m.get("ts"), m.get("from"), m.get("text"))
+            key = (acct, m.get("ts"), m.get("from"), m.get("text"))
             if key in self._seen_keys:
                 continue
             self._seen_keys.add(key)
@@ -521,7 +670,7 @@ class Daemon:
                     continue
             _diag(f"INBOUND({src}) acct={acct} from={m.get('from')}")
             await self.emit({"ev": "inbound", "acct": acct,
-                             "message": self._shape(m)})
+                             "message": self._shape(m, acct)})
 
     async def poll_loop(self) -> None:
         ticks = 0
@@ -532,30 +681,16 @@ class Daemon:
                 # a deliberate page reload is in progress — every read would
                 # see a half-booted page and emit bogus empty events
                 continue
-            # Refresh the friends list (status changes) every ~12s, but only
+            if self._started and self.steam.is_dead():
+                # r635: zombie browser — nothing below can work; restart it
+                # (rate-limited inside) instead of logging fetch errors forever
+                await self._recover_browser("poll")
+                continue
+            # Refresh the friends list (status changes) every ~4s, but only
             # push when something actually changed, so the list doesn't rebuild
-            # (and scroll-jump) needlessly.
-            if self._started and self.signed and ticks % 46 == 23:
-                # emote/sticker stores fill late and grow with purchases —
-                # re-list occasionally and re-push own info when they change
-                try:
-                    em = await self.steam.list_emoticons()
-                    st = await self.steam.list_stickers()
-                    if ((em and em != self.emoticons)
-                            or (st and st != self.stickers)):
-                        self.emoticons = em or self.emoticons
-                        self.stickers = st or self.stickers
-                        _diag(f"RELIST emotes={len(self.emoticons)} stickers={len(self.stickers)}")
-                        await self.emit({"ev": "own", "acct": self.own,
-                                         "avatar": self.own_avatar,
-                                         "name": self.own_name, "state": self.own_state,
-                                         "invites": self.own_invites,
-                                         "invisible": self.own_invisible,
-                                         "ingame": self.own_ingame, "game": self.own_game,
-                                         "emoticons": self.emoticons,
-                                         "stickers": self.stickers, "effects": self.effects})
-                except Exception:
-                    pass
+            # (and scroll-jump) needlessly. r636: the emote relist and the
+            # own_info refresh (two HTTPS fetches) left this task for _own_loop
+            # — inline they stalled live inbound for seconds at a time.
             if self._started and self.signed and ticks % 3 == 0:
                 # r508: every ~4s (was ~12s) — tab chips showed a friend as
                 # offline until the user clicked the tab and the open path
@@ -563,9 +698,10 @@ class Daemon:
                 try:
                     await self.refresh_list()
                     if (not getattr(self, "_persona_dumped", False)
-                            and self.convos):
+                            and self.convos and os.environ.get("PPH_STEAM_RECON")):
                         # one-shot: dump one OFFLINE friend's fields so the
                         # last-seen property can be identified for real
+                        # (r636: opt-in via PPH_STEAM_RECON=1)
                         self._persona_dumped = True
                         with contextlib.suppress(Exception):
                             _tg = next((a for a, i in self.convos.items()
@@ -581,43 +717,31 @@ class Daemon:
                         await self.emit({"ev": "friends", "items": list(self.convos.values())})
                 except Exception:
                     pass
-            if self._started and self.signed and ticks % 9 == 0:
-                with contextlib.suppress(Exception):
-                    info = await self.steam.own_info()
-                    sig = (info.get("state"), bool(info.get("invisible")),
-                           bool(info.get("ingame")), info.get("game", ""),
-                           info.get("invites", 0), info.get("name", ""))
-                    if sig != getattr(self, "_own_sig", None):
-                        self._own_sig = sig
-                        _diag(f"OWN {info}")
-                        self.own_state = info.get("state", 1) or 1
-                        self.own_invisible = bool(info.get("invisible"))
-                        self.own_ingame = bool(info.get("ingame"))
-                        self.own_game = info.get("game", "") or ""
-                        self.own_invites = info.get("invites", 0) or 0
-                        if info.get("name"):
-                            self.own_name = info["name"]
-                        if info.get("avatar"):
-                            self.own_avatar = info["avatar"]
-                        await self.emit({"ev": "own", "acct": self.own,
-                                         "avatar": self.own_avatar,
-                                         "name": self.own_name, "state": self.own_state,
-                                         "invites": self.own_invites,
-                                         "invisible": self.own_invisible,
-                                         "ingame": self.own_ingame, "game": self.own_game,
-                                         "emoticons": self.emoticons, "stickers": self.stickers, "effects": self.effects})
             if not self.clients:
                 continue    # nobody listening: do NOT fetch/emit — an emit to
                             # zero clients is LOST, but the watermark/seen sets
                             # would mark it delivered and the app could never
                             # get it after reconnecting. Frozen clocks make the
                             # first post-reconnect poll pull everything missed.
+            # r636: ONE evaluate per tick for the per-tick store reads — the
+            # typing flag, the all-chats activity clocks and the keep-warm
+            # nudge used to be three separate round trips into the renderer
+            # (~138 evaluates/min with a chat open and nobody talking).
+            _st: dict = {"typing": False, "activity": {}, "reactivated": False}
+            if self._started and self.signed and (self.active or ticks % 3 == 0):
+                # (no chat open: only the sweep's activity clocks are consumed,
+                # every 3rd tick — the other ticks skip the read entirely)
+                with contextlib.suppress(Exception):
+                    # keep the chat warm/foreground every ~4s (helps typing + mark-read)
+                    _st = await self.steam.tick_state(
+                        self.active or 0,
+                        reactivate=bool(self.active) and ticks % 3 == 0)
             # ALL-CHATS inbound sweep: a friend messaging a chat that is NOT
             # open in the app must still surface (tab + unread + cached line)
             # like real Steam. One cheap clock read; fetch only advanced chats.
             if self._started and self.signed and ticks % 3 == 0:
                 with contextlib.suppress(Exception):
-                    activity = await self.steam.chat_activity()
+                    activity = _st.get("activity") or {}
                     if activity and not self._recv_baselined:
                         self._recv_baselined = True
                         self._last_recv.update(activity)
@@ -628,8 +752,13 @@ class Daemon:
                         for acct in changed:
                             prev = self._last_recv.get(acct, 0)
                             self._last_recv[acct] = activity[acct]
-                            fresh = await self.steam.fetch_messages(
-                                acct, max(prev - 3, 1))
+                            # r635: prev == 0 is a chat born AFTER the baseline;
+                            # since=1 replayed its entire history as fresh
+                            # inbound. Start 15 min behind its clock instead
+                            # (dedup covers the overlap).
+                            since = (max(prev - 3, 1) if prev > 0
+                                     else max(int(activity[acct]) - 900, 1))
+                            fresh = await self.steam.fetch_messages(acct, since)
                             await self._sweep_deliver(acct, fresh, "sweep")
                         # brand-new chats appearing post-baseline start at
                         # their current clock (handled above via changed)
@@ -642,8 +771,8 @@ class Daemon:
             # for background sessions — the clock sweep then goes blind (a
             # friend's message never surfaces). Verify ONE recent chat per
             # pass with a real server fetch; the watermark + dedup gate in
-            # _sweep_deliver keeps it emit-only-new.
-            if self._started and self.signed and self.clients and ticks % 3 == 1:
+            # _sweep_deliver keeps it emit-only-new. r636: every 6 ticks (was 3).
+            if self._started and self.signed and self.clients and ticks % 6 == 1:
                 with contextlib.suppress(Exception):
                     _rr = [a for a, v in sorted(
                                self.convos.items(),
@@ -660,13 +789,11 @@ class Daemon:
 
             if not self.active:
                 continue
-            # keep the chat warm/foreground every ~4s (helps typing + mark-read).
-            if ticks % 3 == 0:
-                with contextlib.suppress(Exception):
-                    await self.steam.reactivate(self.active)
-            # typing indicator
+            # typing indicator (r636: from the shared tick read above)
             try:
-                typing = await self.steam.is_typing(self.active)
+                typing = bool(_st.get("typing"))
+                if typing:
+                    self._hot_at = time.monotonic()   # r636: snap to the fast cadence
                 if typing != self._typing:
                     self._typing = typing
                     _diag(f"typing={typing} acct={self.active}")
@@ -677,20 +804,33 @@ class Daemon:
             # LIVE inbound = SERVER FETCH, not the local array. Steam does not append
             # new messages to this background session's array (push is withheld while
             # the user's real client is primary), but GetMessagesFromTimeRange pulls
-            # them fresh from the server. Fetch a small trailing window (every ~2.6s
-            # to stay light on the server) and emit any (ts,from,text) not shown yet.
-            if ticks % 2 != 0:
+            # them fresh from the server. Fetch a small trailing window and emit any
+            # (ts,from,text) not shown yet. r636: adaptive cadence — every 2 ticks
+            # (2.6 s) while the friend is typing or within 120 s of the last
+            # inbound / own send / open, else every 4 ticks (5.2 s); typing,
+            # inbound, send and open all snap it back to fast.
+            _fast = self._typing or (time.monotonic() - self._hot_at) < 120.0
+            if ticks % (2 if _fast else 4) != 0:
                 continue
             _poll_acct = self.active   # capture ONCE: an open landing mid-
             # iteration must never re-tag this batch with another chat's acct
             try:
                 fresh = await self.steam.fetch_messages(_poll_acct, self._last_ts - 3)
                 self._fetch_err = None
+                self._dead_hits = 0
             except Exception as exc:
                 if str(exc) != self._fetch_err:
                     self._fetch_err = str(exc)
                     _diag(f"fetch error: {exc}")
                 fresh = []
+                if _DEAD_RE.search(str(exc)):
+                    # r635: two consecutive "browser closed" errors = zombie
+                    # Edge (a single one can be a mid-reload blip)
+                    self._dead_hits += 1
+                    if self._dead_hits >= 2:
+                        self._dead_hits = 0
+                        await self._recover_browser("fetch")
+                        continue
             # Emit strictly in time order — same-second messages from both sides can
             # come back interleaved, which made replies render before the message
             # they answered (and mis-grouped blocks in the app).
@@ -706,7 +846,7 @@ class Daemon:
                                       # replay. Same-second bursts pass (their
                                       # ordinals are unreliable) and dedup via
                                       # _seen_keys instead.
-                key = (m.get("ts"), m.get("from"), m.get("text"))
+                key = (_poll_acct, m.get("ts"), m.get("from"), m.get("text"))
                 if key in self._seen_keys:
                     continue
                 self._seen_keys.add(key)
@@ -744,23 +884,33 @@ class Daemon:
                             await self.emit({"ev": "seen", "acct": self.active,
                                              "ts": int(m.get("ts") or 0)})
                         continue
-                _diag(f"INBOUND(fetch) from={m.get('from')} own={self.own} {(m.get('text') or '')[:30]!r}")
-                if "[sticker" in (m.get("text") or ""):
-                    _diag("RAWSTICKER " + repr((m.get("text") or "")[:400]))
+                # r635: no message text in diag (length only)
+                _diag(f"INBOUND(fetch) from={m.get('from')} own={self.own} "
+                      f"len={len(m.get('text') or '')}")
+                self._hot_at = time.monotonic()   # r636: inbound snaps to fast cadence
                 await self.emit({"ev": "inbound", "acct": _poll_acct,
-                                 "message": self._shape(m)})
+                                 "message": self._shape(m, _poll_acct)})
                 # The view clears its typing indicator when a message lands; if the
                 # friend is STILL composing, our cached state would suppress the
                 # re-emit — reset it so the next poll re-announces the typing.
                 self._typing = False
             # keep the dedup set from growing without bound over a long session
-            if len(self._seen_keys) > 800:
-                cutoff = self._last_ts - 7200
-                self._seen_keys = {k for k in self._seen_keys if (k[0] or 0) >= cutoff}
+            if len(self._seen_keys) > 2000:
+                # r635: prune PER CHAT against that chat's own high-water mark —
+                # cutting on the ACTIVE chat's clock dropped background chats'
+                # keys and the rr verify fetch re-emitted their last message
+                # (a closed tab came back with a phantom unread dot)
+                self._seen_keys = {
+                    k for k in self._seen_keys
+                    if (k[1] or 0) >= (self._emitted.get(k[0], self._last_ts) - 7200)}
 
     async def handle(self, reader: asyncio.StreamReader, writer: asyncio.StreamWriter) -> None:
         self.clients.add(writer)
         try:
+            # r636: identify ourselves first (the view ignores it) so a foreign
+            # program squatting on the port is diagnosable from the app side
+            await self.emit({"ev": "hello", "app": "puripuly-steam", "proto": 1,
+                             "pid": os.getpid()}, only=writer)
             await self.ensure_started()
             await self.push_state(only=writer)   # bring this client up to date
             async for raw in reader:
@@ -810,10 +960,11 @@ class Daemon:
                           f"-> {len(older)}")
                     await self.emit({"ev": "history_older", "acct": acct,
                                      "before": before,
-                                     "messages": [self._shape(m)
+                                     "messages": [self._shape(m, acct)
                                                   for m in older]})
                 elif cmd == "send":
-                    await self.do_send(int(obj.get("acct", 0)), obj.get("text", ""))
+                    await self.do_send(int(obj.get("acct", 0)), obj.get("text", ""),
+                                       obj.get("sid"))
                 elif cmd == "send_image":
                     acct = int(obj.get("acct", 0))
                     path = obj.get("path", "")
@@ -829,6 +980,15 @@ class Daemon:
                         result = await self.steam.send_image(
                             acct, b64, Path(path).name, mime,
                             spoiler=bool(obj.get("spoiler")), used=used_ids)
+                        if (not result.get("ok") and result.get("step") == "begin"
+                                and not self._upload_flow_dumped):
+                            # r635: beginfileupload has answered 400 success:10
+                            # for a week — dump the page's OWN upload code path
+                            # once so the next failure is self-diagnosing
+                            self._upload_flow_dumped = True
+                            with contextlib.suppress(Exception):
+                                info = await self.steam.dump_upload_flow(acct)
+                                _diag("UPLOAD-FLOW " + json.dumps(info)[:14000])
                         if (not result.get("ok")
                                 and (result.get("status") == 401
                                      or "Not Logged" in str(result.get("resp", "")))):
@@ -953,6 +1113,7 @@ class Daemon:
                 elif cmd == "quit":
                     # Module switched off: free ALL RAM (browser + this process).
                     _diag("QUIT by app request")
+                    self._quitting = True   # r635: the poll tick must not relaunch Edge
                     with contextlib.suppress(Exception):
                         await self.steam.close()
                     os._exit(0)
@@ -998,10 +1159,14 @@ class Daemon:
         except OSError:
             _diag("SINGLETON exit: another daemon owns the port")
             return
-        server = await asyncio.start_server(self.handle, sock=lsock)
+        # r635: asyncio's default 64 KiB line limit broke the connection for
+        # good once the "friends" event outgrew it (~160+ friends)
+        server = await asyncio.start_server(self.handle, sock=lsock,
+                                            limit=16 * 1024 * 1024)
         # Pre-warm: load Steam now so the first tab open is instant.
         asyncio.create_task(self._prewarm())
         asyncio.create_task(self._poll_supervisor())
+        asyncio.create_task(self._own_supervisor())   # r636: network-bound work
         async with server:
             await server.serve_forever()
 
@@ -1021,6 +1186,103 @@ class Daemon:
                 _diag("POLL-LOOP CRASH, restarting:\n"
                       + traceback.format_exc(limit=6))
                 await asyncio.sleep(2.0)
+
+    async def _refresh_own(self) -> None:
+        """r636: the own_info refresh that used to run inline on the poll task
+        every ~9 ticks (two HTTPS fetches). Emits "own" only when it changed."""
+        with contextlib.suppress(Exception):
+            info = await self.steam.own_info()
+            # r636: a failed read ({} from a dead page, acct 0 from the JS
+            # catch) or one that landed under a reload / recovery is NOT a
+            # state change - it used to publish state=1 / no game for a user
+            # who is Away or in-game until the next round; never let it
+            # overwrite own_state/own_game or emit
+            if (not info.get("acct") or getattr(self, "_reloading", False)
+                    or getattr(self, "_recovering", False)):
+                return
+            sig = (info.get("state"), bool(info.get("invisible")),
+                   bool(info.get("ingame")), info.get("game", ""),
+                   info.get("invites", 0), info.get("name", ""))
+            if sig != getattr(self, "_own_sig", None):
+                self._own_sig = sig
+                _diag(f"OWN {info}")
+                self.own_state = info.get("state", 1) or 1
+                self.own_invisible = bool(info.get("invisible"))
+                self.own_ingame = bool(info.get("ingame"))
+                self.own_game = info.get("game", "") or ""
+                self.own_invites = info.get("invites", 0) or 0
+                if info.get("name"):
+                    self.own_name = info["name"]
+                if info.get("avatar"):
+                    self.own_avatar = info["avatar"]
+                await self.emit({"ev": "own", "acct": self.own,
+                                 "avatar": self.own_avatar,
+                                 "name": self.own_name, "state": self.own_state,
+                                 "invites": self.own_invites,
+                                 "invisible": self.own_invisible,
+                                 "ingame": self.own_ingame, "game": self.own_game,
+                                 "emoticons": self.emoticons, "stickers": self.stickers, "effects": self.effects})
+
+    async def _relist_emotes(self) -> None:
+        """r636: emote/sticker stores fill late and grow with purchases —
+        re-list occasionally and re-push own info when they change. Used to
+        run inline on the poll task every ~60 s (a user with <= 25 emotes paid
+        the 4 s settle loop every time); now ~10 min, settle loop only while
+        our list is still empty."""
+        with contextlib.suppress(Exception):
+            em = await self.steam.list_emoticons(wait=not self.emoticons)
+            st = await self.steam.list_stickers()
+            if ((em and em != self.emoticons)
+                    or (st and st != self.stickers)):
+                self.emoticons = em or self.emoticons
+                self.stickers = st or self.stickers
+                _diag(f"RELIST emotes={len(self.emoticons)} stickers={len(self.stickers)}")
+                await self.emit({"ev": "own", "acct": self.own,
+                                 "avatar": self.own_avatar,
+                                 "name": self.own_name, "state": self.own_state,
+                                 "invites": self.own_invites,
+                                 "invisible": self.own_invisible,
+                                 "ingame": self.own_ingame, "game": self.own_game,
+                                 "emoticons": self.emoticons,
+                                 "stickers": self.stickers, "effects": self.effects})
+
+    async def _own_loop(self) -> None:
+        """r636: network-bound refreshes off the poll task — own_info every
+        ~30 s (was every ~12 s inline), the emote relist every ~10 min (was
+        ~60 s inline). Both only emit "own". Quiet over a reload / recovery,
+        after a quit, before sign-in and while the browser is dead. While our
+        emote list is still empty (a slow boot: the store had not filled inside
+        ensure_started's settle loop) the relist runs every round for the first
+        ~5 min instead, so the picker does not stay empty for a whole cadence;
+        a truly emote-less account stops paying the settle loop after that.
+        (Stickers ride the SAME store request, so an empty sticker list with a
+        filled emote list means "owns none" — not "not settled yet" — and is
+        deliberately not a retry trigger.)"""
+        n = 0
+        while True:
+            await asyncio.sleep(30.0)
+            if (self._quitting or getattr(self, "_reloading", False)
+                    or not (self._started and self.signed) or self.steam.is_dead()):
+                continue
+            n += 1
+            await self._refresh_own()
+            # r636: every round while empty (bounded), else every ~10 min
+            if n % 20 == 0 or (not self.emoticons and n <= 10):
+                await self._relist_emotes()
+
+    async def _own_supervisor(self) -> None:
+        """r636: crash-proof like _poll_supervisor — log + sleep + continue."""
+        import traceback
+
+        while True:
+            try:
+                await self._own_loop()
+            except asyncio.CancelledError:
+                raise
+            except Exception:
+                _diag("OWN-LOOP CRASH, restarting:\n"
+                      + traceback.format_exc(limit=6))
+                await asyncio.sleep(5.0)
 
     async def _prewarm(self) -> None:
         try:

@@ -73,6 +73,9 @@ build = [
 testpaths = ["tests"]
 addopts = "-q -s"
 asyncio_mode = "auto"
+# r636: a test stuck for 2 minutes dumps every thread's stack to stderr instead of
+# stalling the run forever (the test itself is not aborted).
+faulthandler_timeout = 120
 
 [tool.black]
 line-length = 100

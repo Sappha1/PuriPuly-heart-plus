@@ -239,6 +239,10 @@ LOCAL_SHERPA_STT_PROVIDERS = (
     STTProviderName.LOCAL_PARAKEET_V3,
     STTProviderName.LOCAL_PARAKEET_JAPANESE,
 )
+# r636: how long a deferred warmup waits for the speech pipeline before giving
+# up and running anyway (cloud STT never loads a local model, and a failed
+# local load must not strand the OCR restore / Steam prewarm forever).
+DEFERRED_WARMUP_GATE_TIMEOUT_S = 15.0
 LOCAL_SHERPA_MODEL_ID_BY_PROVIDER = {
     STTProviderName.LOCAL_QWEN: LOCAL_STT_MODEL_ID,
     STTProviderName.LOCAL_PARAKEET_V3: LOCAL_PARAKEET_V3_MODEL_ID,
@@ -411,6 +415,32 @@ class GuiController:
     _bridge_task: asyncio.Task[None] | None = None
     _mic_task: asyncio.Task[None] | None = None
     _audio_source: AudioSource | None = None
+    # r636 startup order: the recognizer build kicked off at the TOP of start()
+    # so the shared (r386) instance is already cached when the saved toggles
+    # restore the peer channel at the end of start().
+    _early_stt_warmup_task: asyncio.Task[None] | None = field(
+        init=False,
+        default=None,
+        repr=False,
+    )
+    # r636: gate for non-critical warmups (transliteration, Steam helper, OCR
+    # restore) — opened once the speech pipeline is up, or by a timeout.
+    _pipeline_settled_event: asyncio.Event | None = field(
+        init=False,
+        default=None,
+        repr=False,
+    )
+    _deferred_translit_task: asyncio.Task[None] | None = field(
+        init=False,
+        default=None,
+        repr=False,
+    )
+    # r636: Whisper reachability probe, off the startup critical path.
+    _whisper_probe_task: asyncio.Task[None] | None = field(
+        init=False,
+        default=None,
+        repr=False,
+    )
     # r326: whether THIS launch created settings.json fresh (set by
     # _load_or_init_settings; drives the post-update announcement). MUST be
     # declared here — GuiController is slotted, and r325's undeclared
@@ -654,7 +684,10 @@ class GuiController:
         self._sync_effective_hub_flags(self.settings)
         self._refresh_overlay_peer_consumers()
 
-    async def start(self) -> None:
+    async def start(self, on_ready_to_show: Callable[[], None] | None = None) -> None:
+        """r636: `on_ready_to_show` is called once the dashboard carries every
+        cheap synchronous state (labels, toggles, provider pills) — main_gui
+        reveals the window there instead of waiting for the whole pipeline."""
         self.settings = self._load_or_init_settings(self.config_path)
         # Capture the saved on/off states, then start clean. We restore them at the
         # very end of start() (once the pipeline + UI bridge are live) so the app
@@ -681,6 +714,26 @@ class GuiController:
             self.app._sync_stt_label(self.settings)
         with contextlib.suppress(Exception):
             self.app._sync_translator_label(self.settings)
+
+        # r636: the 4.7-5.5 s sherpa recognizer build used to start only when
+        # _restore_saved_runtime_toggles ran, at the very END of start() —
+        # peer STT reached STREAMING 9-14 s after launch. Kick the build off
+        # here instead; it lands in the process-wide recognizer cache (r386)
+        # and the real peer backend picks it up for free.
+        self._schedule_early_local_stt_warmup(peer_enabled=restore_peer_enabled)
+
+        # r636: everything the dashboard can know WITHOUT the pipeline, so the
+        # window can be revealed now (2-3 s) instead of when start() returns
+        # (3.7-8.4 s). The post-pipeline block below still writes the
+        # authoritative values once the hub exists.
+        self._prime_dashboard_before_reveal()
+        if callable(on_ready_to_show):
+            with contextlib.suppress(Exception):
+                on_ready_to_show()
+
+        # r636: +241 MB / ~0.5 s of GIL, and only useful when a reading line is
+        # actually shown — behind the settled gate, not on the startup path.
+        self._schedule_deferred_transliteration_warmup()
 
         # Silently re-assert the SteamVR auto-launch registration (fixes moved installs;
         # no-op/no error toast when SteamVR isn't running yet).
@@ -712,32 +765,22 @@ class GuiController:
         if dash is not None:
             # Set needs_key flags based on saved verification status & key existence
             # STT: check current provider's verification status
-            stt_provider = self.settings.provider.stt.value
+            # r636: the saved-verification lookups moved into
+            # _saved_stt_key_verified / _saved_llm_key_verified so the
+            # pre-reveal priming above shares one copy of the field maps.
             if self._stt_provider_requires_secret(self.settings.provider.stt):
-                # Map stt provider to api_key_verified field name (qwen_asr uses alibaba keys)
-                stt_key_map = {"qwen_asr": self._get_alibaba_verified_key()}
-                stt_verified_key = stt_key_map.get(stt_provider, stt_provider)
-                stt_verified = getattr(self.settings.api_key_verified, stt_verified_key, False)
-                dash.stt_needs_key = (self.hub.stt is None) or (not stt_verified)
+                dash.stt_needs_key = (self.hub.stt is None) or (
+                    not self._saved_stt_key_verified()
+                )
             else:
                 dash.stt_needs_key = False
 
             # LLM: check current provider's verification status
-            llm_provider = self.settings.provider.llm.value
             if self._llm_provider_requires_secret(self.settings.provider.llm):
-                # Map llm provider to api_key_verified field name
-                llm_key_map = {
-                    "gemini": "google",
-                    "openrouter": "openrouter",
-                    "deepseek": "deepseek",
-                    "qwen": self._get_alibaba_verified_key(),
-                }
-                llm_verified_key = llm_key_map.get(llm_provider, llm_provider)
-                llm_verified = getattr(self.settings.api_key_verified, llm_verified_key, False)
                 dash.translation_needs_key = (
                     False
                     if self._managed_openrouter_can_attempt_translation()
-                    else (self.hub.llm is None) or (not llm_verified)
+                    else (self.hub.llm is None) or (not self._saved_llm_key_verified())
                 )
             else:
                 dash.translation_needs_key = False
@@ -764,6 +807,10 @@ class GuiController:
             overlay_enabled=restore_overlay_enabled,
             peer_enabled=restore_peer_enabled,
         )
+        # r636: nothing heavy is left on the startup path — release the
+        # deferred warmups (transliteration, Steam helper prewarm, OCR
+        # restore) even when no local model was ever loaded.
+        self.note_pipeline_settled()
 
     async def _restore_saved_runtime_toggles(
         self, *, overlay_enabled: bool, peer_enabled: bool
@@ -772,6 +819,8 @@ class GuiController:
         the app last ran. Called at the end of start(); the toggle methods emit the
         usual state events so the dashboard buttons reflect the restored state."""
         if peer_enabled:
+            # r636: set_peer_translation_enabled waits out the early startup
+            # warmup before it touches the shared crash sentinel.
             with contextlib.suppress(Exception):
                 await self.set_peer_translation_enabled(True)
         if overlay_enabled:
@@ -785,6 +834,283 @@ class GuiController:
         if self.settings.qwen.region == QwenRegion.BEIJING:
             return "alibaba_beijing"
         return "alibaba_singapore"
+
+    def _saved_stt_key_verified(self) -> bool:
+        """r636: saved api_key_verified flag for the selected STT provider
+        (qwen_asr shares the alibaba keys). Hub-independent, so the reveal
+        path can use it before the pipeline exists."""
+        if self.settings is None:
+            return False
+        provider = self.settings.provider.stt.value
+        key_map = {"qwen_asr": self._get_alibaba_verified_key()}
+        return bool(
+            getattr(self.settings.api_key_verified, key_map.get(provider, provider), False)
+        )
+
+    def _saved_llm_key_verified(self) -> bool:
+        """r636: saved api_key_verified flag for the selected translator."""
+        if self.settings is None:
+            return False
+        provider = self.settings.provider.llm.value
+        key_map = {
+            "gemini": "google",
+            "openrouter": "openrouter",
+            "deepseek": "deepseek",
+            "qwen": self._get_alibaba_verified_key(),
+        }
+        return bool(
+            getattr(self.settings.api_key_verified, key_map.get(provider, provider), False)
+        )
+
+    def _prime_dashboard_before_reveal(self) -> None:
+        """r636: the hub-independent half of the post-_init_pipeline dashboard
+        sync, run BEFORE the window is revealed so nothing on screen is blank
+        or wrong for the first few seconds. Pure settings -> widget state; the
+        block in start() re-applies the authoritative values once the hub is
+        up (a provider that fails to build can only be known then)."""
+        dash = getattr(self.app, "view_dashboard", None)
+        if dash is None or self.settings is None:
+            return
+        with contextlib.suppress(Exception):
+            dash.single_turn_mode = self.settings.overlay.single_turn_mode
+        with contextlib.suppress(Exception):
+            dash.set_translation_enabled(True)
+        with contextlib.suppress(Exception):
+            dash.set_stt_enabled(False)
+        with contextlib.suppress(Exception):
+            dash.stt_needs_key = bool(
+                self._stt_provider_requires_secret(self.settings.provider.stt)
+                and not self._saved_stt_key_verified()
+            )
+        with contextlib.suppress(Exception):
+            # The managed-OpenRouter exemption is read straight from settings
+            # here: _managed_openrouter_can_attempt_translation() also asks the
+            # hub, which does not exist yet, and would flash a key warning at
+            # every managed-trial user for the length of the pipeline init.
+            managed_llm = (
+                self.settings.provider.llm == LLMProviderName.OPENROUTER
+                and self.settings.openrouter.selected_source
+                == OpenRouterCredentialSource.MANAGED
+            )
+            dash.translation_needs_key = bool(
+                self._llm_provider_requires_secret(self.settings.provider.llm)
+                and not managed_llm
+                and not self._saved_llm_key_verified()
+            )
+        with contextlib.suppress(Exception):
+            sync = getattr(self.app, "_sync_dashboard_from_controller_settings", None)
+            if callable(sync):
+                sync()
+
+    # --- r636 startup order: early warmup + deferred-warmup gate ------------
+
+    def _early_local_stt_warmup_channel(self, *, peer_enabled: bool) -> str | None:
+        """"peer" when the saved toggles will restore a local sherpa peer
+        recognizer, else None. The mic has no saved on/off state — start()
+        always brings it up OFF — so there is nothing to pre-build for it."""
+        settings = self.settings
+        if settings is None:
+            return None
+        if (
+            peer_enabled
+            and settings.provider.peer_stt in LOCAL_SHERPA_STT_PROVIDERS
+            and self._peer_translation_eula_accepted_for(settings)
+        ):
+            return "peer"
+        return None
+
+    def _schedule_early_local_stt_warmup(self, *, peer_enabled: bool) -> None:
+        if self._early_stt_warmup_task is not None:
+            return
+        if self._early_local_stt_warmup_channel(peer_enabled=peer_enabled) is None:
+            return
+        with contextlib.suppress(Exception):
+            self._early_stt_warmup_task = asyncio.create_task(
+                self._run_early_local_stt_warmup()
+            )
+
+    async def _run_early_local_stt_warmup(self) -> None:
+        """Build the shared sherpa recognizer through the REAL peer factory, so
+        the r386 process-wide cache (model_dir / num_threads / feature_dim /
+        provider) is already warm when the peer channel starts, then prewarm
+        the voiceprint model. Never raises: a failure here is retried by the
+        real backend with all of its user-facing error handling intact."""
+        from puripuly_heart.core.shutdown import is_shutting_down
+
+        backend = None
+        try:
+            if self.settings is None or is_shutting_down():
+                return
+            secrets = create_secret_store(
+                self.settings.secrets, config_path=self.config_path
+            )
+            backend = create_peer_stt_backend(
+                self.settings,
+                secrets=secrets,
+                diagnostics_enabled=self._detailed_audio_diag_enabled,
+                on_model_loading=self._on_local_stt_model_loading,
+                on_model_loaded=self._on_local_stt_model_loaded,
+            )
+            # warmup() goes through _ensure_recognizer, so the crash sentinel,
+            # the memory floor and the shutdown guard all still apply.
+            await backend.warmup()
+            self.log_detailed("[STT] r636 early recognizer warmup ready (peer)")
+            await self._prewarm_speaker_embedder()
+        except asyncio.CancelledError:
+            raise
+        except Exception as exc:
+            with contextlib.suppress(Exception):
+                self.log_detailed(f"[STT] r636 early recognizer warmup skipped: {exc}")
+        finally:
+            if backend is not None:
+                # close() drops THIS backend's reference only — the shared
+                # recognizer stays cached (r386), which is the whole point.
+                close = getattr(backend, "close", None)
+                if callable(close):
+                    with contextlib.suppress(Exception):
+                        await close()
+            self.note_pipeline_settled()
+
+    async def _await_early_local_stt_warmup(self) -> None:
+        task = self._early_stt_warmup_task
+        if task is None or task.done():
+            return
+        with contextlib.suppress(Exception):
+            await asyncio.shield(task)
+
+    async def _prewarm_speaker_embedder(self) -> None:
+        """r636: build the shared voiceprint session and run one dummy embed on
+        a worker thread, so the first caption of a session no longer pays the
+        0.46-0.60 s lazy onnxruntime load inside the STT worker."""
+        from puripuly_heart.core.shutdown import is_shutting_down
+
+        if self.settings is None or is_shutting_down():
+            return
+        settings = self.settings
+
+        def _warm() -> None:
+            from puripuly_heart.app.wiring import _shared_speaker_embedder
+            from puripuly_heart.core.speaker_embedder import SAMPLE_RATE_HZ
+
+            embedder = _shared_speaker_embedder(settings)
+            if embedder is None:      # speaker id off — nothing to build
+                return
+            ensure = getattr(embedder, "_ensure_session", None)
+            if callable(ensure) and not ensure():
+                return
+            embed = getattr(embedder, "embed", None)
+            if callable(embed):
+                # 1.5 s of silence: over MIN_UTTERANCE_SECONDS, so the fbank
+                # and the ORT run both execute exactly as in a real utterance.
+                embed(np.zeros(int(1.5 * SAMPLE_RATE_HZ), dtype=np.float32))
+
+        with contextlib.suppress(Exception):
+            await asyncio.to_thread(_warm)
+
+    def _pipeline_settled_gate(self) -> asyncio.Event:
+        gate = self._pipeline_settled_event
+        if gate is None:
+            gate = asyncio.Event()
+            self._pipeline_settled_event = gate
+        return gate
+
+    def note_pipeline_settled(self) -> None:
+        """r636: open the deferred-warmup gate. Called once the speech pipeline
+        is up (the recognizer is warm / the first session can stream) and
+        unconditionally when start() finishes."""
+        with contextlib.suppress(Exception):
+            self._pipeline_settled_gate().set()
+
+    @property
+    def pipeline_settled(self) -> bool:
+        gate = self._pipeline_settled_event
+        return bool(gate is not None and gate.is_set())
+
+    async def await_pipeline_settled(
+        self, timeout: float = DEFERRED_WARMUP_GATE_TIMEOUT_S
+    ) -> None:
+        """r636: hold a non-critical warmup until the speech pipeline is up, or
+        `timeout` seconds, whichever comes first. A timeout OPENS the gate so
+        every other waiter is released at the same moment."""
+        gate = self._pipeline_settled_gate()
+        if gate.is_set():
+            return
+        try:
+            await asyncio.wait_for(gate.wait(), timeout=max(0.0, float(timeout)))
+        except asyncio.TimeoutError:
+            self.note_pipeline_settled()
+
+    def _any_reading_line_enabled(self) -> bool:
+        """r636: does anything on screen actually render a romanization line?
+        The transliteration warmup costs +241 MB and ~0.5 s of GIL, so it is
+        pure waste for a user who reads none of them."""
+        settings = self.settings
+        if settings is None:
+            return False
+        try:
+            ui = settings.ui
+            if any((
+                ui.chat_show_pinyin, ui.chat_show_romaji, ui.chat_show_romaja,
+                ui.chat_show_latin, ui.show_pinyin, ui.show_romaji, ui.show_latin,
+                ui.send_pinyin, ui.send_romaji, ui.send_latin,
+            )):
+                return True
+            overlay = settings.overlay
+            if overlay.show_romanization and any((
+                overlay.show_pinyin, overlay.show_romaji,
+                overlay.show_romaja, overlay.show_latin,
+            )):
+                return True
+            # The Steam tab keeps its OWN pinyin preference (its settings panel
+            # is independent of the VRChat chat flags).
+            dash = getattr(self.app, "view_dashboard", None)
+            steam_view = getattr(dash, "_steam_view", None) if dash is not None else None
+            if steam_view is not None and bool(getattr(steam_view, "_show_pinyin", False)):
+                return True
+            return False
+        except Exception:
+            return True     # unreadable settings: warm, exactly as before
+
+    def _schedule_deferred_transliteration_warmup(self) -> None:
+        """r636: one-shot. This used to be an unconditional executor job inside
+        _ensure_local_stt_ready; now it runs only when a reading line is
+        actually shown, and only once the pipeline has settled (or the gate
+        times out), so it never competes with the model load for the GIL."""
+        if self._deferred_translit_task is not None:
+            return
+        if not self._any_reading_line_enabled():
+            return
+
+        async def _run() -> None:
+            await self.await_pipeline_settled()
+            with contextlib.suppress(Exception):
+                from puripuly_heart.core.transliteration import warmup as _warm_translit
+
+                await asyncio.to_thread(_warm_translit)
+
+        with contextlib.suppress(Exception):
+            self._deferred_translit_task = asyncio.create_task(_run())
+
+    async def _cancel_startup_order_tasks(self) -> None:
+        """r636: cancel/await the early warmup, the deferred transliteration
+        warmup and the background Whisper probe. Called from stop()."""
+        tasks = [
+            self._early_stt_warmup_task,
+            self._deferred_translit_task,
+            self._whisper_probe_task,
+        ]
+        self._early_stt_warmup_task = None
+        self._deferred_translit_task = None
+        self._whisper_probe_task = None
+        # Open the gate first: a deferred warmup parked on it would otherwise
+        # sit out its whole timeout before noticing the cancellation.
+        self.note_pipeline_settled()
+        pending = [task for task in tasks if task is not None and not task.done()]
+        for task in pending:
+            task.cancel()
+        if pending:
+            with contextlib.suppress(Exception):
+                await asyncio.gather(*pending, return_exceptions=True)
 
     def _stt_provider_applies_custom_vocabulary(self, settings: AppSettings) -> bool:
         return settings.provider.stt in (
@@ -990,26 +1316,19 @@ class GuiController:
         behind the Great Firewall — and notify the user."""
         if self.settings is None:
             return
-        from puripuly_heart.providers.stt.whisper_stt import (
-            is_huggingface_reachable,
-            whisper_model_locally_available,
-        )
+        # r636: OFF the critical path unless Whisper is actually selected. The
+        # probe cost 0.4-0.6 s (up to 2.9 s) of every launch even when both
+        # channels run local Qwen; all it did then was grey the option out in
+        # the picker, which a background task delivers just as well.
+        if STTProviderName.WHISPER not in (
+            self.settings.provider.stt,
+            self.settings.provider.peer_stt,
+        ):
+            self._schedule_whisper_availability_probe()
+            return
 
-        model_name = getattr(self.settings.whisper_stt, "model", "")
-        available = True
-        try:
-            if not await asyncio.to_thread(whisper_model_locally_available, model_name):
-                # Not cached — it would need to download from HuggingFace.
-                available = await asyncio.to_thread(is_huggingface_reachable, 2.5)
-        except Exception:
-            available = True  # never let the probe itself disrupt startup
-
-        # Tell the dashboard so the STT picker can grey Whisper out when unavailable.
-        dash = getattr(self.app, "view_dashboard", None)
-        set_avail = getattr(dash, "set_whisper_availability", None)
-        if callable(set_avail):
-            with contextlib.suppress(Exception):
-                set_avail(available, "dashboard.whisper_hub_unreachable")
+        available = await self._probe_whisper_available()
+        self._push_whisper_availability(available)
 
         if available:
             return
@@ -1034,6 +1353,43 @@ class GuiController:
         if callable(sync):
             with contextlib.suppress(Exception):
                 sync(self.settings)
+
+    async def _probe_whisper_available(self) -> bool:
+        """r636 (extracted): cached model, or HuggingFace reachable to fetch it."""
+        if self.settings is None:
+            return True
+        from puripuly_heart.providers.stt.whisper_stt import (
+            is_huggingface_reachable,
+            whisper_model_locally_available,
+        )
+
+        model_name = getattr(self.settings.whisper_stt, "model", "")
+        try:
+            if await asyncio.to_thread(whisper_model_locally_available, model_name):
+                return True
+            # Not cached — it would need to download from HuggingFace.
+            return bool(await asyncio.to_thread(is_huggingface_reachable, 2.5))
+        except Exception:
+            return True  # never let the probe itself disrupt startup
+
+    def _push_whisper_availability(self, available: bool) -> None:
+        """Tell the dashboard so the STT picker can grey Whisper out."""
+        dash = getattr(self.app, "view_dashboard", None)
+        set_avail = getattr(dash, "set_whisper_availability", None)
+        if callable(set_avail):
+            with contextlib.suppress(Exception):
+                set_avail(bool(available), "dashboard.whisper_hub_unreachable")
+
+    def _schedule_whisper_availability_probe(self) -> None:
+        """r636: the picker hint only — no blocking network probe in start()."""
+        if self._whisper_probe_task is not None:
+            return
+
+        async def _run() -> None:
+            self._push_whisper_availability(await self._probe_whisper_available())
+
+        with contextlib.suppress(Exception):
+            self._whisper_probe_task = asyncio.create_task(_run())
 
     async def _on_whisper_download_blocked(self, error_msg: str) -> None:
         """First live Whisper model-download failure: tell the user what's wrong
@@ -2889,6 +3245,11 @@ class GuiController:
         )
 
     async def stop(self) -> None:
+        # r636: startup-order tasks first — a still-running early warmup owns
+        # the crash sentinel and a 4-5 s native build; cancelling it (and the
+        # gate-waiting deferred warmups) before the rest of teardown keeps
+        # them from starting new work behind our back.
+        await self._cancel_startup_order_tasks()
         await self._drain_github_star_prompt_translation_success_task()
         await self._cancel_local_stt_download()
         await self.stop_microphone_test()
@@ -3051,6 +3412,14 @@ class GuiController:
             self._peer_translation_activation_requested_for(self.settings)
         )
         if enabled:
+            # r636: let the early startup warmup finish first. It builds the
+            # SAME "peer" backend, and _ensure_recognizer writes one shared
+            # crash sentinel (.stt_load_sentinel_peer) for the duration of a
+            # load — a second concurrent build would read the in-flight
+            # sentinel as "the model crashed the app last time". After startup
+            # this returns instantly (no task, or already done), and the
+            # recognizer it left in the r386 cache makes this enable free.
+            await self._await_early_local_stt_warmup()
             await self._ensure_peer_local_stt_ready()
         self._clear_local_stt_pending_enable_if_provider_switched_away()
         self._sync_local_stt_notice()
@@ -4026,14 +4395,18 @@ class GuiController:
         try:
             # Warm the romaji/pinyin backends off-thread so the first Japanese/Chinese
             # utterance doesn't eat the ~150ms one-time MeCab dictionary load.
-            with contextlib.suppress(Exception):
-                from puripuly_heart.core.transliteration import warmup as _warm_translit
-                asyncio.get_running_loop().run_in_executor(None, _warm_translit)
+            # r636: one-shot, gated on a reading line actually being shown and
+            # held until the pipeline settles — it used to fire on every mic
+            # enable, +241 MB and ~0.5 s of GIL against the model load.
+            self._schedule_deferred_transliteration_warmup()
             await self.hub.stt.warmup()
             self._local_stt_install_state = LocalSTTInstallState(status="ready")
             if self._local_stt_runtime_status != "downloading":
                 self._local_stt_runtime_status = "ready"
             self._sync_local_stt_notice()
+            # r636: the self recognizer is up — release the deferred warmups
+            # even if the peer channel never started.
+            self.note_pipeline_settled()
             return True
         except LocalSTTModelMissingError:
             return self._handle_local_stt_unavailable(
@@ -4978,7 +5351,7 @@ class GuiController:
             ),
         )
 
-    def _create_peer_process_audio_source(self, target):
+    def _create_peer_process_audio_source(self, target, resolution=None):
         from puripuly_heart.config.process_capture_resolution import (
             ProcessCaptureResolver,
         )
@@ -4988,8 +5361,12 @@ class GuiController:
         )
         from puripuly_heart.core.audio.process_source import ProcessAudioCaptureSource
 
-        resolver = ProcessCaptureResolver(snapshots=PsutilCurrentUserProcessSnapshots())
-        resolution = resolver.resolve_for_start(target)
+        if resolution is None:
+            # r635: the event-loop caller pre-resolves on a worker thread (see
+            # _create_peer_audio_source_from_runtime_config_async); this psutil
+            # scan is the synchronous fallback
+            resolver = ProcessCaptureResolver(snapshots=PsutilCurrentUserProcessSnapshots())
+            resolution = resolver.resolve_for_start(target)
         if not resolution.available:
             reason = resolution.unavailable_reason or "no_process"
             self.log_basic(
@@ -5008,14 +5385,17 @@ class GuiController:
         )
         return source
 
-    def _create_peer_audio_source_from_runtime_config(self, config: PeerRuntimeConfig):
+    def _create_peer_audio_source_from_runtime_config(
+        self, config: PeerRuntimeConfig, resolution=None
+    ):
         from puripuly_heart.config.process_capture_target import (
             parse_process_capture_target,
         )
 
         process_target = parse_process_capture_target(config.output_device)
         if process_target is not None:
-            raw_source = self._create_peer_process_audio_source(process_target)
+            raw_source = self._create_peer_process_audio_source(
+                process_target, resolution=resolution)
             wrapped_source = self._wrap_diagnostic_audio_source(
                 raw_source,
                 channel_label="peer",
@@ -5064,6 +5444,34 @@ class GuiController:
             is_detailed_enabled=self._detailed_audio_diag_enabled,
             log_detailed=lambda message: self.log_detailed(message),
         )
+
+    async def _create_peer_audio_source_from_runtime_config_async(
+        self, config: PeerRuntimeConfig
+    ):
+        """r635: the peer runtime's source_factory. The psutil process scan
+        behind resolve_for_start (41 ms warm, >1 s cold) used to run on the
+        event loop; pre-resolve app targets on a worker thread, then build
+        the source with the synchronous factory as before."""
+        from puripuly_heart.config.process_capture_target import (
+            parse_process_capture_target,
+        )
+
+        resolution = None
+        process_target = parse_process_capture_target(config.output_device)
+        if process_target is not None:
+            from puripuly_heart.config.process_capture_resolution import (
+                ProcessCaptureResolver,
+            )
+            from puripuly_heart.core.audio.process_identity import (
+                PsutilCurrentUserProcessSnapshots,
+            )
+
+            resolver = ProcessCaptureResolver(
+                snapshots=PsutilCurrentUserProcessSnapshots())
+            resolution = await asyncio.to_thread(
+                resolver.resolve_for_start, process_target)
+        return self._create_peer_audio_source_from_runtime_config(
+            config, resolution=resolution)
 
     @property
     def debug_capture_fault_profile(self) -> str:
@@ -5502,7 +5910,9 @@ class GuiController:
                     continue
                 resolver = ProcessCaptureResolver(
                     snapshots=PsutilCurrentUserProcessSnapshots())
-                resolution = resolver.resolve_for_start(target)
+                # r635: psutil scan (41 ms warm, >1 s cold) off the loop
+                resolution = await asyncio.to_thread(
+                    resolver.resolve_for_start, target)
                 if not getattr(resolution, "available", False):
                     # app still gone — reflect it on the PEER pill once
                     if not self._peer_target_missing:
@@ -5831,7 +6241,8 @@ class GuiController:
             hub=hub,
             clock=self.clock,
             stt_factory=self._create_peer_stt_provider_from_runtime_config,
-            source_factory=self._create_peer_audio_source_from_runtime_config,
+            # r635: async - pre-resolves app targets off the loop
+            source_factory=self._create_peer_audio_source_from_runtime_config_async,
             vad_factory=self._create_peer_vad_from_runtime_config,
             vad_model_resolver=ensure_silero_vad_onnx,
             run_audio_loop=self._run_peer_audio_vad_loop,

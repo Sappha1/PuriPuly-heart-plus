@@ -377,6 +377,107 @@ async def test_provider_factory_failure_transitions_faulted_without_attach() -> 
 
 
 @pytest.mark.asyncio
+async def test_async_source_factory_starts_running_and_uses_awaited_source() -> None:
+    # r635: the app's source factory is async (process target pre-resolved
+    # off the loop); the runtime must await it and feed the RESULT, not the
+    # coroutine, to the audio loop.
+    hub = DummyHub()
+    source = DummySource()
+    loop_sources: list[object] = []
+
+    async def async_source_factory(config: PeerRuntimeConfig):
+        await asyncio.sleep(0)
+        return source
+
+    async def capturing_run_audio_loop(**kwargs) -> None:
+        loop_sources.append(kwargs.get("source"))
+        await asyncio.Event().wait()
+
+    runtime = PeerChannelRuntime(
+        hub=hub,
+        clock=FakeClock(),
+        stt_factory=lambda config, on_terminal_failure: DummyManagedSTT(),
+        source_factory=async_source_factory,
+        vad_factory=lambda config, model_path: "peer-vad",
+        vad_model_resolver=lambda: Path("vad.onnx"),
+        run_audio_loop=capturing_run_audio_loop,
+    )
+
+    await runtime.apply_policy(config=make_peer_runtime_config(), desired_active=True)
+    for _ in range(3):
+        await asyncio.sleep(0)
+
+    assert runtime.state == PeerChannelRuntimeState.RUNNING
+    assert hub.peer_stt is not None
+    assert loop_sources == [source]
+    assert source.close_calls == 0
+
+    await runtime.close()
+
+    assert source.close_calls == 1
+    assert runtime.state == PeerChannelRuntimeState.STOPPED
+
+
+@pytest.mark.asyncio
+async def test_async_source_factory_failure_transitions_faulted_and_closes_stt() -> None:
+    hub = DummyHub()
+    stt = DummyManagedSTT()
+
+    async def failing_source_factory(config: PeerRuntimeConfig):
+        await asyncio.sleep(0)
+        raise RuntimeError("process capture target unavailable")
+
+    runtime = PeerChannelRuntime(
+        hub=hub,
+        clock=FakeClock(),
+        stt_factory=lambda config, on_terminal_failure: stt,
+        source_factory=failing_source_factory,
+        vad_factory=lambda config, model_path: "peer-vad",
+        vad_model_resolver=lambda: Path("vad.onnx"),
+        run_audio_loop=fake_run_audio_loop,
+    )
+
+    await runtime.apply_policy(config=make_peer_runtime_config(), desired_active=True)
+
+    assert runtime.state == PeerChannelRuntimeState.FAULTED
+    assert stt.close_calls == 1
+    assert hub.replace_peer_stt_calls[-1] is None
+
+
+@pytest.mark.asyncio
+async def test_async_source_factory_cancelled_mid_await_closes_stt() -> None:
+    # r635: CancelledError is not an Exception - cancelling apply_policy while
+    # the async factory is in flight must still close the stt built before it.
+    hub = DummyHub()
+    stt = DummyManagedSTT()
+    entered = asyncio.Event()
+
+    async def hanging_source_factory(config: PeerRuntimeConfig):
+        entered.set()
+        await asyncio.Event().wait()
+
+    runtime = PeerChannelRuntime(
+        hub=hub,
+        clock=FakeClock(),
+        stt_factory=lambda config, on_terminal_failure: stt,
+        source_factory=hanging_source_factory,
+        vad_factory=lambda config, model_path: "peer-vad",
+        vad_model_resolver=lambda: Path("vad.onnx"),
+        run_audio_loop=fake_run_audio_loop,
+    )
+
+    task = asyncio.create_task(
+        runtime.apply_policy(config=make_peer_runtime_config(), desired_active=True)
+    )
+    await entered.wait()
+    task.cancel()
+    with pytest.raises(asyncio.CancelledError):
+        await task
+
+    assert stt.close_calls == 1
+
+
+@pytest.mark.asyncio
 async def test_loop_crash_detaches_and_moves_runtime_to_faulted() -> None:
     hub = DummyHub()
 
@@ -485,3 +586,54 @@ async def test_close_detaches_provider_and_cancels_running_loop() -> None:
 
     assert hub.replace_peer_stt_calls[-1] is None
     assert runtime.state == PeerChannelRuntimeState.STOPPED
+
+
+@pytest.mark.asyncio
+async def test_same_signature_reapply_refreshes_hints_on_the_wrapped_backend() -> None:
+    """r633: the runtime holds a ManagedSTTProvider wrapper; the language /
+    script-retry hints live on the backend inside it. A pin change with an
+    unchanged runtime signature must reach that backend (switching to Auto
+    Detect must CLEAR the retry hint), not silently no-op on the wrapper."""
+    from dataclasses import replace
+
+    from puripuly_heart.core.stt.controller import ManagedSTTProvider
+
+    @dataclass(slots=True)
+    class StubBackend:
+        language_hint: str | None = None
+        script_retry_language_hint: str | None = None
+
+    class QuietManaged(ManagedSTTProvider):
+        # the runtime warms up / closes the provider; neither needs a session here
+        async def warmup(self) -> None:
+            return None
+
+        async def close(self) -> None:
+            return None
+
+    backend = StubBackend()
+    provider = QuietManaged(backend=backend, sample_rate_hz=16000, channel="peer")
+    runtime = PeerChannelRuntime(
+        hub=DummyHub(),
+        clock=FakeClock(),
+        stt_factory=lambda config, on_terminal_failure: provider,
+        source_factory=lambda config: DummySource(),
+        vad_factory=lambda config, model_path: "peer-vad",
+        vad_model_resolver=lambda: Path("vad.onnx"),
+        run_audio_loop=fake_run_audio_loop,
+    )
+
+    pinned = make_peer_runtime_config()
+    pinned = replace(pinned, backend=replace(pinned.backend, script_retry_language_hint="Korean"))
+    await runtime.apply_policy(config=pinned, desired_active=True)
+    # the factory-built backend already carries the hint; the refresh path must
+    # also be able to SET it on a live backend
+    assert runtime.state == PeerChannelRuntimeState.RUNNING
+    await runtime.apply_policy(config=pinned, desired_active=True)
+    assert backend.script_retry_language_hint == "Korean"
+
+    # same runtime signature, pin switched to Auto Detect -> cleared live
+    auto = replace(pinned, backend=replace(pinned.backend, script_retry_language_hint=None))
+    await runtime.apply_policy(config=auto, desired_active=True)
+    assert backend.script_retry_language_hint is None
+    assert backend.language_hint is None

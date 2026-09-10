@@ -1,15 +1,25 @@
 from __future__ import annotations
 
+import os
+
+# r636: cap the BLAS/OpenMP worker pools BEFORE numpy can load (nothing above
+# this line imports it; the imports below are stdlib + config.paths +
+# runtime_logging, none of which touch numpy). Uncapped, OpenBLAS spawned 23
+# threads and committed ~818 MB in EACH of the app's three processes for math
+# it never does at that scale. ORT and sherpa size their own pools and are
+# deliberately left alone. Child processes inherit these via the environment.
+os.environ.setdefault("OPENBLAS_NUM_THREADS", "1")
+os.environ.setdefault("OMP_NUM_THREADS", "1")
+
 import argparse
 import asyncio
 import logging
-import os
 import sys
 from pathlib import Path
 from typing import TYPE_CHECKING, Any
 
 from puripuly_heart.config.paths import default_settings_path, default_vad_model_path
-from puripuly_heart.core.runtime_logging import configure_main_logging
+from puripuly_heart.core.runtime_logging import OVERLAY_LOG_FILENAME, configure_main_logging
 
 if TYPE_CHECKING:
     from puripuly_heart.config.settings import AppSettings
@@ -257,32 +267,16 @@ def _stop_steam_helper() -> None:
         pass
 
 
-_SINGLE_INSTANCE_MUTEX_HANDLE = None
-
-
 def _acquire_single_instance_lock() -> bool:
-    """True if this is the only GUI instance. Uses a named Windows mutex so that
-    auto-launch (SteamVR / VRChat launch options) can't spawn a duplicate app that
-    would fight over the OSC port and settings file. The handle is intentionally
-    kept for the process lifetime."""
-    if sys.platform != "win32":
-        return True
-    global _SINGLE_INSTANCE_MUTEX_HANDLE
-    try:
-        import ctypes
+    """True if this is the only GUI instance. r647: the mutex now lives in
+    puripuly_heart.single_instance (its own module, so the frozen __main__
+    entry and the shutdown path share one handle) and is RELEASED at
+    begin_shutdown - so this needs no wait: a genuine duplicate is rejected
+    instantly (no boot-splash lingering), and a close-then-relaunch acquires
+    immediately because the closing instance already released the mutex."""
+    from puripuly_heart import single_instance
 
-        # OCR PROTOTYPE BRANCH: distinct mutex name so this test build can run
-        # ALONGSIDE the release install (which holds ".SingleInstance").
-        handle = ctypes.windll.kernel32.CreateMutexW(
-            None, False, "PuriPulyHeartPlus.SingleInstance.OCRProto"
-        )
-        if not handle:
-            return True  # can't tell — don't block startup
-        _SINGLE_INSTANCE_MUTEX_HANDLE = handle
-        error_already_exists = 183
-        return ctypes.windll.kernel32.GetLastError() != error_already_exists
-    except Exception:
-        return True
+    return single_instance.acquire()
 
 
 def _run_launch_wrapper(game_argv: list[str]) -> int:
@@ -346,7 +340,15 @@ def main(argv: list[str] | None = None) -> int:
         return run_steam_window()
     argv = raw_argv
 
-    logging_sinks = configure_main_logging()
+    # r636: the overlay renderer subprocess gets its own log file. Sharing
+    # puripuly_heart.log with the GUI process made every rollover fail on
+    # Windows (rename of a file the other process holds) and silently dropped
+    # the rolling side's records. Decided on raw argv because the file has to
+    # be open before argparse runs (parse errors are logged too).
+    if "run-desktop-overlay" in raw_argv or "run-desktop-overlay-preview" in raw_argv:
+        logging_sinks = configure_main_logging(log_filename=OVERLAY_LOG_FILENAME)
+    else:
+        logging_sinks = configure_main_logging()
     # r354: before anything can import huggingface_hub, which reads its
     # endpoint once at import time. A user behind the Great Firewall had every
     # model download time out, which left them on the one recogniser their CPU
@@ -360,10 +362,6 @@ def main(argv: list[str] | None = None) -> int:
     except Exception:
         logging.getLogger(__name__).debug("mirror setup skipped", exc_info=True)
     try:
-        from puripuly_heart.core.system_info import log_system_info_async
-
-        log_system_info_async()
-
         parser = build_parser()
         args = parser.parse_args(argv)
 
@@ -384,8 +382,53 @@ def main(argv: list[str] | None = None) -> int:
         # renderer subcommand is a legitimate second process of this exe and is
         # exempt.
         if args.command in (None, "run-gui") and not _acquire_single_instance_lock():
+            # r647: a genuine duplicate (the app really is running, mutex held)
+            # is rejected instantly - close the boot splash the moment we know,
+            # so it does not linger. A close-then-relaunch does not reach here:
+            # the closing instance releases the mutex at begin_shutdown.
+            try:
+                from puripuly_heart import boot_splash
+                boot_splash.close()
+            except Exception:
+                pass
             print("PuriPulyHeart is already running.", flush=True)
             return 0
+
+        if args.command in (None, "run-gui"):
+            # r649: honour the "show boot splash" setting. The splash is drawn by
+            # the exe bootloader BEFORE Python runs, so it cannot be suppressed
+            # outright - but if the user turned it off we close it now (it barely
+            # registers) instead of animating it. Read the flag straight from the
+            # settings file so this stays ahead of the slow model load.
+            _splash_on = True
+            try:
+                import json as _json
+
+                _sp = args.config
+                if _sp is not None and Path(_sp).is_file():
+                    _sd = _json.loads(Path(_sp).read_text(encoding="utf-8"))
+                    _splash_on = bool(_sd.get("ui", {}).get("show_boot_splash", True))
+            except Exception:
+                _splash_on = True
+            # r643: animate the percentage as early as possible so it climbs
+            # during the slow numpy / onnxruntime import below (frozen only).
+            try:
+                from puripuly_heart import boot_splash
+                if _splash_on:
+                    boot_splash.start_progress()
+                else:
+                    boot_splash.close()
+            except Exception:
+                pass
+
+        if args.command in (None, "run-gui"):
+            # r636: GUI process only. This used to run for EVERY subcommand,
+            # and its int8 probe imports numpy + onnxruntime -- the overlay
+            # renderer paid the whole OpenBLAS pool (~818 MB, 23 threads) to
+            # write a [SysInfo] line the GUI process had already written.
+            from puripuly_heart.core.system_info import log_system_info_async
+
+            log_system_info_async()
 
         if args.command == "run-desktop-overlay":
             return _run_desktop_overlay(args.config)

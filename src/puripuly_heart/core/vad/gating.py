@@ -421,11 +421,21 @@ class VadGating:
     ) -> None:
         if not self.candidate_log_label:
             return
+        # r636: these three lines were 6,600 INFO records a day (~45% of the
+        # app log) on a normal peer session. They are a diagnostic aid, so
+        # they stay at INFO only while detailed diagnostics are ON - the
+        # r629/r630 "dropped" facts (hits/prob/min_prob) are still needed
+        # there to chase missed speech. Otherwise they drop to DEBUG: nothing
+        # is lost, they just no longer reach the shipped log.
+        level = logging.INFO if self._candidate_log_detailed() else logging.DEBUG
+        if not logger.isEnabledFor(level):
+            return
         utterance = (
             str(self._pending_start_id)[:8] if self._pending_start_id is not None else "unknown"
         )
         if action == "start":
-            logger.info(
+            logger.log(
+                level,
                 "[VAD][TEST] %s candidate start: id=%s, prob=%.2f",
                 self.candidate_log_label,
                 utterance,
@@ -433,7 +443,8 @@ class VadGating:
             )
             return
         if action == "dropped":
-            logger.info(
+            logger.log(
+                level,
                 "[VAD][TEST] %s candidate dropped: id=%s, buffered_chunks=%s, hits=%s, "
                 "prob=%s, min_prob=%s",
                 self.candidate_log_label,
@@ -445,7 +456,8 @@ class VadGating:
             )
             return
         if action == "committed":
-            logger.info(
+            logger.log(
+                level,
                 "[VAD][TEST] %s candidate committed: id=%s, buffered_chunks=%s, hits=%s, "
                 "min_prob=%s",
                 self.candidate_log_label,
@@ -454,6 +466,21 @@ class VadGating:
                 hits,
                 "n/a" if min_prob is None else f"{min_prob:.2f}",
             )
+
+    def _candidate_log_detailed(self) -> bool:
+        """r636: detail-level probe for the candidate lines only.
+
+        Unlike _diagnostics_enabled() this does NOT require a diagnostic event
+        callback - the candidate lines go to the logger, not to the detailed
+        event sink, so the runtime's detail flag alone decides. No flag wired
+        (headless runs, unit tests) = not detailed.
+        """
+        probe = self.diagnostics_enabled
+        if probe is None:
+            return False
+        with contextlib.suppress(Exception):
+            return bool(probe())
+        return False
 
     def _diagnostics_enabled(self) -> bool:
         if self.diagnostic_event_callback is None:

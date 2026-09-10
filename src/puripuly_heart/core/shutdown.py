@@ -91,6 +91,15 @@ def begin_shutdown(reason: str = "") -> None:
         return
     _shutting_down.set()
     logger.info("[Shutdown] begin%s", f": {reason}" if reason else "")
+    # r647: release the single-instance mutex the moment we commit to closing,
+    # so a quick relaunch acquires it immediately instead of being rejected and
+    # flashing the boot splash while this process finishes tearing down.
+    try:
+        from puripuly_heart import single_instance
+
+        single_instance.release()
+    except Exception:
+        pass
 
 
 def is_shutting_down() -> bool:

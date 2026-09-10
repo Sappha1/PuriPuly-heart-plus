@@ -34,7 +34,10 @@ from puripuly_heart.core.stt.local_qwen_hallucination import (
     is_known_local_qwen_hallucination,
 )
 
-DEFAULT_SHERPA_NUM_THREADS = 3
+# r634: 3 -> 4. Measured on the real qwen3-asr-0.6b-int8 files with the app's
+# own ORT runtime: ~18% faster decodes at 4 threads; beyond that the gain
+# flattens and competes with the game for cores.
+DEFAULT_SHERPA_NUM_THREADS = 4
 LOCAL_QWEN_RECOGNIZER_SAMPLE_RATE_HZ = 16000
 _KNOWN_HALLUCINATION_LOG_REDACTION = "<known-local-qwen-hallucination>"
 # Mean per-token log-prob below which a transcript is treated as garbage the model
@@ -210,6 +213,47 @@ def _looks_script_mismatched(text: str, language_hint: str | None) -> bool:
     cjk = sum("\u4e00" <= ch <= "\u9fff" for ch in text)
     latin = sum("a" <= ch.lower() <= "z" for ch in text)
     return cjk >= 3 or latin >= max(5, len(text) // 2)
+
+
+# r632: CJK-confusion re-decode support -------------------------------------
+_DEFAULT_HINT = object()   # sentinel: use the backend's own language_hint
+# scripts that are COMPATIBLE with a pinned language (no retry needed)
+_COMPATIBLE_SCRIPTS_FOR_HINT = {
+    "Korean": {"hangul"},
+    "Japanese": {"kana", "han"},   # kanji-only lines are still Japanese
+    "Chinese": {"han"},
+}
+# scripts that mean the model picked the WRONG CJK language
+_CONFUSED_SCRIPTS_FOR_HINT = {
+    "Korean": {"han", "kana"},
+    "Japanese": {"hangul"},
+    "Chinese": {"hangul", "kana"},
+}
+
+
+def _dominant_cjk_script(text: str) -> str | None:
+    hangul = kana = han = 0
+    for ch in text:
+        if "\uac00" <= ch <= "\ud7af" or "\u1100" <= ch <= "\u11ff" or "\u3130" <= ch <= "\u318f":
+            hangul += 1
+        elif "\u3040" <= ch <= "\u30ff":
+            kana += 1
+        elif "\u4e00" <= ch <= "\u9fff":
+            han += 1
+    counts = {"hangul": hangul, "kana": kana, "han": han}
+    best = max(counts, key=counts.get)
+    return best if counts[best] > 0 else None
+
+
+def _script_retry_wanted(text: str, retry_hint: str | None) -> bool:
+    if not text or not retry_hint:
+        return False
+    confused = _CONFUSED_SCRIPTS_FOR_HINT.get(retry_hint)
+    return bool(confused) and _dominant_cjk_script(text) in confused
+
+
+def _script_matches_hint(text: str, retry_hint: str) -> bool:
+    return _dominant_cjk_script(text) in _COMPATIBLE_SCRIPTS_FOR_HINT.get(retry_hint, set())
 
 
 def _pcm16le_duration_ms(pcm16le_size_bytes: int, sample_rate_hz: int) -> float:
@@ -407,6 +451,11 @@ class LocalQwenSherpaSTTBackend(STTBackend):
     provider: str = "cpu"
     stream_label: str | None = None
     language_hint: str | None = None
+    # r632: the pinned peer language as a Qwen hint, used ONLY to re-decode a
+    # result that came back in a different CJK script (Korean heard as
+    # Mandarin). Latin results are never retried: that is the r382 protection
+    # against a stale pin turning an English room into fabricated text.
+    script_retry_language_hint: str | None = None
     hotwords: tuple[str, ...] = ()
     # Mean per-token log-prob below which a transcript is dropped as garbage. None
     # disables the confidence filter entirely (no transcripts dropped on confidence).
@@ -616,14 +665,75 @@ class LocalQwenSherpaSTTBackend(STTBackend):
                     "recognizer was poisoned by a timed-out decode; a fresh "
                     "instance will be built on the next utterance"
                 )
-            timeout_s = self.decode_timeout_s
+            text, lang = await self._decode_guarded(recognizer, samples_f32)
+            retry_hint = self.script_retry_language_hint
+            if (
+                retry_hint
+                and not self.language_hint
+                and _script_retry_wanted(text, retry_hint)
+            ):
+                # r632: the model picked a different CJK language than the one
+                # pinned for this channel (Korean speech written as Mandarin is
+                # the common case). Decode the same audio once more, telling it
+                # which language to expect; keep the retry only if the script
+                # now agrees. Latin results never reach this branch.
+                first_script = _dominant_cjk_script(text)
+                # r633: the first decode may have taken seconds; do not start
+                # another native decode into a closing app or onto a
+                # recognizer the other channel poisoned meanwhile.
+                if is_shutting_down() or _recognizer_is_poisoned(recognizer):
+                    return text, lang
+                try:
+                    text2, lang2 = await self._decode_guarded(
+                        recognizer, samples_f32, language_hint=retry_hint
+                    )
+                except LocalQwenSherpaDecodeTimeoutError:
+                    raise   # poison semantics: a hung decode must surface
+                except LocalQwenSherpaInferenceError as exc:
+                    # r633: a transient failure in the RETRY must not throw
+                    # away a transcript the first decode already produced
+                    logger.warning(
+                        "%s re-decode with language=%s failed (%s); keeping the "
+                        "first result",
+                        _log_prefix(self.stream_label), retry_hint, exc,
+                    )
+                    return text, lang
+                if text2 and _script_matches_hint(text2, retry_hint):
+                    logger.info(
+                        "%s re-decoded with language=%s: %s -> %s",
+                        _log_prefix(self.stream_label), retry_hint,
+                        first_script, _dominant_cjk_script(text2),
+                    )
+                    return text2, lang2
+                logger.info(
+                    "%s re-decode with language=%s did not yield %s text; "
+                    "keeping the first result",
+                    _log_prefix(self.stream_label), retry_hint, first_script,
+                )
+            return text, lang
+
+    async def _decode_guarded(
+        self,
+        recognizer: object,
+        samples_f32: np.ndarray,
+        *,
+        language_hint: object = _DEFAULT_HINT,
+    ) -> tuple[str, str | None]:
+        """One native decode under the timeout/poison guard (caller holds
+        _decode_lock and has already checked for poison)."""
+        timeout_s = self.decode_timeout_s
+        if True:
             try:
                 if timeout_s > 0:
                     return await asyncio.wait_for(
-                        self._decode_in_abandonable_thread(recognizer, samples_f32),
+                        self._decode_in_abandonable_thread(
+                            recognizer, samples_f32, language_hint=language_hint
+                        ),
                         timeout=timeout_s,
                     )
-                return await self._decode_in_abandonable_thread(recognizer, samples_f32)
+                return await self._decode_in_abandonable_thread(
+                    recognizer, samples_f32, language_hint=language_hint
+                )
             except (asyncio.TimeoutError, TimeoutError):
                 self._poison_recognizer(recognizer)
                 audio_ms = _sample_count_duration_ms(
@@ -647,7 +757,11 @@ class LocalQwenSherpaSTTBackend(STTBackend):
                 raise LocalQwenSherpaInferenceError(str(exc)) from exc
 
     async def _decode_in_abandonable_thread(
-        self, recognizer: object, samples_f32: np.ndarray
+        self,
+        recognizer: object,
+        samples_f32: np.ndarray,
+        *,
+        language_hint: object = _DEFAULT_HINT,
     ) -> tuple[str, str | None]:
         """Run the native decode on a dedicated daemon thread that is safe to
         abandon.
@@ -679,7 +793,8 @@ class LocalQwenSherpaSTTBackend(STTBackend):
 
         def _worker() -> None:
             try:
-                _deliver(result=self._decode_f32_sync(recognizer, samples_f32))
+                _deliver(result=self._decode_f32_sync(
+                    recognizer, samples_f32, language_hint=language_hint))
             except BaseException as exc:
                 _deliver(exc=exc)
 
@@ -716,14 +831,19 @@ class LocalQwenSherpaSTTBackend(STTBackend):
         return text.split("-")[0]
 
     def _decode_f32_sync(
-        self, recognizer: object, samples_f32: np.ndarray
+        self,
+        recognizer: object,
+        samples_f32: np.ndarray,
+        *,
+        language_hint: object = _DEFAULT_HINT,
     ) -> tuple[str, str | None]:
+        hint = self.language_hint if language_hint is _DEFAULT_HINT else language_hint
         samples = np.asarray(samples_f32, dtype=np.float32).reshape(-1).copy()
         stream = recognizer.create_stream()
         set_option = getattr(stream, "set_option", None)
         if callable(set_option):
-            if self.language_hint:
-                set_option("language", self.language_hint)
+            if hint:
+                set_option("language", hint)
             if self.hotwords:
                 set_option("hotwords", ",".join(self.hotwords))
         np.clip(samples, -1.0, 1.0, out=samples)
@@ -768,7 +888,7 @@ class LocalQwenSherpaSTTBackend(STTBackend):
                 _audio_diag_prefix(self.stream_label),
                 detected_lang,
                 "n/a" if avg_logprob is None else f"{avg_logprob:.3f}",
-                self.language_hint,
+                hint,
                 text[:60],
             )
         threshold = self.min_avg_logprob
@@ -822,26 +942,71 @@ class _LocalQwenSherpaSession(STTBackendSession):
             return
         self._buffer_f32.append(samples.copy())
 
+    # r634: the VAD keeps every hangover chunk in the segment, so each decode
+    # carried ~500 ms of trailing silence. Keep this much of it (the model
+    # likes a little tail) and drop the rest before decoding; detection
+    # itself is unchanged because the VAD still waits the full hangover.
+    _KEEP_TAIL_SILENCE_MS = 150
+    _MIN_SEGMENT_MS_AFTER_TRIM = 320
+
     async def on_speech_end(self, *, trailing_silence_ms: int | None = None) -> None:
-        _ = trailing_silence_ms
         if self._closed or not self._buffer_f32:
             return
 
         samples_f32 = np.concatenate(self._buffer_f32)
         self._buffer_f32.clear()
+        # r635: speaker ID keeps the UNtrimmed segment. Its gates
+        # (MIN_UTTERANCE_SECONDS 1.2 / MIN_TRUSTED_SECONDS 2.0 in
+        # core/speaker_id.py, the r360 faint/gappy bounds) were measured on
+        # VAD-padded segments; handing it the trimmed audio shortened both the
+        # vector's input and speaker_seconds and pushed real utterances under
+        # the enrol threshold. Only the decoder sees the trim.
+        speaker_samples_f32 = samples_f32
+        sr = self.backend.sample_rate_hz
+        if trailing_silence_ms and trailing_silence_ms > self._KEEP_TAIL_SILENCE_MS:
+            cut = int((trailing_silence_ms - self._KEEP_TAIL_SILENCE_MS) * sr / 1000)
+            keep_min = int(self._MIN_SEGMENT_MS_AFTER_TRIM * sr / 1000)
+            if 0 < cut < samples_f32.size - keep_min:
+                samples_f32 = samples_f32[:-cut]
         audio_ms = _sample_count_duration_ms(samples_f32.size, self.backend.sample_rate_hz)
         diag_enabled = self._diagnostics_enabled()
         # r313: always log decode_start — one line per utterance with rms/peak
         # is the difference between diagnosing a user's junk-transcript log in
         # one pass and guessing (two logs arrived without it this week).
         self._log_decode_start_diagnostics(samples_f32)
+        # r634: the speaker embedding is independent of the decode (same
+        # samples, its own ONNX session) but used to run strictly AFTER it,
+        # adding ~360 ms before the transcript could leave. Start it now and
+        # collect it once the decode is back.
+        embed_task: asyncio.Task | None = None
+        embedder = getattr(self.backend, "speaker_embedder", None)
+        if (
+            embedder is not None
+            # r635: no new native work into a closing app
+            and not is_shutting_down()
+            and not self._too_faint_to_identify(speaker_samples_f32)
+        ):
+            try:
+                embed_task = asyncio.create_task(
+                    asyncio.to_thread(embedder.embed, speaker_samples_f32))
+            except Exception:
+                embed_task = None
+            else:
+                # r635: if this coroutine is cancelled mid-decode nobody
+                # awaits the task; retrieving the exception here keeps
+                # asyncio from logging "Task exception was never retrieved".
+                embed_task.add_done_callback(
+                    lambda t: (not t.cancelled()) and t.exception())
 
         try:
             started_at = time.perf_counter()
             text, detected_language = await self.backend.decode_f32(samples_f32)
             inference_ms = (time.perf_counter() - started_at) * 1000.0
         except Exception as exc:
+            # r635: surface the failure first; draining the embedding must
+            # not delay error propagation
             await self._events.put(exc)
+            await self._drain_embed_task(embed_task)
             return
 
         rtf = inference_ms / audio_ms if audio_ms > 0 else 0.0
@@ -869,16 +1034,15 @@ class _LocalQwenSherpaSession(STTBackendSession):
             )
             speaker_embedding: tuple[float, ...] | None = None
             speaker_seconds = 0.0
-            embedder = getattr(self.backend, "speaker_embedder", None)
-            if embedder is not None and not self._too_faint_to_identify(samples_f32):
+            if embed_task is not None:
                 try:
-                    vector = await asyncio.to_thread(embedder.embed, samples_f32)
+                    vector = await embed_task
                     if vector is not None:
                         speaker_embedding = tuple(float(x) for x in vector)
                         # r349: same rate the decode diagnostics use, rather
                         # than a second hardcoded copy of it.
                         speaker_seconds = _sample_count_duration_ms(
-                            samples_f32.size, self.backend.sample_rate_hz
+                            speaker_samples_f32.size, self.backend.sample_rate_hz
                         ) / 1000.0
                 except Exception:
                     logger.debug("speaker embedding failed", exc_info=True)
@@ -892,6 +1056,34 @@ class _LocalQwenSherpaSession(STTBackendSession):
                     audio_ms=audio_ms,
                 )
             )
+        else:
+            # r635: the controller pairs every SpeechEnd with ONE final event
+            # (FIFO utterance ids). Saying nothing here left the id queued, so
+            # later finals popped stale ids: wrong ids reached the hub and the
+            # logged e2e latency was measured from the wrong speech end.
+            # Release the id BEFORE draining the embedding: nothing will use
+            # the vector, and the hub awaits this call inline per VAD event.
+            await self._events.put(
+                STTBackendTranscriptEvent(
+                    text="",
+                    is_final=True,
+                    detected_language=detected_language,
+                    audio_ms=audio_ms,
+                )
+            )
+            # empty decode: nothing to attach the vector to
+            await self._drain_embed_task(embed_task)
+
+    @staticmethod
+    async def _drain_embed_task(task: "asyncio.Task | None") -> None:
+        """Consume an embedding task whose result is no longer wanted so a
+        late failure is not logged as 'exception was never retrieved'."""
+        if task is None:
+            return
+        try:
+            await task
+        except Exception:
+            logger.debug("speaker embedding failed", exc_info=True)
 
     async def stop(self) -> None:
         self._log_summary_once()

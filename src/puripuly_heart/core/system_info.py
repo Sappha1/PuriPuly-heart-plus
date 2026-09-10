@@ -222,6 +222,13 @@ def _run_int8_probe() -> str:
     """Multiply numbers whose product is known and see what comes back.
 
     Returns "vnni", "emulated", or "" when the probe could not run at all.
+
+    r636: numpy and onnxruntime stay imported INSIDE this function (and inside
+    cpu_int8_support's fallback) on purpose. Hoisting either to module scope
+    would make merely importing this module pull the whole OpenBLAS pool in
+    (measured: +23 threads, ~740 MB commit), which is exactly the cost main()
+    now keeps out of the non-GUI subcommands by calling log_system_info_async
+    only for the GUI.
     """
     global _probe_result
     if _probe_result is not None:

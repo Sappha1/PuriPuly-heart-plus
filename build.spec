@@ -245,9 +245,29 @@ normalize_soxr_runtime_binaries(a.binaries)
 
 pyz = PYZ(a.pure, a.zipped_data, cipher=block_cipher)
 
+# r639: boot splash shown by the bootloader within a few hundred ms of launch
+# (before Python finishes importing), closed by the app the moment the main
+# window reveals (ui/app.py _close_boot_splash). Covers the ~4 s blank gap the
+# user saw. Regenerate the art with build/make_splash.py.
+splash = Splash(
+    str(src_path / "puripuly_heart" / "data" / "icons" / "splash.png"),
+    binaries=a.binaries,
+    datas=a.datas,
+    # r643: a live percentage (boot_splash animates it). Kept SHORT and using
+    # the default splash font (no custom family - r641's "Consolas" fell back to
+    # a wide font, which looked poor and threw the centring off). A short string
+    # centres reliably: text_pos is the left edge, ~centred for "NN%" on 460px.
+    text_pos=(210, 200),
+    text_size=14,
+    text_color="#c9cbce",
+    text_default="0%",
+    always_on_top=True,
+)
+
 exe = EXE(
     pyz,
     a.scripts,
+    splash,
     [],
     exclude_binaries=True,
     name="PuriPulyHeart",
@@ -275,6 +295,7 @@ coll = COLLECT(
     a.binaries,
     a.zipfiles,
     a.datas,
+    splash.binaries,
     strip=False,
     upx=False,
     upx_exclude=[],

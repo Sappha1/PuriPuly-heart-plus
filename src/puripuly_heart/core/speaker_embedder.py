@@ -59,8 +59,23 @@ class SpeakerEmbedder:
             try:
                 import onnxruntime as ort
 
+                # r636: bounded, non-spinning pool. The default session sized
+                # its intra-op pool to every core and spun between ops; since
+                # r634 embedding runs concurrently with the 4-thread sherpa
+                # decode, and the two fought over cores. Measured on a 32-core
+                # box: the session parks 3 threads instead of 23, and one 3 s
+                # utterance costs ~70 ms instead of ~40 ms (p50) -- well inside
+                # the 65-175 ms this path has always been budgeted for, and the
+                # threads it stops stealing matter far more on the 4-8 core
+                # machines where the decode actually starves.
+                options = ort.SessionOptions()
+                options.intra_op_num_threads = 4
+                options.inter_op_num_threads = 1
+                options.add_session_config_entry("session.intra_op.allow_spinning", "0")
                 session = ort.InferenceSession(
-                    str(self._model_path), providers=["CPUExecutionProvider"]
+                    str(self._model_path),
+                    sess_options=options,
+                    providers=["CPUExecutionProvider"],
                 )
                 self._input_name = session.get_inputs()[0].name
                 self._session = session

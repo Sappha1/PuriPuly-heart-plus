@@ -2,6 +2,25 @@
 
 User-facing changes per build. The latest build's highlights also appear in-app when an update is ready.
 
+## r650 - 2026-09-10
+
+- Added: a startup splash screen while the app loads, with a setting to turn it off in Settings > Updates
+- Added: a warning at startup if loopback to VRChat was left on, so the other person's audio is not looped back into VRChat by mistake
+- Added: the Steam tab turns orange while a Steam message is waiting to be read
+- Improved: translated captions arrive noticeably sooner - the translation connection is reused between lines, the speaker voiceprint is computed alongside the transcription, the decoder uses another thread, and trailing silence is trimmed before decoding
+- Improved: opening or reopening a Steam chat shows the history instantly from cache, and a friend's messages appear immediately instead of after a short hold
+- Improved: lower memory use and quieter logs from the Steam module and the captions overlay
+- Fixed: Korean (and other single pinned languages) spoken by the other person could be transcribed as a neighbouring language and dropped; it is now re-decoded in the pinned language when the script does not match
+- Fixed: typed messages could send untranslated when the partner language was Auto Detect and matched your own; they now fall back to English and are marked in the chat log
+- Fixed: Steam chat - a rejected message is marked as not delivered instead of looking sent, a shared video shows as a link instead of vanishing, and messages from a background chat no longer take the open chat's name and avatar
+- Fixed: Steam chat - the helper recovers on its own when its hidden browser dies instead of freezing silently
+- Fixed: Steam chat - a brand-new conversation could replay its whole history, and a closed tab could reappear with a phantom unread dot
+- Fixed: Steam chat - accounts with very large friend lists (roughly 160 or more) could not connect to the helper
+- Fixed: copying a chat image could leave the clipboard empty
+- Fixed: the PEER source label kept the previous language after the app language was changed
+- Fixed: the window size is now remembered between sessions
+- Fixed: the pop-up options menu (gear icon) could be cut off on a short window
+
 ## r631 - 2026-09-02
 
 - Fixed: the captions overlay now stays above the game on its own instead of getting buried until it was toggled off and on

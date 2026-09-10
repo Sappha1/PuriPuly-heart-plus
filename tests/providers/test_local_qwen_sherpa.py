@@ -1,7 +1,9 @@
 from __future__ import annotations
 
+import asyncio
 import logging
 import sys
+import time
 from pathlib import Path
 from types import ModuleType, SimpleNamespace
 
@@ -22,10 +24,10 @@ from puripuly_heart.providers.stt.local_qwen_sherpa import (
 )
 
 
-def test_local_qwen_backend_uses_thread_count_3_by_default() -> None:
-    assert local_qwen_module.DEFAULT_SHERPA_NUM_THREADS == 3
+def test_local_qwen_backend_uses_thread_count_4_by_default() -> None:
+    assert local_qwen_module.DEFAULT_SHERPA_NUM_THREADS == 4
     backend = LocalQwenSherpaSTTBackend(model_dir=Path("/models/qwen"))
-    assert backend.num_threads == 3
+    assert backend.num_threads == 4
 
 
 def _installed_manifest() -> InstalledLocalSTTManifest:
@@ -1141,3 +1143,278 @@ async def test_local_qwen_decode_continues_when_diagnostic_logging_fails(
     gen = session.events()
     event = await gen.__anext__()
     assert event.text == "hello local qwen"
+
+
+def _script_retry_recognizer(*, unhinted: str, hinted: str):
+    """A fake recognizer whose output depends on the stream's language option."""
+
+    class FakeStream:
+        def __init__(self) -> None:
+            self.options: dict[str, object] = {}
+            self.result = SimpleNamespace(text="")
+
+        def set_option(self, key: str, value: object) -> None:
+            self.options[key] = value
+
+        def accept_waveform(self, sample_rate: int, samples) -> None:
+            _ = (sample_rate, samples)
+
+    class FakeRecognizer:
+        def __init__(self) -> None:
+            self.streams: list[FakeStream] = []
+
+        def create_stream(self) -> FakeStream:
+            stream = FakeStream()
+            self.streams.append(stream)
+            return stream
+
+        def decode_stream(self, stream: FakeStream) -> None:
+            stream.result = SimpleNamespace(
+                text=hinted if stream.options.get("language") else unhinted
+            )
+
+    return FakeRecognizer()
+
+
+async def _decode_with(monkeypatch, recognizer, **backend_kwargs):
+    import numpy as np
+
+    monkeypatch.setattr(
+        local_qwen_module,
+        "validate_local_stt_runtime_ready",
+        lambda *args, **kwargs: _installed_manifest(),
+    )
+    _install_fake_sherpa(monkeypatch, recognizer_factory=lambda _config: recognizer)
+    backend = LocalQwenSherpaSTTBackend(
+        model_dir=Path("/models/qwen"), sample_rate_hz=16000, stream_label="peer",
+        **backend_kwargs,
+    )
+    return await backend.decode_f32(np.zeros(16000, dtype=np.float32))
+
+
+@pytest.mark.asyncio
+async def test_local_qwen_backend_redecodes_wrong_cjk_script(monkeypatch) -> None:
+    # pinned Korean, model wrote Mandarin: retry with the hint, keep the Hangul
+    recognizer = _script_retry_recognizer(unhinted="三百三十五", hinted="삼백삼십오")
+    text, _ = await _decode_with(monkeypatch, recognizer, script_retry_language_hint="Korean")
+    assert text == "삼백삼십오"
+    assert len(recognizer.streams) == 2
+    assert "language" not in recognizer.streams[0].options
+    assert recognizer.streams[1].options["language"] == "Korean"
+
+
+@pytest.mark.asyncio
+async def test_local_qwen_backend_never_retries_latin_results(monkeypatch) -> None:
+    # English in a pinned-Korean room stays English (r382 protection)
+    recognizer = _script_retry_recognizer(unhinted="hello there", hinted="여보세요")
+    text, _ = await _decode_with(monkeypatch, recognizer, script_retry_language_hint="Korean")
+    assert text == "hello there"
+    assert len(recognizer.streams) == 1
+
+
+@pytest.mark.asyncio
+async def test_local_qwen_backend_treats_kanji_as_japanese(monkeypatch) -> None:
+    recognizer = _script_retry_recognizer(unhinted="三百三十五", hinted="さんびゃく")
+    text, _ = await _decode_with(monkeypatch, recognizer, script_retry_language_hint="Japanese")
+    assert text == "三百三十五"
+    assert len(recognizer.streams) == 1
+
+
+@pytest.mark.asyncio
+async def test_local_qwen_backend_keeps_first_result_when_retry_does_not_help(monkeypatch) -> None:
+    recognizer = _script_retry_recognizer(unhinted="三百三十五", hinted="三百三十五")
+    text, _ = await _decode_with(monkeypatch, recognizer, script_retry_language_hint="Korean")
+    assert text == "三百三十五"
+    assert len(recognizer.streams) == 2
+
+
+@pytest.mark.asyncio
+async def test_local_qwen_backend_no_retry_without_pinned_hint(monkeypatch) -> None:
+    recognizer = _script_retry_recognizer(unhinted="三百三十五", hinted="삼백삼십오")
+    text, _ = await _decode_with(monkeypatch, recognizer)
+    assert text == "三百三十五"
+    assert len(recognizer.streams) == 1
+
+
+# r635: session-level checks (trim / speaker ID / empty finals) ---------------
+class _FakeSessionBackend:
+    """Just enough backend for _LocalQwenSherpaSession: the decoder records
+    what it was handed; the embedder is whatever the test plugs in."""
+
+    sample_rate_hz = 16000
+    stream_label = "peer"
+    diagnostics_enabled = None
+
+    def __init__(self, *, text: str, embedder=None, error: Exception | None = None) -> None:
+        self.text = text
+        self.speaker_embedder = embedder
+        self.error = error
+        self.decoded: list[np.ndarray] = []
+
+    async def decode_f32(self, samples_f32):
+        self.decoded.append(np.asarray(samples_f32, dtype=np.float32).copy())
+        if self.error is not None:
+            raise self.error
+        return self.text, "ja"
+
+
+class _FakeEmbedder:
+    def __init__(self) -> None:
+        self.received: list[np.ndarray] = []
+
+    def embed(self, samples_f32):
+        self.received.append(np.asarray(samples_f32, dtype=np.float32).copy())
+        return (0.6, 0.8)
+
+
+def _two_seconds_of_tone() -> np.ndarray:
+    # loud enough that the r360 faint/gappy gate lets speaker ID run
+    t = np.arange(32000, dtype=np.float32) / 16000.0
+    return (0.3 * np.sin(2 * np.pi * 220.0 * t)).astype(np.float32)
+
+
+async def _session_after_speech_end(backend, *, trailing_silence_ms: int | None = 512):
+    session = local_qwen_module._LocalQwenSherpaSession(backend=backend)
+    await session.send_audio_f32(_two_seconds_of_tone())
+    await session.on_speech_end(trailing_silence_ms=trailing_silence_ms)
+    return session
+
+
+@pytest.mark.asyncio
+async def test_local_qwen_session_trims_only_the_decoder_input() -> None:
+    embedder = _FakeEmbedder()
+    backend = _FakeSessionBackend(text="hello local qwen", embedder=embedder)
+    session = await _session_after_speech_end(backend)
+
+    # 512 ms hangover - 150 ms kept tail = 362 ms = 5792 samples off the decode...
+    assert [s.size for s in backend.decoded] == [26208]
+    # ...while speaker ID keeps the padded segment its thresholds were tuned on
+    assert [s.size for s in embedder.received] == [32000]
+    assert session._events.qsize() == 1
+    event = await session.events().__anext__()
+    assert event.text == "hello local qwen"
+    assert event.is_final is True
+    assert event.speaker_embedding == (0.6, 0.8)
+    assert event.speaker_seconds == 2.0
+    assert event.audio_ms == 1638.0
+
+
+@pytest.mark.asyncio
+async def test_local_qwen_session_empty_decode_drains_embedding_and_queues_one_empty_final() -> None:
+    order: list[str] = []
+
+    class SlowEmbedder(_FakeEmbedder):
+        def embed(self, samples_f32):
+            time.sleep(0.05)
+            order.append("embed")
+            return super().embed(samples_f32)
+
+    class RecordingQueue(asyncio.Queue):
+        async def put(self, item):
+            order.append("event")
+            await super().put(item)
+
+    embedder = SlowEmbedder()
+    backend = _FakeSessionBackend(text="", embedder=embedder)
+    session = local_qwen_module._LocalQwenSherpaSession(backend=backend)
+    session._events = RecordingQueue()
+    await session.send_audio_f32(_two_seconds_of_tone())
+    await session.on_speech_end(trailing_silence_ms=512)
+
+    # r635: the pending id is released before the unused vector is waited on
+    assert order == ["event", "embed"]
+    assert len(embedder.received) == 1  # drained, not abandoned
+    assert session._events.qsize() == 1
+    event = await session.events().__anext__()
+    assert event.text == ""
+    assert event.is_final is True
+    assert event.speaker_embedding is None
+    assert event.speaker_seconds == 0.0
+    assert event.detected_language == "ja"
+    assert event.audio_ms == 1638.0
+
+
+@pytest.mark.asyncio
+async def test_local_qwen_session_skips_the_embedding_while_shutting_down(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.setattr(local_qwen_module, "is_shutting_down", lambda: True)
+    embedder = _FakeEmbedder()
+    backend = _FakeSessionBackend(text="hello local qwen", embedder=embedder)
+    session = await _session_after_speech_end(backend)
+
+    assert embedder.received == []
+    event = await session.events().__anext__()
+    assert event.text == "hello local qwen"
+    assert event.speaker_embedding is None
+
+
+@pytest.mark.asyncio
+async def test_local_qwen_session_surfaces_decode_error_before_draining_embedding() -> None:
+    order: list[str] = []
+
+    class SlowEmbedder(_FakeEmbedder):
+        def embed(self, samples_f32):
+            time.sleep(0.05)
+            order.append("embed")
+            return super().embed(samples_f32)
+
+    class RecordingQueue(asyncio.Queue):
+        async def put(self, item):
+            order.append("exception" if isinstance(item, BaseException) else "event")
+            await super().put(item)
+
+    embedder = SlowEmbedder()
+    backend = _FakeSessionBackend(
+        text="", embedder=embedder, error=LocalQwenSherpaInferenceError("decode failed")
+    )
+    session = local_qwen_module._LocalQwenSherpaSession(backend=backend)
+    session._events = RecordingQueue()
+    await session.send_audio_f32(_two_seconds_of_tone())
+    await session.on_speech_end(trailing_silence_ms=512)
+
+    assert order == ["exception", "embed"]
+    assert len(embedder.received) == 1
+    with pytest.raises(LocalQwenSherpaInferenceError):
+        await session.events().__anext__()
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("text", ["", "hello local qwen"])
+async def test_local_qwen_backend_queues_exactly_one_final_per_speech_end(
+    monkeypatch: pytest.MonkeyPatch,
+    text: str,
+) -> None:
+    class FakeStream:
+        def __init__(self) -> None:
+            self.result = SimpleNamespace(text=text)
+
+        def accept_waveform(self, sample_rate: int, samples) -> None:
+            _ = sample_rate, samples
+
+    class FakeRecognizer:
+        def create_stream(self) -> FakeStream:
+            return FakeStream()
+
+        def decode_stream(self, stream: FakeStream) -> None:
+            _ = stream
+
+    monkeypatch.setattr(
+        local_qwen_module,
+        "validate_local_stt_runtime_ready",
+        lambda *args, **kwargs: _installed_manifest(),
+    )
+    _install_fake_sherpa(monkeypatch, recognizer_factory=lambda _config: FakeRecognizer())
+
+    backend = LocalQwenSherpaSTTBackend(model_dir=Path("/models/qwen"), stream_label="peer")
+    session = await backend.open_session()
+    await session.send_audio_f32(np.zeros(16000, dtype=np.float32))
+    await session.on_speech_end()
+
+    # the controller pops one pending utterance id per final: an empty decode
+    # must still report exactly one (empty) final, a real one exactly one too
+    assert session._events.qsize() == 1
+    event = await session.events().__anext__()
+    assert event.text == text
+    assert event.is_final is True
+    assert event.audio_ms == 1000.0

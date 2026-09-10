@@ -680,6 +680,7 @@
   "dashboard.ocr.menu.region_set": "设置 OCR 区域（拖动）",
   "dashboard.ocr.menu.region_set.tooltip": "将 OCR 限制在屏幕区域内：拖动设定区域，眼睛切换虚线边框显示，锁定使扫描保持在区域内。",
   "dashboard.chat.translation_failed": "翻译失败 — 请检查模型设置",
+  "dashboard.chat.same_language_hint": "已按原文发送：输入消息的翻译目标是你自己的语言。请在“目标语言”一行中选择对方的语言。",
   "settings_modal.requires_api_key": "需要 API 密钥 — 请在设置中填写",
   "settings_modal.requires_api_key_short": "需要 API 密钥",
   "dashboard.mute_sync.tooltip.off": "静音同步（关闭）— 点击启用。启用后，当你在 VRChat 中将麦克风静音时，语音识别不会向聊天框发送消息。",
@@ -929,6 +930,7 @@
   "steam.their_language": "对方语言",
   "steam.translator": "翻译器",
   "steam.send_to_them": "发送给对方",
+  "steam.send_failed": "消息未送达 - Steam 拒绝了该消息，请重试",
   "steam.show_pinyin": "显示拼音",
   "steam.grouped_pinyin": "按词分组拼音",
   "steam.show_original": "显示原文",
@@ -1144,5 +1146,10 @@
   "steam.unit_month_many": "{n}个月",
   "steam.unit_year_one": "{n}年",
   "steam.unit_year_many": "{n}年",
-  "steam.unit_join": ""
+  "steam.unit_join": "",
+  "speaker.reset_unreadable": "无法读取已保存的声音，已重置；旧文件已保留为 voices.json.corrupt-<time>",
+  "startup.loopback_on_warning": "提醒：上次会话遗留的对方音频回环(Loopback)仍处于开启状态，正在捕获并翻译对方的语音并发送到 VRChat 聊天框。如果不是有意开启，请关闭它。",
+  "startup.loopback_on_turn_off": "关闭",
+  "settings.show_boot_splash": "启动画面",
+  "settings.show_boot_splash.tooltip": "启动时显示加载启动画面。它在程序加载之前由启动器绘制，因此关闭会在启动瞬间将其关闭，而不是完全阻止其出现。"
 }

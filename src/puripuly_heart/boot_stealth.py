@@ -147,3 +147,20 @@ def finish() -> None:
         time.sleep(0.12)               # watchdog exit + pending size commands
     with contextlib.suppress(Exception):
         _each_flutter_window(_restore)
+
+
+def parked_count() -> int:
+    """r639: how many flutter windows the watchdog has parked off-screen so
+    far. The early reveal waits for this to be >= 1 before calling finish(),
+    which guarantees a real, parked window exists to restore.
+
+    This closes the r636 invisible-window bug: the r636 early reveal called
+    finish() from inside controller.start() before the flet client's window
+    had been created (let alone parked), so _restore had nothing in _parked
+    to move on-screen, yet finish() still latched _finished and disarmed the
+    watchdog - the real window then appeared later and sat at -32000 for the
+    whole session. _parked is append-only (entries are never removed even
+    after a restore), so a non-zero count means 'a window has existed and been
+    parked at least once', which is exactly the precondition finish() needs.
+    """
+    return len(_parked)

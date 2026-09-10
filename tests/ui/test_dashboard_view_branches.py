@@ -803,3 +803,122 @@ def test_dashboard_local_stt_notice_can_change_and_clear_without_touching_displa
         (dashboard_module.t("dashboard.local_stt_notice_downloading_progress", percent=63), "info"),
         (None, None),
     ]
+
+
+def test_dashboard_steam_tab_label_color_tracks_selection_and_unread(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    # r635: the Steam tab reads ON while selected, orange while a Steam message
+    # waits behind the Chat tab, faint otherwise.
+    view = _make_dashboard(monkeypatch)
+
+    assert view._steam_tab_unread is False
+    assert view._steam_tab_label_color() == dashboard_module._TEXT_FAINT
+
+    view._set_steam_tab_unread(True)
+    assert view._steam_tab_unread is True
+    assert view._steam_tab_label_color() == dashboard_module._TOGGLE_WARNING
+    assert view._tab_steam.content.color == dashboard_module._TOGGLE_WARNING
+
+    # Selecting the Steam tab shows the normal ON colour even with unread left.
+    view._chat_tab = "steam"
+    assert view._steam_tab_label_color() == dashboard_module._TOGGLE_ON
+    # Back on Chat with unread still pending: orange again.
+    view._chat_tab = "vrc"
+    assert view._steam_tab_label_color() == dashboard_module._TOGGLE_WARNING
+
+    view._set_steam_tab_unread(False)
+    assert view._steam_tab_label_color() == dashboard_module._TEXT_FAINT
+    assert view._tab_steam.content.color == dashboard_module._TEXT_FAINT
+
+
+def test_dashboard_unified_typed_target_falls_back_to_english_when_it_equals_source(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    # r635 friend safeguard: partner on Auto Detect + typed target == own
+    # language would send typed text untranslated; English is the fallback.
+    view = _make_dashboard(monkeypatch)
+    view.on_language_change = lambda *args: None
+
+    view.set_languages_from_codes("zh-CN", "zh_cn", "", "")
+    assert view._target_lang_code == "en"
+
+    # zh-CN / zh-TW count as one family only when both sides are zh.
+    assert view._same_lang_family("zh-CN", "zh-TW") is True
+    assert view._same_lang_family("zh_CN", "zh-cn") is True
+    assert view._same_lang_family("ja", "zh") is False
+    assert view._same_lang_family("", "") is False
+
+    # An English speaker has no universal fallback: left alone.
+    view.set_languages_from_codes("en", "en", "", "")
+    assert view._target_lang_code == "en"
+
+    # A concrete partner language keeps winning over the safeguard.
+    view.set_languages_from_codes("zh-CN", "zh-CN", "ja", "")
+    assert view._target_lang_code == "ja"
+
+    # Different languages are never touched.
+    view.set_languages_from_codes("ko", "ja", "", "")
+    assert view._target_lang_code == "ja"
+
+
+def test_dashboard_same_language_hint_only_for_auto_detect_partner(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    # r635: the orange "sent untranslated" line explains exactly one case -
+    # unified layout, partner on Auto Detect, typed target == own language.
+    # A deliberately same-language partner or TRANS off stays quiet.
+    view = _make_dashboard(monkeypatch)
+    view.on_language_change = lambda *args: None
+    view.on_send_message = lambda source, text: None
+    hint = dashboard_module.t("dashboard.chat.same_language_hint")
+
+    def _hint_after_send() -> bool:
+        view._chat_list_view.controls.clear()
+        view._on_submit("hello")
+        col = view._chat_list_view.controls[-1].content
+        return any(getattr(c, "value", None) == hint for c in col.controls)
+
+    view.is_translation_on = True
+    assert view._unified_translation is True
+    # English speaker: the fallback has nowhere to go, so target == source.
+    view.set_languages_from_codes("en", "en", "", "")
+    assert _hint_after_send() is True
+
+    # Partner explicitly English: untranslated on purpose, no hint.
+    view.set_languages_from_codes("en", "en", "en", "")
+    assert _hint_after_send() is False
+
+    # Different languages: no hint.
+    view.set_languages_from_codes("en", "ja", "", "")
+    assert _hint_after_send() is False
+
+    # TRANS off: raw text for another reason, the hint stays quiet.
+    view.set_languages_from_codes("en", "en", "", "")
+    view.is_translation_on = False
+    assert _hint_after_send() is False
+
+
+def test_dashboard_resolve_paste_entry_claims_the_entry_before_hopping(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    # r635: the registry entry is popped on the calling thread, so the bool a
+    # worker (OCR feed line / timeout Timer) gets back reflects real
+    # consumption - two callers racing for one id can't both see True.
+    view = _make_dashboard(monkeypatch)
+    hops: list = []
+    monkeypatch.setattr(view, "_ui_hop", lambda fn, *a: hops.append(fn) or True)
+    entry = ft.Container()
+    view._paste_entries = {"rid-1": (entry, "img.png")}
+
+    assert view.resolve_paste_entry("rid-1", "src", "dst") is True
+    assert "rid-1" not in view._paste_entries
+    assert len(hops) == 1
+    assert hops[0].keywords["_item"] == (entry, "img.png")
+
+    # The loser of the race (late feed line or the timeout Timer) sees False
+    # and nothing more is scheduled on the loop.
+    assert view.resolve_paste_entry("rid-1", "", "", "error") is False
+    assert len(hops) == 1
+    assert view.resolve_paste_entry("unknown", "src", "dst") is False
+    assert len(hops) == 1

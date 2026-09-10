@@ -19,6 +19,7 @@ import re
 import socket
 import time
 import unicodedata
+import uuid
 from pathlib import Path
 
 import flet as ft
@@ -475,6 +476,8 @@ class SteamBridgeView(ft.Container):
         self.translator_value = None   # injected: resolved model value (cache key)
         self._resend_queue: list = []  # sends attempted while the helper was down
         self.on_module_state = None    # dashboard: grey the Steam chip when off
+        self.on_unread_change = None   # r635: dashboard colours the Steam tab while unread
+        self._unread_flag_pushed = None  # r635: last value handed to on_unread_change
         self.on_popout = None          # app: open the tab in its own window
         self._is_popout = False        # standalone window: no module screens
         self._popped_out = False       # main window: the tab lives in a pop-out
@@ -508,6 +511,15 @@ class SteamBridgeView(ft.Container):
         self._started = False
         self._prewarmed = False
         self._got_friends = False
+        # r636 render-cost work: friends-list build signature, background
+        # translation tasks (strong refs), debounced UI-snapshot writer and
+        # the helper's hello handshake
+        self._friends_built_sig = None
+        self._tr_tasks: set = set()
+        self._snap_dirty = False
+        self._snap_task = None
+        self._snap_last_write = 0.0
+        self._hello_seen = False
 
         # left: own profile header + search + friends list (favorites are a
         # named section at the top of the list, Steam-style — see _rebuild_friends)
@@ -633,10 +645,12 @@ class SteamBridgeView(ft.Container):
         # as the estimate shifted; a scrollable Column lays everything out
         # and the thumb tracks the cursor exactly.
         self._msg_lists: dict = {}      # acct -> (wrapper Container, Column)
+        self._parked_at: dict = {}      # r636: closed-but-mounted column -> close time (LRU)
         self._col_epoch: dict = {}      # acct -> _remount_epoch when anchored
         self._remount_epoch = 0
         self._loadmore_busy: dict = {}  # acct -> load-earlier in flight
         self._pending_imgs: dict = {}   # sid -> optimistic image block
+        self._pending_txt: dict = {}    # r635: sid -> optimistic text block (send ack)
         self._messages_fallback = ft.Column(
             controls=[], expand=True, spacing=10,
             scroll=ft.ScrollMode.AUTO, auto_scroll=False,
@@ -1049,6 +1063,10 @@ class SteamBridgeView(ft.Container):
                    self._following, float(getattr(self, "_last_pixels", 0) or 0),
                    getattr(self, "_last_pixels_acct", None) == self._active)
         self._mount_guard = time.time()
+        if getattr(self, "_snap_dirty", False) and self.page:
+            # r636: teardown bypasses the 30 s snapshot debounce
+            with contextlib.suppress(Exception):
+                self.page.run_task(self._flush_snapshot)
 
     @_on_ui_thread
     def _show_state_overlay(self, mode: str) -> None:
@@ -1140,6 +1158,10 @@ class SteamBridgeView(ft.Container):
     @_on_ui_thread
     def _state_action(self) -> None:
         if self._state_mode == "popped":
+            if getattr(self, "_snap_dirty", False) and self.page:
+                # r636: the pop-out is about to be torn down - flush now
+                with contextlib.suppress(Exception):
+                    self.page.run_task(self._flush_snapshot)
             if callable(self.on_popout_restore):
                 self.on_popout_restore()
             return
@@ -1277,6 +1299,7 @@ class SteamBridgeView(ft.Container):
             self._reader = None
             self._started = False
             self._prewarmed = False
+            await self._flush_snapshot()     # r636: module off = teardown, write now
 
         if self.page:
             self.page.run_task(_shutdown)
@@ -2003,7 +2026,9 @@ class SteamBridgeView(ft.Container):
         # actually paint ("no translations until close+reopen" bug)
         with contextlib.suppress(Exception):
             if self.page and seq == self._open_seq:
-                self.page.update()
+                # r636: the column carries every translation line; this ran
+                # a full page walk on every tab switch
+                self._flush_col(self._messages)
 
     def _reload_chat(self) -> None:
         # Full reload from the helper (re-reads + re-groups server history) —
@@ -2277,11 +2302,55 @@ class SteamBridgeView(ft.Container):
                             if k in b:
                                 d[k] = b[k]
                         b = d
+                    _prev_lb, _old_col = self._last_block, None
+                    with contextlib.suppress(Exception):
+                        _old_col = c.content.controls[1]
                     col.controls[i] = self._block_control(b)
+                    # r635: _block_control re-anchors same-sender grouping on
+                    # the rebuilt block. Keep the previous anchor unless it
+                    # WAS this block (its old column is detached now) - or the
+                    # next line of mine would slot into an OLDER block, above
+                    # whatever came after it
+                    if _prev_lb is None or _prev_lb.get("col") is not _old_col:
+                        self._last_block = _prev_lb
                     with contextlib.suppress(Exception):
                         col.update()
                     return True
         return False
+
+    def _send_failed_line(self) -> ft.Control:
+        # r635: shared by the block renderer and the failed-send ack insert
+        return ft.Text(_T("steam.img_failed", default="Failed to send"),
+                       size=11.5, italic=True, color="#ff8f8f")
+
+    def _note_bubble_pos(self, b: dict, lb) -> None:
+        """r635: remember the column a live bubble's lines went into and its
+        last line, so a failed-send ack can slot the red line right under
+        THAT bubble. A block's Container is never rebuilt for a text failure
+        (every later same-sender bubble is grouped into its column and would
+        vanish), and a grouped bubble has no Container of its own anyway."""
+        with contextlib.suppress(Exception):
+            col = lb["col"]
+            b["_col"] = col
+            b["_col_anchor"] = col.controls[-1] if col.controls else None
+
+    def _track_txt_send(self, b, acct: int) -> str:
+        """r635: register an optimistic TEXT bubble so the helper's send ack
+        ({"ev":"sent","ok":..,"sid":..}) can mark it failed. Returns the sid
+        that rides on the send command. Column + anchor come from the block
+        (stashed by _render_live at render time) - _last_block may already
+        point at a friend's block by the time _send gets here."""
+        sid = uuid.uuid4().hex
+        col = anchor = None
+        if isinstance(b, dict):
+            b["_send_sid"] = sid
+            b["_send_acct"] = acct
+            col, anchor = b.get("_col"), b.get("_col_anchor")
+        self._pending_txt[sid] = {"b": b, "col": col, "anchor": anchor,
+                                  "acct": acct}
+        while len(self._pending_txt) > 50:      # an old helper never acks
+            self._pending_txt.pop(next(iter(self._pending_txt)))
+        return sid
 
     @_on_ui_thread
     def _retry_img(self, b: dict) -> None:
@@ -2333,10 +2402,7 @@ class SteamBridgeView(ft.Container):
     @_on_ui_thread
     def _on_search(self, q: str) -> None:
         self._filter = (q or "").strip().lower()
-        self._rebuild_friends()
-        if self.page:
-            with contextlib.suppress(Exception):
-                self._friends_list.update()
+        self._rebuild_friends()        # r636: flushes the list itself when it rebuilt
 
     # ── right-click context menu ─────────────────────────────────────────────
     def _menu_actions(self, f: dict) -> list:
@@ -2696,10 +2762,7 @@ class SteamBridgeView(ft.Container):
             self._collapsed_sections.discard(label)
         else:
             self._collapsed_sections.add(label)
-        self._rebuild_friends()
-        if self.page:
-            with contextlib.suppress(Exception):
-                self._friends_list.update()
+        self._rebuild_friends()        # r636: flushes the list itself when it rebuilt
 
     @_on_ui_thread
     def _toggle_game(self, game: str) -> None:
@@ -2707,10 +2770,7 @@ class SteamBridgeView(ft.Container):
             self._expanded_games.discard(game)
         else:
             self._expanded_games.add(game)
-        self._rebuild_friends()
-        if self.page:
-            with contextlib.suppress(Exception):
-                self._friends_list.update()
+        self._rebuild_friends()        # r636: flushes the list itself when it rebuilt
 
     def _game_group(self, game: str, members: list) -> ft.Control:
         icon = next((f.get("icon") for f in members if f.get("icon")), "")
@@ -2809,12 +2869,66 @@ class SteamBridgeView(ft.Container):
             with contextlib.suppress(Exception):
                 self._rail_scroll.update()
 
-    def _rebuild_friends(self) -> None:
+    def _friend_items(self) -> list:
+        """The friends a list build renders (search filter applied)."""
         items = list(self._friends.values())
         if self._filter:
             q = self._filter
             items = [f for f in items
                      if q in self._search_index.get(int(f["acct"]), (f.get("name") or "").lower())]
+        return items
+
+    def _chat_order(self, items: list) -> tuple:
+        """r636: the last_chat-derived orderings a build depends on - the
+        UNREAD MESSAGES membership and the RECENT top-4 - derived exactly as
+        _rebuild_friends does (the unread section itself sorts by status +
+        name, so only its membership matters). A last_chat bump that leaves
+        both unchanged changes nothing visible (no row shows last_chat), so
+        callers compare this before/after the bump instead of rebuilding
+        ~1,000 controls."""
+        favs = {int(f["acct"]) for f in items if f.get("fav")}
+        unread = {int(f["acct"]) for f in items
+                  if int(f.get("unread") or 0) > 0 and int(f["acct"]) not in favs}
+        assigned = favs | unread
+        recent = [f for f in sorted((f for f in items if f.get("last_chat")),
+                                    key=lambda f: -(f.get("last_chat") or 0))
+                  if int(f["acct"]) not in assigned][:4]
+        return (frozenset(unread), tuple(int(f["acct"]) for f in recent))
+
+    def _friends_sig(self, items: list):
+        """r636: everything a friends-list build shows, in canonical order:
+        per friend (acct, shown name, name, nick, real name, state, in-game,
+        game, presence text, unread, fav, avatar, game icon, badge flags,
+        groups, last-seen) plus the chat orderings and the view state that
+        picks the rows (filter, collapsed sections, expanded games, and the
+        active chat - but only while something IS collapsed, since that is
+        the one place a row depends on it). The 15-min bucket only refreshes
+        'Last online N ago' text now and then."""
+        try:
+            rows = tuple(sorted(
+                (int(f["acct"]), _disp_name(f), f.get("name") or "",
+                 f.get("nick") or "", f.get("real") or "",
+                 int(f.get("state") or 0),
+                 bool(f.get("ingame")), f.get("game") or "",
+                 f.get("extra") or "", f.get("extra_full") or "",
+                 int(f.get("unread") or 0), bool(f.get("fav")),
+                 f.get("avatar") or "", f.get("icon") or "",
+                 int(f.get("flags") or 0), str(f.get("groups") or ""),
+                 int(f.get("last_seen") or 0))
+                for f in items))
+            return (rows, self._chat_order(items), self._filter,
+                    (self._active if self._collapsed_sections else None),
+                    frozenset(self._collapsed_sections),
+                    frozenset(self._expanded_games), int(time.time() // 900))
+        except Exception:
+            return object()          # unhashable oddity: never skip the build
+
+    def _rebuild_friends(self, *, force: bool = False) -> bool:
+        items = self._friend_items()
+        sig = self._friends_sig(items)
+        if not force and sig == self._friends_built_sig:
+            return False     # r636: identical rows - skip the ~1,000-control rebuild
+        self._friends_built_sig = sig
 
         def sk(f):
             return (0 if f.get("ingame") else (1 if f.get("state") else 2),
@@ -2900,6 +3014,12 @@ class SteamBridgeView(ft.Container):
                     C.append(self._friend_row(f, lead_icon=f.get("icon", "")))
         add_section("ONLINE", online)
         add_section("OFFLINE", offline)
+        if self.page:
+            # r636: targeted flush of the list only - a page.update() here
+            # walked the whole dashboard+steam tree (~42-85 ms) per push
+            with contextlib.suppress(Exception):
+                self._friends_list.update()
+        return True
 
     def _set_chat_head(self, f: dict | None) -> None:
         # The tabs now serve as the header (see _tab_chip); nothing to do here.
@@ -3130,6 +3250,27 @@ class SteamBridgeView(ft.Container):
                     _vlog.exception("[SteamView] tab-host update failed")
         else:
             self._tab_strip.controls = chips
+            if self._tab_strip.page is not None:
+                # r636: targeted - the hot callers (seen / inbound) no longer
+                # page.update() for a chip change; a bad flush stays loud
+                try:
+                    self._tab_strip.update()
+                except Exception:
+                    _vlog.exception("[SteamView] tab-strip update failed")
+        # r635: the dashboard colours its Steam tab label while any chat here
+        # is unread. Mirrors the chip dots exactly (the active chat is
+        # excluded like in _tab_chip - my own send bumps its last_chat past
+        # the seen mark, which would otherwise flag it). Pushed only on
+        # change; every unread transition already funnels through here.
+        flag = any(a != self._active and self._tab_unread(a) for a in self._tabs)
+        if flag != getattr(self, "_unread_flag_pushed", None):
+            self._unread_flag_pushed = flag
+            cb = getattr(self, "on_unread_change", None)
+            if callable(cb):
+                try:
+                    cb(flag)
+                except Exception:
+                    _vlog.exception("[SteamView] on_unread_change failed")
 
     def _clamp_menu_left(self, gx: float) -> float:
         # keep context menus inside the window — a right-edge tab's menu
@@ -3240,14 +3381,13 @@ class SteamBridgeView(ft.Container):
         # a closed tab forgets its position — reopening jumps to the newest
         self._scroll_pos.pop(acct, None)
         self._was_following.pop(acct, None)
-        self._render_fp.pop(acct, None)   # a reopen must repaint, not fp-skip
+        # r636: _render_fp is kept - the comparison is content-based now (the
+        # cache rebuild sets it from the same formula), so a reopen followed
+        # by an identical history fp-skips instead of repainting
         self._loadmore_busy.pop(acct, None)
-        # drop the closed chat's mounted column — removing it from the stack
-        # blanks it immediately and frees its controls
-        _ent = self._msg_lists.pop(acct, None)
-        if _ent is not None:
-            with contextlib.suppress(Exception):
-                self._messages_stack.controls.remove(_ent[0])
+        # r636: the closed chat's column stays mounted, parked off-viewport,
+        # so a reopen is instant (the oldest parked ones are evicted)
+        self._park_column(acct)
         if acct == self._active:
             self._last_block = None
             self._hist_blocks = []
@@ -3401,6 +3541,17 @@ class SteamBridgeView(ft.Container):
             with contextlib.suppress(Exception):
                 self._messages.scroll_to(
                     offset=(-1 if pos is None else pos), duration=1)
+            if pos is None:
+                # r636: jump-to-newest lifts the curtain one frame after the
+                # FIRST pin. The settle loop below used to keep it down until
+                # the extent stopped moving or the 1.2 s deadline - a blank
+                # pane for 0.4-1.3 s on every open and reopen. The re-pins
+                # stay invisible (at-end -> at-end); only the kept-position
+                # case keeps the longer curtain (it needs the second pin)
+                await asyncio.sleep(0.05)
+                if gen != self._anchor_gen:
+                    return
+                self._lift_opacity()
             if pos is not None:
                 await asyncio.sleep(0.2)
                 if gen != self._anchor_gen:
@@ -3573,29 +3724,87 @@ class SteamBridgeView(ft.Container):
     # UI snapshot: last-known friends list + own header, painted INSTANTLY on
     # activate while the helper (headless browser) is still booting — the live
     # "friends"/"own" events replace it seamlessly when they arrive.
+    # r636: this used to json.dumps 16 chats x 40 blocks + friends (~208 KB)
+    # and write_text it ON THE LOOP for every own/friends push. Now a dirty
+    # flag feeds one debounced writer task (at most one write per
+    # _SNAP_MIN_GAP_S while dirty); the payload is serialized on the loop
+    # from shallow copies (cheap) and the disk write runs in a worker thread.
+    # Teardown paths (module off, deactivate, pop-out restore, shutdown) call
+    # _flush_snapshot() directly. The file format is unchanged.
+    _SNAP_MIN_GAP_S = 30.0
+
+    def _snapshot_data(self) -> dict:
+        """The snapshot as plain data - shallow copies of the friend dicts
+        and key-filtered copies of the blocks, built on the loop (~0.6 ms)
+        so the worker thread never reads a dict the loop may be mutating."""
+        _ok = (str, int, float, bool, list, dict, type(None))
+        chats = {}
+        for _a in list(dict.fromkeys(
+                list(self._tabs) + list(self._chat_cache.keys())))[:16]:
+            _blks = self._chat_cache.get(_a)
+            if _blks:
+                chats[str(_a)] = [
+                    {k: v for k, v in b.items()
+                     if k not in ("_ctrl", "_out_ctrl", "_seg_tr")
+                     and isinstance(v, _ok)}
+                    for b in _blks[-40:]]
+        snap = {"seen": {str(k): v for k, v in self._seen_chat_ts.items()},
+                "chats": chats,
+                "friends": [dict(f) for f in self._friends.values()],
+                "own": {"acct": self._own, "name": self._own_name,
+                        "avatar": self._own_avatar, "state": self._own_state,
+                        "invites": self._own_invites,
+                        "invisible": self._own_invisible,
+                        "ingame": self._own_ingame, "game": self._own_game}}
+        return snap
+
+    def _snapshot_payload(self) -> str:
+        return json.dumps(self._snapshot_data(), ensure_ascii=False)
+
+    def _write_snapshot_file(self, payload: str) -> None:
+        _CACHE_FILE.with_name("ui_snapshot.json").write_text(payload, encoding="utf-8")
+
+    def _write_snapshot_data(self, data: dict) -> None:
+        # worker thread: serialize the copies, then write
+        self._write_snapshot_file(json.dumps(data, ensure_ascii=False))
+
+    async def _flush_snapshot(self) -> None:
+        """Write the snapshot now if anything changed (bypasses the debounce)."""
+        if not getattr(self, "_snap_dirty", False):
+            return
+        self._snap_dirty = False
+        self._snap_last_write = time.monotonic()
+        try:
+            data = self._snapshot_data()          # copies, on the loop
+            await asyncio.to_thread(self._write_snapshot_data, data)
+        except Exception:
+            _vlog.debug("[SteamView] snapshot write failed", exc_info=True)
+
+    async def _snapshot_writer(self) -> None:
+        while getattr(self, "_snap_dirty", False):
+            wait = self._snap_last_write + self._SNAP_MIN_GAP_S - time.monotonic()
+            if wait > 0:
+                await asyncio.sleep(wait)
+            await self._flush_snapshot()
+
     def _save_snapshot(self) -> None:
-        with contextlib.suppress(Exception):
-            _ok = (str, int, float, bool, list, dict, type(None))
-            chats = {}
-            for _a in list(dict.fromkeys(
-                    list(self._tabs) + list(self._chat_cache.keys())))[:16]:
-                _blks = self._chat_cache.get(_a)
-                if _blks:
-                    chats[str(_a)] = [
-                        {k: v for k, v in b.items()
-                         if k not in ("_ctrl", "_out_ctrl", "_seg_tr")
-                         and isinstance(v, _ok)}
-                        for b in _blks[-40:]]
-            snap = {"seen": {str(k): v for k, v in self._seen_chat_ts.items()},
-                    "chats": chats,
-                    "friends": list(self._friends.values()),
-                    "own": {"acct": self._own, "name": self._own_name,
-                            "avatar": self._own_avatar, "state": self._own_state,
-                            "invites": self._own_invites,
-                            "invisible": self._own_invisible,
-                            "ingame": self._own_ingame, "game": self._own_game}}
-            _CACHE_FILE.with_name("ui_snapshot.json").write_text(
-                json.dumps(snap, ensure_ascii=False), encoding="utf-8")
+        self._snap_dirty = True
+        task = getattr(self, "_snap_task", None)
+        if task is not None and not task.done():
+            return                        # the writer picks the change up
+        try:
+            loop = asyncio.get_running_loop()
+        except RuntimeError:
+            loop = None
+        if loop is not None:
+            self._snap_task = loop.create_task(self._snapshot_writer())
+        elif self.page is not None and getattr(self.page, "loop", None) is not None:
+            self._snap_task = self.page.run_task(self._snapshot_writer)
+        else:
+            # no loop at all (offline harness): synchronous, as before
+            with contextlib.suppress(Exception):
+                self._snap_dirty = False
+                self._write_snapshot_file(self._snapshot_payload())
 
     def _paint_snapshot(self, prefetch_only: bool = False) -> None:
         if prefetch_only:
@@ -3984,6 +4193,10 @@ class SteamBridgeView(ft.Container):
             out_ctrl = ft.Text(b.get("_out_sent") or "", size=13, color=_ACCENT)
             b["_out_ctrl"] = out_ctrl
             out.append(out_ctrl)
+        if b.get("_send_failed") and not b.get("images"):
+            # r635: a text send the helper rejected - a small red line under
+            # the bubble (images get the Retry/Discard card instead)
+            out.append(self._send_failed_line())
         fx = self._effect_of(b)
         if fx:
             icon, fx_name = fx
@@ -4460,7 +4673,7 @@ class SteamBridgeView(ft.Container):
             results = await asyncio.gather(
                 *(self._tr(src, force=force) for src, _ in segs),
                 return_exceptions=True)
-            if seq != self._open_seq:
+            if seq != self._open_seq or b.get("_trimmed"):
                 return
             _hit = False
             for (src, ctrl), tr in zip(segs, results):
@@ -4468,8 +4681,7 @@ class SteamBridgeView(ft.Container):
                     continue
                 self._apply_tr_spans(b, ctrl, tr)
                 _hit = True
-                with contextlib.suppress(Exception):
-                    ctrl.update()
+                self._ctrl_update(ctrl)
             if _hit:
                 self._stick_to_end()
             return
@@ -4483,8 +4695,7 @@ class SteamBridgeView(ft.Container):
                     or (b.get("from_me") and not self._tr_outgoing)):
                 return
             self._apply_tr_spans(b, tc, _given)
-            with contextlib.suppress(Exception):
-                tc.update()
+            self._ctrl_update(tc)
             self._stick_to_end()
             return
         if b.pop("_tr_prefilled", False):
@@ -4495,12 +4706,43 @@ class SteamBridgeView(ft.Container):
             return                                  # own-message translation turned off
         noml = _URL_RE.sub("", _plain_for_tr(orig)).strip()   # no URLs/code
         tr = await self._tr(noml, force=force)
-        if seq != self._open_seq or not tr or tr == noml:
+        if seq != self._open_seq or not tr or tr == noml or b.get("_trimmed"):
             return
         self._apply_tr_spans(b, tc, tr)
-        with contextlib.suppress(Exception):
-            tc.update()
+        self._ctrl_update(tc)
         self._stick_to_end()
+
+    @staticmethod
+    def _ctrl_update(ctrl) -> None:
+        """r636: flush ONE control, and only while it is still mounted. A
+        translation now lands from its own task, so the block may have been
+        trimmed or re-rendered meanwhile - a detached control must not push
+        an update for a dead id (that poisons the page)."""
+        with contextlib.suppress(Exception):
+            if getattr(ctrl, "page", None) is not None:
+                ctrl.update()
+
+    def _spawn_translate(self, b: dict, seq: int) -> None:
+        """r636: a friend's bubble paints first; its translation runs on a
+        background task (strong ref kept in _tr_tasks) so _read_loop is not
+        held ~1 s per line - a 5-line burst used to show line k only after
+        translations 1..k-1 finished. _tr's in-flight map still dedupes."""
+        if not b.get("from_me") and not self._tr_incoming:
+            return
+        try:
+            task = asyncio.get_running_loop().create_task(
+                self._translate_block(b, seq))
+        except RuntimeError:
+            return
+
+        def _done(t, _tasks=self._tr_tasks):
+            _tasks.discard(t)
+            if not t.cancelled() and t.exception() is not None:
+                _vlog.debug("[SteamView] background translate failed",
+                            exc_info=t.exception())
+
+        self._tr_tasks.add(task)
+        task.add_done_callback(_done)
 
     def _apply_tr_spans(self, b: dict, tc, tr: str) -> None:
         tc.visible = True
@@ -4668,21 +4910,45 @@ class SteamBridgeView(ft.Container):
                 for b in _carry
             ]
         _acct_now = self._active or 0
-        _fp = tuple((int(b.get("_ts") or 0), b.get("from"), b.get("text") or "",
-                     len(b.get("images") or []), len(b.get("stickers") or []),
-                     len(b.get("emoticons") or [])) for b in blocks)
-        if (_fp == self._render_fp.get(_acct_now)
-                and self._hist_blocks and self._messages.controls):
+        _fp = self._hist_fp(blocks)
+        _shown = bool(self._hist_blocks and self._messages.controls)
+        if _fp == self._render_fp.get(_acct_now) and _shown:
             # identical to what's on screen — repainting would flicker; just
             # refresh the bookkeeping
             if blocks:
                 self._seen_chat_ts[_acct_now] = max(
                     self._seen_chat_ts.get(_acct_now, 0),
                     max(int(b.get("_ts") or 0) for b in blocks))
-            self._rebuild_tabs()
-            if self.page:
-                self.page.update()
+            self._rebuild_tabs()      # r636: flushes the strip itself; no page walk
             return
+        if (_shown and self._chat_cache.get(_acct_now) is self._hist_blocks
+                and any(isinstance(getattr(c, "data", None), dict)
+                        for c in self._messages.controls)):
+            # r636: compare against what the column actually shows (its
+            # block list - the cache list it aliases), not only the last
+            # render's fingerprint: a cache rebuild, live lines or a parked
+            # reopen may already have put this content on screen
+            _cur = self._hist_fp(self._hist_blocks)
+            if _fp == _cur:
+                self._render_fp[_acct_now] = _fp
+                if blocks:
+                    self._seen_chat_ts[_acct_now] = max(
+                        self._seen_chat_ts.get(_acct_now, 0),
+                        max(int(b.get("_ts") or 0) for b in blocks))
+                self._rebuild_tabs()
+                return
+            if len(_fp) > len(_cur) and _fp[:len(_cur)] == _cur:
+                # r636: the history only GREW at the end (lines that arrived
+                # while the tab was closed, or that the open fetched) -
+                # append them like live lines instead of repainting the
+                # whole column behind a curtain (the fp is set AFTER: the
+                # live path extends whatever it finds per line)
+                self._pend = None
+                await self._append_blocks_live(list(blocks[len(_cur):]))
+                self._render_fp[_acct_now] = _fp
+                self._rebuild_tabs()
+                self._save_cache()
+                return
         self._render_fp[_acct_now] = _fp
         self._pend = None                  # drop any half-buffered live lines
         _keep_pos = (None if self._was_following.get(_acct_now, True)
@@ -4756,8 +5022,10 @@ class SteamBridgeView(ft.Container):
             # no page to run the anchor task -> nothing would ever lift the
             # opacity curtain; show the list as-is (r556 blank-tab fix)
             self._messages.opacity = 1
-        if self.page:
-            self.page.update()
+        # r636: the column carries everything this rebuilt (controls, the
+        # opacity curtain); the overlay and tab strip flushed themselves
+        # above. A page walk here ran on every open AND every reconnect
+        self._flush_col(self._messages)
         # translate all blocks at once (cached ones are instant) instead of
         # one-by-one — much faster, and skips English->English entirely
         await asyncio.gather(*(self._translate_block(b, seq) for b in blocks))
@@ -4767,6 +5035,13 @@ class SteamBridgeView(ft.Container):
         # Buffer rapid same-sender TEXT lines for ~1s so a burst renders (and
         # translates) as ONE combined message instead of one block per line.
         # Media messages render immediately (never combined).
+        # r634: merging is disabled (_MERGE_MAX_CHARS / _MERGE_GAP_S = 0, per
+        # the user's request that lines never fuse) -- the buffer could never
+        # merge anything, yet still held EVERY incoming line for 1.0 s.
+        if self._MERGE_MAX_CHARS <= 0 or self._MERGE_GAP_S <= 0:
+            await self._flush_pend()
+            await self._render_live(m)
+            return
         if m.get("images") or m.get("stickers"):
             await self._flush_pend()
             await self._render_live(m)
@@ -4842,7 +5117,203 @@ class SteamBridgeView(ft.Container):
                 return hb
         return None
 
-    async def _render_live(self, m: dict) -> None:
+    def _flush_col(self, col, inner=None) -> None:
+        """r636: flush ONE chat column after a live append. page.update()
+        here walked the mounted dashboard+steam tree (~42-85 ms of loop
+        time) for every incoming line. A line grouped into an existing
+        block passes that block's line column as `inner`: flushing those
+        ~10 controls beats walking the whole chat column (up to _COL_CAP
+        blocks) again. Page-level only while the column's wrapper has not
+        been mounted yet (a first open before its flush)."""
+        if not self.page:
+            return
+        with contextlib.suppress(Exception):
+            if inner is not None and getattr(inner, "page", None) is not None:
+                inner.update()
+            elif getattr(col, "page", None) is not None:
+                col.update()
+            else:
+                self.page.update()
+
+    def _flush_stack(self) -> None:
+        """r636: flush the chat-column Stack (a new or evicted column, the
+        on-stage / parked wrappers, a rebuilt column and its curtain) plus
+        the entry and jump pill that _open touches. _open used to
+        page.update() here - the dashboard walked too, on every tab switch.
+        Page-level only while the Stack itself is not mounted yet."""
+        if not self.page:
+            return
+        with contextlib.suppress(Exception):
+            if getattr(self._messages_stack, "page", None) is None:
+                self.page.update()
+                return
+            self._messages_stack.update()
+            for c in (self._entry, self._jump_btn):
+                if getattr(c, "page", None) is not None:
+                    with contextlib.suppress(Exception):
+                        c.update()
+
+    @staticmethod
+    def _hist_fp(blocks) -> tuple:
+        """r636: the content fingerprint of a block list - what _render_history
+        compares a history event against. Shared by the history render, the
+        cache rebuild in _open and the live append, so the three agree."""
+        return tuple((int(b.get("_ts") or 0), b.get("from"), b.get("text") or "",
+                      len(b.get("images") or []), len(b.get("stickers") or []),
+                      len(b.get("emoticons") or [])) for b in blocks)
+
+    async def _append_blocks_live(self, tail: list) -> None:
+        """r636: put already-coalesced blocks that are not on screen yet
+        (a history that only GREW at the end, or cached lines a parked
+        column missed) through the live path - grouping, day separators,
+        the cap, one targeted column flush and a background translation
+        per line - instead of repainting the whole column behind a curtain."""
+        for b in tail:
+            m = {"from_me": bool(b.get("from_me")), "name": b.get("name") or "",
+                 "avatar": b.get("avatar") or "", "text": b.get("text") or "",
+                 "images": list(b.get("images") or []),
+                 "stickers": list(b.get("stickers") or []),
+                 "ts": int(b.get("_ts") or 0), "ord": int(b.get("_ord") or 0)}
+            await self._render_live(m, block=b)
+
+    def _unrendered_tail(self, col, cached: list):
+        """r636 (parked columns): the cached blocks a mounted column has not
+        shown yet - [] when it is up to date - or None when the column and
+        the cache no longer line up (the background sweep trimmed the list
+        at 60 -> 40, or a late history replaced it) and only a rebuild can
+        reconcile them. A block is on screen when it owns a block Container
+        or was grouped live into one (_note_bubble_pos stamps _col)."""
+        shown = [getattr(c, "data", None) for c in col.controls]
+        shown_ids = {id(d) for d in shown if isinstance(d, dict)}
+        if not shown_ids:
+            return None                      # only a spinner / note: rebuild
+        cached_ids = {id(b) for b in cached}
+        if any(i not in cached_ids for i in shown_ids):
+            return None                      # showing blocks the cache dropped
+
+        def _on_screen(b) -> bool:
+            return id(b) in shown_ids or b.get("_col") is not None
+
+        k = len(cached)
+        while k > 0 and not _on_screen(cached[k - 1]):
+            k -= 1
+        if not all(_on_screen(b) for b in cached[:k]):
+            return None                      # a gap in the middle: rebuild
+        return cached[k:]
+
+    def _anchor_after(self, col, b: dict | None) -> None:
+        """r636: point _last_block at the newest block already in `col` so a
+        line appended next groups / day-separates against it exactly as a
+        live line would have (a reopened column has no anchor of its own)."""
+        self._last_block = None
+        if not isinstance(b, dict):
+            return
+        with contextlib.suppress(Exception):
+            inner = b.get("_col")
+            if inner is None:
+                own = next(c for c in reversed(col.controls)
+                           if getattr(c, "data", None) is b)
+                inner = own.content.controls[1]
+            self._last_block = {"from_me": bool(b.get("from_me")),
+                                "name": b.get("name") or "", "col": inner,
+                                "ts": int(b.get("_ts") or 0)}
+
+    _PARK_MAX = 6    # r636: closed chat columns kept mounted for an instant reopen
+
+    def _park_column(self, acct) -> None:
+        """r636 (8d): a closed tab's column stays mounted, parked off-viewport
+        like a background tab's, so reopening it within the session is as
+        instant as a tab switch. The _PARK_MAX most recently closed are
+        kept; older ones are evicted LRU (their controls freed)."""
+        if acct not in self._msg_lists:
+            return
+        self._parked_at[acct] = time.monotonic()
+        for a in [a for a in self._parked_at if a not in self._msg_lists]:
+            self._parked_at.pop(a, None)
+        parked = [a for a in self._msg_lists if a not in self._tabs]
+        while len(parked) > self._PARK_MAX:
+            old = min(parked, key=lambda a: self._parked_at.get(a, 0.0))
+            parked.remove(old)
+            self._parked_at.pop(old, None)
+            ent = self._msg_lists.pop(old, None)
+            if ent is not None:
+                with contextlib.suppress(Exception):
+                    self._messages_stack.controls.remove(ent[0])
+
+    _COL_CAP = 200   # r636: block controls kept per chat column on live append
+
+    def _trim_column(self, col, acct) -> int:
+        """r636: live appends never trimmed - a busy chat grew without bound.
+        Before a live append that adds a block control, drop the oldest
+        blocks past _COL_CAP together with their dicts (_hist_blocks /
+        _chat_cache) and every registry keyed by them (_pending_imgs,
+        _pending_txt, the grouping anchor). Load-more inserts (older history)
+        are never capped. Called BEFORE the append, in the same flush, and
+        skipped while the user is reading up the active chat so the viewport
+        never moves under them (it trims on the next append while following).
+        Returns the number of blocks dropped."""
+        ctrls = col.controls
+        n_blocks = sum(1 for c in ctrls if isinstance(getattr(c, "data", None), dict))
+        excess = n_blocks - (self._COL_CAP - 1)
+        if excess <= 0:
+            return 0
+        if acct == self._active and not self._following:
+            return 0
+        gone_dicts: list = []
+        gone_cols: set = set()
+        i = 0
+        while excess > 0 and i < len(ctrls):
+            c = ctrls[i]
+            d = getattr(c, "data", None)
+            if isinstance(d, dict):
+                del ctrls[i]
+                excess -= 1
+                gone_dicts.append(d)
+                with contextlib.suppress(Exception):
+                    gone_cols.add(id(c.content.controls[1]))   # the block's line column
+                continue
+            i += 1
+        # a day separator with no block left under it goes too. Only a
+        # separator directly followed by ANOTHER separator is orphaned: the
+        # trim takes blocks off the front, so orphans sit ahead of the first
+        # surviving block - and a trailing one is the separator _render_live
+        # just appended for the block it is about to add (keep it)
+        i = 0
+        while i + 1 < len(ctrls):
+            if (getattr(ctrls[i], "data", None) == "daysep"
+                    and getattr(ctrls[i + 1], "data", None) == "daysep"):
+                del ctrls[i]
+                continue
+            if isinstance(getattr(ctrls[i], "data", None), dict):
+                break                          # past the front: nothing orphaned below
+            i += 1
+        gone_ids = {id(d) for d in gone_dicts}
+
+        def _dead(hb) -> bool:
+            return (isinstance(hb, dict)
+                    and (id(hb) in gone_ids or id(hb.get("_col")) in gone_cols))
+
+        for hb in list(self._hist_blocks) + gone_dicts:
+            if _dead(hb):
+                hb["_trimmed"] = True         # an in-flight translation stands down
+        # in place: _chat_cache[acct] normally aliases _hist_blocks
+        self._hist_blocks[:] = [hb for hb in self._hist_blocks if not _dead(hb)]
+        cache = self._chat_cache.get(acct)
+        if isinstance(cache, list) and cache is not self._hist_blocks:
+            cache[:] = [hb for hb in cache if not _dead(hb)]
+        for sid in [k for k, v in self._pending_imgs.items() if _dead(v)]:
+            self._pending_imgs.pop(sid, None)
+        for sid in [k for k, v in self._pending_txt.items()
+                    if _dead(v.get("b")) or id(v.get("col")) in gone_cols]:
+            self._pending_txt.pop(sid, None)
+        lb = self._last_block
+        if lb and id(lb.get("col")) in gone_cols:
+            self._last_block = None
+        if _dead(getattr(self, "_react_target", None)):
+            self._react_target = None          # the picker's target block is gone
+        return len(gone_dicts)
+
+    async def _render_live(self, m: dict, *, block: dict | None = None) -> None:
         # the first live message replaces the "No messages here yet" note
         if any(getattr(c, "data", None) == "empty" for c in self._messages.controls):
             self._messages.controls = [
@@ -4852,13 +5323,22 @@ class SteamBridgeView(ft.Container):
         if self._active is not None                 and self._state_mode in ("idle", "connecting"):
             self._hide_state_overlay()
         self._live_since_open = (self._live_since_open + [dict(m)])[-30:]
-        text, emos = _extract_emoticons((m.get("text", "") or "").strip())
-        ts = int(m.get("ts") or 0) or int(time.time())
-        b = {"from_me": bool(m.get("from_me")), "name": m.get("name", ""),
-             "avatar": m.get("avatar", ""), "text": text, "emoticons": emos,
-             "images": m.get("images", []), "stickers": m.get("stickers", []),
-             "_ts": ts, "_ord": int(m.get("ord") or 0),
-             "_out_pending": bool(m.get("_out_pending"))}
+        if block is not None:
+            # r636: an already-coalesced block (a history tail, or cached
+            # lines a parked column has not shown yet) appended as if it
+            # had arrived live - its text/emoticons are final, keep them
+            b = block
+            ts = int(b.get("_ts") or 0) or int(time.time())
+            b["_ts"] = ts
+            b["_out_pending"] = bool(b.get("_out_pending"))
+        else:
+            text, emos = _extract_emoticons((m.get("text", "") or "").strip())
+            ts = int(m.get("ts") or 0) or int(time.time())
+            b = {"from_me": bool(m.get("from_me")), "name": m.get("name", ""),
+                 "avatar": m.get("avatar", ""), "text": text, "emoticons": emos,
+                 "images": m.get("images", []), "stickers": m.get("stickers", []),
+                 "_ts": ts, "_ord": int(m.get("ord") or 0),
+                 "_out_pending": bool(m.get("_out_pending"))}
         # ── out-of-order delivery (r532): a restarted helper replays recent
         # history in arbitrary order. Blind appends put an 11:29 message
         # under an 11:22 one. Skip what's already on screen; anything new
@@ -4878,6 +5358,7 @@ class SteamBridgeView(ft.Container):
                     break
                 i -= 1
             ctrl = self._block_control(b)
+            self._note_bubble_pos(b, self._last_block)   # r635: before the restore
             self._last_block = prev_lb        # inserts never anchor grouping
             _ins = i + 1
             if _ins == 0 and ctrls and getattr(ctrls[0], "data", None) == "loadmore":
@@ -4888,32 +5369,60 @@ class SteamBridgeView(ft.Container):
                                    or 0) > ts:
                 hidx -= 1
             self._hist_blocks.insert(hidx, b)
-            if self.page:
-                self.page.update()
-            await self._translate_block(b, self._open_seq)
+            self._flush_col(self._messages)          # r636: targeted, no page walk
+            if b["from_me"]:
+                await self._translate_block(b, self._open_seq)
+            else:
+                self._spawn_translate(b, self._open_seq)   # r636: paint first
             return b
         lb = self._last_block
         if (lb and lb.get("ts") and ts
                 and time.localtime(lb["ts"])[:3] != time.localtime(ts)[:3]):
             self._messages.controls.append(self._day_sep(ts))
             lb = self._last_block = None
+        _inner = None
         if (lb and lb["from_me"] == b["from_me"] and lb["name"] == (b.get("name") or "")
                 and (not lb.get("ts") or ts - lb["ts"] <= self._GROUP_GAP_S)):
             # Same sender, recent → share the name header; the message KEEPS its own
             # lines (no text fusion).
             with contextlib.suppress(Exception):
                 lb["col"].controls.extend(self._message_body_controls(b))
+                _inner = lb["col"]   # r636: only this block's lines changed
             lb["ts"] = ts
         else:
-            self._messages.controls.append(self._block_control(b))
+            col = self._messages
+            self._trim_column(col, self._active)     # r636: cap BEFORE the append
+            col.controls.append(self._block_control(b))
+            lb = self._last_block
+        # r635: captured HERE, not in _send after the translate await below -
+        # a friend's line rendered meanwhile moves _last_block to their block
+        self._note_bubble_pos(b, lb)
         self._hist_blocks.append(b)
+        _fpk = self._active or 0
+        if _fpk in self._render_fp:
+            # r636: the server's next history snapshot ends with this line -
+            # extend the rendered fingerprint so it fp-skips in
+            # _render_history instead of repainting the whole column
+            self._render_fp[_fpk] = self._render_fp[_fpk] + self._hist_fp((b,))
         self._seen_chat_ts[self._active or 0] = max(
             self._seen_chat_ts.get(self._active or 0, 0), ts)
         if self.page:
-            self.page.update()
-            if self._following:
+            if self._following and getattr(self._messages, "page", None) is not None:
+                # r636: Flet's scroll_to() updates the column itself, and that
+                # one walk already carries the new lines - a separate flush
+                # here walked the same column twice per incoming line
                 self._scroll_to_end()
-        await self._translate_block(b, self._open_seq)
+            else:
+                self._flush_col(self._messages, _inner)  # r636: targeted, no page walk
+                if self._following:
+                    self._scroll_to_end()
+        if b["from_me"]:
+            # own bubbles keep the inline await: _send reads the block after it
+            await self._translate_block(b, self._open_seq)
+        else:
+            # r636: a friend's line is on screen now; its translation lands
+            # from a task via the targeted tc.update in _translate_block
+            self._spawn_translate(b, self._open_seq)
         return b
 
     # ── helper process + socket ──────────────────────────────────────────────
@@ -4955,11 +5464,30 @@ class SteamBridgeView(ft.Container):
                 await asyncio.sleep(0.5)
         if connected:
             self._reconnect_delay = 1.0
+            self._hello_seen = False          # r636: per connection
             self.page.run_task(self._read_loop)
+            self.page.run_task(self._hello_watch)
+
+    async def _hello_watch(self) -> None:
+        """r636: newer helpers open with {"ev":"hello","app":"puripuly-steam",
+        "proto":1,"pid":N}. Older helpers (common) and foreign programs on
+        the port never say it - warn ONCE, keep working either way."""
+        await asyncio.sleep(2.0)
+        if self._hello_seen or getattr(self, "_nohello_warned", False):
+            return
+        if self._reader is None:
+            return                # the connection already dropped - not a hello issue
+        self._nohello_warned = True
+        _vlog.warning("[SteamView] helper on port %d sent no hello - an older "
+                      "helper or a foreign program owns the port", _PORT)
 
     async def _try_open(self) -> bool:
         try:
-            self._reader, self._writer = await asyncio.open_connection(_HOST, _PORT)
+            # r635: the default 64 KiB StreamReader limit killed _read_loop
+            # on every connect once the "friends" event outgrew it (~160+
+            # friends): a reconnect storm and a dead tab
+            self._reader, self._writer = await asyncio.open_connection(
+                _HOST, _PORT, limit=16 * 1024 * 1024)
             return True
         except Exception:
             return False
@@ -4976,10 +5504,22 @@ class SteamBridgeView(ft.Container):
                 # re-pushes friends when its signature changes, which a
                 # message to the already-top chat never does
                 with contextlib.suppress(Exception):
-                    fr = self._friends.get(int(obj.get("acct") or 0))
+                    _sa = int(obj.get("acct") or 0)
+                    fr = self._friends.get(_sa)
                     if fr is not None:
+                        _before = self._chat_order(self._friend_items())   # r636
                         fr["last_chat"] = int(time.time())
-                        self._rebuild_friends()
+                        # r635: the message is mine, so it is seen. Translate
+                        # latency put this bump past the render's seen mark;
+                        # switching away then flagged the chat unread (chip
+                        # dot, and now the dashboard's Steam tab) until the
+                        # helper echoed a 'seen' or a friends push
+                        self._seen_chat_ts[_sa] = max(
+                            self._seen_chat_ts.get(_sa, 0), fr["last_chat"])
+                        if self._chat_order(self._friend_items()) != _before:
+                            # r636: only when RECENT/UNREAD actually reorder -
+                            # no row shows last_chat itself
+                            self._rebuild_friends()
             return True
         except Exception:
             self._writer = None
@@ -5045,7 +5585,14 @@ class SteamBridgeView(ft.Container):
         lst = self._ensure_msg_list(acct)
         self._show_msg_list(acct)
         cached = self._chat_cache.get(acct)
-        if cached and lst.controls:
+        # r636: a mounted column (an open background tab, or a closed tab
+        # parked by _close_tab) may be BEHIND its cache - lines swept in
+        # while it was not active. Append just those; None means the two no
+        # longer line up and the cache rebuild below repaints instead
+        _tail = (self._unrendered_tail(lst, cached)
+                 if (cached and lst.controls) else None)
+        _was_parked = self._parked_at.pop(acct, None) is not None
+        if cached and lst.controls and _tail is not None:
             # already built — normally parked exactly where the user left it,
             # so show it untouched; the fresh fetch below fp-skips (or
             # repaints) as needed
@@ -5054,10 +5601,12 @@ class SteamBridgeView(ft.Container):
             self._following = self._was_following.get(acct, True)
             if self._jump_btn.visible == self._following:
                 self._jump_btn.visible = not self._following
-            if self._col_epoch.get(acct) != self._remount_epoch:
+            if self._col_epoch.get(acct) != self._remount_epoch or _was_parked:
                 # the dashboard was remounted since this column was last
                 # anchored — its Flutter scroll reset to the top; restore
-                # the kept spot invisibly
+                # the kept spot invisibly. r636: a reopened closed tab takes
+                # the same path to the newest line (its position was
+                # forgotten on close) - the curtain lifts after the first pin
                 self._col_epoch[acct] = self._remount_epoch
                 _keep_pos = (None if self._following
                              else self._scroll_pos.get(acct))
@@ -5066,6 +5615,14 @@ class SteamBridgeView(ft.Container):
                     self.page.run_task(self._anchor_end, _keep_pos)
             else:
                 lst.opacity = 1            # belt: never a stuck curtain
+            if _tail:
+                # r636: the missed lines go through the live path (grouped
+                # against the newest shown block); _render_live re-appends
+                # each to the cache list, so take them off it first
+                self._anchor_after(lst, cached[len(cached) - len(_tail) - 1]
+                                   if len(cached) > len(_tail) else None)
+                del cached[len(cached) - len(_tail):]
+                await self._append_blocks_live(list(_tail))
             # repair any translations that never landed (cache hits are
             # instant and _tr_prefilled guards make this cheap)
             if self.page:
@@ -5078,9 +5635,12 @@ class SteamBridgeView(ft.Container):
                          else self._scroll_pos.get(acct))
             self._following = _keep_pos is None
             self._messages.opacity = 0     # hidden until anchored
+            self._messages.controls.clear()   # r636: a stale parked column rebuilds
+            self._last_block = None
             _prev_day = None
             for b in cached:
                 b.pop("_ctrl", None)
+                b.pop("_col", None)        # r636: no longer grouped into a live column
                 _bts = int(b.get("_ts") or 0)
                 if _bts:
                     _day = time.localtime(_bts)[:3]
@@ -5093,6 +5653,10 @@ class SteamBridgeView(ft.Container):
             # it a reopened tab whose history event fp-skips never gets one
             self._messages.controls.insert(0, self._load_more_pill())
             self._loadmore_busy.pop(acct, None)
+            # r636: what is on screen now IS this content - an identical
+            # history event fp-skips instead of repainting behind a second
+            # curtain (the fp used to be popped on close, forcing a repaint)
+            self._render_fp[acct] = self._hist_fp(cached)
             if self.page:
                 self.page.run_task(self._anchor_end, _keep_pos)
                 self.page.run_task(self._fill_translations, cached, self._open_seq)
@@ -5107,8 +5671,9 @@ class SteamBridgeView(ft.Container):
                             size=12.5, color=_TEXT_FAINT),
                 ], spacing=10, alignment=ft.MainAxisAlignment.CENTER),
                 padding=ft.padding.only(top=40)))
-        if self.page:
-            self.page.update()
+        # r636: the column Stack + entry + jump pill are all _open changed
+        # that has not flushed itself; a page walk here ran per tab switch
+        self._flush_stack()
         self._save_prefs()
         await self._cmd({"cmd": "open", "acct": acct})
 
@@ -5143,11 +5708,12 @@ class SteamBridgeView(ft.Container):
                                             f"picker to browse them"))
                 return
             await self._flush_pend()
-            await self._render_live({
+            _sb = await self._render_live({
                 "from_me": True, "name": self._own_name, "avatar": self._own_avatar,
                 "text": text, "images": [], "stickers": [],
                 "ts": int(time.time())})
-            await self._cmd({"cmd": "send", "acct": self._active, "text": text})
+            await self._cmd({"cmd": "send", "acct": self._active, "text": text,
+                             "sid": self._track_txt_send(_sb, self._active)})
             return
         # Same behavior as the main chat tab: the ORIGINAL goes out (and renders)
         # IMMEDIATELY — never gated on DeepL latency — and the translation follows
@@ -5167,8 +5733,9 @@ class SteamBridgeView(ft.Container):
             "text": orig_out, "images": [], "stickers": [],
             "ts": int(time.time()),
             "_out_pending": fmt != "orig_only"})
+        sid = self._track_txt_send(b, acct)   # r635: the helper acks by this id
         if fmt == "orig_only":
-            await self._cmd({"cmd": "send", "acct": acct, "text": orig_out})
+            await self._cmd({"cmd": "send", "acct": acct, "text": orig_out, "sid": sid})
             return
         tr_src = _URL_RE.sub("", clean).strip()
         urls = " ".join(_URL_RE.findall(clean))
@@ -5183,7 +5750,7 @@ class SteamBridgeView(ft.Container):
                     _oc.visible = False
                     with contextlib.suppress(Exception):
                         _oc.update()
-            await self._cmd({"cmd": "send", "acct": acct, "text": orig_out})
+            await self._cmd({"cmd": "send", "acct": acct, "text": orig_out, "sid": sid})
             return
         zh = None
         if callable(self.translate_message):
@@ -5201,7 +5768,7 @@ class SteamBridgeView(ft.Container):
                     _oc.visible = False
                     with contextlib.suppress(Exception):
                         _oc.update()
-            await self._cmd({"cmd": "send", "acct": acct, "text": orig_out})
+            await self._cmd({"cmd": "send", "acct": acct, "text": orig_out, "sid": sid})
             return
         self._tr_cache[self._tr_key(zh)] = tr_src         # echo renders instantly
         reading = self._romanize(zh) if "read" in fmt else ""
@@ -5222,7 +5789,7 @@ class SteamBridgeView(ft.Container):
         out2 = "\n".join(l for l in lines if l).strip() or orig_out
         if urls and not fmt.startswith("orig") and urls not in out2:
             out2 = f"{out2}\n{urls}".strip()   # links ride along untranslated
-        await self._cmd({"cmd": "send", "acct": acct, "text": out2})
+        await self._cmd({"cmd": "send", "acct": acct, "text": out2, "sid": sid})
         sent_extra = "\n".join(l for l in lines
                                if l and l != orig_out and l != _orig_line)
         if b is not None and sent_extra:
@@ -5241,6 +5808,11 @@ class SteamBridgeView(ft.Container):
                 except Exception:
                     continue
                 await self._handle(ev)
+        except ValueError:
+            # r636: StreamReader raises ValueError for a line past the 16 MiB
+            # limit - that is a dead tab plus a reconnect storm, never silent
+            _vlog.exception("[SteamView] read loop ended: a helper line "
+                            "exceeded the stream limit")
         except Exception:
             pass
         # Connection closed (daemon died/restarted) — self-heal so the tab does
@@ -5270,6 +5842,14 @@ class SteamBridgeView(ft.Container):
 
     async def _handle(self, ev: dict) -> None:
         kind = ev.get("ev")
+        if kind == "hello":
+            # r636: the newer helper's handshake - nothing to render
+            self._hello_seen = True
+            if not getattr(self, "_hello_logged", False):
+                self._hello_logged = True
+                _vlog.debug("[SteamView] helper hello: app=%s proto=%s pid=%s",
+                            ev.get("app"), ev.get("proto"), ev.get("pid"))
+            return
         if kind == "own":
             self._own = int(ev.get("acct", 0))
             self._own_name = ev.get("name") or "You"
@@ -5341,10 +5921,7 @@ class SteamBridgeView(ft.Container):
             _sa, _sts = int(ev.get("acct") or 0), int(ev.get("ts") or 0)
             if _sa and _sts and _sts > self._seen_chat_ts.get(_sa, 0):
                 self._seen_chat_ts[_sa] = _sts
-                self._rebuild_tabs()
-                if self.page:
-                    with contextlib.suppress(Exception):
-                        self.page.update()
+                self._rebuild_tabs()      # r636: flushes the strip itself
         elif kind == "friends":
             if not (ev.get("items") or []):
                 # an empty friends push is NEVER a reason to tear down open
@@ -5383,13 +5960,15 @@ class SteamBridgeView(ft.Container):
                 if a not in self._search_index:
                     self._search_index[a] = _search_key(i.get("name", ""))
             self._hide_loading()
-            self._rebuild_friends()
-            self._rebuild_tabs()
-            self._save_snapshot()
+            self._rebuild_friends()       # r636: signature-gated, flushes the list
+            self._rebuild_tabs()          # flushes the strip
+            self._save_snapshot()         # dirty flag; the writer debounces
             if self._active in self._friends:
                 self._set_chat_head(self._friends[self._active])
-            if self.page:
-                self.page.update()
+            if stale and self.page:
+                # r636: page-level only when the Stack lost a stale chat column
+                with contextlib.suppress(Exception):
+                    self.page.update()
         elif kind == "history_older":
             h_acct = int(ev.get("acct", 0))
             msgs = ev.get("messages", []) or []
@@ -5411,10 +5990,9 @@ class SteamBridgeView(ft.Container):
                     with contextlib.suppress(Exception):
                         # older than everything on screen -> the out-of-order
                         # path slots each one in chronologically and drops
-                        # ones the log already shows
+                        # ones the log already shows (r636: each insert
+                        # flushes its own column; no page walk after)
                         await self._render_live(m)
-                if self.page:
-                    self.page.update()
         elif kind == "history":
             h_acct = int(ev.get("acct", 0))
             if h_acct == self._active:
@@ -5431,7 +6009,8 @@ class SteamBridgeView(ft.Container):
             if ev.get("ok") and int(ev.get("acct", 0)) == self._active:
                 self._entry.disabled = False
                 if self.page:
-                    self.page.update()
+                    with contextlib.suppress(Exception):
+                        self._entry.update()      # r636: targeted
         elif kind == "typing":
             if int(ev.get("acct", 0)) == self._active:
                 self._set_typing(ev.get("name", "") if ev.get("typing") else "")
@@ -5443,8 +6022,12 @@ class SteamBridgeView(ft.Container):
             with contextlib.suppress(Exception):
                 _fr = self._friends.get(_in_acct)
                 if _fr is not None and _im:
+                    _before = self._chat_order(self._friend_items())   # r636
                     _fr["last_chat"] = int(_im.get("ts") or time.time())
-                    self._rebuild_friends()
+                    if self._chat_order(self._friend_items()) != _before:
+                        # r636: rebuild only when RECENT/UNREAD reorder - the
+                        # rows never show last_chat, so nothing else changed
+                        self._rebuild_friends()
             if _in_acct == self._active:
                 self._set_typing("")
                 await self._append_message(ev.get("message", {}))
@@ -5460,10 +6043,36 @@ class SteamBridgeView(ft.Container):
                 if _in_acct not in self._tabs:
                     self._tabs.append(_in_acct)
                 self._unread_live.add(_in_acct)
-                self._rebuild_tabs()
-                if self.page:
+                self._rebuild_tabs()      # r636: flushes the strip itself
+        elif kind == "sent":
+            # r635: the helper acks every text send ({"ok","acct","sid"}) -
+            # a rejected message used to look delivered. No sid = an older
+            # helper is still running: nothing to mark, just say so.
+            _sid = str(ev.get("sid") or "")
+            _pt = self._pending_txt.pop(_sid, None) if _sid else None
+            if ev.get("ok"):
+                return
+            _b = (_pt or {}).get("b")
+            if isinstance(_b, dict):
+                _b["_send_failed"] = True   # a history rebuild renders the line itself
+                # NOT _refresh_block: rebuilding the Container drops every
+                # later bubble grouped into that block's column (and would
+                # re-decide the translation layout). Insert the red line
+                # right after this bubble's last line - column and anchor
+                # were captured when it rendered - so earlier failures in
+                # the same block do not shift it
+                _col, _anchor = _pt.get("col"), _pt.get("anchor")
+                if _col is not None:
                     with contextlib.suppress(Exception):
-                        self.page.update()
+                        _at = len(_col.controls)
+                        for _i, _c in enumerate(_col.controls):
+                            if _c is _anchor:
+                                _at = _i + 1
+                                break
+                        _col.controls.insert(_at, self._send_failed_line())
+                        _col.update()
+            self._notice(_T("steam.send_failed",
+                            default="Message not delivered - Steam rejected it, try again"))
         elif kind == "image_sent":
             _sid = str(ev.get("sid") or "")
             _pb = self._pending_imgs.pop(_sid, None)
@@ -5498,6 +6107,8 @@ class SteamBridgeView(ft.Container):
                             duration=4000))
 
     async def shutdown(self) -> None:
+        with contextlib.suppress(Exception):
+            await self._flush_snapshot()      # r636: teardown bypasses the debounce
         with contextlib.suppress(Exception):
             if self._writer:
                 self._writer.close()

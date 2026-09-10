@@ -1385,3 +1385,47 @@ def test_create_stt_backend_soniox_passes_effective_custom_terms() -> None:
 
     assert isinstance(backend, SonioxRealtimeSTTBackend)
     assert list(backend.context_terms) == ["Puripuly", "VRChat"]
+
+
+def _local_qwen_peer_settings(**language_kwargs):
+    from puripuly_heart.config.settings import (
+        AppSettings,
+        LanguagePreset,
+        LanguageSettings,
+        ProviderSettings,
+        STTProviderName,
+    )
+
+    presets = language_kwargs.pop("presets", None) or [LanguagePreset()]
+    return AppSettings(
+        provider=ProviderSettings(peer_stt=STTProviderName.LOCAL_QWEN),
+        languages=LanguageSettings(presets=presets, active_preset=0, **language_kwargs),
+    )
+
+
+def test_peer_script_retry_hint_for_single_pinned_cjk_language() -> None:
+    settings = _local_qwen_peer_settings(peer_source_language="ko", auto_detect_peer_voice=False)
+    assert resolve_peer_stt_config(settings).script_retry_language_hint == "Korean"
+    settings = _local_qwen_peer_settings(peer_source_language="zh-CN", auto_detect_peer_voice=False)
+    assert resolve_peer_stt_config(settings).script_retry_language_hint == "Chinese"
+    # the r382 rule: the general language_hint stays None regardless
+    assert resolve_peer_stt_config(settings).language_hint is None
+
+
+def test_peer_script_retry_hint_is_none_for_auto_detect_and_latin() -> None:
+    settings = _local_qwen_peer_settings(peer_source_language="ko", auto_detect_peer_voice=True)
+    assert resolve_peer_stt_config(settings).script_retry_language_hint is None
+    settings = _local_qwen_peer_settings(peer_source_language="en", auto_detect_peer_voice=False)
+    assert resolve_peer_stt_config(settings).script_retry_language_hint is None
+
+
+def test_peer_script_retry_hint_is_none_when_active_preset_has_extra_peer_languages() -> None:
+    from puripuly_heart.config.settings import LanguagePreset
+
+    # ko + ja room: a Japanese friend's kana must never be re-decoded as Korean
+    settings = _local_qwen_peer_settings(
+        peer_source_language="ko",
+        auto_detect_peer_voice=False,
+        presets=[LanguagePreset(extra_peer_sources=["ja"])],
+    )
+    assert resolve_peer_stt_config(settings).script_retry_language_hint is None

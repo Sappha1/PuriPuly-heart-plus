@@ -205,6 +205,35 @@ _DESKTOP_EMPTY_LOCK_ACTION_MIN_HIT_TARGET = 44
 _DESKTOP_EMPTY_LOCK_ACTION_HORIZONTAL_PADDING = 28
 _DESKTOP_EMPTY_LOCK_ACTION_VERTICAL_PADDING = 12
 _DESKTOP_EMPTY_LOCK_ACTION_TEXT_WIDTH_SAFETY = 24
+# r636: the compositor nudge. The presenter republishes the SAME frame every
+# 100 ms for ~2 s per turn with a load-bearing refresh nonce (see
+# core/overlay/state.py tick_peer_presentation_refresh), so dedup cannot
+# coalesce it and the r197-r208 "static frame silently dropped by the Windows
+# compositor" failure stays fixed. That used to cost a full page.clean() +
+# page.add() rebuild of the whole caption tree (per-character ft.Text controls
+# for CJK ruby) up to ~20x per turn. The nonce path now maps to this 1x1
+# control instead: flipping its opacity between "paint nothing" and "paint one
+# imperceptible pixel", then updating ONLY it, still submits a fresh Flutter
+# frame for the locked transparent window, which is the part r197-r208 needs.
+_DESKTOP_RENDER_NUDGE_SIZE = 1
+_DESKTOP_RENDER_NUDGE_TINT = "#01000000"
+_DESKTOP_RENDER_NUDGE_OPACITY_ON = 0.01
+_DESKTOP_RENDER_NUDGE_OPACITY_OFF = 0.0
+# Escape hatch for bisecting a suspected paint regression: restores the r635
+# unconditional full rebuild on every snapshot.
+_DESKTOP_FULL_REDRAW_ENV = "PPH_OVERLAY_FULL_REDRAW"
+# r636: shared window for the Topmost buried/re-sorted log pair. The old limiter
+# keyed on (window description, 60 s), so a burying window that alternated
+# between two classes reset it every tick — 2,847 lines/day measured.
+_DESKTOP_TOPMOST_LOG_WINDOW_S = 60.0
+_TRUTHY_ENV_VALUES = frozenset({"1", "true", "yes", "on"})
+
+
+def _desktop_full_redraw_forced() -> bool:
+    """True when PPH_OVERLAY_FULL_REDRAW asks for the pre-r636 render path."""
+
+    raw = os.environ.get(_DESKTOP_FULL_REDRAW_ENV, "")
+    return str(raw or "").strip().lower() in _TRUTHY_ENV_VALUES
 
 
 def _desktop_caption_color_for_channel(channel: str) -> str:
@@ -2743,6 +2772,21 @@ class FletDesktopRendererWindow:
         # r388: a lull-edge composite pulse is in flight — prevents stacking
         # pulses when captions arrive faster than the ~60ms pulse completes.
         self._composite_kick_in_flight: bool = False
+        # r636 incremental render: the last committed pixel signature (everything
+        # that affects what is drawn, and NOTHING that is only a refresh
+        # nonce/revision/sequence counter) plus the root it produced. A repeat
+        # signature takes the compositor nudge instead of a full rebuild.
+        self._render_signature: tuple[object, ...] | None = None
+        self._render_root: Any = None
+        self._render_nudge_ctrl: Any = None
+        self._render_nudge_on: bool = False
+        self._render_skipped_rebuilds: int = 0
+        # r636: ONE shared window for the Topmost buried/re-sorted pair (the old
+        # per-description limiter was reset by alternating burying windows), plus
+        # the (kind, description) pairs already reported once this session.
+        self._topmost_log_seen: set[tuple[str, str]] = set()
+        self._topmost_log_last_at: float = 0.0
+        self._topmost_log_suppressed: int = 0
 
     def prime_startup_runtime_controls(
         self,
@@ -3412,6 +3456,150 @@ class FletDesktopRendererWindow:
                 window_update()
         self._startup_relayout_pending = True
 
+    def _intended_ignore_mouse_events(self) -> bool:
+        """The click-through flag the current state wants on the window.
+
+        r636: split out of _apply_interaction_window_chrome so the render
+        signature can carry it. The nudge path never flushes page-level window
+        attributes, so a chrome change MUST fall back to the full rebuild.
+        """
+        if getattr(self, "_suppress_content", False):
+            # Soft-hidden: always click-through, regardless of interaction mode.
+            return True
+        return (
+            self._interaction_mode == _DESKTOP_INTERACTION_MODE_PASS_THROUGH
+            and not self._active_banner_visible()
+            and not self._relayout_in_progress
+        )
+
+    def _render_signature_for(
+        self,
+        *,
+        content_kind: str,
+        plan: DesktopCaptionPlan,
+        extra: tuple[object, ...] = (),
+    ) -> tuple[object, ...]:
+        """Everything that decides what the window PAINTS, and nothing else.
+
+        The caption plan is a frozen dataclass built purely from the snapshot's
+        blocks, the window size, the visual state and the interaction mode — the
+        refresh nonce rides on block.session_scope, which this renderer only
+        logs. So comparing plans is exactly "did any pixel change?", with the
+        revision/nonce/sequence counters excluded by construction.
+        """
+        return (
+            content_kind,
+            self._interaction_mode,
+            bool(getattr(self, "_suppress_content", False)),
+            self._intended_ignore_mouse_events(),
+            self._locale,
+            float(self._active_banner_opacity),
+            plan,
+            extra,
+        )
+
+    def _build_render_root(
+        self,
+        ft: Any,
+        content: Any,
+        *,
+        alignment: Any,
+        expand: Any,
+    ) -> tuple[Any, Any]:
+        """Page root plus the r636 compositor nudge stacked on top of `content`.
+
+        The nudge is POSITIONED (left/top/width/height), so Flutter sizes the
+        Stack from `content` alone and the laid-out result is what the bare
+        container produced before — the r197-r208 layout is untouched.
+        """
+        nudge = ft.Container(
+            left=0,
+            top=0,
+            width=_DESKTOP_RENDER_NUDGE_SIZE,
+            height=_DESKTOP_RENDER_NUDGE_SIZE,
+            bgcolor=_DESKTOP_RENDER_NUDGE_TINT,
+            opacity=_DESKTOP_RENDER_NUDGE_OPACITY_OFF,
+        )
+        root = ft.Container(
+            content=ft.Stack(controls=[content, nudge]),
+            padding=0,
+            bgcolor=ft.Colors.TRANSPARENT,
+            alignment=alignment,
+            expand=expand,
+        )
+        return root, nudge
+
+    def _can_skip_rebuild(self, page: Any, signature: tuple[object, ...]) -> bool:
+        if _desktop_full_redraw_forced():
+            return False
+        if self._render_signature is None or signature != self._render_signature:
+            return False
+        root = self._render_root
+        if root is None or self._render_nudge_ctrl is None:
+            return False
+        try:
+            controls = getattr(page, "controls", None) or ()
+            return any(control is root for control in controls)
+        except Exception:
+            return False
+
+    def _pulse_render_nudge(self) -> bool:
+        """Flip the 1x1 nudge and update ONLY that control.
+
+        opacity 0 means Flutter paints nothing for it, so the flip toggles the
+        layer tree and a fresh frame is submitted and composited — which is the
+        half of the r197-r208 fix the 100 ms nonce republishes actually need.
+        Returns False when the nudge is not mounted, so the caller falls back to
+        the full rebuild rather than dropping the frame.
+        """
+        ctrl = self._render_nudge_ctrl
+        if ctrl is None:
+            return False
+        try:
+            on = not self._render_nudge_on
+            ctrl.opacity = (
+                _DESKTOP_RENDER_NUDGE_OPACITY_ON if on else _DESKTOP_RENDER_NUDGE_OPACITY_OFF
+            )
+            self._render_nudge_on = on
+            if getattr(ctrl, "page", None) is None:
+                return False
+            ctrl.update()
+        except Exception:
+            return False
+        return True
+
+    def _commit_render_root(
+        self,
+        page: Any,
+        root: Any,
+        nudge: Any,
+        signature: tuple[object, ...],
+    ) -> bool:
+        """Publish `root`, or nudge the compositor when no pixel moved.
+
+        Returns True when the page tree was actually rebuilt.
+        """
+        # window.ignore_mouse_events is a PAGE attribute in Flet 0.28
+        # (page._set_attr("windowIgnoreMouseEvents")), so it rides the next page
+        # update. Applying it BEFORE page.add() — which IS a full page update
+        # (flet Page.add -> Page.__update) — is what makes the trailing
+        # page.update() this method replaced redundant: that was a second
+        # whole-tree diff plus a websocket round trip on every snapshot.
+        self._apply_interaction_window_chrome()
+        if self._can_skip_rebuild(page, signature) and self._pulse_render_nudge():
+            self._render_skipped_rebuilds += 1
+            return False
+        if hasattr(page, "clean"):
+            page.clean()
+        else:
+            page.controls.clear()
+        page.add(root)
+        self._render_signature = signature
+        self._render_root = root
+        self._render_nudge_ctrl = nudge
+        self._render_nudge_on = False
+        return True
+
     def _render_page(self) -> None:
         page = self._page
         if page is None:
@@ -3420,15 +3608,22 @@ class FletDesktopRendererWindow:
         self._restore_if_minimized()
 
         if self._preview_catalog is not None:
+            # Local QA preview: interactive dropdowns, not the caption stream —
+            # it keeps the unconditional rebuild (and invalidates any signature).
+            self._render_signature = None
+            self._render_root = None
+            self._render_nudge_ctrl = None
             root = self._build_preview_root(ft)
             if hasattr(page, "clean"):
                 page.clean()
             else:
                 page.controls.clear()
-            page.add(root)
             self._apply_interaction_window_chrome()
             self._reveal_window_if_supported()
-            page.update()
+            # r636: page.add() is itself a full page update, so it flushes the
+            # window attributes set just above; the trailing page.update() was a
+            # second whole-tree diff for an empty change set.
+            page.add(root)
             return
 
         _cur = self._current_window_bounds
@@ -3456,20 +3651,22 @@ class FletDesktopRendererWindow:
             # transparent overlay with no content is indistinguishable from a hidden
             # window, and never touching window.visible/opacity/bounds means Flutter's
             # layout can never be invalidated by the toggle (the r197-r204 saga).
-            root = ft.Container(
-                content=build_desktop_transparent_sizing_host(plan),
-                padding=0,
-                bgcolor=ft.Colors.TRANSPARENT,
+            root, nudge = self._build_render_root(
+                ft,
+                build_desktop_transparent_sizing_host(plan),
                 alignment=ft.alignment.center,
+                expand=None,
             )
-            if hasattr(page, "clean"):
-                page.clean()
-            else:
-                page.controls.clear()
-            page.add(root)
-            self._apply_interaction_window_chrome()
-            page.update()
+            self._commit_render_root(
+                page,
+                root,
+                nudge,
+                self._render_signature_for(content_kind="suppressed", plan=plan),
+            )
             return
+        # r636: per-branch pixel inputs that are NOT already in `plan` (the edit
+        # chrome sizes itself from the real window and can draw a sample plan).
+        _signature_extra: tuple[object, ...] = ()
         if self._interaction_mode == _DESKTOP_INTERACTION_MODE_EDIT:
             # Size the chrome EXPLICITLY to the real window (cur_bounds is correct at
             # startup; page.window.width/height lag the first render and made small
@@ -3557,6 +3754,7 @@ class FletDesktopRendererWindow:
             )
             content_kind = "drag_area"
             content = drag_area
+            _signature_extra = (win_w, win_h, band_h, lock_label, body_plan)
         elif self._active_banner_visible():
             # One-time "overlay active" confirmation while locked (armed in start()).
             # Drawn over whatever the locked content would be so it's visible even at
@@ -3638,24 +3836,27 @@ class FletDesktopRendererWindow:
         # The active banner uses the same window-filling layout as the edit chrome
         # (expand + top-left) so it reliably gets real bounds and paints.
         _window_filling = _edit or content_kind == "active_banner"
-        root = ft.Container(
-            content=content,
-            padding=0,
-            bgcolor=ft.Colors.TRANSPARENT,
+        root, nudge = self._build_render_root(
+            ft,
+            content,
             # Edit chrome is explicitly window-sized, so pin it to the top-left origin
             # rather than centering (centering a window-sized box is a no-op but can
             # interact badly with expand); captions keep centering.
             alignment=ft.alignment.top_left if _window_filling else ft.alignment.center,
             expand=_window_filling,
         )
-
-        if hasattr(page, "clean"):
-            page.clean()
-        else:
-            page.controls.clear()
-        page.add(root)
-        self._apply_interaction_window_chrome()
-        page.update()
+        # r636: identical pixels -> nudge the compositor instead of tearing the
+        # caption tree down and rebuilding it. See _render_signature_for.
+        self._commit_render_root(
+            page,
+            root,
+            nudge,
+            self._render_signature_for(
+                content_kind=content_kind,
+                plan=plan,
+                extra=_signature_extra,
+            ),
+        )
         self._reveal_window_if_supported()
 
     def _apply_interaction_window_chrome(self) -> None:
@@ -4385,15 +4586,9 @@ class FletDesktopRendererWindow:
                     buried_by = getattr(self, "_topmost_buried_by", None)
                     if buried_by:
                         self._topmost_buried_by = None
-                        # same (window, 60 s) limiter as the buried line: a
-                        # window in a higher band keeps winning every tick
-                        now = time.monotonic()
-                        last_desc, last_at = getattr(
-                            self, "_topmost_resorted_logged", (None, 0.0))
-                        if last_desc != buried_by or now - last_at > 60.0:
-                            self._topmost_resorted_logged = (buried_by, now)
-                            logger.info(
-                                "[DesktopOverlay][Topmost] re-sorted above %s", buried_by)
+                        # r636: shares the buried line's limiter — see
+                        # _log_topmost_event.
+                        self._log_topmost_event("resorted", buried_by)
                 self._reassert_native_click_through(hwnd)
                 # the guard loop must run no matter WHICH path first got a
                 # handle — startup-reveal was the only starter before, and
@@ -4501,11 +4696,37 @@ class FletDesktopRendererWindow:
         except Exception:
             desc = "an unknown window"
         self._topmost_buried_by = desc
-        now = time.monotonic()
-        last_desc, last_at = getattr(self, "_topmost_buried_logged", (None, 0.0))
-        if last_desc != desc or now - last_at > 60.0:
-            self._topmost_buried_logged = (desc, now)
-            logger.info("[DesktopOverlay][Topmost] buried under %s; re-sorting", desc)
+        self._log_topmost_event("buried", desc)
+
+    def _log_topmost_event(self, kind: str, desc: str, *, now: float | None = None) -> None:
+        """Emit one buried/re-sorted line, rate-limited across BOTH of them.
+
+        r636: the limiter used to be per (window description, 60 s) and per
+        line, so a burying window that alternated between two classes reset it
+        on every tick — 2,847 lines/day measured. One shared timestamp now
+        governs both lines, and whatever it swallowed is reported as a count on
+        the next line that does get through. The FIRST sighting of each
+        (kind, description) still goes out immediately, so a new burying app
+        stays identifiable exactly once per session.
+        """
+        stamp = time.monotonic() if now is None else now
+        seen: set[tuple[str, str]] = self._topmost_log_seen
+        if (kind, desc) in seen and (
+            stamp - self._topmost_log_last_at <= _DESKTOP_TOPMOST_LOG_WINDOW_S
+        ):
+            self._topmost_log_suppressed += 1
+            return
+        seen.add((kind, desc))
+        suppressed = self._topmost_log_suppressed
+        self._topmost_log_suppressed = 0
+        self._topmost_log_last_at = stamp
+        tail = f" ({suppressed} similar suppressed)" if suppressed else ""
+        if kind == "buried":
+            logger.info(
+                "[DesktopOverlay][Topmost] buried under %s; re-sorting%s", desc, tail)
+        else:
+            logger.info(
+                "[DesktopOverlay][Topmost] re-sorted above %s%s", desc, tail)
 
     async def _set_interaction_mode(self, mode: str, *, emit_event: bool) -> None:
         if mode not in _DESKTOP_INTERACTION_MODES:

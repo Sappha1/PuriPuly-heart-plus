@@ -346,6 +346,10 @@ class ResolvedPeerSTTConfig:
     # backend can have its hint refreshed live when the language changes — without
     # reloading the (large, multilingual) model. None = no hint / auto-detect.
     language_hint: str | None = None
+    # r632: the pinned peer language as a Qwen hint, used only to re-decode a
+    # result that came back in a different CJK script. None = no retry. Set
+    # only when exactly ONE peer language is pinned and it is ko/ja/zh.
+    script_retry_language_hint: str | None = None
 
 
 def create_secret_store(
@@ -702,6 +706,35 @@ def _shared_speaker_embedder(settings: "AppSettings"):
     return _SPEAKER_EMBEDDER_SINGLETON
 
 
+def _peer_script_retry_hint(settings: AppSettings) -> str | None:
+    """r632: Qwen hint for the CJK-confusion re-decode. Only when exactly one
+    peer language is pinned (no Auto Detect, no extras) and it is Korean,
+    Japanese or Chinese. The RAW pinned value is used: Auto Detect must never
+    resolve to the user's own language here."""
+    from puripuly_heart.core.language import get_local_qwen_language_hint
+
+    languages = settings.languages
+    pinned = str(getattr(languages, "voice_peer_source_language", "") or "").strip()
+    # r633: the extra "their language" slots live on the ACTIVE PRESET (the
+    # dashboard's "+"), not on LanguageSettings; reading a non-existent
+    # attribute made this guard dead and would have re-decoded a Japanese
+    # friend's kana into Korean in a ko+ja room.
+    presets = list(getattr(languages, "presets", None) or [])
+    extras: list[str] = []
+    if presets:
+        idx = max(0, min(int(getattr(languages, "active_preset", 0) or 0), len(presets) - 1))
+        extras = [
+            str(e) for e in (getattr(presets[idx], "extra_peer_sources", None) or [])
+            if str(e).strip()
+        ]
+    if not pinned or extras:
+        return None
+    if pinned.split("-")[0].lower() not in ("ko", "ja", "zh"):
+        return None
+    hint = get_local_qwen_language_hint(pinned)
+    return hint if hint in ("Korean", "Japanese", "Chinese") else None
+
+
 def resolve_peer_stt_config(settings: AppSettings) -> ResolvedPeerSTTConfig:
     peer_source_language = settings.languages.effective_peer_source
     keyterms: tuple[str, ...] = ()
@@ -770,6 +803,11 @@ def resolve_peer_stt_config(settings: AppSettings) -> ResolvedPeerSTTConfig:
             # fabricates fluent, plausible content, which is far worse than the
             # occasional mis-spelled short word it was meant to fix.
             language_hint=None,
+            # r632: a narrower lever that keeps the rule above intact: when ONE
+            # CJK language is pinned and the unhinted decode comes back in a
+            # different CJK script, the backend re-decodes with this hint.
+            # Latin results are never retried.
+            script_retry_language_hint=_peer_script_retry_hint(settings),
         )
 
     if provider in (
@@ -928,6 +966,7 @@ def create_peer_stt_backend(
             # Resolved hint (RAW peer source language; "Auto Detect" → no hint so the
             # model self-detects). Same value the runtime refreshes live on changes.
             language_hint=resolved.language_hint,
+            script_retry_language_hint=resolved.script_retry_language_hint,
             min_avg_logprob=(
                 LOCAL_QWEN_MIN_AVG_LOGPROB
                 if settings.stt.local_low_confidence_filter

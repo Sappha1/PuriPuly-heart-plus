@@ -682,6 +682,7 @@
   "dashboard.ocr.menu.region_set": "OCR領域を設定（ドラッグ）",
   "dashboard.ocr.menu.region_set.tooltip": "OCR を画面領域に限定：ドラッグで設定、目のアイコンで破線枠の表示切替、ロックで領域内のみスキャン。",
   "dashboard.chat.translation_failed": "翻訳失敗 — モデル設定を確認してください",
+  "dashboard.chat.same_language_hint": "未翻訳のまま送信しました：入力メッセージの翻訳先があなた自身の言語になっています。「ターゲット言語」の行で相手の言語を選んでください。",
   "settings_modal.requires_api_key": "APIキーが必要 — 設定で入力してください",
   "settings_modal.requires_api_key_short": "APIキーが必要",
   "dashboard.mute_sync.tooltip.off": "ミュート同期（オフ）— クリックで有効化。オンにすると、VRChatでマイクをミュート中は音声認識がチャットボックスにメッセージを送信しません。",
@@ -929,6 +930,7 @@
   "steam.their_language": "相手の言語",
   "steam.translator": "翻訳モデル",
   "steam.send_to_them": "相手に送る内容",
+  "steam.send_failed": "メッセージが届きませんでした - Steam に拒否されました。もう一度お試しください",
   "steam.show_pinyin": "読みを表示",
   "steam.grouped_pinyin": "単語ごとのピンイン",
   "steam.show_original": "原文を表示",
@@ -1144,5 +1146,10 @@
   "steam.unit_month_many": "{n}か月",
   "steam.unit_year_one": "{n}年",
   "steam.unit_year_many": "{n}年",
-  "steam.unit_join": ""
+  "steam.unit_join": "",
+  "speaker.reset_unreadable": "保存された声を読み込めなかったためリセットしました。古いファイルは voices.json.corrupt-<time> として残してあります",
+  "startup.loopback_on_warning": "注意: 前回のセッションから相手音声のループバックがオンのままです。相手の声を取り込んで翻訳し、VRChatのチャットボックスへ送信しています。意図せず残っている場合はオフにしてください。",
+  "startup.loopback_on_turn_off": "オフにする",
+  "settings.show_boot_splash": "起動スプラッシュ",
+  "settings.show_boot_splash.tooltip": "起動中に読み込みスプラッシュを表示します。アプリ読み込み前にランチャーが描画するため、オフにすると完全に抑制するのではなく起動直後に閉じます。"
 }

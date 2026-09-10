@@ -1336,6 +1336,109 @@ async def test_managed_stt_provider_peer_channel_produces_final_event():
     assert event.transcript.text == "peer line"
 
 
+_LOCAL_SHERPA_PROVIDER_NAMES = [
+    STTProviderName.LOCAL_QWEN,
+    STTProviderName.LOCAL_PARAKEET_V3,
+    STTProviderName.LOCAL_PARAKEET_JAPANESE,
+]
+
+
+@pytest.mark.parametrize("stt_provider_name", _LOCAL_SHERPA_PROVIDER_NAMES)
+async def test_managed_stt_provider_local_sherpa_empty_final_releases_pending_id_without_event(
+    stt_provider_name,
+) -> None:
+    # r635: the local sherpa session (shared by Qwen and both Parakeets)
+    # reports empty decodes as empty finals so the pending-id FIFO stays in
+    # step; the controller must pop the id for it and emit nothing, so the
+    # NEXT real final gets its own id.
+    runtime_logging, log_stream = _make_runtime_logging_capture()
+    runtime_logging.set_mode(SessionLoggingMode.DETAILED)
+    provider = ManagedSTTProvider(
+        backend=FakeBackend(),
+        sample_rate_hz=16000,
+        channel="peer",
+        stt_provider_name=stt_provider_name,
+        runtime_logging=runtime_logging,
+        clock=FakeClock(10.0),
+    )
+    empty_id = uuid4()
+    spoken_id = uuid4()
+    provider._pending_final_utterance_ids.extend([empty_id, spoken_id])
+    provider._pending_final_utterance_times[empty_id] = 9.0
+    provider._pending_final_utterance_times[spoken_id] = 9.5
+
+    await provider._consume_session_events(
+        EventOnlySession(
+            [
+                STTBackendTranscriptEvent(text="", is_final=True, audio_ms=800.0),
+                STTBackendTranscriptEvent(text="peer line", is_final=True),
+            ]
+        )
+    )
+
+    event = await _next_event(provider.events())
+    assert isinstance(event, STTFinalEvent)
+    assert event.utterance_id == spoken_id
+    assert event.transcript.text == "peer line"
+    assert provider._events.empty()
+    assert list(provider._pending_final_utterance_ids) == []
+    assert provider._pending_final_utterance_times == {}
+    messages = _runtime_log_messages(log_stream)
+    assert any(
+        f"[STT] Empty final for id={str(empty_id)[:8]} - pending id released" in message
+        for message in messages
+    )
+
+
+@pytest.mark.parametrize("stt_provider_name", _LOCAL_SHERPA_PROVIDER_NAMES)
+async def test_managed_stt_provider_local_sherpa_empty_final_alone_emits_nothing(
+    stt_provider_name,
+) -> None:
+    provider = ManagedSTTProvider(
+        backend=FakeBackend(),
+        sample_rate_hz=16000,
+        stt_provider_name=stt_provider_name,
+    )
+    utterance_id = uuid4()
+    provider._pending_final_utterance_ids.append(utterance_id)
+
+    await provider._consume_session_events(
+        EventOnlySession([STTBackendTranscriptEvent(text="   ", is_final=True)])
+    )
+
+    assert provider._events.empty()
+    assert list(provider._pending_final_utterance_ids) == []
+
+
+@pytest.mark.parametrize(
+    "stt_provider_name",
+    [STTProviderName.DEEPGRAM, STTProviderName.SONIOX, STTProviderName.QWEN_ASR, None],
+)
+async def test_managed_stt_provider_other_providers_still_emit_empty_finals(
+    stt_provider_name,
+) -> None:
+    # r635 restricts the empty-final drop to the local sherpa providers
+    # (Qwen + both Parakeets); everyone else keeps their exact previous
+    # behaviour
+    provider = ManagedSTTProvider(
+        backend=FakeBackend(),
+        sample_rate_hz=16000,
+        stt_provider_name=stt_provider_name,
+    )
+    utterance_id = uuid4()
+    provider._pending_final_utterance_ids.append(utterance_id)
+
+    await provider._consume_session_events(
+        EventOnlySession([STTBackendTranscriptEvent(text="", is_final=True)])
+    )
+
+    event = await _next_event(provider.events())
+    assert isinstance(event, STTFinalEvent)
+    assert event.utterance_id == utterance_id
+    assert event.transcript.text == ""
+    assert list(provider._pending_final_utterance_ids) == []
+
+
 @pytest.mark.parametrize(
     ("channel", "text"),
     [

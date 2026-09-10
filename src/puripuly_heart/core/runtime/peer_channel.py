@@ -62,7 +62,9 @@ class PeerChannelRuntime:
             [PeerRuntimeConfig, Callable[[Exception], Awaitable[None]]],
             Awaitable[object] | object,
         ],
-        source_factory: Callable[[PeerRuntimeConfig], object],
+        # r635: like stt_factory, may return an awaitable (the app's factory
+        # pre-resolves process-capture targets on a worker thread)
+        source_factory: Callable[[PeerRuntimeConfig], Awaitable[object] | object],
         vad_factory: Callable[[PeerRuntimeConfig, Path], object],
         vad_model_resolver: Callable[[], Path],
         run_audio_loop: Callable[..., Awaitable[None]],
@@ -110,9 +112,19 @@ class PeerChannelRuntime:
                 # so transcription still tracks the selected language without an
                 # expensive reload. Guarded: only backends that expose language_hint.
                 stt = self._stt
-                if stt is not None and hasattr(stt, "language_hint"):
+                # r633: the runtime holds a ManagedSTTProvider WRAPPER; the hints
+                # live on the backend it wraps. Refreshing the wrapper silently
+                # did nothing, so a hint stayed frozen at whatever the pin was
+                # when the channel started (switching to Auto Detect never
+                # cleared it).
+                target = getattr(stt, "backend", stt) if stt is not None else None
+                if target is not None and hasattr(target, "language_hint"):
                     with contextlib.suppress(Exception):
-                        stt.language_hint = getattr(config.backend, "language_hint", None)
+                        target.language_hint = getattr(config.backend, "language_hint", None)
+                if target is not None and hasattr(target, "script_retry_language_hint"):
+                    with contextlib.suppress(Exception):
+                        target.script_retry_language_hint = getattr(
+                            config.backend, "script_retry_language_hint", None)
                 return
             self._generation += 1
             generation = self._generation
@@ -174,8 +186,20 @@ class PeerChannelRuntime:
         source = None
         try:
             source = self._source_factory(config)
+            if inspect.isawaitable(source):
+                # r635: async factory. Hold None while awaiting so a raise
+                # never hands the coroutine object to _close_if_possible;
+                # the superseded check below then closes the awaited source.
+                pending, source = source, None
+                source = await pending
             model_path = self._vad_model_resolver()
             vad = self._vad_factory(config, model_path)
+        except asyncio.CancelledError:
+            # r635: cancelled mid-await on the async source factory. Not an
+            # Exception, so the stt built above used to leak unclosed.
+            await self._close_if_possible(source)
+            await self._close_if_possible(stt)
+            raise
         except Exception:
             await self._close_if_possible(source)
             await self._close_if_possible(stt)

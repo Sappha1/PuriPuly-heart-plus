@@ -960,6 +960,10 @@ class UiSettings:
     # r331: show the what's-new dialog after an update (opt-out lives both in
     # the dialog itself and in Settings).
     show_update_notes_on_launch: bool = True
+    # r649: show the boot splash while the app loads. Off closes it the instant
+    # the app starts (it is drawn by the exe bootloader before Python runs, so
+    # it can be dismissed immediately but not suppressed entirely).
+    show_boot_splash: bool = True
     self_in_overlay: bool = False
     typed_in_overlay: bool = False
     filter_peer_by_target_languages: bool = False
@@ -1810,6 +1814,7 @@ def to_dict(settings: AppSettings) -> dict[str, Any]:
             "auto_download_updates": settings.ui.auto_download_updates,
             "last_run_build": settings.ui.last_run_build,
             "show_update_notes_on_launch": settings.ui.show_update_notes_on_launch,
+            "show_boot_splash": settings.ui.show_boot_splash,
             "self_in_overlay": settings.ui.self_in_overlay,
             "typed_in_overlay": settings.ui.typed_in_overlay,
             # Persisted so the overlay/peer toggles are restored on next launch.
@@ -4167,6 +4172,7 @@ def from_dict(data: dict[str, Any]) -> AppSettings:
             autolaunch_with_steamvr=bool(ui_data.get("autolaunch_with_steamvr", False)),
             auto_download_updates=bool(ui_data.get("auto_download_updates", True)),
             last_run_build=int(ui_data.get("last_run_build", 0) or 0),
+            show_boot_splash=bool(ui_data.get("show_boot_splash", True)),
             show_update_notes_on_launch=bool(
                 ui_data.get("show_update_notes_on_launch", True)
             ),

@@ -67,6 +67,10 @@ class STTProvider(Protocol):
 
 
 _PROMO_INTERVAL_SEC: float = 300.0  # 5 minutes
+# r636: extra-target translation/transliteration used to fail silently
+# (except: pass). One warning per stage+target per minute names the failure
+# without letting a dead provider flood the log, one line per utterance.
+_TARGET_FAILURE_WARN_INTERVAL_S: float = 60.0
 _RELAXED_OVERLAP_MIN_CHARS: int = 3
 _BOUNDARY_PUNCT = {".", ",", ";", ":", "!", "?"}
 _SOFT_REUSE_PUNCT = {".", ",", "…", "。", "，", "、"}
@@ -157,6 +161,8 @@ class ClientHub:
     loopback_selected_languages_only: bool = False
     _peer_language_filter_notice_shown: bool = False
     _peer_language_filter_notice_last_s: float = float("-inf")
+    # r636: last warn time per "stage:target" (see _warn_target_failure)
+    _target_failure_warn_last_s: dict[str, float] = field(default_factory=dict)
     _pending_overlay_transcripts: dict = field(default_factory=dict)
     # Utterances that came from the keyboard (submit_text). Typed text can be
     # in ANY language regardless of the configured "You speak" — these get
@@ -1307,6 +1313,17 @@ class ClientHub:
             # Peer language filter excluded this voice (wrong language for the chosen
             # peer source). Explain it in the chat (throttled) so users understand why
             # a voice they can hear isn't appearing, then discard.
+            # r632: and say so in the log every time. A whole session of a friend's
+            # Korean written as Mandarin and silently hidden was invisible here.
+            _pinned = [
+                s for s in ([self.peer_source_language] + list(self.extra_peer_source_languages))
+                if s and s.strip()
+            ]
+            self._emit_detailed(
+                f"[Hub] peer line hidden by language filter "
+                f"(script={self._detect_text_script(transcript.text)}, pinned={_pinned}): "
+                f"'{transcript.text[:40]}'",
+                fallback_level=logging.INFO)
             await self._maybe_notify_peer_language_filtered(transcript.text)
             await self._emit_overlay_utterance_closed(
                 utterance_id=transcript.utterance_id,
@@ -3830,8 +3847,10 @@ class ClientHub:
                 )
                 if extra_trans and extra_trans.text.strip():
                     extra_translation_pairs.append((extra_target, extra_trans.text.strip()))
-            except Exception:
-                pass
+            except Exception as exc:
+                # r636: was a bare pass - an extra target that never arrived
+                # looked identical to one that was never configured
+                self._warn_target_failure("extra target translation", extra_target, exc)
         extra_translation_texts = [t for _, t in extra_translation_pairs]
 
         if runtime.channel == "self":
@@ -3891,8 +3910,11 @@ class ClientHub:
                         )
                         if _extra_translit:
                             extra_chatbox_parts.append(_extra_translit)
-                    except Exception:
-                        pass
+                    except Exception as exc:
+                        # r636: was a bare pass
+                        self._warn_target_failure(
+                            "extra target transliteration", _extra_lang, exc
+                        )
                 extra_chatbox_parts.append(_extra_text)
             if extra_chatbox_parts:
                 combined_translation = translation.text + "\n" + "\n".join(extra_chatbox_parts)
@@ -3914,6 +3936,29 @@ class ClientHub:
             )
         if runtime.channel == "peer":
             self._complete_peer_logical_turn(utterance_id)
+
+    def _warn_target_failure(self, stage: str, target_language: str, exc: BaseException) -> None:
+        """r636: name an extra-target failure that used to be swallowed.
+
+        These three call sites were `except Exception: pass`, so a dead
+        provider or a broken transliteration import meant the extra language
+        simply never appeared, with nothing in the log to explain it.
+        Throttled per stage+target so a provider failing on every utterance
+        costs one line a minute instead of one per line of speech.
+        """
+        key = f"{stage}:{target_language}"
+        now = self.clock.now()
+        last = self._target_failure_warn_last_s.get(key)
+        if last is not None and now - last < _TARGET_FAILURE_WARN_INTERVAL_S:
+            return
+        self._target_failure_warn_last_s[key] = now
+        logger.warning(
+            "[Hub] %s failed for target '%s': %s: %s",
+            stage,
+            target_language,
+            type(exc).__name__,
+            exc,
+        )
 
     def _enqueue_peer_loopback_chatbox(
         self,
@@ -4047,8 +4092,12 @@ class ClientHub:
                             show_romaji=self.send_romaji,
                             show_latin=self.send_latin,
                         )
-                    except Exception:
-                        pass
+                    except Exception as exc:
+                        # r636: was a bare pass - the chatbox silently lost its
+                        # reading line and nothing said why
+                        self._warn_target_failure(
+                            "chatbox transliteration", self.target_language, exc
+                        )
 
         _rtl_lang = self.target_language.split("-")[0].lower() in ("ar", "he", "fa", "ur")
         _translit_sep = "\n\n" if translit and _rtl_lang else "\n"

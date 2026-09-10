@@ -1,12 +1,13 @@
 {
-  "build": 631,
-  "tag": "r631",
-  "date": "2026-09-02",
+  "build": 650,
+  "tag": "r650",
+  "date": "2026-09-10",
   "notes": [
-    "Fixed: the captions overlay stays above the game on its own instead of needing a toggle",
-    "Fixed: short or soft speech from the other person was sometimes never detected",
-    "Fixed: the other person's audio could be discarded during transcription; capture now buffers through busy moments",
-    "Fixed: the overlay could come back compressed after a toggle"
+    "New startup splash screen, with an option to turn it off in Settings > Updates",
+    "Warns at startup if loopback to VRChat was left on by mistake",
+    "Steam chats open instantly from cache and a friend's messages appear right away",
+    "Faster translated captions, and fixed pinned-language (e.g. Korean) recognition",
+    "Steam chat fixes: delivery marks, shared videos, background-chat labels, self-recovery, and very large friend lists"
   ],
-  "zip_sha256": "2d897a447fe8d90a53475b9020502430f694eb74dcfc3c6e4ace9ae148fe438e"
+  "zip_sha256": "8d75fb41660a331ce4beb8a5422f882486317cacd2165b653a721487e994e70e"
 }

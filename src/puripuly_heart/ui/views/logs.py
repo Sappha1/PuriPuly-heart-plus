@@ -25,7 +25,11 @@ from puripuly_heart.ui.theme import (
     get_card_shadow,
 )
 
-MAX_LOG_ENTRIES = 4000
+# r636: 4000 (+500 cleanup headroom) meant every on-screen flush re-sent up to
+# 4,500 lines / ~710 KB of text to the client, 5x a second while logging. The
+# tail is what anyone reads live; the full history stays in the log FILE
+# ("Open folder"), which keeps its own rotation.
+MAX_LOG_ENTRIES = 1500
 CLEANUP_BATCH = 500
 MAX_CONVERSATION_RECORDS = 1000
 _UPDATE_INTERVAL = 0.2  # 200ms throttling
@@ -175,6 +179,9 @@ class LogsView(ft.Column):
         self._showing_conversation = False
         self._conversation_model = ConversationViewModel()
         self._runtime_logging_mode = _BASIC_MODE
+        # r636: app._on_nav_change flips this. Default True so a caller that
+        # never tells us (tests, the overlay) behaves exactly as before.
+        self._on_screen = True
 
 
         # Log buffer and throttling state
@@ -373,7 +380,9 @@ class LogsView(ft.Column):
         )
         if self._showing_conversation:
             self._render_conversation_text()
-            if self.page and self._log_text is not None:
+            # r636: only ship it while the tab is on screen (set_on_screen
+            # re-renders and pushes once when it comes back)
+            if self.page and self._on_screen and self._log_text is not None:
                 self._log_text.update()
 
     def _schedule_log_append(self, record: str) -> bool:
@@ -405,9 +414,50 @@ class LogsView(ft.Column):
         self._model.append(record)
         self._pending_update = True
 
+    def set_on_screen(self, on: bool) -> None:
+        """Tell the view whether it is the tab currently being shown.
+
+        r636: off screen the view kept rebuilding a 4,500-line string and
+        shipping it to the client every 200 ms (self.page stays set after a
+        view swap, so the update guard never caught it). Buffer instead, and
+        flush once when the tab comes back.
+        """
+        was_on = self._on_screen
+        self._on_screen = bool(on)
+        if not self._on_screen or was_on:
+            return
+        if self._showing_conversation:
+            self._render_conversation_text()
+            self._mark_flushed()
+            if self.page and self._log_text is not None:
+                self._log_text.update()
+            return
+        if self._flush_pending():
+            self._flush_logs()
+
+    def _flush_pending(self) -> bool:
+        """True when the rendered text is behind the buffer."""
+        return (
+            self._pending_update
+            or self._rendered_line_count != len(self._log_buffer)
+            or self._last_cleanup_count != self._model.cleanup_count
+        )
+
+    def _mark_flushed(self) -> None:
+        self._rendered_line_count = len(self._log_buffer)
+        self._last_cleanup_count = self._model.cleanup_count
+        self._last_update = time.time()
+        self._pending_update = False
+
     def _flush_logs(self):
         """Flush pending logs to the UI."""
         if self._log_text is None:
+            return
+
+        if not self._on_screen:
+            # r636: keep buffering, but don't rebuild/ship the text for a tab
+            # nobody is looking at. set_on_screen(True) catches up in one go.
+            self._pending_update = True
             return
 
         if self._showing_conversation:

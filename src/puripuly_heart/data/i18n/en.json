@@ -1151,5 +1151,7 @@
   "startup.loopback_on_warning": "Heads up: peer audio loopback is ON from your last session - the other person's voice is being captured, translated, and sent into VRChat's chatbox. Turn it off if you did not mean to leave it on.",
   "startup.loopback_on_turn_off": "Turn off",
   "settings.show_boot_splash": "Boot splash screen",
-  "settings.show_boot_splash.tooltip": "Show the loading splash while the app starts. It is drawn by the installer's launcher before the app loads, so turning it off dismisses it immediately rather than preventing it entirely."
+  "settings.show_boot_splash.tooltip": "Show the small loading splash while the app starts. Turning it off hides it entirely.",
+  "settings.boot_splash_opacity": "Splash opacity",
+  "settings.boot_splash_opacity.tooltip": "How see-through the startup splash is (20-100%). Lower lets the screen behind it show through. Applies from the next launch."
 }

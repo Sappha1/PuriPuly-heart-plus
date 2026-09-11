@@ -1151,5 +1151,7 @@
   "startup.loopback_on_warning": "알림: 지난 세션에서 상대 음성 루프백이 켜진 채로 남아 있습니다. 상대의 목소리를 캡처해 번역한 뒤 VRChat 채팅창으로 보내는 중입니다. 의도한 것이 아니라면 꺼 주세요.",
   "startup.loopback_on_turn_off": "끄기",
   "settings.show_boot_splash": "부팅 스플래시",
-  "settings.show_boot_splash.tooltip": "시작하는 동안 로딩 스플래시를 표시합니다. 앱이 로드되기 전에 런처가 그리므로, 끄면 완전히 막는 대신 시작 직후 즉시 닫습니다."
+  "settings.show_boot_splash.tooltip": "앱이 시작하는 동안 작은 로딩 스플래시를 표시합니다. 끄면 완전히 숨겨집니다.",
+  "settings.boot_splash_opacity": "스플래시 불투명도",
+  "settings.boot_splash_opacity.tooltip": "시작 스플래시가 얼마나 비치는지(20-100%). 낮을수록 뒤 화면이 비쳐 보입니다. 다음 실행부터 적용됩니다."
 }

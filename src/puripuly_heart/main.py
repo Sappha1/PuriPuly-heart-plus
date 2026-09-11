@@ -401,20 +401,30 @@ def main(argv: list[str] | None = None) -> int:
             # registers) instead of animating it. Read the flag straight from the
             # settings file so this stays ahead of the slow model load.
             _splash_on = True
+            _splash_opacity = 85
             try:
                 import json as _json
 
                 _sp = args.config
                 if _sp is not None and Path(_sp).is_file():
                     _sd = _json.loads(Path(_sp).read_text(encoding="utf-8"))
-                    _splash_on = bool(_sd.get("ui", {}).get("show_boot_splash", True))
+                    _ui = _sd.get("ui", {})
+                    _splash_on = bool(_ui.get("show_boot_splash", True))
+                    _splash_opacity = int(_ui.get("boot_splash_opacity", 85) or 85)
             except Exception:
                 _splash_on = True
+                _splash_opacity = 85
             # r643: animate the percentage as early as possible so it climbs
             # during the slow numpy / onnxruntime import below (frozen only).
+            # r652: the splash is baked WITHDRAWN, so it is invisible until we
+            # reveal it. On: apply the saved opacity, then reveal, then animate.
+            # Off: never reveal (and close) - so a disabled splash never flashes
+            # open-then-closed; it simply does not appear.
             try:
                 from puripuly_heart import boot_splash
                 if _splash_on:
+                    boot_splash.set_alpha(_splash_opacity)
+                    boot_splash.reveal()
                     boot_splash.start_progress()
                 else:
                     boot_splash.close()

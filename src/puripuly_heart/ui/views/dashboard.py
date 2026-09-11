@@ -20,7 +20,7 @@ from puripuly_heart.ui.fonts import font_for_language
 from puripuly_heart.ui.i18n import get_locale, language_name, t
 from puripuly_heart.ui.overlay_peer_contract import OverlayPeerConsumerContract
 
-_BUILD_TAG = "r650"  #increment each build so user can confirm version
+_BUILD_TAG = "r653"  #increment each build so user can confirm version
 
 # ── VRCT-style dark palette ──────────────────────────────────────────────────
 _BG_MAIN = "#292b2e"
@@ -7847,14 +7847,27 @@ class DashboardView(ft.Row):
         children.append(ft.Container(height=4))
         content = ft.Container(content=ft.Column(
             children, spacing=0, tight=True, horizontal_alignment=ft.CrossAxisAlignment.STRETCH))
-        # r650: the height estimate drives whether the popover caps to the window
-        # and scrolls. A fixed 500 was far below the full Output Format menu
-        # (~800, with the toggles + reading checkboxes + chat actions), so on a
-        # window taller than 500 but shorter than the menu it neither capped nor
-        # scrolled and the bottom rows (Clear chat / Settings) were clipped.
-        # Scale the estimate with the actual rows (generous, so it caps a touch
-        # early rather than clipping).
-        _est_height = 130.0 + len(children) * 46.0
+        # r653: the height estimate drives whether the popover caps to the window
+        # and scrolls. r650's `len(children) * 46` grossly over-counted a menu
+        # that is mostly thin dividers and short rows, so on a tall window the
+        # panel got pinned to the whole window height and grew as it was resized,
+        # leaving a big empty area below the last row. Estimate accurately by
+        # summing realistic per-row heights (dividers ~7, spacer ~4, rows ~32),
+        # recursing into the format sub-columns so only their VISIBLE rows count.
+        def _est_child_h(c: Any) -> float:
+            h = getattr(c, "height", None)
+            if h == 1:   # _div(): 1px rule + ~3px margin top/bottom
+                return 7.0
+            if h == 4:   # trailing spacer
+                return 4.0
+            if isinstance(c, ft.Column):
+                inner = sum(
+                    _est_child_h(cc) for cc in (c.controls or [])
+                    if getattr(cc, "visible", True) is not False
+                )
+                return inner or 32.0
+            return 32.0  # section row / checkbox row / action row
+        _est_height = 14.0 + sum(_est_child_h(c) for c in children)
         self._translit_popover_close = self._open_popover_at(
             x, y, content, width=280.0, est_height=_est_height)
 

@@ -1151,5 +1151,7 @@
   "startup.loopback_on_warning": "注意: 前回のセッションから相手音声のループバックがオンのままです。相手の声を取り込んで翻訳し、VRChatのチャットボックスへ送信しています。意図せず残っている場合はオフにしてください。",
   "startup.loopback_on_turn_off": "オフにする",
   "settings.show_boot_splash": "起動スプラッシュ",
-  "settings.show_boot_splash.tooltip": "起動中に読み込みスプラッシュを表示します。アプリ読み込み前にランチャーが描画するため、オフにすると完全に抑制するのではなく起動直後に閉じます。"
+  "settings.show_boot_splash.tooltip": "アプリの起動中に小さな読み込みスプラッシュを表示します。オフにすると完全に非表示になります。",
+  "settings.boot_splash_opacity": "スプラッシュの不透明度",
+  "settings.boot_splash_opacity.tooltip": "起動スプラッシュの透け具合（20-100%）。低いほど背後の画面が透けて見えます。次回起動時に反映されます。"
 }

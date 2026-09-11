@@ -245,6 +245,66 @@ normalize_soxr_runtime_binaries(a.binaries)
 
 pyz = PYZ(a.pure, a.zipped_data, cipher=block_cipher)
 
+# r652: boot-splash transparency + "off = never shown". PyInstaller's splash IPC
+# only knows `update_text`, and the bootloader draws the splash before Python
+# runs, so we patch the generated tcl (the template strings Splash().generate_script
+# concatenates) to:
+#   1) start the window WITHDRAWN (hidden). The app deiconifies it (a `reveal`
+#      IPC command) ONLY when the setting is on, so a disabled splash never
+#      flashes - it is simply never shown, instead of opening then closing.
+#   2) add a `set_alpha` IPC command for live window opacity, plus an 85% baked
+#      default. boot_splash.set_alpha applies the user's Settings > Updates value
+#      before revealing.
+#   3) drop the Windows `-transparentcolor magenta` colour-key (we have no
+#      transparent corners - the image is a solid rectangle) because combining it
+#      with `-alpha` on a layered window suppressed the opacity in r651. Alpha
+#      alone reliably renders a translucent window.
+# showing/hiding rides on withdraw/deiconify (works regardless of alpha support);
+# opacity rides on `-alpha` (best effort). Defensive: patch only when the anchors
+# are present, else the splash degrades to a plain opaque one rather than failing.
+import PyInstaller.building.splash_templates as _spl_tmpl
+from PyInstaller.compat import is_win as _spl_is_win
+
+_SPLASH_DEFAULT_ALPHA = 0.85  # matches settings.ui.boot_splash_opacity default (85)
+
+_ipc_handlers = (
+    '        # set_alpha(<0..1>) (r652): live whole-window opacity\n'
+    '        if {[string match "set_alpha*" $cmd]} {\n'
+    '            set first [expr {[string first "(" $cmd] + 1}]\n'
+    '            set last [expr {[string last ")" $cmd] - 1}]\n'
+    '            set _a [string range $cmd $first $last]\n'
+    '            if {[string is double -strict $_a]} {\n'
+    '                catch {wm attributes . -alpha $_a}\n'
+    '            }\n'
+    '        }\n'
+    '        # reveal (r652): show the splash (baked withdrawn so "off" never flashes)\n'
+    '        if {[string match "reveal*" $cmd]} {\n'
+    '            catch {wm deiconify .}\n'
+    '            catch {raise .}\n'
+    '            catch {wm attributes . -topmost 1}\n'
+    '        }\n'
+    '        # Implement other procedures here'
+)
+if "# Implement other procedures here" in _spl_tmpl.ipc_script and "set_alpha" not in _spl_tmpl.ipc_script:
+    _spl_tmpl.ipc_script = _spl_tmpl.ipc_script.replace(
+        "        # Implement other procedures here", _ipc_handlers, 1
+    )
+else:
+    print("build.spec WARNING: splash ipc_script anchor missing - reveal/set_alpha NOT injected")
+
+# Bake the default opacity + start hidden. Appended to the window-setup template
+# so the bootloader applies them before Python connects.
+_bake = "\nwm attributes . -alpha %.3f\nwm withdraw .\n" % _SPLASH_DEFAULT_ALPHA
+for _pw_name in ("position_window_on_top", "position_window"):
+    _pw = getattr(_spl_tmpl, _pw_name, None)
+    if isinstance(_pw, str) and "wm withdraw" not in _pw:
+        setattr(_spl_tmpl, _pw_name, _pw + _bake)
+
+# Drop the Windows magenta colour-key so `-alpha` renders (no transparent corners
+# needed); keep the canvas background dark so no light sliver shows.
+if _spl_is_win and "transparentcolor" in _spl_tmpl.transparent_setup:
+    _spl_tmpl.transparent_setup = '\n.root.canvas configure -background "#202225"\n'
+
 # r639: boot splash shown by the bootloader within a few hundred ms of launch
 # (before Python finishes importing), closed by the app the moment the main
 # window reveals (ui/app.py _close_boot_splash). Covers the ~4 s blank gap the
@@ -256,9 +316,10 @@ splash = Splash(
     # r643: a live percentage (boot_splash animates it). Kept SHORT and using
     # the default splash font (no custom family - r641's "Consolas" fell back to
     # a wide font, which looked poor and threw the centring off). A short string
-    # centres reliably: text_pos is the left edge, ~centred for "NN%" on 460px.
-    text_pos=(210, 200),
-    text_size=14,
+    # centres reliably: text_pos is the left edge (anchor sw), ~centred for "NN%".
+    # r652: repositioned for the minimal 160x96 card.
+    text_pos=(67, 88),
+    text_size=10,
     text_color="#c9cbce",
     text_default="0%",
     always_on_top=True,

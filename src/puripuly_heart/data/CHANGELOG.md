@@ -2,6 +2,13 @@
 
 User-facing changes per build. The latest build's highlights also appear in-app when an update is ready.
 
+## r653 - 2026-09-10
+
+- Changed: the startup splash is much smaller now, so it covers little of the screen while the app loads
+- Added: a "Splash opacity" setting (Settings > Updates) to make the startup splash see-through - default 85%
+- Fixed: turning the startup splash off now hides it completely instead of briefly flashing it on screen
+- Fixed: the Output Format menu (the gear button) could stretch to fill the window or be cut off; it now sizes to its contents
+
 ## r650 - 2026-09-10
 
 - Added: a startup splash screen while the app loads, with a setting to turn it off in Settings > Updates

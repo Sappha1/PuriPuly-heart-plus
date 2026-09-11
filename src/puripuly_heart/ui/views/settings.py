@@ -1718,6 +1718,28 @@ class SettingsView(ft.Column):
             ),
             value=self._show_boot_splash_text,
         )
+        # r651: splash opacity (20-100 %, default 85). The user found the splash
+        # obtrusive; a lower opacity lets the screen behind it show through.
+        self._boot_splash_opacity_slider = ft.Slider(
+            min=20,
+            max=100,
+            divisions=16,
+            value=85,
+            label="85%",
+            active_color=COLOR_PRIMARY,
+            on_change=self._on_boot_splash_opacity_visual,
+            on_change_end=self._on_boot_splash_opacity_change,
+        )
+        boot_splash_opacity_card = self._wrap_unit_card(
+            title=self._info_title_keyed(
+                "settings.boot_splash_opacity", "settings.boot_splash_opacity.tooltip"
+            ),
+            value=ft.Container(
+                content=self._boot_splash_opacity_slider,
+                alignment=_CENTER_ALIGNMENT,
+                expand=True,
+            ),
+        )
         self._separate_text_text = self._build_clickable_text(
             t("settings.option.off"),
             self._on_separate_text_click,
@@ -1767,6 +1789,7 @@ class SettingsView(ft.Column):
                 auto_download_updates_card,
                 self._update_notes_card,
                 show_boot_splash_card,
+                boot_splash_opacity_card,
             ],
             spacing=0,
         )
@@ -3565,6 +3588,10 @@ class SettingsView(ft.Column):
         self._show_boot_splash_text.content.value = t(
             "settings.option.on" if bool(getattr(settings.ui, "show_boot_splash", True)) else "settings.option.off"
         )
+        # r651: sync the splash-opacity slider to the saved value.
+        _bs_op = max(20, min(100, int(getattr(settings.ui, "boot_splash_opacity", 85) or 85)))
+        self._boot_splash_opacity_slider.value = _bs_op
+        self._boot_splash_opacity_slider.label = f"{_bs_op}%"
         # Prompt
         provider_name = self._active_prompt_key()
         self._prompt_editor.set_provider(provider_name)
@@ -5535,6 +5562,20 @@ class SettingsView(ft.Column):
         )
         if self.page:
             self._show_boot_splash_text.update()
+        self._emit_settings_changed()
+
+    def _on_boot_splash_opacity_visual(self, e) -> None:
+        # r651: live label while dragging - does not commit until on_change_end.
+        self._boot_splash_opacity_slider.label = f"{int(float(e.control.value))}%"
+        _update_control_if_mounted(self._boot_splash_opacity_slider)
+
+    def _on_boot_splash_opacity_change(self, e) -> None:
+        if not self._settings:
+            return
+        new_value = max(20, min(100, int(float(e.control.value))))
+        self._settings.ui.boot_splash_opacity = new_value
+        self._boot_splash_opacity_slider.label = f"{new_value}%"
+        _update_control_if_mounted(self._boot_splash_opacity_slider)
         self._emit_settings_changed()
 
     def _on_separate_text_click(self, e) -> None:

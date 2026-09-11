@@ -1,13 +1,12 @@
 {
-  "build": 650,
-  "tag": "r650",
+  "build": 653,
+  "tag": "r653",
   "date": "2026-09-10",
   "notes": [
-    "New startup splash screen, with an option to turn it off in Settings > Updates",
-    "Warns at startup if loopback to VRChat was left on by mistake",
-    "Steam chats open instantly from cache and a friend's messages appear right away",
-    "Faster translated captions, and fixed pinned-language (e.g. Korean) recognition",
-    "Steam chat fixes: delivery marks, shared videos, background-chat labels, self-recovery, and very large friend lists"
+    "Much smaller startup splash that covers little of the screen",
+    "New \"Splash opacity\" setting (Settings > Updates), default 85%",
+    "Turning the startup splash off now hides it completely",
+    "Fixed the Output Format menu stretching to fill the window or being cut off"
   ],
-  "zip_sha256": "8d75fb41660a331ce4beb8a5422f882486317cacd2165b653a721487e994e70e"
+  "zip_sha256": "5e97ebaf8f2b7c6e667e650abf083e0209a82b0c4ce86fb68755f17f3e8668bc"
 }

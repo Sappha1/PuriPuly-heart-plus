@@ -1151,5 +1151,7 @@
   "startup.loopback_on_warning": "提醒：上次会话遗留的对方音频回环(Loopback)仍处于开启状态，正在捕获并翻译对方的语音并发送到 VRChat 聊天框。如果不是有意开启，请关闭它。",
   "startup.loopback_on_turn_off": "关闭",
   "settings.show_boot_splash": "启动画面",
-  "settings.show_boot_splash.tooltip": "启动时显示加载启动画面。它在程序加载之前由启动器绘制，因此关闭会在启动瞬间将其关闭，而不是完全阻止其出现。"
+  "settings.show_boot_splash.tooltip": "在应用启动时显示小型加载启动画面。关闭后将完全隐藏它。",
+  "settings.boot_splash_opacity": "启动画面不透明度",
+  "settings.boot_splash_opacity.tooltip": "启动画面的不透明程度（20-100%）。数值越低，越能透出后面的屏幕内容。下次启动时生效。"
 }

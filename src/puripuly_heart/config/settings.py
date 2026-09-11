@@ -964,6 +964,10 @@ class UiSettings:
     # the app starts (it is drawn by the exe bootloader before Python runs, so
     # it can be dismissed immediately but not suppressed entirely).
     show_boot_splash: bool = True
+    # r651: boot-splash opacity as a percentage (20..100). The build bakes 85%
+    # into the splash so the bootloader shows it before Python; the app applies
+    # this value on the next launch. Lower = less obtrusive while the app loads.
+    boot_splash_opacity: int = 85
     self_in_overlay: bool = False
     typed_in_overlay: bool = False
     filter_peer_by_target_languages: bool = False
@@ -1815,6 +1819,7 @@ def to_dict(settings: AppSettings) -> dict[str, Any]:
             "last_run_build": settings.ui.last_run_build,
             "show_update_notes_on_launch": settings.ui.show_update_notes_on_launch,
             "show_boot_splash": settings.ui.show_boot_splash,
+            "boot_splash_opacity": settings.ui.boot_splash_opacity,
             "self_in_overlay": settings.ui.self_in_overlay,
             "typed_in_overlay": settings.ui.typed_in_overlay,
             # Persisted so the overlay/peer toggles are restored on next launch.
@@ -4173,6 +4178,9 @@ def from_dict(data: dict[str, Any]) -> AppSettings:
             auto_download_updates=bool(ui_data.get("auto_download_updates", True)),
             last_run_build=int(ui_data.get("last_run_build", 0) or 0),
             show_boot_splash=bool(ui_data.get("show_boot_splash", True)),
+            boot_splash_opacity=max(
+                20, min(100, int(ui_data.get("boot_splash_opacity", 85) or 85))
+            ),
             show_update_notes_on_launch=bool(
                 ui_data.get("show_update_notes_on_launch", True)
             ),

@@ -2,6 +2,10 @@
 
 User-facing changes per build. The latest build's highlights also appear in-app when an update is ready.
 
+## r654 - 2026-10-08
+
+- Fixed: Steam chats could fall out of sync with Steam - a friend's new messages stopped arriving, and a chat could open blank or show only your own messages (caused by an earlier message that had failed to send)
+
 ## r653 - 2026-09-10
 
 - Changed: the startup splash is much smaller now, so it covers little of the screen while the app loads

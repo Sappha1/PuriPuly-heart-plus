@@ -1,12 +1,9 @@
 {
-  "build": 653,
-  "tag": "r653",
-  "date": "2026-09-10",
+  "build": 654,
+  "tag": "r654",
+  "date": "2026-10-08",
   "notes": [
-    "Much smaller startup splash that covers little of the screen",
-    "New \"Splash opacity\" setting (Settings > Updates), default 85%",
-    "Turning the startup splash off now hides it completely",
-    "Fixed the Output Format menu stretching to fill the window or being cut off"
+    "Fixed Steam chats falling out of sync: a friend's new messages not arriving, or a chat opening blank or showing only your own messages"
   ],
-  "zip_sha256": "5e97ebaf8f2b7c6e667e650abf083e0209a82b0c4ce86fb68755f17f3e8668bc"
+  "zip_sha256": "196e93aabbf7c989c50249884a5c2fe8e3304d5d7f333f8e33638c31eab2f059"
 }

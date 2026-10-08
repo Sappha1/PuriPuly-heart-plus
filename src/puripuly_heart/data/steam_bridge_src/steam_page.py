@@ -646,10 +646,17 @@ class SteamPage:
                   for (const m of c.m_rgChatMessages) {
                     if (m.eDeleteState) continue;
                     if (m.m_bNoUserContent) continue;
+                    // r654: a send that FAILED is restored from Steam's persisted send
+                    // queue as a local echo with eErrorSendingObservable set and
+                    // rtTimestamp in MILLISECONDS. It never reached the server (the
+                    // friend and the real client do not have it) - skip it.
+                    if (m.eErrorSendingObservable) continue;
                     const t = (m.strMessageInternal || "").trim();
                     if (!t) continue;
+                    let ts = Number(m.rtTimestamp) || 0;
+                    if (ts > 1e11) ts = ts / 1000;   // ms -> s, whatever the source
                     out.push({from: m.unAccountID || 0, text: t,
-                              ordinal: m.unOrdinal || 0, ts: m.rtTimestamp || 0});
+                              ordinal: m.unOrdinal || 0, ts: Math.floor(ts)});
                   }
                   return out;
                 }""",
@@ -674,17 +681,29 @@ class SteamPage:
                   if (!c) throw new Error("nochat");
                   if (!c.GetMessagesFromTimeRange) throw new Error("norange");
                   const now = Math.floor(Date.now() / 1000) + 5;
-                  const start = since > 0 ? since : now - 905;
+                  // r654: rtime32_start_time is a protobuf fixed32 - jspb ASSERTS
+                  // (the request never leaves the page) unless it is an integer
+                  // in [0, 2^32). One millisecond value here killed the live poll.
+                  let s0 = Math.floor(Number(since) || 0);
+                  if (s0 > 1e11) s0 = Math.floor(s0 / 1000);
+                  const start = (s0 > 0 && s0 <= now) ? s0 : now - 905;
                   const r = await c.GetMessagesFromTimeRange(start, now);
                   const msgs = (r && r.messages) ? r.messages : (Array.isArray(r) ? r : []);
                   const out = [];
                   for (const m of msgs) {
                     if (m.eDeleteState) continue;
                     if (m.m_bNoUserContent) continue;
+                    // r654: a send that FAILED is restored from Steam's persisted send
+                    // queue as a local echo with eErrorSendingObservable set and
+                    // rtTimestamp in MILLISECONDS. It never reached the server (the
+                    // friend and the real client do not have it) - skip it.
+                    if (m.eErrorSendingObservable) continue;
                     const t = (m.strMessageInternal || "").trim();
                     if (!t) continue;
+                    let ts = Number(m.rtTimestamp) || 0;
+                    if (ts > 1e11) ts = ts / 1000;   // ms -> s, whatever the source
                     out.push({from: m.unAccountID || 0, text: t,
-                              ordinal: m.unOrdinal || 0, ts: m.rtTimestamp || 0});
+                              ordinal: m.unOrdinal || 0, ts: Math.floor(ts)});
                   }
                   return out;
                 }""",
@@ -698,7 +717,14 @@ class SteamPage:
         shape as fetch_messages."""
         return await self._page.evaluate(
                 r"""async (args) => {
-                  const [acct, start, end] = args;
+                  const [acct, start0, end0] = args;
+                  // r654: both feed protobuf uint32/fixed32 fields - coerce to
+                  // integer seconds in [0, 2^32) so jspb cannot assert.
+                  const _u = v => { v = Math.floor(Number(v) || 0);
+                                    if (v > 1e11) v = Math.floor(v / 1000);
+                                    return (v >= 0 && v < 4294967296) ? v : 0; };
+                  const start = _u(start0);
+                  const end = _u(end0) || Math.floor(Date.now() / 1000);
                   const a = window.g_FriendsUIApp;
                   const cs = a.m_ChatStore, fcs = cs.m_FriendChatStore;
                   let c = (fcs.m_rgFriendChats || []).find(x => x.m_unAccountIDFriend === acct);
@@ -711,10 +737,17 @@ class SteamPage:
                   for (const m of msgs) {
                     if (m.eDeleteState) continue;
                     if (m.m_bNoUserContent) continue;
+                    // r654: a send that FAILED is restored from Steam's persisted send
+                    // queue as a local echo with eErrorSendingObservable set and
+                    // rtTimestamp in MILLISECONDS. It never reached the server (the
+                    // friend and the real client do not have it) - skip it.
+                    if (m.eErrorSendingObservable) continue;
                     const t = (m.strMessageInternal || "").trim();
                     if (!t) continue;
+                    let ts = Number(m.rtTimestamp) || 0;
+                    if (ts > 1e11) ts = ts / 1000;   // ms -> s, whatever the source
                     out.push({from: m.unAccountID || 0, text: t,
-                              ordinal: m.unOrdinal || 0, ts: m.rtTimestamp || 0});
+                              ordinal: m.unOrdinal || 0, ts: Math.floor(ts)});
                   }
                   return out;
                 }""",

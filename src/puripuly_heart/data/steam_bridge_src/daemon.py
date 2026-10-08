@@ -85,6 +85,19 @@ def _record_sent_ugcid(ugcid: str) -> list:
 _DIAG_MAX = 512 * 1024   # r636: rotate past this (one generation: diag.log.1)
 
 
+def _norm_ts(v) -> int:
+    """Message times are UNIX seconds, but Steam's send-queue restore stores
+    MILLISECONDS. Coerce to int seconds in [0, 2^32) (0 on garbage) so one bad
+    value can never poison _last_ts / the delivery watermarks again (r654)."""
+    try:
+        v = int(v or 0)
+    except (TypeError, ValueError):
+        return 0
+    if v > 100_000_000_000:
+        v //= 1000
+    return v if 0 <= v < 4_294_967_296 else 0
+
+
 def _diag(msg: str) -> None:
     try:
         # r636: bounded — the file had passed 1 MB (43% of it recon dumps
@@ -474,7 +487,7 @@ class Daemon:
             "text": text,
             "images": images,
             "stickers": stickers,
-            "ts": int(m.get("ts") or 0),
+            "ts": _norm_ts(m.get("ts")),
             "ord": int(m.get("ordinal") or 0),
             "name": (self.own_name or "You") if from_me else self._name(acct),
             "avatar": self.own_avatar if from_me else self._avatar(acct),
@@ -543,12 +556,12 @@ class Daemon:
         self.seen_count = len(msgs)
         # Seed the server-fetch dedup from the loaded history so the live poll only
         # emits messages that arrive AFTER this open.
-        self._last_ts = max((m.get("ts") or 0 for m in msgs), default=0)
+        self._last_ts = max((_norm_ts(m.get("ts")) for m in msgs), default=0)
         # ADDITIVE: replacing this set wiped the sweep's dedup keys, and since
         # Steam withholds push the swept message was absent from local history
         # — every open re-emitted it as a duplicate
         self._seen_keys |= {(acct, m.get("ts"), m.get("from"), m.get("text")) for m in msgs}
-        _mark = max((int(m.get("ts") or 0) for m in msgs), default=0)
+        _mark = max((_norm_ts(m.get("ts")) for m in msgs), default=0)
         if _mark > self._emitted.get(acct, 0):
             self._emitted[acct] = _mark
         _diag(f"OPEN acct={acct} ok={ok} count={len(msgs)} last_ts={self._last_ts}")
@@ -641,7 +654,7 @@ class Daemon:
         shared by the clock sweep and the round-robin verify fetch."""
         fresh.sort(key=lambda m: (m.get("ts") or 0, m.get("ordinal") or 0))
         for m in fresh:
-            mk = int(m.get("ts") or 0)
+            mk = _norm_ts(m.get("ts"))
             if mk < self._emitted.get(acct, 0):
                 continue
             key = (acct, m.get("ts"), m.get("from"), m.get("text"))
@@ -817,11 +830,20 @@ class Daemon:
             try:
                 fresh = await self.steam.fetch_messages(_poll_acct, self._last_ts - 3)
                 self._fetch_err = None
+                self._fetch_err_n = 0
                 self._dead_hits = 0
             except Exception as exc:
                 if str(exc) != self._fetch_err:
                     self._fetch_err = str(exc)
+                    self._fetch_err_n = 0
                     _diag(f"fetch error: {exc}")
+                else:
+                    # r654: a persistent failure used to log ONCE and then fail
+                    # silently on every poll (live inbound dead, no trace)
+                    self._fetch_err_n = getattr(self, "_fetch_err_n", 0) + 1
+                    if self._fetch_err_n % 30 == 0:
+                        _diag(f"fetch error repeated x{self._fetch_err_n}: "
+                              f"{str(exc).splitlines()[0][:200]}")
                 fresh = []
                 if _DEAD_RE.search(str(exc)):
                     # r635: two consecutive "browser closed" errors = zombie
@@ -839,7 +861,7 @@ class Daemon:
                            # poll re-fetches under the new chat's own window
             fresh.sort(key=lambda m: (m.get("ts") or 0, m.get("ordinal") or 0))
             for m in fresh:
-                mk = int(m.get("ts") or 0)
+                mk = _norm_ts(m.get("ts"))
                 if mk < self._emitted.get(_poll_acct, 0):
                     continue          # STRICTLY older than the high-water mark
                                       # — an OPEN reset the fetch window; never
@@ -851,7 +873,7 @@ class Daemon:
                     continue
                 self._seen_keys.add(key)
                 self._emitted[_poll_acct] = max(self._emitted.get(_poll_acct, 0), mk)
-                self._last_ts = max(self._last_ts, m.get("ts") or 0)
+                self._last_ts = max(self._last_ts, _norm_ts(m.get("ts")))
                 if (m["from"] == self.own and self._img_pending > 0
                         and (m.get("text") or "").lstrip().startswith("[img")):
                     # echo of an app image-send (already rendered optimistically)

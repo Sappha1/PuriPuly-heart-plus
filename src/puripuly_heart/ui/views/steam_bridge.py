@@ -288,6 +288,20 @@ def _refresh_bridge_sources() -> None:
 _CREATE_NO_WINDOW = 0x08000000
 
 
+def _sec(v) -> int:
+    """A Steam message time as int UNIX seconds (0 on garbage). Steam's
+    send-queue restore stores MILLISECONDS, and one such value used to make
+    time.localtime / datetime.fromtimestamp raise mid-render, painting the
+    whole history blank (r654)."""
+    try:
+        v = int(v or 0)
+    except (TypeError, ValueError):
+        return 0
+    if v > 100_000_000_000:
+        v //= 1000
+    return v if 0 <= v < 4_294_967_296 else 0
+
+
 def steam_module_installed() -> bool:
     """The Steam bridge is an optional module (like OCR): the tab only exists
     when the helper (daemon + its Playwright venv) is present on disk."""
@@ -2000,7 +2014,7 @@ class SteamBridgeView(ft.Container):
         _prev_day = None
         for b in blocks:
             b.pop("_ctrl", None)               # rebuilt by the body builder below
-            _bts = int(b.get("_ts") or 0)
+            _bts = _sec(b.get("_ts"))
             if _bts:
                 _day = time.localtime(_bts)[:3]
                 if _day != _prev_day:
@@ -3841,7 +3855,11 @@ class SteamBridgeView(ft.Container):
                         _snap0 = json.loads(_f0.read_text(encoding="utf-8"))
                 for _k, _blks in ((_snap0 or {}).get("chats") or {}).items():
                     with contextlib.suppress(Exception):
-                        self._chat_cache.setdefault(int(_k), list(_blks))
+                        _bl = list(_blks)
+                        for _b in _bl:      # r654: ms times from older sessions
+                            if isinstance(_b, dict):
+                                _b["_ts"] = _sec(_b.get("_ts"))
+                        self._chat_cache.setdefault(int(_k), _bl)
         if self._got_friends or self._friends:
             return
         with contextlib.suppress(Exception):
@@ -3853,7 +3871,7 @@ class SteamBridgeView(ft.Container):
                 snap = json.loads(f.read_text(encoding="utf-8"))
             for k, v in (snap.get("seen") or {}).items():
                 with contextlib.suppress(Exception):
-                    self._seen_chat_ts.setdefault(int(k), int(v))
+                    self._seen_chat_ts.setdefault(int(k), _sec(v))
             items = snap.get("friends") or []
             if items:
                 self._friends = {int(i["acct"]): i for i in items}
@@ -4086,7 +4104,7 @@ class SteamBridgeView(ft.Container):
         blocks = []
         for m in messages:
             fm = bool(m.get("from_me"))
-            ts = int(m.get("ts") or 0)
+            ts = _sec(m.get("ts"))
             joinable = (
                 blocks
                 and blocks[-1]["from_me"] == fm
@@ -4344,10 +4362,14 @@ class SteamBridgeView(ft.Container):
         return outs or [ft.Text(spans=_spans(text, color), size=14)]
 
     def _fmt_ts(self, ts: int) -> str:
+        ts = _sec(ts)
         if not ts:
             return ""
         import datetime as _dt
-        d = _dt.datetime.fromtimestamp(ts)
+        try:
+            d = _dt.datetime.fromtimestamp(ts)
+        except (OSError, OverflowError, ValueError):
+            return ""
         hm = d.strftime("%I:%M %p").lstrip("0")
         if d.date() == _dt.datetime.now().date():
             return hm
@@ -4355,7 +4377,10 @@ class SteamBridgeView(ft.Container):
 
     def _day_sep(self, ts: int) -> ft.Control:
         import datetime as _dt
-        d = _dt.datetime.fromtimestamp(ts)
+        try:
+            d = _dt.datetime.fromtimestamp(_sec(ts) or time.time())
+        except (OSError, OverflowError, ValueError):
+            d = _dt.datetime.now()
         label = (f"{_T(f'steam.day_{d.weekday()}', default=d.strftime('%A'))}, "
                  f"{d.month}/{d.day}/{d.year}")
         return ft.Container(
@@ -4831,6 +4856,9 @@ class SteamBridgeView(ft.Container):
                                            "before": oldest})
 
     async def _render_history(self, messages: list, seq: int) -> None:
+        for _m in messages or []:
+            if isinstance(_m, dict):
+                _m["ts"] = _sec(_m.get("ts"))
         blocks = self._coalesce(messages)
         if seq != self._open_seq:
             return
@@ -4978,7 +5006,7 @@ class SteamBridgeView(ft.Container):
         # OLD messages are never grouped — each gets its own avatar+name block.
         _prev_day = None
         for b in blocks:
-            _bts = int(b.get("_ts") or 0)
+            _bts = _sec(b.get("_ts"))
             if _bts:
                 _day = time.localtime(_bts)[:3]
                 if _day != _prev_day:
@@ -5047,7 +5075,7 @@ class SteamBridgeView(ft.Container):
             await self._render_live(m)
             return
         key = (bool(m.get("from_me")), m.get("name", "") or "")
-        ts = int(m.get("ts") or 0) or int(time.time())
+        ts = _sec(m.get("ts")) or int(time.time())
         # history replays (older than the newest block) must not fuse with
         # live lines in the merge buffer — render them straight away so the
         # out-of-order path in _render_live can place or drop them
@@ -5319,7 +5347,7 @@ class SteamBridgeView(ft.Container):
             self._messages.controls = [
                 c for c in self._messages.controls
                 if getattr(c, "data", None) != "empty"]
-        self._mark_seen(self._active or 0, int(m.get("ts") or 0))
+        self._mark_seen(self._active or 0, _sec(m.get("ts")))
         if self._active is not None                 and self._state_mode in ("idle", "connecting"):
             self._hide_state_overlay()
         self._live_since_open = (self._live_since_open + [dict(m)])[-30:]
@@ -5333,7 +5361,7 @@ class SteamBridgeView(ft.Container):
             b["_out_pending"] = bool(b.get("_out_pending"))
         else:
             text, emos = _extract_emoticons((m.get("text", "") or "").strip())
-            ts = int(m.get("ts") or 0) or int(time.time())
+            ts = _sec(m.get("ts")) or int(time.time())
             b = {"from_me": bool(m.get("from_me")), "name": m.get("name", ""),
                  "avatar": m.get("avatar", ""), "text": text, "emoticons": emos,
                  "images": m.get("images", []), "stickers": m.get("stickers", []),
@@ -5377,7 +5405,7 @@ class SteamBridgeView(ft.Container):
             return b
         lb = self._last_block
         if (lb and lb.get("ts") and ts
-                and time.localtime(lb["ts"])[:3] != time.localtime(ts)[:3]):
+                and time.localtime(_sec(lb["ts"]))[:3] != time.localtime(_sec(ts))[:3]):
             self._messages.controls.append(self._day_sep(ts))
             lb = self._last_block = None
         _inner = None
@@ -5641,7 +5669,7 @@ class SteamBridgeView(ft.Container):
             for b in cached:
                 b.pop("_ctrl", None)
                 b.pop("_col", None)        # r636: no longer grouped into a live column
-                _bts = int(b.get("_ts") or 0)
+                _bts = _sec(b.get("_ts"))
                 if _bts:
                     _day = time.localtime(_bts)[:3]
                     if _day != _prev_day:
@@ -5918,7 +5946,7 @@ class SteamBridgeView(ft.Container):
                 self._show_state_overlay(
                     "net" if ev.get("net_blocked") else "signedout")
         elif kind == "seen":
-            _sa, _sts = int(ev.get("acct") or 0), int(ev.get("ts") or 0)
+            _sa, _sts = int(ev.get("acct") or 0), _sec(ev.get("ts"))
             if _sa and _sts and _sts > self._seen_chat_ts.get(_sa, 0):
                 self._seen_chat_ts[_sa] = _sts
                 self._rebuild_tabs()      # r636: flushes the strip itself
@@ -6023,7 +6051,7 @@ class SteamBridgeView(ft.Container):
                 _fr = self._friends.get(_in_acct)
                 if _fr is not None and _im:
                     _before = self._chat_order(self._friend_items())   # r636
-                    _fr["last_chat"] = int(_im.get("ts") or time.time())
+                    _fr["last_chat"] = _sec(_im.get("ts")) or int(time.time())
                     if self._chat_order(self._friend_items()) != _before:
                         # r636: rebuild only when RECENT/UNREAD reorder - the
                         # rows never show last_chat, so nothing else changed

@@ -243,6 +243,18 @@ a = Analysis(
 
 normalize_soxr_runtime_binaries(a.binaries)
 
+# r654: the whole src/puripuly_heart/data tree is bundled, so anything a local
+# test or helper run leaves in it (the Steam daemon writes diag.log next to
+# itself; imports leave __pycache__) would ship with the release. Keep run
+# artifacts out of the bundle regardless of what is on disk.
+def _is_run_artifact(dest: str) -> bool:
+    d = dest.replace("\\", "/")
+    return d.startswith("puripuly_heart/data/") and (
+        "/__pycache__/" in d or d.endswith(".log") or d.endswith(".pyc"))
+
+
+a.datas = [e for e in a.datas if not _is_run_artifact(e[0])]
+
 pyz = PYZ(a.pure, a.zipped_data, cipher=block_cipher)
 
 # r652: boot-splash transparency + "off = never shown". PyInstaller's splash IPC

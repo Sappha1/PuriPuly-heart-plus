@@ -1,9 +1,9 @@
 {
-  "build": 654,
-  "tag": "r654",
-  "date": "2026-10-08",
+  "build": 655,
+  "tag": "r655",
+  "date": "2026-10-10",
   "notes": [
-    "Fixed Steam chats falling out of sync: a friend's new messages not arriving, or a chat opening blank or showing only your own messages"
+    "Fixed Steam messages sent from the app sometimes not reaching a friend while looking sent; failed sends now retry and are marked not delivered"
   ],
-  "zip_sha256": "196e93aabbf7c989c50249884a5c2fe8e3304d5d7f333f8e33638c31eab2f059"
+  "zip_sha256": "00c420d42a8217f4cd19517f37f090b3c331e9f46f8ac8fdcb4eb7f3520e2f7d"
 }

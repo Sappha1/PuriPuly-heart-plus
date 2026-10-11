@@ -85,6 +85,12 @@ def _record_sent_ugcid(ugcid: str) -> list:
 _DIAG_MAX = 512 * 1024   # r636: rotate past this (one generation: diag.log.1)
 
 
+# r655: Steam's EChatMsgSendError (SendChatMessageInternal's result)
+_SEND_GENERIC = 1
+_SEND_REASON = {1: "generic", 2: "not_friends", 3: "no_permission",
+                4: "rate_limited", -1: "no_chat", -2: "helper_error"}
+
+
 def _norm_ts(v) -> int:
     """Message times are UNIX seconds, but Steam's send-queue restore stores
     MILLISECONDS. Coerce to int seconds in [0, 2^32) (0 on garbage) so one bad
@@ -576,8 +582,8 @@ class Daemon:
         if len(self._sent_pending) > 20:
             self._sent_pending.pop(0)
         self._hot_at = time.monotonic()   # r636: a send snaps to the fast cadence
-        ok = await self.steam.send(acct, text)
-        if not ok and (self._recovering or self.steam.is_dead()):
+        res = await self._send_once(acct, text, "first")
+        if not res["ok"] and (self._recovering or self.steam.is_dead()):
             # r635: a dead hidden browser failed every send silently — restart
             # it and retry once; the app now shows the outcome per sid. A send
             # landing DURING a recovery (is_dead() reads False over a deliberate
@@ -586,8 +592,78 @@ class Daemon:
                 await self._wait_recovery()
             else:
                 await self._recover_browser("send")
-            ok = await self.steam.send(acct, text)
-        await self.emit({"ev": "sent", "ok": ok, "acct": acct, "sid": sid})
+            res = await self._send_once(acct, text, "after-recover")
+        if not res["ok"] and res.get("code") == _SEND_GENERIC:
+            res = await self._send_recover(acct, text, res)
+        ev = {"ev": "sent", "ok": bool(res["ok"]), "acct": acct, "sid": sid}
+        if not res["ok"]:
+            ev["reason"] = _SEND_REASON.get(res.get("code"), "")
+        await self.emit(ev)
+
+    async def _send_once(self, acct: int, text: str, attempt: str) -> dict:
+        """r655: one send, normalised to {ok, code, warns, is_friend} and logged
+        (outcome + Steam's EResult only - never the text)."""
+        r = await self.steam.send(acct, text)
+        if not isinstance(r, dict):
+            r = {"ok": bool(r), "code": 0 if r else -2, "warns": [], "is_friend": None}
+        r["ok"] = bool(r.get("ok"))
+        _diag(f"SEND acct={acct} {attempt} ok={r['ok']} code={r.get('code')} "
+              f"friend={r.get('is_friend')} warns={r.get('warns') or []}")
+        return r
+
+    async def _landed(self, acct: int, text: str) -> bool:
+        """r655: did an apparently failed send reach the server after all?
+        (checked before every retry so recovery never double-sends)"""
+        want = (text or "").strip()
+        if not want:
+            return False
+        try:
+            got = await self.steam.fetch_messages(acct, int(time.time()) - 180) or []
+        except Exception:
+            return False
+        for m in got:
+            if m.get("from") != self.own:
+                continue
+            have = (m.get("text") or "").strip()
+            if have == want or (len(want) >= 12 and have[:40] == want[:40]):
+                return True
+        return False
+
+    async def _send_recover(self, acct: int, text: str, res: dict) -> dict:
+        """r655: a Generic failure (Steam's catch-all for an unexpected EResult
+        or a transport error) came in bursts for a chat while the page's session
+        was stale - the same staleness the image path reloads through. Escalate:
+        re-initialise the chat and retry, then reload the page and retry, each
+        time first checking the message did not land after all."""
+        for step in ("reopen", "reload"):
+            if await self._landed(acct, text):
+                _diag(f"SEND acct={acct} delivered despite the error")
+                return {"ok": True, "code": 0, "warns": [], "is_friend": None}
+            if step == "reopen":
+                with contextlib.suppress(Exception):
+                    await self.steam.open_conversation(acct)
+            else:
+                reload = getattr(self.steam, "reload", None)
+                if reload is None:
+                    break
+                self._reloading = True   # pause the poll over the half-booted page
+                try:
+                    await reload()
+                    for _ in range(20):
+                        await asyncio.sleep(1.0)
+                        if await self.steam.is_signed_in():
+                            break
+                    with contextlib.suppress(Exception):
+                        await self.steam.open_conversation(acct)
+                    if self.active and self.active != acct:
+                        with contextlib.suppress(Exception):
+                            await self.steam.open_conversation(self.active)
+                finally:
+                    self._reloading = False
+            res = await self._send_once(acct, text, f"after-{step}")
+            if res["ok"] or res.get("code") != _SEND_GENERIC:
+                return res
+        return res
 
     async def _wait_recovery(self, timeout_s: float = 25.0) -> None:
         """r635: block (bounded) while _recover_browser owns the browser."""

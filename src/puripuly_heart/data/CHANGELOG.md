@@ -2,6 +2,10 @@
 
 User-facing changes per build. The latest build's highlights also appear in-app when an update is ready.
 
+## r655 - 2026-10-10
+
+- Fixed: Steam messages sent from the app could fail to reach a friend while still looking sent. The app now retries automatically when Steam rejects a message, and clearly marks it as not delivered if it still fails
+
 ## r654 - 2026-10-08
 
 - Fixed: Steam chats could fall out of sync with Steam - a friend's new messages stopped arriving, and a chat could open blank or show only your own messages (caused by an earlier message that had failed to send)

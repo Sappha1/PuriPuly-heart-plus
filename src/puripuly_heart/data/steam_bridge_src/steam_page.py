@@ -826,23 +826,70 @@ class SteamPage:
             pass
         return out
 
-    async def send(self, acct: int, text: str) -> bool:
+    async def send(self, acct: int, text: str) -> dict:
+        """Send a 1:1 text and report what Steam ACTUALLY did (r655).
+
+        Steam's SendChatMessage() never throws: a rejected send is marked failed
+        in its persisted send queue and the call returns normally, so "did not
+        raise" was reported as delivered. SendChatMessageInternal returns Steam's
+        EChatMsgSendError (0 ok, 1 Generic, 2 NotFriends, 3 NoChatPermissionInGroup,
+        4 RateLimitExceeded); the real EResult is only console.warn'ed, so a
+        pass-through tap collects it. Bypassing the queue also stops failed sends
+        piling up there (Steam restores them later as phantom local messages).
+        Returns {ok, code, warns, is_friend}."""
         try:
-            return bool(await self._page.evaluate(
+            res = await self._page.evaluate(
                 r"""async (args) => {
                   const [acct, text] = args;
                   const a = window.g_FriendsUIApp;
                   const cs = a.m_ChatStore, fcs = cs.m_FriendChatStore;
                   let c = (fcs.m_rgFriendChats || []).find(x => x.m_unAccountIDFriend === acct);
                   if (!c) { try { c = cs.GetFriendChat(acct); } catch (e) {} }
-                  if (!c || !c.SendChatMessage) return false;
-                  try { await c.SendChatMessage(text); return true; } catch (e) { return false; }
+                  if (!c) return {ok: false, code: -1, warns: ["nochat"], is_friend: null};
+                  if (!window.__pphWarnTap) {
+                    window.__pphWarnTap = [];
+                    const ow = console.warn;
+                    console.warn = function (...xs) {
+                      try {
+                        const s = xs.map(x => String(x)).join(" ");
+                        if (/Error sending message/i.test(s)) {
+                          window.__pphWarnTap.push({t: Date.now(), s: s.slice(0, 200)});
+                          if (window.__pphWarnTap.length > 50) window.__pphWarnTap.shift();
+                        }
+                      } catch (e) {}
+                      return ow.apply(this, xs);
+                    };
+                  }
+                  const t0 = Date.now();
+                  let code = 1;
+                  try {
+                    if (typeof c.SendChatMessageInternal === "function") {
+                      code = await c.SendChatMessageInternal(text);
+                    } else if (c.SendChatMessage) {
+                      await c.SendChatMessage(text);   // no outcome available
+                      code = 0;
+                    } else {
+                      code = -1;
+                    }
+                  } catch (e) {
+                    window.__pphWarnTap.push({t: Date.now(), s: ("threw " + e).slice(0, 200)});
+                    code = 1;
+                  }
+                  if (typeof code !== "number") code = 1;
+                  let isFriend = null;
+                  try { isFriend = !!(c.chat_partner && c.chat_partner.is_friend); } catch (e) {}
+                  return {ok: code === 0, code: code,
+                          warns: window.__pphWarnTap.filter(w => w.t >= t0).map(w => w.s),
+                          is_friend: isFriend};
                 }""",
                 [acct, text],
-            ))
+            )
         except Exception as exc:
             logger.warning("send failed: %s", exc)
-            return False
+            return {"ok": False, "code": -2, "warns": [str(exc)[:160]], "is_friend": None}
+        if isinstance(res, dict):
+            return res
+        return {"ok": bool(res), "code": 0 if res else -2, "warns": [], "is_friend": None}
 
     async def list_emoticons(self, wait: bool = True) -> list[str]:
         """The user's owned emoticon names (rendered as economy images by the app).

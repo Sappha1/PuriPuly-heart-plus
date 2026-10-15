@@ -49,7 +49,7 @@ def _send_js() -> str:
         if isinstance(node, ast.AsyncFunctionDef) and node.name == "send":
             for sub in ast.walk(node):
                 if (isinstance(sub, ast.Call) and isinstance(sub.func, ast.Attribute)
-                        and sub.func.attr == "evaluate" and isinstance(sub.args[0], ast.Constant)):
+                        and sub.func.attr in ("evaluate", "_ev") and isinstance(sub.args[0], ast.Constant)):
                     return sub.args[0].value
     raise AssertionError("send() evaluate body not found")
 

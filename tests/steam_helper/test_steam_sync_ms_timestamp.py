@@ -117,7 +117,7 @@ def _evaluate_bodies(path: Path) -> dict:
                 "read_messages", "fetch_messages", "fetch_messages_range"):
             for sub in ast.walk(node):
                 if (isinstance(sub, ast.Call) and isinstance(sub.func, ast.Attribute)
-                        and sub.func.attr == "evaluate" and sub.args
+                        and sub.func.attr in ("evaluate", "_ev") and sub.args
                         and isinstance(sub.args[0], ast.Constant)):
                     out[node.name] = sub.args[0].value
                     break

@@ -262,6 +262,8 @@ class Daemon:
         self._seen_keys: set = set()          # (acct, ts, from, text) already emitted, for dedup
         self._emitted: dict = {}              # acct -> (ts, ordinal) high-water mark: never re-emit at/below
         self._dead_hits = 0                   # r635: consecutive "browser closed" fetch errors
+        self._seen_stalls = 0                 # r656: SteamPage.stall_count already handled
+        self._last_stall_fix = -1e9           # r656: monotonic time of the last stall reload
         self._recovering = False              # r635: _recover_browser in flight
         self._recovered_at: float | None = None   # r635: monotonic time the last recovery ended
         self._recover_backoff = 30.0          # r635: seconds between recoveries (doubles while the launch keeps failing)
@@ -665,6 +667,47 @@ class Daemon:
                 return res
         return res
 
+    async def _recover_stall(self) -> None:
+        """r656: reload the page after a page call timed out (stale web session),
+        then re-open the active chat and re-push friends/presence. Rate-limited
+        to one reload a minute; a reload that itself fails or hangs escalates to
+        a full browser restart."""
+        now = time.monotonic()
+        if (self._recovering or self._login_busy or self._quitting
+                or now - self._last_stall_fix < 60.0):
+            return
+        self._last_stall_fix = now
+        _diag(f"STALL page call timed out (#{getattr(self.steam, 'stall_count', 0)}) "
+              f"-> page reload")
+        self._reloading = True
+        reloaded = False
+        try:
+            try:
+                await asyncio.wait_for(self.steam.reload(), 45.0)
+                reloaded = True
+            except Exception as exc:
+                _diag(f"STALL reload failed: {type(exc).__name__}: {exc}")
+            if reloaded:
+                for _ in range(20):
+                    await asyncio.sleep(1.0)
+                    with contextlib.suppress(Exception):
+                        if await self.steam.is_signed_in():
+                            break
+                if self.active:
+                    with contextlib.suppress(Exception):
+                        await self.steam.open_conversation(self.active)
+        finally:
+            self._reloading = False
+        if not reloaded:
+            await self._recover_browser("stall")
+            return
+        with contextlib.suppress(Exception):
+            await self.refresh_list()
+        with contextlib.suppress(Exception):
+            await self.push_state()
+        self._seen_stalls = getattr(self.steam, "stall_count", 0)
+        _diag("STALL recovery done")
+
     async def _wait_recovery(self, timeout_s: float = 25.0) -> None:
         """r635: block (bounded) while _recover_browser owns the browser."""
         deadline = time.monotonic() + timeout_s
@@ -774,6 +817,14 @@ class Daemon:
                 # r635: zombie browser — nothing below can work; restart it
                 # (rate-limited inside) instead of logging fetch errors forever
                 await self._recover_browser("poll")
+                continue
+            # r656: a page call hit its deadline -> the web session is stale (a
+            # Steam request never settled). Reload instead of letting every later
+            # call wait out its own timeout.
+            _sc = getattr(self.steam, "stall_count", 0)
+            if self._started and _sc != self._seen_stalls:
+                self._seen_stalls = _sc
+                await self._recover_stall()
                 continue
             # Refresh the friends list (status changes) every ~4s, but only
             # push when something actually changed, so the list doesn't rebuild

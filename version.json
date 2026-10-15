@@ -1,9 +1,9 @@
 {
-  "build": 655,
-  "tag": "r655",
-  "date": "2026-10-10",
+  "build": 656,
+  "tag": "r656",
+  "date": "2026-10-14",
   "notes": [
-    "Fixed Steam messages sent from the app sometimes not reaching a friend while looking sent; failed sends now retry and are marked not delivered"
+    "Fixed the Steam tab sometimes freezing mid-session (no new messages, friends shown offline); it now recovers on its own"
   ],
-  "zip_sha256": "00c420d42a8217f4cd19517f37f090b3c331e9f46f8ac8fdcb4eb7f3520e2f7d"
+  "zip_sha256": "5e4f812a1c51a2de37d13d2a3107fcc87a30382e2b7e3808f21d8632cc1bfd79"
 }

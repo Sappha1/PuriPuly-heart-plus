@@ -2,6 +2,10 @@
 
 User-facing changes per build. The latest build's highlights also appear in-app when an update is ready.
 
+## r656 - 2026-10-14
+
+- Fixed: the Steam tab could stop updating partway through a session - new messages stopped arriving and friends showed as offline until the app was restarted. It now recovers on its own
+
 ## r655 - 2026-10-10
 
 - Fixed: Steam messages sent from the app could fail to reach a friend while still looking sent. The app now retries automatically when Steam rejects a message, and clearly marks it as not delivered if it still fails

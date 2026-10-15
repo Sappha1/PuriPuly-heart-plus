@@ -21,6 +21,7 @@ with `.forEach(...)` (never spread / Object.keys, which expose MobX internals).
 """
 from __future__ import annotations
 
+import asyncio
 import contextlib
 import logging
 
@@ -296,6 +297,23 @@ class SteamPage:
         self._dead = False          # r635: page/context closed or crashed under us
         self._restarting = False    # r635: a deliberate restart is tearing the page down
 
+    # r656: a Steam (CM) request inside a page call can hang forever when the
+    # web session half-dies - the promise never settles, so the evaluate never
+    # returns. That froze the daemon's whole poll loop silently (no inbound,
+    # no presence, no opens, zero CPU, nothing logged). Every page call now
+    # has a deadline; a timeout bumps stall_count, which the daemon's poll loop
+    # turns into a page reload.
+    stall_count = 0
+
+    async def _ev(self, js, *args, timeout: float = 30.0):
+        try:
+            return await asyncio.wait_for(self._page.evaluate(js, *args), timeout)
+        except asyncio.TimeoutError:
+            self.stall_count += 1
+            logger.warning("page call timed out after %.0fs (stall #%d)",
+                           timeout, self.stall_count)
+            raise RuntimeError(f"page call timed out after {timeout:.0f}s") from None
+
     async def start(self, mode: str = "hidden") -> None:
         from playwright.async_api import async_playwright
 
@@ -419,8 +437,8 @@ class SteamPage:
         self._loaded_at = int(_t.time())
         for _ in range(40 if mode == "hidden" else 6):
             try:
-                if await self._page.evaluate(STORE_READY_JS):
-                    self._own = await self._page.evaluate(OWN_ACCOUNT_JS) or 0
+                if await self._ev(STORE_READY_JS):
+                    self._own = await self._ev(OWN_ACCOUNT_JS) or 0
                     return
             except Exception:
                 pass
@@ -498,8 +516,8 @@ class SteamPage:
         end = _t.monotonic() + timeout_s
         while _t.monotonic() < end:
             try:
-                if await self._page.evaluate(STORE_READY_JS):
-                    self._own = await self._page.evaluate(OWN_ACCOUNT_JS) or 0
+                if await self._ev(STORE_READY_JS):
+                    self._own = await self._ev(OWN_ACCOUNT_JS) or 0
                     return True
                 await self._page.wait_for_timeout(1500)
             except Exception:
@@ -508,28 +526,28 @@ class SteamPage:
 
     async def is_signed_in(self) -> bool:
         try:
-            return bool(await self._page.evaluate(STORE_READY_JS))
+            return bool(await self._ev(STORE_READY_JS))
         except Exception:
             return False
 
     async def own_account_id(self) -> int:
         if not self._own:
             try:
-                self._own = await self._page.evaluate(OWN_ACCOUNT_JS) or 0
+                self._own = await self._ev(OWN_ACCOUNT_JS) or 0
             except Exception:
                 self._own = 0
         return self._own
 
     async def own_info(self) -> dict:
         try:
-            return await self._page.evaluate(OWN_INFO_JS) or {}
+            return await self._ev(OWN_INFO_JS) or {}
         except Exception:
             return {}
 
     async def list_friends(self) -> list[dict]:
         """The FULL friends list with per-friend status."""
         try:
-            return await self._page.evaluate(FRIENDS_JS) or []
+            return await self._ev(FRIENDS_JS) or []
         except Exception:
             return []
 
@@ -537,7 +555,7 @@ class SteamPage:
         """Diagnostic: every scalar property (name+value) on one friend's
         objects — used once to identify the real last-seen field name."""
         try:
-            return await self._page.evaluate(
+            return await self._ev(
                 r"""(acct) => {
                   const f = window.g_FriendsUIApp.m_FriendStore.GetFriend(acct);
                   const p = f && f.m_persona;
@@ -576,7 +594,7 @@ class SteamPage:
     async def preload_recent(self, n: int = 20) -> None:
         """Warm history for the n most-recent chats so opening them is instant."""
         try:
-            await self._page.evaluate(
+            await self._ev(
                 r"""async (n) => {
                   const a = window.g_FriendsUIApp;
                   const rg = a.m_ChatStore.m_FriendChatStore.m_rgFriendChats || [];
@@ -591,8 +609,7 @@ class SteamPage:
                   }
                   return true;
                 }""",
-                n,
-            )
+                n, timeout=120.0)
         except Exception:
             pass
 
@@ -600,7 +617,7 @@ class SteamPage:
         """Activate the friend chat (GetFriendChat get-or-creates it for friends
         you have never messaged) and pull its history from the CM."""
         try:
-            ok = await self._page.evaluate(
+            ok = await self._ev(
                 r"""async (acct) => {
                   const a = window.g_FriendsUIApp;
                   const cs = a.m_ChatStore, fcs = cs.m_FriendChatStore;
@@ -626,8 +643,7 @@ class SteamPage:
                   } catch (e) {}
                   return true;
                 }""",
-                acct,
-            )
+                acct, timeout=60.0)
             return bool(ok)
         except Exception as exc:
             logger.warning("open_conversation(%r) failed: %s", acct, exc)
@@ -635,7 +651,7 @@ class SteamPage:
 
     async def read_messages(self, acct: int) -> list[dict]:
         try:
-            return await self._page.evaluate(
+            return await self._ev(
                 r"""(acct) => {
                   const a = window.g_FriendsUIApp;
                   const cs = a.m_ChatStore, fcs = cs.m_FriendChatStore;
@@ -671,7 +687,7 @@ class SteamPage:
         primary). GetMessagesFromTimeRange(start,end) returns {messages,...} pulled
         fresh from the server — the reliable way to see new messages. Same message
         shape as read_messages."""
-        return await self._page.evaluate(
+        return await self._ev(
                 r"""async (args) => {
                   const [acct, since] = args;
                   const a = window.g_FriendsUIApp;
@@ -715,7 +731,7 @@ class SteamPage:
         """Server fetch of an arbitrary [start, end] window — used to page
         BACK through history older than what the app already shows. Same
         shape as fetch_messages."""
-        return await self._page.evaluate(
+        return await self._ev(
                 r"""async (args) => {
                   const [acct, start0, end0] = args;
                   // r654: both feed protobuf uint32/fixed32 fields - coerce to
@@ -759,7 +775,7 @@ class SteamPage:
         drives the all-chats inbound sweep (messages must surface even for
         chats that are not open in the app)."""
         try:
-            rows = await self._page.evaluate(
+            rows = await self._ev(
                 r"""() => {
                   const a = window.g_FriendsUIApp;
                   const out = [];
@@ -774,7 +790,7 @@ class SteamPage:
 
     async def is_typing(self, acct: int) -> bool:
         try:
-            return bool(await self._page.evaluate(
+            return bool(await self._ev(
                 r"""(acct) => {
                   const a = window.g_FriendsUIApp;
                   const c = (a.m_ChatStore.m_FriendChatStore.m_rgFriendChats || [])
@@ -793,7 +809,7 @@ class SteamPage:
         None skips the typing + reactivate halves (no chat open)."""
         out = {"typing": False, "activity": {}, "reactivated": False}
         try:
-            res = await self._page.evaluate(
+            res = await self._ev(
                 r"""(args) => {
                   const [acct, doReact] = args;
                   const a = window.g_FriendsUIApp, cs = a.m_ChatStore;
@@ -838,7 +854,7 @@ class SteamPage:
         piling up there (Steam restores them later as phantom local messages).
         Returns {ok, code, warns, is_friend}."""
         try:
-            res = await self._page.evaluate(
+            res = await self._ev(
                 r"""async (args) => {
                   const [acct, text] = args;
                   const a = window.g_FriendsUIApp;
@@ -896,7 +912,7 @@ class SteamPage:
         r636: `wait` runs the up-to-4 s settle loop; relists pass False (the
         loop still runs while the store array is empty)."""
         try:
-            return await self._page.evaluate(
+            return await self._ev(
                 r"""async (wait) => {
                   const es = window.g_FriendsUIApp.m_ChatStore.m_EmoticonStore;
                   try { if (es.RequestEmoticonList) await es.RequestEmoticonList(); } catch (e) {}
@@ -935,7 +951,7 @@ class SteamPage:
         """Owned sticker names (rendered from the economy CDN; sent as
         [sticker type="name"] BBCode — the same shape incoming stickers use)."""
         try:
-            return await self._page.evaluate(
+            return await self._ev(
                 r"""() => {
                   // PICKER-RECON: stickers live ON the EmoticonStore as
                   // m_rgStickers — items carry name + appid.
@@ -967,7 +983,7 @@ class SteamPage:
         the chat object and stores for a dedicated send method; fall back to
         the wire text. Returns {ok, how} for diag."""
         try:
-            return await self._page.evaluate(
+            return await self._ev(
                 r"""async (args) => {
                   const [acct, name, kind] = args;
                   const a = window.g_FriendsUIApp, cs = a.m_ChatStore;
@@ -1003,7 +1019,7 @@ class SteamPage:
         the exact wire text sent as plain chat renders invisible, so the
         client must attach sticker data via a dedicated call)."""
         try:
-            return await self._page.evaluate(
+            return await self._ev(
                 r"""() => {
                   const out = {};
                   const a = window.g_FriendsUIApp, cs = a.m_ChatStore;
@@ -1036,7 +1052,7 @@ class SteamPage:
         """Recon: source of every sticker/effect-ish method on the chat object
         and EmoticonStore, so the send path can be read instead of guessed."""
         try:
-            return await self._page.evaluate(
+            return await self._ev(
                 r"""() => {
                   const out = {};
                   const a = window.g_FriendsUIApp, cs = a.m_ChatStore;
@@ -1066,7 +1082,7 @@ class SteamPage:
     async def list_effects(self) -> list[str]:
         """Room-effect names from the EmoticonStore's m_rgEffects (4 observed)."""
         try:
-            return await self._page.evaluate(
+            return await self._ev(
                 r"""() => {
                   try {
                     const es = window.g_FriendsUIApp.m_ChatStore.m_EmoticonStore;
@@ -1081,7 +1097,7 @@ class SteamPage:
     async def dump_picker_recon(self) -> dict:
         """One-shot: emote/sticker store shapes, for data-driven fixes."""
         try:
-            return await self._page.evaluate(
+            return await self._ev(
                 r"""() => {
                   const out = {};
                   const size = x => {
@@ -1116,7 +1132,7 @@ class SteamPage:
 
     async def set_favorite(self, acct: int, on: bool) -> bool:
         try:
-            return bool(await self._page.evaluate(
+            return bool(await self._ev(
                 r"""async (args) => {
                   const [acct, on] = args;
                   const fav = window.g_FriendsUIApp.m_FriendStore.m_FavoritesStore;
@@ -1131,7 +1147,7 @@ class SteamPage:
 
     async def set_status(self, state: int) -> str:
         try:
-            res = await self._page.evaluate(
+            res = await self._ev(
                 r"""async (state) => {
                   const app = window.g_FriendsUIApp;
                   const targets = [app.m_FriendStore, app, app.m_ChatStore];
@@ -1177,7 +1193,7 @@ class SteamPage:
         """Add an emoticon reaction to a message. Probes the reaction API and
         returns 'ok:<method>' or 'none:<recon dump>' for the daemon's diag."""
         try:
-            res = await self._page.evaluate(
+            res = await self._ev(
                 r"""async (a) => {
                   const app = window.g_FriendsUIApp, cs = app.m_ChatStore;
                   let c = (cs.m_FriendChatStore.m_rgFriendChats || [])
@@ -1223,7 +1239,7 @@ class SteamPage:
         """Nudge Steam to keep pushing live messages for the open chat to this
         (headless) page — OnActivate + a focus event."""
         try:
-            await self._page.evaluate(
+            await self._ev(
                 r"""(acct) => {
                   const a = window.g_FriendsUIApp, cs = a.m_ChatStore;
                   let c = (cs.m_FriendChatStore.m_rgFriendChats || []).find(x => x.m_unAccountIDFriend === acct);
@@ -1242,7 +1258,7 @@ class SteamPage:
         Dumps unread/msg counts, last-recv time, connection state, and every method
         on the chat object so we can find a 'fetch newer messages' call."""
         try:
-            return await self._page.evaluate(
+            return await self._ev(
                 r"""async (acct) => {
                   const a = window.g_FriendsUIApp;
                   const cs = a.m_ChatStore, fcs = cs.m_FriendChatStore;
@@ -1328,7 +1344,7 @@ class SteamPage:
         then sees a bare filedownload link, or an earlier picture, instead of
         the image. Any begin response whose ugcid is already used is re-asked."""
         try:
-            return await self._page.evaluate(
+            return await self._ev(
                 r"""async (args) => {
                   const [acct, b64, fname, mime, spoiler, used] = args;
                   const a = window.g_FriendsUIApp, cs = a.m_ChatStore;
@@ -1437,8 +1453,7 @@ class SteamPage:
                            ids: allIds.join('|'),
                            mime: mime, w: w, h: h, bytes: bytes.length };
                 }""",
-                [acct, b64, fname, mime, bool(spoiler), list(used or [])],
-            ) or {"step": "eval", "err": "no result"}
+                [acct, b64, fname, mime, bool(spoiler), list(used or [])], timeout=180.0) or {"step": "eval", "err": "no result"}
         except Exception as exc:
             return {"step": "py", "err": str(exc)}
 
@@ -1447,7 +1462,7 @@ class SteamPage:
         The friends-store persona reports Online/no-game, so find where the truth
         lives: full persona scalars + the miniprofile endpoint (hover cards)."""
         try:
-            return await self._page.evaluate(
+            return await self._ev(
                 r"""async () => {
                   const a = window.g_FriendsUIApp, fs = a.m_FriendStore;
                   const own = fs.m_self ? fs.m_self.m_unAccountID : 0;
@@ -1475,7 +1490,7 @@ class SteamPage:
         """Recon for image-send: the source of the chat's file-upload helpers, so
         the Begin→PUT→Commit flow can be reproduced from page JS."""
         try:
-            return await self._page.evaluate(
+            return await self._ev(
                 r"""(acct) => {
                   const a = window.g_FriendsUIApp, cs = a.m_ChatStore;
                   let c = (cs.m_FriendChatStore.m_rgFriendChats||[]).find(x=>x.m_unAccountIDFriend===acct);
@@ -1504,7 +1519,7 @@ class SteamPage:
         upload/file/attach/ugc member scan of the chat object (+ prototype
         chain), the ChatStore and g_FriendsUIApp. Never message text."""
         try:
-            return await self._page.evaluate(
+            return await self._ev(
                 r"""async (acct) => {
                   const out = {};
                   try {
@@ -1572,7 +1587,7 @@ class SteamPage:
 
     async def poke(self) -> None:
         try:
-            await self._page.evaluate("() => { try { window.dispatchEvent(new Event('focus')); } catch(e){} }")
+            await self._ev("() => { try { window.dispatchEvent(new Event('focus')); } catch(e){} }")
         except Exception:
             pass
 
@@ -1588,7 +1603,7 @@ class SteamPage:
         with contextlib.suppress(Exception):
             await self._ctx.clear_cookies()
         with contextlib.suppress(Exception):
-            await self._page.evaluate(
+            await self._ev(
                 "() => { try { localStorage.clear(); sessionStorage.clear(); } "
                 "catch (e) {} }")
         with contextlib.suppress(Exception):
@@ -1597,13 +1612,43 @@ class SteamPage:
     async def close(self) -> None:
         # r635: each step in its own try — a dead context used to skip stopping
         # the driver, leaking it (and its browser) across restarts
+        # r656: ...and each with a deadline. A wedged browser connection made
+        # ctx.close() hang forever, so a stall recovery that escalated to a
+        # restart froze the daemon instead. On a timeout the browser tree of
+        # THIS profile is killed by command line (never the daemon itself).
         try:
             if self._ctx:
-                await self._ctx.close()
+                await asyncio.wait_for(self._ctx.close(), 15.0)
+        except asyncio.TimeoutError:
+            logger.warning("browser close timed out - killing the helper's browser")
+            await self._kill_profile_browser()
         except Exception:
             pass
         try:
             if self._pw:
-                await self._pw.stop()
+                await asyncio.wait_for(self._pw.stop(), 15.0)
         except Exception:
             pass
+
+    async def _kill_profile_browser(self) -> None:
+        """r656: force-stop the Edge/Chrome tree running OUR profile only (the
+        same command-line match the app's stop_helper_processes uses for the
+        browser half; the user's own browser never carries this profile)."""
+        import subprocess
+
+        ps = (
+            "Get-CimInstance Win32_Process | Where-Object { "
+            "$_.Name -in @('msedge.exe','chrome.exe') -and "
+            "$_.CommandLine -like '*steamprobe-profile*' } | "
+            "ForEach-Object { Stop-Process -Id $_.ProcessId -Force "
+            "-ErrorAction SilentlyContinue }"
+        )
+
+        def _run() -> None:
+            with contextlib.suppress(Exception):
+                subprocess.run(["powershell", "-NoProfile", "-Command", ps],
+                               capture_output=True, timeout=20,
+                               creationflags=0x08000000)
+
+        with contextlib.suppress(Exception):
+            await asyncio.to_thread(_run)

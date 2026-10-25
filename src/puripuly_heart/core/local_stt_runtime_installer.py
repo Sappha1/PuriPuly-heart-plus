@@ -5,6 +5,7 @@ import os
 import ssl
 
 import asyncio
+import contextlib
 import hashlib
 import inspect
 import json
@@ -225,6 +226,129 @@ def _promote_staging_install(
     else:
         if backup_dir.exists():
             shutil.rmtree(backup_dir, ignore_errors=True)
+
+
+def _download_repair_file(
+    *,
+    asset,
+    source_name: str,
+    manifest: LocalSTTAssetManifest,
+    target: Path,
+    cancel_event: threading.Event | None = None,
+) -> None:
+    """Download one file of the current revision to `target`, verified."""
+    source = manifest.sources[source_name]
+    part = target.with_name(target.name + ".part")
+    url = _apply_hf_mirror(
+        source.download_url_template.format(path=asset.remote_path_for_source(source_name))
+    )
+    digest = hashlib.sha256()
+    size_bytes = 0
+    try:
+        with httpx.Client(timeout=30.0, follow_redirects=True,
+                          verify=_download_ssl_verify()) as client:
+            with client.stream("GET", url) as response:
+                response.raise_for_status()
+                with part.open("wb") as handle:
+                    for chunk in response.iter_bytes():
+                        _raise_if_cancelled(cancel_event)
+                        if not chunk:
+                            continue
+                        handle.write(chunk)
+                        digest.update(chunk)
+                        size_bytes += len(chunk)
+        if digest.hexdigest() != asset.sha256_for_source(source_name):
+            raise LocalSTTRuntimeInstallError(
+                f"checksum mismatch for repaired model file: {asset.relative_path}"
+            )
+        expected_size = asset.size_for_source(source_name)
+        if expected_size is not None and size_bytes != expected_size:
+            raise LocalSTTRuntimeInstallError(
+                f"size mismatch for repaired model file: {asset.relative_path}"
+            )
+        os.replace(part, target)
+    finally:
+        if part.exists():
+            part.unlink(missing_ok=True)
+
+
+async def repair_outdated_local_stt_install(
+    *,
+    model_dir: Path | None = None,
+    manifest: LocalSTTAssetManifest | None = None,
+    cancel_event: threading.Event | None = None,
+    on_start: Callable[[int], None] | None = None,
+) -> str:
+    """Bring an install from an accepted older revision up to date in place.
+
+    Only the files that changed are downloaded (for Qwen3-ASR 0.6B: the
+    corrected decoder). The old files keep serving the running model; the new
+    ones are swapped in as soon as they are not in use (next start at the
+    latest). Returns "current", "updated" or "pending".
+    """
+    from puripuly_heart.core.local_stt_assets import (
+        apply_pending_local_stt_repairs,
+        default_local_stt_model_dir,
+        local_stt_install_is_outdated,
+        repair_file_path,
+    )
+
+    resolved_manifest = manifest or load_local_stt_asset_manifest()
+    resolved_dir = model_dir or default_local_stt_model_dir(resolved_manifest.model_id)
+    state = inspect_local_stt_install_state(resolved_dir, manifest=resolved_manifest)
+    installed = state.installed_manifest
+    if state.status != "ready" or installed is None:
+        return "current"
+    if not local_stt_install_is_outdated(installed, resolved_manifest):
+        return "current"
+
+    source_name = installed.selected_source
+    source_names = [source_name] + [n for n in resolved_manifest.sources if n != source_name]
+    needed = []
+    for asset in resolved_manifest.files:
+        path = resolved_dir / asset.relative_path
+        expected_size = asset.size_for_source(source_name)
+        if expected_size is None or (path.exists() and path.stat().st_size == expected_size):
+            continue
+        target = repair_file_path(path)
+        if target.exists() and target.stat().st_size == expected_size:
+            continue  # downloaded earlier, waiting for the swap
+        needed.append((asset, target))
+    if needed and on_start is not None:
+        with contextlib.suppress(Exception):
+            on_start(sum(asset.size_for_source(source_name) or 0 for asset, _ in needed))
+    for asset, target in needed:
+        _raise_if_cancelled(cancel_event)
+        failures: list[str] = []
+        for name in source_names:
+            try:
+                logger.info(
+                    "[Models] %s: downloading updated %s from %r",
+                    resolved_manifest.model_id, asset.relative_path, name,
+                )
+                await asyncio.to_thread(
+                    _download_repair_file,
+                    asset=asset,
+                    source_name=name,
+                    manifest=resolved_manifest,
+                    target=target,
+                    cancel_event=cancel_event,
+                )
+                break
+            except LocalSTTRuntimeInstallCancelled:
+                raise
+            except Exception as exc:
+                failures.append(f"{name}: {exc}")
+        else:
+            raise LocalSTTRuntimeInstallError(
+                f"{resolved_manifest.model_id}: could not update {asset.relative_path}: "
+                + "; ".join(failures)
+            )
+
+    updated = await asyncio.to_thread(
+        apply_pending_local_stt_repairs, resolved_dir, manifest=resolved_manifest
+    )
+    return "updated" if updated else "pending"
 
 
 async def ensure_local_stt_installed(

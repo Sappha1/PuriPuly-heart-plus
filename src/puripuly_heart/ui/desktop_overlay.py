@@ -86,6 +86,15 @@ _REQUIRED_MANIFEST_INT_FIELDS = {"contract_version", "parent_pid", "startup_dead
 _DESKTOP_CAPTION_WHITE = "#FFFFFF"
 _DESKTOP_CAPTION_GOLD = "#FFD700"
 _DESKTOP_CAPTION_PEER_SOURCE = "#c8b4ff"  # light purple for peer source/pinyin lines
+# (source, translation) colors per identified peer voice, in order of first
+# appearance; slot 0 keeps the classic purple/gold. None of them collide with
+# your own light-blue/mint lines.
+_DESKTOP_CAPTION_PEER_SPEAKER_COLORS = (
+    ("#c8b4ff", "#FFD700"),
+    ("#ffc9ad", "#ffa36b"),
+    ("#bff2c6", "#7fe08c"),
+    ("#ffbcdc", "#ff80bd"),
+)
 # Your own (self/typed) lines get their own colored scheme so they read like the
 # peer captions instead of plain white: a light blue source + mint translation,
 # distinct from the peer's purple/gold so you can still tell who said what.
@@ -1365,6 +1374,15 @@ def _peer_active_lines(
     )
 
 
+def _peer_colors(block: OverlayPresentationBlock) -> tuple[str, str]:
+    index = getattr(block, "speaker_index", None)
+    if index is None:
+        return _DESKTOP_CAPTION_PEER_SOURCE, _DESKTOP_CAPTION_GOLD
+    return _DESKTOP_CAPTION_PEER_SPEAKER_COLORS[
+        int(index) % len(_DESKTOP_CAPTION_PEER_SPEAKER_COLORS)
+    ]
+
+
 def _peer_finalized_lines(
     block: OverlayPresentationBlock,
     *,
@@ -1376,6 +1394,7 @@ def _peer_finalized_lines(
     # Layout: source (Chinese + pinyin) on TOP, translation (English) on BOTTOM.
     # The "secondary" slot renders after "primary" in _slot_lines_with_reserved_regions,
     # so we flip the slot assignments: source → primary (top), translation → secondary (bottom).
+    source_color, translation_color = _peer_colors(block)
     if secondary_text and block.secondary_enabled and primary_text:
         # Both source and translation available: source on top (primary slot, purple),
         # translation below (secondary slot, gold).
@@ -1389,7 +1408,7 @@ def _peer_finalized_lines(
                 max_lines=_DESKTOP_CAPTION_PRIMARY_MAX_LINES,
                 font_size=primary_font_size,
                 language=block.secondary_language,
-                color=_DESKTOP_CAPTION_PEER_SOURCE,
+                color=source_color,
             ),
             _caption_line(
                 block,
@@ -1400,7 +1419,7 @@ def _peer_finalized_lines(
                 max_lines=_DESKTOP_CAPTION_SECONDARY_MAX_LINES,
                 font_size=secondary_font_size,
                 language=block.primary_language,
-                color=_DESKTOP_CAPTION_GOLD,
+                color=translation_color,
             ),
         )
     if primary_text:
@@ -1414,7 +1433,7 @@ def _peer_finalized_lines(
                 max_lines=_DESKTOP_CAPTION_PRIMARY_MAX_LINES,
                 font_size=primary_font_size,
                 language=block.primary_language,
-                color=_DESKTOP_CAPTION_GOLD,
+                color=translation_color,
             ),
         )
     if secondary_text and block.secondary_enabled:
@@ -1429,7 +1448,7 @@ def _peer_finalized_lines(
                 font_size=primary_font_size,
                 language=block.secondary_language,
                 promoted=True,
-                color=_DESKTOP_CAPTION_PEER_SOURCE,
+                color=source_color,
             ),
         )
     return ()

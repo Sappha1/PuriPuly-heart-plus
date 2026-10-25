@@ -38,6 +38,9 @@ class _TranscriptEvent(OverlayEvent):
     source_language: str
     target_language: str
     is_final: bool = True
+    # peer captions: which of the (up to 4) identified voices this is, in
+    # order of first appearance; None when the voice is not identified
+    speaker_index: int | None = None
 
 
 @dataclass(frozen=True, slots=True, kw_only=True)
@@ -219,6 +222,20 @@ class OverlayStreamCoalescer:
 class OverlayEventAdapter:
     clock: Clock = field(default_factory=SystemClock)
     _seq: int = 0
+    _speaker_slots: dict = field(default_factory=dict)
+
+    SPEAKER_COLORS = 4
+
+    def speaker_index_for(self, transcript: Transcript) -> int | None:
+        """Stable caption color slot for an identified peer voice."""
+        name = (getattr(transcript, "speaker_name", "") or "").strip()
+        cluster = int(getattr(transcript, "speaker_cluster_id", -1) or -1)
+        key = f"name:{name}" if name else (f"cluster:{cluster}" if cluster >= 0 else "")
+        if not key:
+            return None
+        if key not in self._speaker_slots:
+            self._speaker_slots[key] = len(self._speaker_slots) % self.SPEAKER_COLORS
+        return self._speaker_slots[key]
 
     def transcript_final(
         self,
@@ -239,6 +256,9 @@ class OverlayEventAdapter:
             source_language=source_language,
             target_language=target_language,
             is_final=True,
+            speaker_index=(
+                self.speaker_index_for(transcript) if transcript.channel == "peer" else None
+            ),
         )
 
     def translation_stream_update(

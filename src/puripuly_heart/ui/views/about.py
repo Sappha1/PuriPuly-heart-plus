@@ -43,14 +43,6 @@ def _load_third_party_notices() -> str:
         return t("about.licenses_unavailable")
 
 
-def _get_profile_image_path() -> str:
-    """Get the profile image path from package data."""
-    try:
-        return str(resources.files("puripuly_heart.data.pictures").joinpath("salee_pic.png"))
-    except Exception:
-        return ""
-
-
 class AboutView(ft.Column):
     """About page with version, credits, inspired by, special thanks, and licenses."""
 
@@ -68,17 +60,6 @@ class AboutView(ft.Column):
         ]
 
     def _build_header(self) -> ft.Control:
-        profile_path = _get_profile_image_path()
-        profile_image = ft.Container(
-            content=(
-                ft.Image(src=profile_path, width=40, height=40, fit=ft.ImageFit.COVER, border_radius=20)
-                if profile_path
-                else ft.Icon(ft.Icons.PERSON, size=28, color=COLOR_ON_BACKGROUND)
-            ),
-            width=40, height=40, border_radius=20, bgcolor=COLOR_DIVIDER,
-            clip_behavior=ft.ClipBehavior.ANTI_ALIAS,
-        )
-
         inspiration_projects = [
             ("VRCT", "https://github.com/misyaguziya/VRCT"),
             ("mimiuchi", "https://github.com/naeruru/mimiuchi"),
@@ -141,37 +122,7 @@ class AboutView(ft.Column):
                     ),
                     ft.Divider(height=1, color=COLOR_DIVIDER, thickness=1),
 
-                    # ── Original author ───────────────────────────────────────
-                    ft.Row(
-                        [
-                            profile_image,
-                            ft.Container(width=10),
-                            ft.Column(
-                                [
-                                    ft.Text(t("about.original_by"), size=11, color=COLOR_NEUTRAL),
-                                    ft.Container(
-                                        content=ft.Text(
-                                            "salee (kapitalismho)",
-                                            size=13, weight=ft.FontWeight.W_600, color=COLOR_ON_BACKGROUND,
-                                        ),
-                                        on_click=lambda _: webbrowser.open("https://x.com/kapitalismho"),
-                                        on_hover=self._on_name_hover,
-                                        tooltip=t("about.open_twitter"),
-                                    ),
-                                    _link_chip(
-                                        t("about.original_repo_chip"),
-                                        "https://github.com/kapitalismho/PuriPuly-heart",
-                                    ),
-                                ],
-                                spacing=3,
-                            ),
-                        ],
-                        vertical_alignment=ft.CrossAxisAlignment.START,
-                        spacing=0,
-                    ),
-                    ft.Divider(height=1, color=COLOR_DIVIDER, thickness=1),
-
-                    # ── About this fork ───────────────────────────────────────
+                    # ── About ─────────────────────────────────────────────────
                     ft.Column(
                         [
                             ft.Text(t("about.fork_section"), size=11, color=COLOR_NEUTRAL),
@@ -182,7 +133,6 @@ class AboutView(ft.Column):
                             ft.Row(
                                 [
                                     _link_chip(t("about.fork_source"), f"https://github.com/{GITHUB_REPO}"),
-                                    _link_chip(t("about.original_project"), "https://github.com/kapitalismho/PuriPuly-heart"),
                                 ],
                                 spacing=12,
                             ),
@@ -242,6 +192,9 @@ class AboutView(ft.Column):
             ("Deepgram", very_high, api_key),
             (t("about.provider.qwen_cloud"), very_high, api_key),
             ("Soniox", very_high, api_key),
+            ("Gemini 3.5 Transcribe", very_high, api_key),
+            ("ElevenLabs Scribe v2", very_high, api_key),
+            (t("provider.custom_stt"), t("about.acc.high_very_high"), t("about.api.local")),
         ]
 
     @staticmethod
@@ -252,16 +205,19 @@ class AboutView(ft.Column):
         free_web = t("about.api.free_web")
         api_key = t("about.api.key")
         return [
+            ("Index-Translate 35B A3B", high, free_web),
             ("Google Translate", good, free_web),
             ("Bing Translator", good, free_web),
             ("Papago", t("about.acc.good_ko_ja"), free_web),
             (t("provider.local_llms"), t("about.acc.high_very_high"), t("about.api.local")),
             ("DeepL", very_high, api_key),
-            ("Gemini 3 Flash", very_high, api_key),
-            ("Gemini 3.1 Flash-Lite", high, api_key),
+            ("Gemini 3.8 Flash", very_high, api_key),
+            ("Gemini 3.5 Flash-Lite", high, api_key),
             ("Qwen 3.5 Plus", very_high, api_key),
             ("DeepSeek V4 Flash", high, api_key),
             ("DeepSeek V4 Pro", very_high, api_key),
+            ("GPT-6 Luna", high, api_key),
+            ("GPT-6.1 Sol", very_high, api_key),
             ("Gemma 4 26B A4B", high, api_key),
         ]
     def _styled_table(self, headers: list[str], rows: list[tuple]) -> ft.DataTable:
@@ -405,12 +361,6 @@ class AboutView(ft.Column):
             content,
             height=height,
         )
-
-    def _on_name_hover(self, e):
-        """Handle hover on name link."""
-        text = e.control.content
-        text.color = COLOR_PRIMARY if e.data == "true" else COLOR_ON_BACKGROUND
-        text.update()
 
     def _on_link_hover(self, e):
         """Handle hover on project links."""

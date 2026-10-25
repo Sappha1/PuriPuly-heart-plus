@@ -21,6 +21,7 @@ _LOCALE_FILES = {
     "zh": "CHANGELOG.zh-CN.md",
     "ja": "CHANGELOG.ja.md",
     "ko": "CHANGELOG.ko.md",
+    "ru": "CHANGELOG.ru.md",
 }
 
 

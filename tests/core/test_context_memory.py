@@ -479,7 +479,7 @@ class TestContextInternalPaths:
         assert mode == "integrated"
         assert '- [peer, 7s ago] "peer line"' in context
 
-    def test_integrated_context_uses_40_second_window_before_entry_budget(self):
+    def test_integrated_context_uses_60_second_window_before_entry_budget(self):
         hub = ClientHub(
             stt=None,
             llm=None,
@@ -489,7 +489,7 @@ class TestContextInternalPaths:
             peer_translation_enabled=True,
         )
         hub.self_runtime.remember_context(
-            "41 seconds old", timestamp=59.0, source_language="en", target_language="ko"
+            "61 seconds old", timestamp=39.0, source_language="en", target_language="ko"
         )
         hub.self_runtime.remember_context(
             "self recent", timestamp=70.0, source_language="en", target_language="ko"
@@ -513,14 +513,14 @@ class TestContextInternalPaths:
         )
 
         assert mode == "integrated"
-        assert "41 seconds old" not in context
+        assert "61 seconds old" not in context
         assert context == (
             '- [self, 30s ago] "self recent"\n'
             '- [peer, 29s ago] "peer recent"\n'
             '- [self, 28s ago] "self newest"'
         )
 
-    def test_integrated_context_uses_latest_4_combined_entries_after_timestamp_merge(self):
+    def test_integrated_context_uses_latest_5_combined_entries_after_timestamp_merge(self):
         hub = ClientHub(
             stt=None,
             llm=None,
@@ -544,6 +544,9 @@ class TestContextInternalPaths:
         hub.self_runtime.remember_context(
             "self 3", timestamp=74.0, source_language="en", target_language="ko"
         )
+        hub.peer_runtime.remember_context(
+            "peer 3", timestamp=75.0, source_language="en", target_language="ko"
+        )
 
         context, mode = hub.context_resolver.resolve_for_request(
             runtime=hub.self_runtime,
@@ -562,16 +565,17 @@ class TestContextInternalPaths:
             '- [peer, 29s ago] "peer 1"\n'
             '- [self, 28s ago] "self 2"\n'
             '- [peer, 27s ago] "peer 2"\n'
-            '- [self, 26s ago] "self 3"'
+            '- [self, 26s ago] "self 3"\n'
+            '- [peer, 25s ago] "peer 3"'
         )
 
-    def test_context_resolver_default_integrated_context_uses_40_second_window_and_latest_4_entries(
+    def test_context_resolver_default_integrated_context_uses_60_second_window_and_latest_5_entries(
         self,
     ):
         self_runtime = ChannelRuntime(channel="self")
         peer_runtime = ChannelRuntime(channel="peer")
         self_runtime.remember_context(
-            "41 seconds old", timestamp=59.0, source_language="en", target_language="ko"
+            "61 seconds old", timestamp=39.0, source_language="en", target_language="ko"
         )
         self_runtime.remember_context(
             "recent 1", timestamp=61.0, source_language="en", target_language="ko"
@@ -588,6 +592,9 @@ class TestContextInternalPaths:
         self_runtime.remember_context(
             "recent 5", timestamp=65.0, source_language="en", target_language="ko"
         )
+        peer_runtime.remember_context(
+            "recent 6", timestamp=66.0, source_language="en", target_language="ko"
+        )
         resolver = ContextResolver(clock=FakeClock(initial_time=100.0))
 
         context, mode = resolver.resolve_for_request(
@@ -602,13 +609,14 @@ class TestContextInternalPaths:
         )
 
         assert mode == "integrated"
-        assert "41 seconds old" not in context
+        assert "61 seconds old" not in context
         assert "recent 1" not in context
         assert context == (
             '- [peer, 38s ago] "recent 2"\n'
             '- [self, 37s ago] "recent 3"\n'
             '- [peer, 36s ago] "recent 4"\n'
-            '- [self, 35s ago] "recent 5"'
+            '- [self, 35s ago] "recent 5"\n'
+            '- [peer, 34s ago] "recent 6"'
         )
 
     def test_prepare_llm_request_formats_prompt_and_context(self):

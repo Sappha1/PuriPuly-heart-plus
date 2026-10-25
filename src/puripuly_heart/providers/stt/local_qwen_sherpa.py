@@ -474,6 +474,13 @@ class LocalQwenSherpaSTTBackend(STTBackend):
     on_model_loaded: object = None   # Callable[[str], None] — fired (with channel "self"|"peer") after model init
     # Which bundled manifest validates model_dir (Parakeet subclasses override).
     asset_model_id: str = LOCAL_STT_MODEL_ID
+    # Live chatbox preview: while a long utterance is still being spoken, decode
+    # what has been heard so far every `partial_interval_s` of new audio and
+    # report it as a non-final transcript. Asked live (the setting can change
+    # without rebuilding the backend); None or False = finals only.
+    partial_results: Callable[[], bool] | None = None
+    partial_interval_s: float = 1.5
+    partial_min_audio_s: float = 1.2
     _recognizer: object | None = field(init=False, default=None, repr=False)
     _load_lock: asyncio.Lock = field(init=False, repr=False)
     _decode_lock: asyncio.Lock = field(init=False, repr=False)
@@ -645,7 +652,18 @@ class LocalQwenSherpaSTTBackend(STTBackend):
     async def decode_pcm16le(self, pcm16le: bytes) -> str:
         return await self.decode_f32(pcm16le_bytes_to_float32(pcm16le))  # -> (text, lang)
 
-    async def decode_f32(self, samples_f32: np.ndarray) -> tuple[str, str | None]:
+    def partial_results_wanted(self) -> bool:
+        check = self.partial_results
+        if check is None:
+            return False
+        try:
+            return bool(check())
+        except Exception:
+            return False
+
+    async def decode_f32(
+        self, samples_f32: np.ndarray, *, partial: bool = False
+    ) -> tuple[str, str | None]:
         # r626: the window is closing — a transcript decoded now can never be
         # shown, and a native decode started now is up to 30s of teardown
         # hostage (or a process wedge if the recognizer's destruction races
@@ -668,7 +686,8 @@ class LocalQwenSherpaSTTBackend(STTBackend):
             text, lang = await self._decode_guarded(recognizer, samples_f32)
             retry_hint = self.script_retry_language_hint
             if (
-                retry_hint
+                not partial
+                and retry_hint
                 and not self.language_hint
                 and _script_retry_wanted(text, retry_hint)
             ):
@@ -924,6 +943,12 @@ class _LocalQwenSherpaSession(STTBackendSession):
     _total_inference_ms: float = field(init=False, default=0.0, repr=False)
     _total_rtf: float = field(init=False, default=0.0, repr=False)
     _summary_logged: bool = field(init=False, default=False, repr=False)
+    # live-preview partial decodes (see LocalQwenSherpaSTTBackend.partial_results)
+    _buffered_samples: int = field(init=False, default=0, repr=False)
+    _last_partial_samples: int = field(init=False, default=0, repr=False)
+    _utterance_generation: int = field(init=False, default=0, repr=False)
+    _partial_task: asyncio.Task | None = field(init=False, default=None, repr=False)
+    _last_partial_text: str = field(init=False, default="", repr=False)
 
     def __post_init__(self) -> None:
         self._buffer_f32 = []
@@ -941,6 +966,59 @@ class _LocalQwenSherpaSession(STTBackendSession):
         if samples.size == 0:
             return
         self._buffer_f32.append(samples.copy())
+        self._buffered_samples += int(samples.size)
+        self._maybe_start_partial_decode()
+
+    def _maybe_start_partial_decode(self) -> None:
+        backend = self.backend
+        task = self._partial_task
+        if task is not None and not task.done():
+            return  # one partial decode at a time
+        wanted = getattr(backend, "partial_results_wanted", None)
+        if not callable(wanted):
+            return
+        sr = backend.sample_rate_hz
+        if self._buffered_samples < int(getattr(backend, "partial_min_audio_s", 1.2) * sr):
+            return
+        if self._buffered_samples - self._last_partial_samples < int(
+            getattr(backend, "partial_interval_s", 1.5) * sr
+        ):
+            return
+        if is_shutting_down() or not wanted():
+            return
+        self._last_partial_samples = self._buffered_samples
+        snapshot = np.concatenate(self._buffer_f32)
+        generation = self._utterance_generation
+        self._partial_task = asyncio.create_task(
+            self._decode_partial(snapshot, generation)
+        )
+
+    async def _decode_partial(self, samples_f32: np.ndarray, generation: int) -> None:
+        try:
+            text, detected_language = await self.backend.decode_f32(samples_f32, partial=True)
+        except Exception as exc:
+            # a failed preview never fails the utterance; the final decode
+            # reports real problems
+            logger.debug(
+                "%s partial decode failed: %s", _log_prefix(self.backend.stream_label), exc
+            )
+            return
+        if self._closed or generation != self._utterance_generation:
+            return  # the utterance ended while decoding; its final is coming
+        text = (text or "").strip()
+        if not text or text == self._last_partial_text:
+            return
+        self._last_partial_text = text
+        await self._events.put(
+            STTBackendTranscriptEvent(
+                text=text,
+                is_final=False,
+                detected_language=detected_language,
+                audio_ms=_sample_count_duration_ms(
+                    int(samples_f32.size), self.backend.sample_rate_hz
+                ),
+            )
+        )
 
     # r634: the VAD keeps every hangover chunk in the segment, so each decode
     # carried ~500 ms of trailing silence. Keep this much of it (the model
@@ -955,6 +1033,12 @@ class _LocalQwenSherpaSession(STTBackendSession):
 
         samples_f32 = np.concatenate(self._buffer_f32)
         self._buffer_f32.clear()
+        # a partial decode still running belongs to this utterance: its result
+        # is dropped (generation changed) and the final below supersedes it
+        self._utterance_generation += 1
+        self._buffered_samples = 0
+        self._last_partial_samples = 0
+        self._last_partial_text = ""
         # r635: speaker ID keeps the UNtrimmed segment. Its gates
         # (MIN_UTTERANCE_SECONDS 1.2 / MIN_TRUSTED_SECONDS 2.0 in
         # core/speaker_id.py, the r360 faint/gappy bounds) were measured on
@@ -1093,6 +1177,7 @@ class _LocalQwenSherpaSession(STTBackendSession):
         self._log_summary_once()
         self._closed = True
         self._buffer_f32.clear()
+        self._utterance_generation += 1
         if self._closed_event_enqueued:
             return
         self._closed_event_enqueued = True

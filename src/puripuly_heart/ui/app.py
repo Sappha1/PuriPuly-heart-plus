@@ -33,7 +33,6 @@ from puripuly_heart.core.managed_openrouter_release import TalkTogetherPassStatu
 from puripuly_heart.core.updater import check_for_update
 from puripuly_heart.ui.components.debug_preview_panel import DebugPreviewPanel
 from puripuly_heart.ui.components.discord_managed_auth_dialog import DiscordManagedAuthDialog
-from puripuly_heart.ui.components.founder_letter_dialog import FounderLetterDialog
 from puripuly_heart.ui.components.local_qwen_hallucination_dialog import (
     LocalQwenHallucinationDialog,
 )
@@ -90,23 +89,7 @@ DEFAULT_WINDOW_HEIGHT = 680
 MIN_WINDOW_WIDTH = 720
 MIN_WINDOW_HEIGHT = 560
 APP_CONTENT_PADDING = 16
-FOUNDER_CONTACT_URL = "https://x.com/kapitalismho"
-FOUNDER_README_BASE_URL = "https://github.com/kapitalismho/PuriPuly-heart/blob/main"
-FOUNDER_README_PATH_BY_LOCALE = {
-    "ko": "README.ko.md",
-    "zh-CN": "README.zh-CN.md",
-    "ja": "README.ja.md",
-}
-FOUNDER_README_API_KEYS_ANCHOR_BY_LOCALE = {
-    "ko": "자신의-api-키-사용하기",
-    "zh-CN": "使用您自己的-api-密钥",
-    "ja": "自分のapiキーを使う",
-}
-FOUNDER_README_DEFAULT_API_KEYS_ANCHOR = "using-your-own-api-keys"
 DEBUG_PREVIEW_TALK_TOGETHER_PASS_ID = "7KQ9M2"
-GITHUB_STAR_REPOSITORY_URL = "https://github.com/kapitalismho/PuriPuly-heart"
-GITHUB_STAR_PROMPT_DELAY_S = 2.5
-GITHUB_STAR_PROMPT_DURATION_MS = 8000
 
 
 def _callable_accepts_keyword(callable_obj: object, keyword: str) -> bool:
@@ -117,14 +100,6 @@ def _callable_accepts_keyword(callable_obj: object, keyword: str) -> bool:
     return keyword in parameters or any(
         parameter.kind == inspect.Parameter.VAR_KEYWORD for parameter in parameters.values()
     )
-
-
-def founder_readme_url_for_locale(locale: str | None) -> str:
-    readme_path = FOUNDER_README_PATH_BY_LOCALE.get(locale or "", "README.md")
-    anchor = FOUNDER_README_API_KEYS_ANCHOR_BY_LOCALE.get(
-        locale or "", FOUNDER_README_DEFAULT_API_KEYS_ANCHOR
-    )
-    return f"{FOUNDER_README_BASE_URL}/{readme_path}#{anchor}"
 
 
 def _write_discord_callback_preview_page(locale: str | None) -> str:
@@ -157,11 +132,9 @@ class TranslatorApp:
         self._discord_managed_auth_generation = 0
         self._discord_managed_auth_cancelled = False
         self._discord_managed_auth_task_handle = None
-        self._github_star_prompt_launch_pending = True
         self._launch_high_priority_feedback_shown = False
         self._launch_high_priority_feedback_reason: str | None = None
         self._launch_high_priority_snackbar = None
-        self._github_star_prompt_shown_this_launch = False
         self._microphone_test_dialog: MicrophoneTestDialog | None = None
         self._setup_page()
         self._build_layout()
@@ -232,6 +205,20 @@ class TranslatorApp:
             self._refresh_peer_source_options_async()
         self.view_dashboard.on_request_current_translator = self._current_translator_model_value
         self.view_dashboard.on_request_deepl_usage_refresh = self._on_request_deepl_usage_refresh
+        self.view_dashboard.on_toggle_floating_chat = self._toggle_floating_chat
+        from puripuly_heart.ui.avatar_controls import AvatarControls
+
+        self.avatar_controls = AvatarControls(
+            get_state=self._avatar_state,
+            apply=self._apply_avatar_state,
+            send=self._send_avatar_parameter,
+        )
+        self._avatar_sync_task = None
+        self.view_dashboard.floating_chat_open = self._floating_chat_is_open
+        with contextlib.suppress(Exception):
+            from puripuly_heart.providers.llm.openai_chat import USAGE as _OPENAI_USAGE
+
+            _OPENAI_USAGE.add_listener(self._on_openai_usage)
         self.view_dashboard.on_request_stt_download = self._on_request_stt_download
         self.view_dashboard.on_stt_provider_change = self._on_dashboard_stt_provider_change
         self.view_dashboard.on_peer_stt_provider_change = self._on_dashboard_peer_stt_provider_change
@@ -448,16 +435,20 @@ class TranslatorApp:
                     _STM.GEMMA4: "Gemma 4 26B",
                     _STM.DEEPSEEK_V4_FLASH: "DeepSeek V4 Flash",
                     _STM.DEEPSEEK_V4_PRO: "DeepSeek V4 Pro",
-                    _STM.GEMINI_3_FLASH: "Gemini 3 Flash",
-                    _STM.GEMINI_31_FLASH_LITE: "Gemini 3.1 Flash-Lite",
+                    _STM.GPT_6_LUNA: "GPT-6 Luna",
+                    _STM.GPT_61_SOL: "GPT-6.1 Sol",
+                    _STM.GEMINI_3_FLASH: "Gemini 3.8 Flash",
+                    _STM.GEMINI_31_FLASH_LITE: "Gemini 3.5 Flash-Lite",
                     _STM.QWEN_35_PLUS: "Qwen 3.5 Plus",
                     _STM.DEEPL: "DeepL",
+                    _STM.INDEX_TRANSLATE: "Index-Translate 35B A3B",
                     _STM.GOOGLE_TRANSLATE: "Google Translate",
                     _STM.BING: "Bing",
                     _STM.PAPAGO: "Papago",
                     _STM.LOCAL_LLM: "Local LLMs",
                 }
-                _STR_NEEDS_KEY = {_STM.DEEPSEEK_V4_PRO, _STM.GEMINI_3_FLASH,
+                _STR_NEEDS_KEY = {_STM.DEEPSEEK_V4_PRO, _STM.GPT_6_LUNA,
+                                  _STM.GPT_61_SOL, _STM.GEMINI_3_FLASH,
                                   _STM.GEMINI_31_FLASH_LITE, _STM.QWEN_35_PLUS,
                                   _STM.DEEPL}
                 _steam_tr_cache: dict[str, object] = {}
@@ -996,7 +987,6 @@ class TranslatorApp:
         return DebugPreviewPanel(
             on_brake_notice=self._preview_brake_notice,
             on_revoked_notice=self._preview_revoked_notice,
-            on_founder_letter=self._preview_founder_letter,
             on_pkce_failure=self._preview_pkce_failure,
             on_discord_auth=self._preview_discord_auth,
             on_discord_callback_page=self._preview_discord_callback_page,
@@ -1008,7 +998,6 @@ class TranslatorApp:
             on_capture_fault_cycle=self._preview_capture_fault_cycle,
             on_stt_fault_cycle=self._preview_stt_fault_cycle,
             on_audio_fault_clear=self._preview_audio_fault_clear,
-            on_github_star_snackbar=self._preview_github_star_snackbar,
         )
 
     def _mark_launch_high_priority_feedback_shown(
@@ -1016,125 +1005,10 @@ class TranslatorApp:
         reason: str,
         snackbar: object | None = None,
     ) -> None:
-        if not getattr(self, "_github_star_prompt_launch_pending", True):
-            return
         self._launch_high_priority_feedback_shown = True
         self._launch_high_priority_feedback_reason = reason
         if snackbar is not None:
             self._launch_high_priority_snackbar = snackbar
-
-    def _launch_feedback_conflicts_with_github_star_prompt(self) -> bool:
-        if getattr(self, "_launch_high_priority_feedback_shown", False):
-            return True
-        snackbar = getattr(self, "_launch_high_priority_snackbar", None)
-        return bool(getattr(snackbar, "open", False))
-
-    async def maybe_show_github_star_prompt_after_launch(
-        self,
-        *,
-        delay_s: float = GITHUB_STAR_PROMPT_DELAY_S,
-    ) -> bool:
-        try:
-            controller = getattr(self, "controller", None)
-            persist_eligible_launch = getattr(
-                controller,
-                "persist_github_star_prompt_eligible_launch",
-                None,
-            )
-            if not callable(persist_eligible_launch):
-                return False
-            launch_gate_satisfied = await persist_eligible_launch()
-            if self._launch_feedback_conflicts_with_github_star_prompt():
-                return False
-            if not launch_gate_satisfied:
-                return False
-            should_show = getattr(controller, "should_show_github_star_prompt", None)
-            if not callable(should_show) or not should_show():
-                return False
-
-            await asyncio.sleep(delay_s)
-
-            if self._launch_feedback_conflicts_with_github_star_prompt():
-                return False
-            if not should_show():
-                return False
-            return await self._open_github_star_prompt_snackbar(
-                should_open=lambda: not self._launch_feedback_conflicts_with_github_star_prompt()
-            )
-        finally:
-            self._github_star_prompt_launch_pending = False
-
-    async def _open_github_star_prompt_snackbar(self, *, should_open=None) -> bool:  # noqa: ANN001
-        if getattr(self, "_github_star_prompt_shown_this_launch", False):
-            return False
-        controller = getattr(self, "controller", None)
-        persist_opened = getattr(controller, "persist_github_star_prompt_opened", None)
-        if not callable(persist_opened) or not await persist_opened(should_open=should_open):
-            return False
-
-        snackbar = None
-
-        def _open_repository(_event) -> None:  # noqa: ANN001
-            async def _persist_click() -> None:
-                persist_clicked = getattr(controller, "persist_github_star_prompt_clicked", None)
-                if callable(persist_clicked):
-                    await persist_clicked()
-
-            self._queue_settings_mutation_task(_persist_click)
-            webbrowser.open(GITHUB_STAR_REPOSITORY_URL)
-            if snackbar is not None:
-                self._close_github_star_prompt_snackbar(snackbar)
-
-        snackbar = self._build_github_star_prompt_snackbar(_open_repository)
-        self._github_star_prompt_shown_this_launch = True
-        self.page.open(snackbar)
-        return True
-
-    def _build_github_star_prompt_snackbar(self, on_click) -> ft.SnackBar:  # noqa: ANN001
-        return ft.SnackBar(
-            content=ft.Row(
-                controls=[
-                    ft.Text(
-                        t("github_star.snackbar.message"),
-                        size=18,
-                        color=ft.Colors.WHITE,
-                        font_family=font_for_language(get_locale()),
-                        expand=True,
-                    ),
-                    ft.TextButton(
-                        text=t("github_star.snackbar.action"),
-                        on_click=on_click,
-                        style=ft.ButtonStyle(
-                            color=ft.Colors.WHITE,
-                            text_style=ft.TextStyle(
-                                size=18,
-                                font_family=font_for_language(get_locale()),
-                            ),
-                            overlay_color=COLOR_PRIMARY,
-                        ),
-                    ),
-                ],
-                alignment=ft.MainAxisAlignment.START,
-                vertical_alignment=ft.CrossAxisAlignment.CENTER,
-                spacing=12,
-            ),
-            bgcolor=COLOR_SUCCESS,
-            duration=GITHUB_STAR_PROMPT_DURATION_MS,
-            behavior=ft.SnackBarBehavior.FLOATING,
-            margin=ft.margin.only(bottom=90),
-            padding=20,
-        )
-
-    def _close_github_star_prompt_snackbar(self, snackbar: ft.SnackBar) -> None:
-        close = getattr(self.page, "close", None)
-        if callable(close):
-            with contextlib.suppress(Exception):
-                close(snackbar)
-        else:
-            snackbar.open = False
-            with contextlib.suppress(Exception):
-                self.page.update()
-        self._displace_current_snackbar_for_flet_028()
 
     def _displace_current_snackbar_for_flet_028(self) -> None:
         """Force-dismiss the visible SnackBar on Flet 0.28.x.
@@ -1159,17 +1033,6 @@ class TranslatorApp:
         with contextlib.suppress(Exception):
             open_control(dismissor)
 
-    def _preview_github_star_snackbar(self) -> None:
-        snackbar = None
-
-        def _open_repository(_event) -> None:  # noqa: ANN001
-            webbrowser.open(GITHUB_STAR_REPOSITORY_URL)
-            if snackbar is not None:
-                self._close_github_star_prompt_snackbar(snackbar)
-
-        snackbar = self._build_github_star_prompt_snackbar(_open_repository)
-        self.page.open(snackbar)
-
     def _preview_brake_notice(self) -> None:
         self._show_snackbar(t("managed_release.brake"), ft.Colors.ORANGE_700)
 
@@ -1178,11 +1041,6 @@ class TranslatorApp:
 
     def _debug_preview_noop(self) -> None:
         return None
-
-    def _preview_founder_letter(self) -> None:
-        dialog = FounderLetterDialog(self.page, on_readme=self._on_founder_letter_readme)
-        self._founder_letter_dialog = dialog
-        dialog.open()
 
     def _preview_pkce_failure(self) -> None:
         self._show_snackbar(t("openrouter.pkce.failed"), ft.Colors.ORANGE_700)
@@ -1470,6 +1328,9 @@ class TranslatorApp:
 
                     async def _task():
                         await self.controller.apply_providers(pending_settings)
+                        # the translator may have changed: show/hide its usage
+                        with contextlib.suppress(Exception):
+                            await self._refresh_deepl_usage_display()
 
                     self._queue_settings_mutation_task(_task)
             elif getattr(self.view_settings, "has_pending_prompt_changes", False):
@@ -2130,6 +1991,17 @@ class TranslatorApp:
                         _po = getattr(dashboard, "paste_ocr_image", None)
                         if callable(_po):
                             _po()
+        # Ctrl+Z right after sending: Flutter's own undo restores a stale
+        # snapshot (the message minus its last few characters), so the
+        # dashboard puts the exact sent text back once the native undo ran.
+        if on_dashboard and isinstance(key, str) and key.lower() == "z":
+            if bool(getattr(event, "ctrl", False)) and not any(
+                bool(getattr(event, modifier, False)) for modifier in ("shift", "alt", "meta")
+            ):
+                undo = getattr(dashboard, "undo_last_send", None)
+                if callable(undo):
+                    with contextlib.suppress(Exception):
+                        undo()
         # r375: Enter steps to the next match (Shift+Enter the previous) while
         # the find bar is open. The field's own on_submit does this too; which
         # of the two actually fires is a Flet detail, so both are wired and the
@@ -2593,6 +2465,9 @@ class TranslatorApp:
                 STTProviderName.QWEN_ASR.value: alibaba_ok,
                 STTProviderName.DEEPGRAM.value: bool(getattr(verified, "deepgram", False)),
                 STTProviderName.SONIOX.value: bool(getattr(verified, "soniox", False)),
+                STTProviderName.GEMINI_TRANSCRIBE.value: bool(getattr(verified, "google", False)),
+                STTProviderName.ELEVENLABS_SCRIBE.value: bool(getattr(verified, "elevenlabs", False)),
+                STTProviderName.CUSTOM_STT.value: True,  # own server, key optional
             }
         except Exception:
             return {}
@@ -2605,6 +2480,7 @@ class TranslatorApp:
             google_ok = bool(getattr(verified, "google", False))
             openrouter_ok = bool(getattr(verified, "openrouter", False))
             deepseek_ok = bool(getattr(verified, "deepseek", False))
+            openai_ok = bool(getattr(verified, "openai", False))
             alibaba_ok = (
                 bool(getattr(verified, "alibaba_beijing", False))
                 or bool(getattr(verified, "alibaba_singapore", False))
@@ -2615,11 +2491,14 @@ class TranslatorApp:
                 TranslationModel.GEMMA4.value: openrouter_ok,
                 TranslationModel.DEEPSEEK_V4_FLASH.value: openrouter_ok or deepseek_ok,
                 TranslationModel.DEEPSEEK_V4_PRO.value: deepseek_ok,
+                TranslationModel.GPT_6_LUNA.value: openai_ok,
+                TranslationModel.GPT_61_SOL.value: openai_ok,
                 TranslationModel.GEMINI_3_FLASH.value: google_ok,
                 TranslationModel.GEMINI_31_FLASH_LITE.value: google_ok,
                 TranslationModel.QWEN_35_PLUS.value: openrouter_ok or alibaba_ok,
                 TranslationModel.DEEPL.value: deepl_ok,
                 TranslationModel.GOOGLE_TRANSLATE.value: True,    # free web
+                TranslationModel.INDEX_TRANSLATE.value: True,     # free, no key
                 TranslationModel.BING.value: True,                # free web
                 TranslationModel.PAPAGO.value: True,              # free web
                 TranslationModel.LOCAL_LLM.value: True,           # local, no key
@@ -2864,8 +2743,201 @@ class TranslatorApp:
         except Exception:
             pass
 
+    # ── avatar menu controls (OSC) ──────────────────────────────────────
+    def _avatar_state(self, key: str):
+        dash = getattr(self, "view_dashboard", None)
+        settings = getattr(self.controller, "settings", None)
+        if dash is None or settings is None:
+            return None
+        contract = getattr(dash, "_overlay_peer_contract", None)
+        if key == "talk":
+            return bool(dash.is_stt_on)
+        if key == "trans":
+            return bool(dash.is_translation_on)
+        if key == "listen":
+            return bool(contract.peer.intent_enabled) if contract is not None else None
+        if key == "captions":
+            return bool(contract.overlay.intent_enabled) if contract is not None else None
+        if key == "mute_sync":
+            return bool(getattr(dash, "_vrc_mute_sync", False))
+        if key == "chatbox_source":
+            return bool(settings.osc.chatbox_include_source)
+        if key == "live_preview":
+            return bool(getattr(settings.osc, "chatbox_live_preview", True))
+        if key == "preset":
+            return int(getattr(dash, "_active_preset", 0) or 0)
+        return None
+
+    def _apply_avatar_state(self, key: str, value) -> None:
+        """Set one app state from the avatar menu (runs on the page loop)."""
+        import copy
+
+        dash = self.view_dashboard
+        logger.info("[AvatarOSC] %s -> %s", key, value)
+        if key == "talk":
+            dash._toggle_stt()
+        elif key == "trans":
+            dash._toggle_translation()
+        elif key == "listen":
+            with contextlib.suppress(Exception):
+                dash._row_peer.set_loading(True)
+            dash._toggle_peer_translation()
+        elif key == "captions":
+            with contextlib.suppress(Exception):
+                dash._row_overlay.set_loading(True)
+            dash._toggle_overlay()
+        elif key == "mute_sync":
+            dash._on_vrc_mute_sync_click()  # only possible while the mic is on
+        elif key == "preset":
+            presets = getattr(dash, "_preset_data", None) or []
+            if 0 <= int(value) < len(presets):
+                dash._on_preset_tab_click(int(value))
+        elif key in ("chatbox_source", "live_preview"):
+            hub = getattr(self.controller, "hub", None)
+            if key == "chatbox_source":
+                with contextlib.suppress(Exception):
+                    hub.chatbox_include_source = bool(value)
+                    dash.set_chatbox_format_state(
+                        bool(value), bool(getattr(hub, "chatbox_reading_only", False))
+                    )
+            else:
+                with contextlib.suppress(Exception):
+                    hub.chatbox_live_preview = bool(value)
+
+            async def _task():
+                settings = self.controller.settings
+                if settings is None:
+                    return
+                updated = copy.deepcopy(settings)
+                if key == "chatbox_source":
+                    updated.osc.chatbox_include_source = bool(value)
+                else:
+                    updated.osc.chatbox_live_preview = bool(value)
+                await self.controller.apply_settings(updated)
+
+            self._queue_settings_mutation_task(_task)
+
+    def _send_avatar_parameter(self, name: str, value) -> None:
+        send = getattr(self.controller, "send_avatar_parameter", None)
+        if callable(send):
+            send(name, value)
+
+    def on_avatar_parameter(self, name: str, value) -> None:
+        with contextlib.suppress(Exception):
+            self.avatar_controls.on_parameter(name, value)
+        self._ensure_avatar_sync_loop()
+
+    def on_avatar_change(self) -> None:
+        # a newly loaded avatar starts from its own defaults: send the app's
+        # real state once it has finished loading
+        async def _later():
+            import asyncio as _aio
+
+            await _aio.sleep(1.5)
+            with contextlib.suppress(Exception):
+                self.avatar_controls.sync(force=True)
+
+        with contextlib.suppress(Exception):
+            self.page.run_task(_later)
+        self._ensure_avatar_sync_loop()
+
+    def _ensure_avatar_sync_loop(self) -> None:
+        task = getattr(self, "_avatar_sync_task", None)
+        if task is not None and not task.done():
+            return
+
+        async def _loop():
+            import asyncio as _aio
+
+            # app-side changes (buttons, settings, hotkeys) reach the avatar
+            # within a second, whichever code path made them
+            while True:
+                await _aio.sleep(1.0)
+                with contextlib.suppress(Exception):
+                    if getattr(self.controller.settings.osc, "avatar_controls", False):
+                        self.avatar_controls.sync()
+
+        with contextlib.suppress(Exception):
+            self._avatar_sync_task = self.page.run_task(_loop)
+
+    # ── floating chat window ────────────────────────────────────────────
+    def _floating_chat_is_open(self) -> bool:
+        proc = getattr(self, "_floating_chat_proc", None)
+        return proc is not None and proc.poll() is None
+
+    def _toggle_floating_chat(self) -> None:
+        if self._floating_chat_is_open():
+            with contextlib.suppress(Exception):
+                self._floating_chat_proc.terminate()
+            return
+
+        async def _open() -> None:
+            import subprocess as _sp
+            import sys as _sys
+
+            from puripuly_heart.ui.floating_chat_server import FloatingChatHub
+            from puripuly_heart.ui.i18n import get_locale
+
+            hub = getattr(self, "_floating_chat_hub", None)
+            if hub is None:
+                hub = FloatingChatHub(on_submit=self.view_dashboard._on_submit)
+                self._floating_chat_hub = hub
+            port = await hub.start()
+            self.view_dashboard.on_chat_entry_mirror = hub.publish
+            args = (
+                [_sys.executable]
+                if getattr(_sys, "frozen", False)
+                else [_sys.executable, "-m", "puripuly_heart.main"]
+            ) + ["--floating-chat", "--port", str(port), "--token", hub.token,
+                 "--locale", get_locale() or "en"]
+            try:
+                self._floating_chat_proc = _sp.Popen(args, close_fds=True)
+            except Exception:
+                logger.exception("Failed to open the floating chat window")
+
+        with contextlib.suppress(Exception):
+            self.page.run_task(_open)
+
     def _active_translator_is_deepl(self) -> bool:
         return self._current_translator_model_value() == "deepl"
+
+    def _active_translator_is_openai(self) -> bool:
+        return self._current_translator_model_value() in ("gpt6_luna", "gpt61_sol")
+
+    def _on_openai_usage(self, _snapshot) -> None:
+        # fired from the provider after every OpenAI reply; the ring is UI
+        # state, so render it on the page loop
+        with contextlib.suppress(Exception):
+            self.page.run_task(self._render_openai_usage, True)
+
+    async def _render_openai_usage(self, from_reply: bool = False) -> None:
+        dash = getattr(self, "view_dashboard", None)
+        if dash is None:
+            return
+        if not self._active_translator_is_openai():
+            with contextlib.suppress(Exception):
+                dash.set_translator_meter(None)
+            return
+        from puripuly_heart.providers.llm.openai_chat import USAGE
+        from puripuly_heart.ui.i18n import t
+        from puripuly_heart.ui.usage_meter import openai_meter_details
+
+        if from_reply:
+            # throttled to once a minute inside; keeps the balance current
+            with contextlib.suppress(Exception):
+                await self.controller.refresh_openai_balance()
+        settings = getattr(self.controller, "settings", None)
+        budget = float(getattr(getattr(settings, "openai", None), "weekly_budget_usd", 0.0) or 0.0)
+        snap = USAGE.snapshot()
+        view = openai_meter_details(snap, budget)
+        details = list(view.lines)
+        if not budget and snap.credit_available is None:
+            details.append(t("dashboard.usage.budget_hint"))
+        headline = view.headline or t("dashboard.usage.ring.tooltip")
+        with contextlib.suppress(Exception):
+            dash.set_translator_meter(view.fraction, view.caption, view.tone, headline, details)
+        with contextlib.suppress(Exception):
+            dash.set_translator_usage("\n".join(view.lines) if view.lines else None)
 
     def _current_translator_model_value(self) -> str:
         """Live translation model value from settings (so the picker highlight is accurate)."""
@@ -2890,6 +2962,13 @@ class TranslatorApp:
         set_usage = getattr(dash, "set_translator_usage", None)
         if not callable(set_usage):
             return
+        if self._active_translator_is_openai():
+            with contextlib.suppress(Exception):
+                await self.controller.refresh_openai_balance()
+            await self._render_openai_usage()
+            return
+        with contextlib.suppress(Exception):
+            dash.set_translator_meter(None)
         # Only the DeepL translator exposes usage; clear it for anything else
         # (e.g. local Qwen STT on MIC/PEER has no API usage to show).
         if not self._active_translator_is_deepl():
@@ -3129,9 +3208,18 @@ class TranslatorApp:
                 sv = getattr(self, "view_settings", None)
                 if sv is not None and not getattr(sv, "has_provider_changes", False):
                     sv._provider_settings_draft = None
+                    # The key fields below follow the settings page's own
+                    # copy; without replacing it they kept showing the OLD
+                    # translator's key (e.g. DeepL after a switch to GPT).
+                    if getattr(self.controller, "settings", None) is not None:
+                        sv._settings = self.controller.settings
                     with contextlib.suppress(Exception):
                         sv._sync_translation_selection_controls(self.controller.settings)
                         sv._update_api_visibility()
+                # usage ring/tooltip for the NEW translator (the immediate
+                # refresh below still sees the old settings)
+                with contextlib.suppress(Exception):
+                    await self._refresh_deepl_usage_display()
 
             self._queue_settings_mutation_task(_task)
 
@@ -3309,9 +3397,61 @@ class TranslatorApp:
             dialog = MicrophoneTestDialog(
                 self.page,
                 on_close=self._on_microphone_test_dialog_dismiss,
+                on_record=self._on_microphone_test_record,
+                on_play=self._on_microphone_test_play,
+                on_stop=self._on_microphone_test_stop,
             )
             self._microphone_test_dialog = dialog
         return dialog
+
+    def _on_microphone_test_record(self) -> None:
+        dialog = getattr(self, "_microphone_test_dialog", None)
+        start = getattr(self.controller, "start_microphone_test_recording", None)
+        if dialog is None or not callable(start):
+            return
+
+        def _done(seconds: float) -> None:
+            # fired from the capture loop - repaint on the page loop
+            async def _paint() -> None:
+                dialog.set_recorded(seconds)
+
+            with contextlib.suppress(Exception):
+                self.page.run_task(_paint)
+
+        if start(5.0, on_done=_done):
+            dialog.set_recording()
+
+    def _on_microphone_test_stop(self) -> None:
+        # recording: the done callback repaints with what was captured;
+        # playback: the play task's finally block resets the dialog
+        stop_rec = getattr(self.controller, "stop_microphone_test_recording", None)
+        stop_play = getattr(self.controller, "stop_microphone_test_playback", None)
+        stopped = False
+        if callable(stop_rec):
+            with contextlib.suppress(Exception):
+                recorder = getattr(self.controller, "_microphone_test_recorder", None)
+                if recorder is not None and recorder.recording:
+                    stop_rec()
+                    stopped = True
+        if not stopped and callable(stop_play):
+            with contextlib.suppress(Exception):
+                stop_play()
+
+    def _on_microphone_test_play(self) -> None:
+        dialog = getattr(self, "_microphone_test_dialog", None)
+        play = getattr(self.controller, "play_microphone_test_recording", None)
+        if dialog is None or not callable(play):
+            return
+
+        async def _task() -> None:
+            dialog.set_playing(True)
+            try:
+                await play()
+            finally:
+                dialog.set_playing(False)
+
+        with contextlib.suppress(Exception):
+            self.page.run_task(_task)
 
     def _close_microphone_test_dialog(self) -> None:
         dialog = getattr(self, "_microphone_test_dialog", None)
@@ -3998,25 +4138,15 @@ class TranslatorApp:
             return
         self._on_request_openrouter_pkce(target_settings, launch_source="letter")
 
-    def _on_founder_letter_contact(self) -> None:
-        webbrowser.open(FOUNDER_CONTACT_URL)
-
-    def _on_founder_letter_readme(self) -> None:
-        webbrowser.open(founder_readme_url_for_locale(get_locale()))
-
-    def show_founder_letter_dialog(self) -> None:
-        self._mark_launch_high_priority_feedback_shown("usage_exhaustion")
-        dialog = FounderLetterDialog(self.page, on_readme=self._on_founder_letter_readme)
-        self._founder_letter_dialog = dialog
-        dialog.open()
-
     def _api_key_verification_matches_current_field(self, provider: str, key: str) -> bool:
         field_by_provider = {
             "deepgram": "_deepgram_key",
+            "elevenlabs": "_elevenlabs_key",
             "soniox": "_soniox_key",
             "google": "_google_key",
             "openrouter": "_openrouter_key",
             "deepseek": "_deepseek_key",
+            "openai": "_openai_key",
             "alibaba_beijing": "_alibaba_key_beijing",
             "alibaba_singapore": "_alibaba_key_singapore",
         }
@@ -4058,7 +4188,10 @@ class TranslatorApp:
             "google": "google_api_key",
             "openrouter": "openrouter_api_key",
             "deepseek": "deepseek_api_key",
+            "openai": "openai_api_key",
             "deepgram": "deepgram_api_key",
+            "elevenlabs": "elevenlabs_api_key",
+            "custom_stt": "custom_stt_api_key",
             "soniox": "soniox_api_key",
             "alibaba_beijing": "alibaba_api_key_beijing",
             "alibaba_singapore": "alibaba_api_key_singapore",
@@ -4104,7 +4237,7 @@ class TranslatorApp:
         save_settings(self.controller.config_path, self.controller.settings)
 
         # Sync verification result with dashboard needs_key flags (UI update on user click)
-        if provider in ("deepgram", "soniox", "qwen_asr"):
+        if provider in ("deepgram", "soniox", "qwen_asr", "elevenlabs", "custom_stt"):
             self.view_dashboard.set_stt_needs_key(not success, update_ui=False)
             try:
                 set_flags = getattr(self.view_dashboard, "set_stt_key_flags", None)
@@ -4116,6 +4249,7 @@ class TranslatorApp:
             "google",
             "openrouter",
             "deepseek",
+            "openai",
             "alibaba_beijing",
             "alibaba_singapore",
             "deepl",
@@ -4127,6 +4261,12 @@ class TranslatorApp:
                     set_trans_flags(self._translator_key_flags_from_settings(self.controller.settings))
             except Exception:
                 pass
+            if provider == "google":
+                # the Google key also unlocks Gemini 3.5 Transcribe (speech)
+                with contextlib.suppress(Exception):
+                    set_flags = getattr(self.view_dashboard, "set_stt_key_flags", None)
+                    if callable(set_flags):
+                        set_flags(self._stt_key_flags_from_settings(self.controller.settings))
             if success:
                 # A verified key must take effect IMMEDIATELY. Without this
                 # rebuild, the free-web fallback provider built at startup
@@ -4145,10 +4285,12 @@ class TranslatorApp:
         # Map secret key name to provider name
         key_to_provider = {
             "deepgram_api_key": "deepgram",
+            "elevenlabs_api_key": "elevenlabs",
             "soniox_api_key": "soniox",
             "google_api_key": "google",
             "openrouter_api_key": "openrouter",
             "deepseek_api_key": "deepseek",
+            "openai_api_key": "openai",
             "alibaba_api_key": "alibaba_beijing",  # Use beijing as default
             "alibaba_api_key_beijing": "alibaba_beijing",
             "alibaba_api_key_singapore": "alibaba_singapore",
@@ -4160,7 +4302,7 @@ class TranslatorApp:
             save_settings(self.controller.config_path, self.controller.settings)
 
             # Update dashboard needs_key flag
-            if provider in ("deepgram", "soniox"):
+            if provider in ("deepgram", "soniox", "elevenlabs"):
                 self.view_dashboard.set_stt_needs_key(True, update_ui=False)
                 try:
                     set_flags = getattr(self.view_dashboard, "set_stt_key_flags", None)
@@ -4172,6 +4314,7 @@ class TranslatorApp:
                 "google",
                 "openrouter",
                 "deepseek",
+                "openai",
                 "alibaba_beijing",
                 "alibaba_singapore",
                 "deepl",
@@ -4183,6 +4326,11 @@ class TranslatorApp:
                         set_trans_flags(self._translator_key_flags_from_settings(self.controller.settings))
                 except Exception:
                     pass
+                if provider == "google":
+                    with contextlib.suppress(Exception):
+                        set_flags = getattr(self.view_dashboard, "set_stt_key_flags", None)
+                        if callable(set_flags):
+                            set_flags(self._stt_key_flags_from_settings(self.controller.settings))
 
     def _warn_if_loopback_restored(self) -> None:
         """r643: warn only when peer audio is actually being LOOPED BACK INTO
@@ -4286,6 +4434,14 @@ async def main_gui(page: ft.Page, *, config_path, debug_ui_preview: bool = False
         if _early_locale:
             _set_locale_early(_early_locale)
 
+    # per-day spend for the usage ring's "this week", kept next to the
+    # settings file (attached here, not in TranslatorApp, so tests that build
+    # the app never write a ledger)
+    with contextlib.suppress(Exception):
+        from puripuly_heart.providers.llm.openai_chat import USAGE as _OPENAI_USAGE
+
+        _OPENAI_USAGE.attach_ledger(Path(config_path).parent / "openai_usage.json")
+
     app = TranslatorApp(
         page,
         config_path=config_path,
@@ -4375,6 +4531,11 @@ async def main_gui(page: ft.Page, *, config_path, debug_ui_preview: bool = False
         app.page.run_task(app._refresh_deepl_usage_display)
     except Exception:
         pass
+
+    # Avatar menu controls: tell an avatar that is already loaded what is on,
+    # then keep it in step with app-side changes
+    with contextlib.suppress(Exception):
+        app.on_avatar_change()
 
     # Wire VRChat OSC mute state callback → dashboard orange "syncing" indicator
     try:

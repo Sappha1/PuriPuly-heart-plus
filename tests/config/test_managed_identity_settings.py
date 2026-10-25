@@ -134,13 +134,13 @@ def test_openrouter_selected_source_round_trip() -> None:
     assert restored.openrouter.selected_source == OpenRouterCredentialSource.MANAGED
 
 
-def test_openrouter_broker_base_url_round_trip() -> None:
+def test_openrouter_broker_base_url_is_never_restored_from_config() -> None:
     settings = AppSettings()
     settings.openrouter.broker_base_url = "https://broker.example.test"
 
     restored = from_dict(to_dict(settings))
 
-    assert restored.openrouter.broker_base_url == "https://broker.example.test"
+    assert restored.openrouter.broker_base_url == DEFAULT_OPENROUTER_BROKER_BASE_URL == ""
 
 
 def test_load_settings_backfills_managed_identity_defaults(tmp_path) -> None:

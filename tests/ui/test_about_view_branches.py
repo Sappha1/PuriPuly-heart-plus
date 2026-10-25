@@ -48,7 +48,6 @@ def _row_cards(container) -> list:
 def test_about_view_uses_shared_card_wrapper_defaults(monkeypatch: pytest.MonkeyPatch) -> None:
     from puripuly_heart.ui.components.shared_card_wrapper import SharedCardWrapper
 
-    monkeypatch.setattr(about_module, "_get_profile_image_path", lambda: "")
     monkeypatch.setattr(about_module, "_load_third_party_notices", lambda: "licenses")
 
     view = AboutView()
@@ -71,7 +70,6 @@ def test_about_view_link_actions_handle_missing_page_gracefully(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     opened: list[str] = []
-    monkeypatch.setattr(about_module, "_get_profile_image_path", lambda: "")
     monkeypatch.setattr(about_module, "_load_third_party_notices", lambda: "licenses")
     monkeypatch.setattr(about_module.webbrowser, "open", lambda url: opened.append(url))
 
@@ -83,8 +81,6 @@ def test_about_view_link_actions_handle_missing_page_gracefully(
     for handler in click_handlers:
         handler(None)
 
-    assert "https://github.com/kapitalismho/PuriPuly-heart" in opened
-    assert "https://x.com/kapitalismho" in opened
     assert "https://github.com/misyaguziya/VRCT" in opened
     assert "https://github.com/naeruru/mimiuchi" in opened
     assert "https://github.com/febilly/Yakutan" in opened
@@ -93,7 +89,6 @@ def test_about_view_link_actions_handle_missing_page_gracefully(
 def test_about_view_special_thanks_names_render_in_requested_order(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    monkeypatch.setattr(about_module, "_get_profile_image_path", lambda: "")
     monkeypatch.setattr(about_module, "_load_third_party_notices", lambda: "licenses")
 
     view = AboutView()
@@ -119,7 +114,6 @@ def test_about_view_special_thanks_names_render_in_requested_order(
 def test_about_view_special_thanks_names_render_from_i18n(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    monkeypatch.setattr(about_module, "_get_profile_image_path", lambda: "")
     monkeypatch.setattr(about_module, "_load_third_party_notices", lambda: "licenses")
 
     localized_names = {
@@ -171,14 +165,13 @@ def test_about_view_special_thanks_name_keys_exist_in_locale_bundles(locale: str
 
 
 def test_about_view_hover_handlers_and_locale_refresh(monkeypatch: pytest.MonkeyPatch) -> None:
-    monkeypatch.setattr(about_module, "_get_profile_image_path", lambda: "")
     monkeypatch.setattr(about_module, "_load_third_party_notices", lambda: "licenses")
     monkeypatch.setattr(AboutView, "update", lambda self: setattr(self, "_updated", True))
     view = AboutView()
 
     text = types.SimpleNamespace(color=about_module.COLOR_ON_BACKGROUND, update=lambda: None)
     evt = types.SimpleNamespace(control=types.SimpleNamespace(content=text), data="true")
-    view._on_name_hover(evt)
+    view._on_link_hover(evt)
     assert text.color == about_module.COLOR_PRIMARY
     evt.data = "false"
     view._on_link_hover(evt)
@@ -202,4 +195,3 @@ def test_about_helper_fallbacks(monkeypatch: pytest.MonkeyPatch) -> None:
     monkeypatch.setattr(about_module.resources, "files", lambda _name: BrokenFiles())
 
     assert about_module._load_third_party_notices() == "Could not load license information."
-    assert about_module._get_profile_image_path() == ""

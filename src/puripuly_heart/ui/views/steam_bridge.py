@@ -65,6 +65,7 @@ _URL_RE = re.compile(r"(https?://[^\s]+)")
 _CJK_RE = re.compile(r"[㐀-鿿぀-ヿ가-힣]")
 _CJK_LANGS = {"zh-CN", "zh-TW", "ja", "ko"}
 from puripuly_heart.ui.i18n import t as _T
+from puripuly_heart.ui.sent_text_undo import SentTextUndo, restore_after_native_undo
 
 
 def _send_fmt_labels() -> dict:
@@ -449,6 +450,8 @@ class SteamBridgeView(ft.Container):
         self.translate_message = None
         self.on_toggle_sidebar = None
         self.on_modal_change = None    # dashboard arms the side-column catcher
+        self._sent_undo = SentTextUndo()
+        self._entry_focused = False
         self._src_lang = "en"
         self._tgt_lang = "zh-CN"
         self._proc = None
@@ -505,6 +508,7 @@ class SteamBridgeView(ft.Container):
         self._emote_meta: dict = {}    # emote name -> source game name
         self._sticker_meta: dict = {}
         self._chat_cache: dict = {}    # acct -> last-rendered history blocks
+        self._rx_unmatched: dict = {}  # acct -> reaction updates whose message is not shown yet
         self._scroll_pos: dict = {}    # acct -> scroll px (open tabs keep position)
         self._was_following: dict = {} # acct -> was at the bottom when last viewed
         self._render_fp: dict = {}     # acct -> fingerprint of last rendered history
@@ -699,6 +703,8 @@ class SteamBridgeView(ft.Container):
             bgcolor=_BG_INPUT, border_radius=8,
             content_padding=ft.padding.symmetric(horizontal=12, vertical=8),
             on_change=self._on_entry_change,
+            on_focus=lambda e: setattr(self, "_entry_focused", True),
+            on_blur=lambda e: setattr(self, "_entry_focused", False),
             on_submit=lambda e: self.page.run_task(self._send))
         self._char_count = ft.Text("", size=10.5, color=_TEXT_FAINT, visible=False)
         emoji_btn = ft.IconButton(
@@ -1320,6 +1326,12 @@ class SteamBridgeView(ft.Container):
         self._show_state_overlay("off")
 
     _MAX_MSG = 5000   # Steam's chat message limit (approx; server truncates)
+
+    def undo_last_send(self) -> None:
+        """Ctrl+Z: put the message just sent back in the box."""
+        if not self._entry_focused or self.page is None or not self._sent_undo.armed:
+            return
+        self.page.run_task(restore_after_native_undo, self._entry, self._sent_undo)
 
     def _on_entry_change(self, e) -> None:
         # hard cap without max_length (its counter reserves an ugly empty line)
@@ -4122,6 +4134,8 @@ class SteamBridgeView(ft.Container):
                      "texts": [], "images": [], "stickers": [], "_ts": ts,
                      "_ord": int(m.get("ord") or 0)}
                 blocks.append(b)
+            if m.get("reactions"):
+                b["_rx"] = [dict(r) for r in m["reactions"] if isinstance(r, dict)]
             if m.get("text"):
                 b["texts"].append(m["text"])
             b["images"] += m.get("images", [])
@@ -4255,23 +4269,166 @@ class SteamBridgeView(ft.Container):
             if b.get("_sending") or b.get("_send_failed"):
                 ic = self._upload_state_wrap(b, ic)
             out.append(ic)
-        if b.get("_reacts"):
+        _chips = self._reaction_chips(b)
+        if _chips:
             out.append(ft.Container(
                 margin=ft.margin.only(top=2),
-                content=ft.Row(
-                    [ft.Container(
-                        content=ft.Image(
-                            src=(self._sticker_url(n[2:]) if n.startswith("s:")
-                                 else self._emoticon_url(n)),
-                            width=24 if n.startswith("s:") else 16,
-                            height=24 if n.startswith("s:") else 16,
-                            fit=ft.ImageFit.CONTAIN),
-                        bgcolor="#26282c", border_radius=9,
-                        border=ft.border.all(1, "#3a3b3e"),
-                        padding=ft.padding.symmetric(horizontal=5, vertical=3))
-                     for n in b["_reacts"][:12]],
-                    spacing=4, tight=True, wrap=True)))
+                content=ft.Row(_chips, spacing=4, tight=True, wrap=True)))
         return out
+
+    @staticmethod
+    def _reaction_key(name: str) -> str:
+        return (name or "").strip().strip(":").strip("\u02d0").lower()
+
+    def _merged_reactions(self, b: dict) -> list[dict]:
+        """Reactions Steam reports for the message, plus ones just sent from
+        here that the next sync has not confirmed yet."""
+        merged = [dict(r) for r in (b.get("_rx") or [])]
+        known = {(int(r.get("type") or 1), self._reaction_key(r.get("name", "")))
+                 for r in merged}
+        for n in b.get("_reacts") or []:
+            sticker = n.startswith("s:")
+            key = (2 if sticker else 1, self._reaction_key(n[2:] if sticker else n))
+            if key not in known:
+                merged.append({"type": key[0], "name": n[2:] if sticker else n,
+                               "count": 1, "mine": True})
+        return merged
+
+    def _reaction_chips(self, b: dict) -> list:
+        chips = []
+        for r in self._merged_reactions(b)[:12]:
+            sticker = int(r.get("type") or 1) == 2
+            name = self._reaction_key(r.get("name", "")) if not sticker else str(
+                r.get("name") or "").strip()
+            if not name:
+                continue
+            size = 22 if sticker else 16
+            parts: list = [ft.Image(
+                src=self._sticker_url(name) if sticker else self._emoticon_url(name),
+                width=size, height=size, fit=ft.ImageFit.CONTAIN)]
+            count = int(r.get("count") or 1)
+            if count > 1:
+                parts.append(ft.Text(str(count), size=11, color=_TEXT_PRIMARY))
+            mine = bool(r.get("mine"))
+            chips.append(ft.Container(
+                content=ft.Row(parts, spacing=3, tight=True,
+                               vertical_alignment=ft.CrossAxisAlignment.CENTER),
+                bgcolor="#2d3a45" if mine else "#26282c", border_radius=9,
+                border=ft.border.all(1, "#4b8fbf" if mine else "#3a3b3e"),
+                padding=ft.padding.symmetric(horizontal=5, vertical=3),
+                tooltip=f":{name}:" if not sticker else name))
+        return chips
+
+    # a message sent from here is stored with the local send time, which can
+    # sit a few seconds off Steam's own timestamp for it
+    _RX_MATCH_WINDOW_S = 8
+
+    @staticmethod
+    def _rx_norm_text(text: str) -> str:
+        plain, _emos = _extract_emoticons((text or "").strip())
+        return " ".join(plain.split()).lower()
+
+    def _rx_find_block(self, blocks: list, it: dict, used: set):
+        """The block a reaction update belongs to: same second and ordinal,
+        else the same sender and text nearby, else the nearest message from
+        the same sender within the window."""
+        ts = _sec(it.get("ts"))
+        if not ts:
+            return None
+        ordv = int(it.get("ord") or 0)
+        from_me = it.get("from_me")
+        want_text = self._rx_norm_text(it.get("text") or "") if it.get("text") else ""
+        near = []
+        for blk in blocks or []:
+            if id(blk) in used:
+                continue
+            bts = _sec(blk.get("_ts"))
+            if not bts or abs(bts - ts) > self._RX_MATCH_WINDOW_S:
+                continue
+            if bts == ts and int(blk.get("_ord") or 0) == ordv:
+                return blk
+            if from_me is not None and bool(blk.get("from_me")) != bool(from_me):
+                continue
+            near.append((abs(bts - ts), blk))
+        if not near:
+            return None
+        near.sort(key=lambda pair: pair[0])
+        if want_text:
+            for _gap, blk in near:
+                have = self._rx_norm_text(
+                    " ".join([blk.get("text") or ""] + [f":{e}:" for e in blk.get("emoticons") or []]))
+                if have and (have == want_text or have in want_text or want_text in have):
+                    return blk
+        if from_me is None and len(near) > 1 and near[0][0] == near[1][0]:
+            return None   # two equally close candidates and no sender to tell them apart
+        return near[0][1]
+
+    def _apply_reactions(self, acct: int, items: list) -> bool:
+        """Store reaction updates from the helper on the matching messages
+        (open chat and cached chats). True when the open chat changed.
+        Updates whose message is not shown yet are kept and retried when it
+        arrives (the helper sends each change only once)."""
+        items = [it for it in items or [] if isinstance(it, dict) and _sec(it.get("ts"))]
+        if not items:
+            return False
+
+        def _update(blocks) -> tuple[bool, list]:
+            hit = False
+            used: set = set()
+            missed = []
+            for it in items:
+                blk = self._rx_find_block(blocks, it, used)
+                if blk is None:
+                    missed.append(it)
+                    continue
+                used.add(id(blk))
+                new = [dict(r) for r in (it.get("reactions") or []) if isinstance(r, dict)]
+                if new != (blk.get("_rx") or []):
+                    blk["_rx"] = new
+                    # Steam now confirms (or dropped) what was sent from here
+                    blk.pop("_reacts", None)
+                    hit = True
+            return hit, missed
+
+        missed = items
+        with contextlib.suppress(Exception):
+            cache = self._chat_cache.get(acct)
+            if cache is not None and cache is not self._hist_blocks:
+                _hit, missed = _update(cache)
+        changed = False
+        if acct == self._active:
+            changed, missed = _update(self._hist_blocks)
+        # newest update per message wins; keep a bounded backlog
+        backlog = {(_sec(it.get("ts")), int(it.get("ord") or 0)): it
+                   for it in (self._rx_unmatched.get(acct) or []) + list(missed)}
+        for it in items:
+            if it not in missed:
+                backlog.pop((_sec(it.get("ts")), int(it.get("ord") or 0)), None)
+        if backlog:
+            self._rx_unmatched[acct] = list(backlog.values())[-40:]
+        else:
+            self._rx_unmatched.pop(acct, None)
+        return changed
+
+    def _retry_unmatched_reactions(self) -> None:
+        """A message just appeared in the open chat: apply any reaction update
+        that was waiting for it."""
+        acct = self._active
+        pending = self._rx_unmatched.get(acct) if acct else None
+        if pending and self._apply_reactions(acct, list(pending)):
+            self._rerender_chat()
+
+    def _schedule_reaction_retry(self) -> None:
+        # after the current render finishes, never in the middle of it
+        if not self._rx_unmatched.get(self._active or 0) or not self.page:
+            return
+
+        async def _retry() -> None:
+            with contextlib.suppress(Exception):
+                self._retry_unmatched_reactions()
+
+        with contextlib.suppress(Exception):
+            self.page.run_task(_retry)
 
     def _segmented_units(self, b: dict, text: str, translated: bool) -> list:
         """Quote/code messages: each segment renders as its own unit with the
@@ -5003,6 +5160,7 @@ class SteamBridgeView(ft.Container):
         self._last_block = None            # fresh chat — don't coalesce across it
         self._hist_blocks = blocks
         self._chat_cache[self._active or 0] = blocks
+        self._schedule_reaction_retry()
         # OLD messages are never grouped — each gets its own avatar+name block.
         _prev_day = None
         for b in blocks:
@@ -5367,6 +5525,8 @@ class SteamBridgeView(ft.Container):
                  "images": m.get("images", []), "stickers": m.get("stickers", []),
                  "_ts": ts, "_ord": int(m.get("ord") or 0),
                  "_out_pending": bool(m.get("_out_pending"))}
+            if m.get("reactions"):
+                b["_rx"] = [dict(r) for r in m["reactions"] if isinstance(r, dict)]
         # ── out-of-order delivery (r532): a restarted helper replays recent
         # history in arbitrary order. Blind appends put an 11:29 message
         # under an 11:22 one. Skip what's already on screen; anything new
@@ -5426,6 +5586,7 @@ class SteamBridgeView(ft.Container):
         # a friend's line rendered meanwhile moves _last_block to their block
         self._note_bubble_pos(b, lb)
         self._hist_blocks.append(b)
+        self._schedule_reaction_retry()
         _fpk = self._active or 0
         if _fpk in self._render_fp:
             # r636: the server's next history snapshot ends with this line -
@@ -5715,6 +5876,7 @@ class SteamBridgeView(ft.Container):
                             default=f"Message is too long for Steam "
                                     f"({len(text)}/{self._MAX_MSG})"))
             return
+        self._sent_undo.remember(text)
         self._entry.value = ""
         if self.page:
             self._entry.update()
@@ -6042,6 +6204,10 @@ class SteamBridgeView(ft.Container):
         elif kind == "typing":
             if int(ev.get("acct", 0)) == self._active:
                 self._set_typing(ev.get("name", "") if ev.get("typing") else "")
+        elif kind == "reactions":
+            # someone reacted to (or removed a reaction from) a message
+            if self._apply_reactions(int(ev.get("acct", 0)), ev.get("items") or []):
+                self._rerender_chat()
         elif kind == "inbound":
             _in_acct = int(ev.get("acct", 0))
             _im = ev.get("message") or {}

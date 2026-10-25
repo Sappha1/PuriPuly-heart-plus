@@ -39,7 +39,7 @@ SETTINGS_SCHEMA_VERSION = 29
 STT_INTERNAL_SAMPLE_RATE_HZ = 16000
 DEFAULT_DESKTOP_AUDIO_VAD_HANGOVER_MS = 500
 MAX_CUSTOM_VOCAB_TERMS = 100
-DEFAULT_OPENROUTER_BROKER_BASE_URL = "https://puripuly-heart-broker.kapitalismho.workers.dev"
+DEFAULT_OPENROUTER_BROKER_BASE_URL = ""
 REFERRAL_ID_LENGTH = 6
 REFERRAL_ID_ALPHABET = frozenset("23456789ABCDEFGHJKMNPQRSTUVWXYZ")
 OVERLAY_TARGET_STEAMVR = "steamvr"
@@ -129,6 +129,12 @@ class STTProviderName(str, Enum):
     DEEPGRAM = "deepgram"
     QWEN_ASR = "qwen_asr"
     SONIOX = "soniox"
+    # Gemini 3.5 Transcribe Live: free tier with a Google AI Studio key
+    GEMINI_TRANSCRIBE = "gemini_transcribe"
+    # ElevenLabs Scribe v2 Realtime (own ElevenLabs key)
+    ELEVENLABS_SCRIBE = "elevenlabs_scribe"
+    # any OpenAI/Whisper-compatible /audio/transcriptions server
+    CUSTOM_STT = "custom_stt"
     GOOGLE_STT = "google_stt"
     WHISPER = "whisper"
 
@@ -138,11 +144,13 @@ class LLMProviderName(str, Enum):
     OPENROUTER = "openrouter"
     QWEN = "qwen"
     DEEPSEEK = "deepseek"
+    OPENAI = "openai"
     LOCAL_LLM = "local_llm"
     DEEPL = "deepl"
     GOOGLE_TRANSLATE = "google_translate"
     BING = "bing"
     PAPAGO = "papago"
+    INDEX_TRANSLATE = "index_translate"
 
 
 class SecretsBackend(str, Enum):
@@ -156,8 +164,12 @@ class QwenRegion(str, Enum):
 
 
 class GeminiLLMModel(str, Enum):
-    GEMINI_3_FLASH = "gemini-3-flash-preview"
-    GEMINI_31_FLASH_LITE = "gemini-3.1-flash-lite"
+    # Member names are the stable internal keys; the values follow Google's
+    # current models. 3 Flash (preview) -> 3.8 Flash; 3.1 Flash-Lite shuts
+    # down 2027-05-07 -> 3.5 Flash-Lite. Saved older ids migrate in
+    # _parse_gemini_llm_model.
+    GEMINI_3_FLASH = "gemini-3.8-flash"
+    GEMINI_31_FLASH_LITE = "gemini-3.5-flash-lite"
 
 
 class QwenLLMModel(str, Enum):
@@ -166,8 +178,15 @@ class QwenLLMModel(str, Enum):
 
 
 class DeepSeekLLMModel(str, Enum):
-    DEEPSEEK_V4_FLASH = "deepseek-v4-flash"
+    # DeepSeek now documents "deepseek-flash" (served by V4.1 Flash); the old
+    # "deepseek-v4-flash" name is only kept as a legacy alias on their side.
+    DEEPSEEK_V4_FLASH = "deepseek-flash"
     DEEPSEEK_V4_PRO = "deepseek-v4-pro"
+
+
+class OpenAILLMModel(str, Enum):
+    GPT_6_LUNA = "gpt-6-luna"
+    GPT_61_SOL = "gpt-6.1-sol"
 
 
 class LocalLLMBackend(str, Enum):
@@ -217,6 +236,8 @@ class TranslationModel(str, Enum):
     GEMMA4 = "gemma4"
     DEEPSEEK_V4_FLASH = "deepseek_v4_flash"
     DEEPSEEK_V4_PRO = "deepseek_v4_pro"
+    GPT_6_LUNA = "gpt6_luna"
+    GPT_61_SOL = "gpt61_sol"
     GEMINI_3_FLASH = "gemini3_flash"
     GEMINI_31_FLASH_LITE = "gemini31_flash_lite"
     QWEN_35_PLUS = "qwen35_plus"
@@ -225,6 +246,8 @@ class TranslationModel(str, Enum):
     GOOGLE_TRANSLATE = "google_translate"
     BING = "bing"
     PAPAGO = "papago"
+    # free model on bilibili's public endpoint, no API key
+    INDEX_TRANSLATE = "index_translate"
 
 
 class TranslationConnection(str, Enum):
@@ -270,9 +293,9 @@ class TranslationSettings:
             del self.connection_history[model_value]
 
 
-# MANAGED / MANAGED_CHINA retired 2026-07-17: the "managed free key" flow was
-# the UPSTREAM author's Discord-verified allowance system — it sent this fork's
-# users to the original author's Discord and implied the wrong maintainer.
+# MANAGED / MANAGED_CHINA retired 2026-07-17: the "managed free key" flow
+# depended on a third-party Discord-verified allowance service this app does
+# not run.
 # Existing configs with connection=managed migrate automatically: the
 # normalizer falls back to the first supported connection (OpenRouter BYOK).
 TRANSLATION_CONNECTIONS_BY_MODEL: dict[TranslationModel, tuple[TranslationConnection, ...]] = {
@@ -284,6 +307,8 @@ TRANSLATION_CONNECTIONS_BY_MODEL: dict[TranslationModel, tuple[TranslationConnec
         TranslationConnection.OFFICIAL_BYOK,
     ),
     TranslationModel.DEEPSEEK_V4_PRO: (TranslationConnection.OFFICIAL_BYOK,),
+    TranslationModel.GPT_6_LUNA: (TranslationConnection.OFFICIAL_BYOK,),
+    TranslationModel.GPT_61_SOL: (TranslationConnection.OFFICIAL_BYOK,),
     TranslationModel.GEMINI_3_FLASH: (TranslationConnection.OFFICIAL_BYOK,),
     TranslationModel.GEMINI_31_FLASH_LITE: (TranslationConnection.OFFICIAL_BYOK,),
     TranslationModel.QWEN_35_PLUS: (TranslationConnection.OFFICIAL_BYOK,),
@@ -292,6 +317,7 @@ TRANSLATION_CONNECTIONS_BY_MODEL: dict[TranslationModel, tuple[TranslationConnec
     TranslationModel.GOOGLE_TRANSLATE: (TranslationConnection.FREE_WEB,),
     TranslationModel.BING: (TranslationConnection.FREE_WEB,),
     TranslationModel.PAPAGO: (TranslationConnection.FREE_WEB,),
+    TranslationModel.INDEX_TRANSLATE: (TranslationConnection.FREE_WEB,),
 }
 TRANSLATION_CONNECTION_PRIORITY: tuple[TranslationConnection, ...] = (
     TranslationConnection.OPENROUTER,
@@ -471,7 +497,7 @@ class LanguagePreset:
 
 @dataclass(slots=True)
 class LanguageSettings:
-    # NOTE: upstream (Korean-made) defaulted source="ko" and peer_target="ko".
+    # NOTE: older builds defaulted source="ko" and peer_target="ko".
     # The literal peer_target default was invisible in the UI and pinned fresh
     # installs to Korean peer translations forever (migrations only fix OLD
     # files — a fresh install starts at the current schema version and keeps
@@ -730,6 +756,12 @@ class OSCSettings:
     chatbox_max_chars: int = 144
     vrc_mic_intercept: bool = True
     chatbox_include_source: bool = True
+    # Show your translation in the chatbox while you are still talking and
+    # update it as more speech is recognized (final text replaces it).
+    chatbox_live_preview: bool = True
+    # control the app from the avatar menu (PuriPuly_* parameters, see
+    # ui/avatar_controls.py); harmless when the avatar has none of them
+    avatar_controls: bool = True
 
     def validate(self) -> None:
         if not self.host:
@@ -843,6 +875,39 @@ class DeepSeekSettings:
 
 
 @dataclass(slots=True)
+class CustomSTTSettings:
+    base_url: str = "http://127.0.0.1:8000/v1"
+    model: str = "whisper-1"
+
+    def validate(self) -> None:
+        if not isinstance(self.base_url, str) or not isinstance(self.model, str):
+            raise ValueError("invalid custom speech server settings")
+
+
+@dataclass(slots=True)
+class OpenAISettings:
+    llm_model: OpenAILLMModel = OpenAILLMModel.GPT_6_LUNA
+    # optional weekly spending budget in USD for the usage ring; 0 = none.
+    # Display only: translation keeps working past it.
+    weekly_budget_usd: float = 0.0
+
+    def validate(self) -> None:
+        if not isinstance(self.llm_model, OpenAILLMModel):
+            raise ValueError("invalid openai llm model")
+        self.weekly_budget_usd = _parse_weekly_budget(self.weekly_budget_usd)
+
+
+def _parse_weekly_budget(value: object) -> float:
+    try:
+        amount = float(str(value).strip().lstrip("$")) if value not in (None, "") else 0.0
+    except (TypeError, ValueError):
+        return 0.0
+    if amount != amount or amount < 0:
+        return 0.0
+    return round(min(amount, 100_000.0), 2)
+
+
+@dataclass(slots=True)
 class LocalLLMSettings:
     backend: LocalLLMBackend = LocalLLMBackend.OLLAMA
     base_url: str = "http://127.0.0.1:11434/v1"
@@ -884,7 +949,7 @@ class OpenRouterSettings:
     llm_model: OpenRouterLLMModel = OpenRouterLLMModel.GEMMA_4_26B_A4B_IT
     routing_mode: OpenRouterRoutingMode = OpenRouterRoutingMode.LATENCY
     provider_routing: OpenRouterProviderRouting = OpenRouterProviderRouting.DEFAULT
-    # NONE (not MANAGED): the managed trial is upstream's and is dead in this fork —
+    # NONE (not MANAGED): the managed trial is retired —
     # it must never be the default credential source.
     selected_source: OpenRouterCredentialSource = OpenRouterCredentialSource.NONE
     selection_alias: OpenRouterSelectionAlias | None = None
@@ -921,7 +986,7 @@ class OpenRouterSettings:
             raise ValueError("openrouter selection alias is required for active sources")
         if not isinstance(self.fallback_selection_alias, OpenRouterFallbackSelectionAlias):
             raise ValueError("invalid openrouter fallback selection alias")
-        if not isinstance(self.broker_base_url, str) or not self.broker_base_url.strip():
+        if not isinstance(self.broker_base_url, str):
             raise ValueError("invalid openrouter broker base url")
 
 
@@ -999,28 +1064,10 @@ class UiSettings:
     loopback_selected_languages_only: bool = False
     window_width: int = 0
     window_height: int = 0
-    github_star_prompt_clicked: bool = False
-    github_star_prompt_last_shown_at: str | None = None
-    github_star_prompt_show_count: int = 0
-    github_star_prompt_translation_success_observed: bool = False
-    github_star_prompt_eligible_launch_count: int = 0
 
     def validate(self) -> None:
         if not self.locale:
             raise ValueError("locale must be non-empty")
-        if not isinstance(self.github_star_prompt_clicked, bool):
-            raise ValueError("github_star_prompt_clicked must be a bool")
-        self.github_star_prompt_last_shown_at = _parse_utc_iso8601_timestamp(
-            self.github_star_prompt_last_shown_at
-        )
-        self.github_star_prompt_show_count = _parse_non_negative_int(
-            self.github_star_prompt_show_count
-        )
-        if not isinstance(self.github_star_prompt_translation_success_observed, bool):
-            raise ValueError("github_star_prompt_translation_success_observed must be a bool")
-        self.github_star_prompt_eligible_launch_count = _parse_non_negative_int(
-            self.github_star_prompt_eligible_launch_count
-        )
 
 
 @dataclass(slots=True)
@@ -1254,6 +1301,8 @@ class ApiKeyVerificationSettings:
     google: bool = False
     openrouter: bool = False
     deepseek: bool = False
+    openai: bool = False
+    elevenlabs: bool = False
     alibaba_beijing: bool = False
     alibaba_singapore: bool = False
     deepl: bool = False
@@ -1327,6 +1376,8 @@ class AppSettings:
     openrouter: OpenRouterSettings = field(default_factory=OpenRouterSettings)
     qwen: QwenSettings = field(default_factory=QwenSettings)
     deepseek: DeepSeekSettings = field(default_factory=DeepSeekSettings)
+    openai: OpenAISettings = field(default_factory=OpenAISettings)
+    custom_stt: CustomSTTSettings = field(default_factory=CustomSTTSettings)
     local_llm: LocalLLMSettings = field(default_factory=LocalLLMSettings)
     llm: LLMSettings = field(default_factory=LLMSettings)
     osc: OSCSettings = field(default_factory=OSCSettings)
@@ -1364,6 +1415,8 @@ class AppSettings:
         self.openrouter.validate()
         self.qwen.validate()
         self.deepseek.validate()
+        self.openai.validate()
+        self.custom_stt.validate()
         self.local_llm.validate()
         self.llm.validate()
         self.osc.validate()
@@ -1780,6 +1833,14 @@ def to_dict(settings: AppSettings) -> dict[str, Any]:
         "deepseek": {
             "llm_model": settings.deepseek.llm_model.value,
         },
+        "openai": {
+            "llm_model": settings.openai.llm_model.value,
+            "weekly_budget_usd": settings.openai.weekly_budget_usd,
+        },
+        "custom_stt": {
+            "base_url": settings.custom_stt.base_url,
+            "model": settings.custom_stt.model,
+        },
         "local_llm": {
             "backend": settings.local_llm.backend.value,
             "base_url": _parse_local_llm_base_url(settings.local_llm.base_url),
@@ -1796,6 +1857,8 @@ def to_dict(settings: AppSettings) -> dict[str, Any]:
             "chatbox_max_chars": settings.osc.chatbox_max_chars,
             "vrc_mic_intercept": settings.osc.vrc_mic_intercept,
             "chatbox_include_source": settings.osc.chatbox_include_source,
+            "chatbox_live_preview": settings.osc.chatbox_live_preview,
+            "avatar_controls": settings.osc.avatar_controls,
         },
         "secrets": {
             "backend": settings.secrets.backend.value,
@@ -1840,19 +1903,6 @@ def to_dict(settings: AppSettings) -> dict[str, Any]:
             "loopback_selected_languages_only": settings.ui.loopback_selected_languages_only,
             "window_width": settings.ui.window_width,
             "window_height": settings.ui.window_height,
-            "github_star_prompt_clicked": settings.ui.github_star_prompt_clicked,
-            "github_star_prompt_last_shown_at": _parse_utc_iso8601_timestamp(
-                settings.ui.github_star_prompt_last_shown_at
-            ),
-            "github_star_prompt_show_count": _parse_non_negative_int(
-                settings.ui.github_star_prompt_show_count
-            ),
-            "github_star_prompt_translation_success_observed": (
-                settings.ui.github_star_prompt_translation_success_observed
-            ),
-            "github_star_prompt_eligible_launch_count": _parse_non_negative_int(
-                settings.ui.github_star_prompt_eligible_launch_count
-            ),
         },
         "api_key_verified": {
             "deepgram": settings.api_key_verified.deepgram,
@@ -1860,6 +1910,8 @@ def to_dict(settings: AppSettings) -> dict[str, Any]:
             "google": settings.api_key_verified.google,
             "openrouter": settings.api_key_verified.openrouter,
             "deepseek": settings.api_key_verified.deepseek,
+            "openai": settings.api_key_verified.openai,
+            "elevenlabs": settings.api_key_verified.elevenlabs,
             "alibaba_beijing": settings.api_key_verified.alibaba_beijing,
             "alibaba_singapore": settings.api_key_verified.alibaba_singapore,
             "deepl": settings.api_key_verified.deepl,
@@ -1925,7 +1977,7 @@ def _parse_qwen_llm_model(value: object) -> QwenLLMModel:
 def _parse_gemini_llm_model(value: object) -> GeminiLLMModel:
     if isinstance(value, str):
         normalized = value.strip()
-        if normalized == "gemini-3-flash":
+        if normalized in {"gemini-3-flash", "gemini-3-flash-preview", "gemini-3.7-flash"}:
             normalized = GeminiLLMModel.GEMINI_3_FLASH.value
         elif normalized in {"gemini-3.1-flash-lite", "gemini-3.1-flash-lite-preview"}:
             normalized = GeminiLLMModel.GEMINI_31_FLASH_LITE.value
@@ -1939,13 +1991,22 @@ def _parse_gemini_llm_model(value: object) -> GeminiLLMModel:
 def _parse_deepseek_llm_model(value: object) -> DeepSeekLLMModel:
     if isinstance(value, str):
         normalized = value.strip()
-        if normalized == "deepseek-chat":
+        if normalized in {"deepseek-chat", "deepseek-v4-flash"}:
             normalized = DeepSeekLLMModel.DEEPSEEK_V4_FLASH.value
         try:
             return DeepSeekLLMModel(normalized)
         except ValueError:
             pass
     return DeepSeekLLMModel.DEEPSEEK_V4_FLASH
+
+
+def _parse_openai_llm_model(value: object) -> OpenAILLMModel:
+    if isinstance(value, str):
+        try:
+            return OpenAILLMModel(value.strip())
+        except ValueError:
+            pass
+    return OpenAILLMModel.GPT_6_LUNA
 
 
 def _parse_openrouter_llm_model(value: object) -> OpenRouterLLMModel:
@@ -2100,10 +2161,7 @@ def _resolve_openrouter_runtime_main_selection(
 
 
 def _parse_openrouter_broker_base_url(value: object) -> str:
-    if isinstance(value, str):
-        normalized = value.strip()
-        if normalized:
-            return normalized
+    _ = value
     return DEFAULT_OPENROUTER_BROKER_BASE_URL
 
 
@@ -2283,6 +2341,7 @@ def _derive_translation_settings_from_runtime_values(
     gemini_model: GeminiLLMModel,
     qwen_model: QwenLLMModel,
     deepseek_model: DeepSeekLLMModel,
+    openai_model: OpenAILLMModel = OpenAILLMModel.GPT_6_LUNA,
     history: object = None,
 ) -> TranslationSettings:
     normalized_history = _parse_translation_connection_history(history)
@@ -2325,6 +2384,13 @@ def _derive_translation_settings_from_runtime_values(
             history=normalized_history,
         )
 
+    if provider_llm == LLMProviderName.INDEX_TRANSLATE:
+        return _normalize_translation_settings(
+            model=TranslationModel.INDEX_TRANSLATE,
+            connection=TranslationConnection.FREE_WEB,
+            history=normalized_history,
+        )
+
     if provider_llm == LLMProviderName.DEEPSEEK:
         if deepseek_model == DeepSeekLLMModel.DEEPSEEK_V4_PRO:
             return _normalize_translation_settings(
@@ -2334,6 +2400,17 @@ def _derive_translation_settings_from_runtime_values(
             )
         return _normalize_translation_settings(
             model=TranslationModel.DEEPSEEK_V4_FLASH,
+            connection=TranslationConnection.OFFICIAL_BYOK,
+            history=normalized_history,
+        )
+
+    if provider_llm == LLMProviderName.OPENAI:
+        return _normalize_translation_settings(
+            model=(
+                TranslationModel.GPT_61_SOL
+                if openai_model == OpenAILLMModel.GPT_61_SOL
+                else TranslationModel.GPT_6_LUNA
+            ),
             connection=TranslationConnection.OFFICIAL_BYOK,
             history=normalized_history,
         )
@@ -2379,6 +2456,7 @@ def _derive_translation_settings_from_runtime(
         gemini_model=settings.gemini.llm_model,
         qwen_model=settings.qwen.llm_model,
         deepseek_model=settings.deepseek.llm_model,
+        openai_model=settings.openai.llm_model,
         history=history,
     )
 
@@ -2437,6 +2515,16 @@ def materialize_translation_settings(settings: AppSettings) -> AppSettings:
         settings.deepseek.llm_model = DeepSeekLLMModel.DEEPSEEK_V4_PRO
         return settings
 
+    if model in (TranslationModel.GPT_6_LUNA, TranslationModel.GPT_61_SOL):
+        settings.openrouter.provider_routing = OpenRouterProviderRouting.DEFAULT
+        settings.provider.llm = LLMProviderName.OPENAI
+        settings.openai.llm_model = (
+            OpenAILLMModel.GPT_61_SOL
+            if model == TranslationModel.GPT_61_SOL
+            else OpenAILLMModel.GPT_6_LUNA
+        )
+        return settings
+
     if model == TranslationModel.GEMINI_3_FLASH:
         settings.provider.llm = LLMProviderName.GEMINI
         settings.openrouter.provider_routing = OpenRouterProviderRouting.DEFAULT
@@ -2461,6 +2549,11 @@ def materialize_translation_settings(settings: AppSettings) -> AppSettings:
 
     if model == TranslationModel.GOOGLE_TRANSLATE:
         settings.provider.llm = LLMProviderName.GOOGLE_TRANSLATE
+        settings.openrouter.provider_routing = OpenRouterProviderRouting.DEFAULT
+        return settings
+
+    if model == TranslationModel.INDEX_TRANSLATE:
+        settings.provider.llm = LLMProviderName.INDEX_TRANSLATE
         settings.openrouter.provider_routing = OpenRouterProviderRouting.DEFAULT
         return settings
 
@@ -2508,6 +2601,8 @@ def _apply_materialized_translation_to_data(
     qwen_data, block_changed = _ensure_mapping_block(data, "qwen")
     changed = changed or block_changed
     deepseek_data, block_changed = _ensure_mapping_block(data, "deepseek")
+    changed = changed or block_changed
+    openai_data, block_changed = _ensure_mapping_block(data, "openai")
     changed = changed or block_changed
 
     translation = _normalize_translation_settings(
@@ -2599,6 +2694,24 @@ def _apply_materialized_translation_to_data(
         )
         return changed
 
+    if translation.model in (TranslationModel.GPT_6_LUNA, TranslationModel.GPT_61_SOL):
+        changed |= _set_mapping_value(
+            openrouter_data,
+            "provider_routing",
+            OpenRouterProviderRouting.DEFAULT.value,
+        )
+        changed |= _set_mapping_value(provider_data, "llm", LLMProviderName.OPENAI.value)
+        changed |= _set_mapping_value(
+            openai_data,
+            "llm_model",
+            (
+                OpenAILLMModel.GPT_61_SOL
+                if translation.model == TranslationModel.GPT_61_SOL
+                else OpenAILLMModel.GPT_6_LUNA
+            ).value,
+        )
+        return changed
+
     if translation.model == TranslationModel.GEMINI_3_FLASH:
         changed |= _set_mapping_value(provider_data, "llm", LLMProviderName.GEMINI.value)
         changed |= _set_mapping_value(
@@ -2629,6 +2742,10 @@ def _apply_materialized_translation_to_data(
 
     if translation.model == TranslationModel.LOCAL_LLM:
         changed |= _set_mapping_value(provider_data, "llm", LLMProviderName.LOCAL_LLM.value)
+        return changed
+
+    if translation.model == TranslationModel.INDEX_TRANSLATE:
+        changed |= _set_mapping_value(provider_data, "llm", LLMProviderName.INDEX_TRANSLATE.value)
         return changed
 
     changed |= _set_mapping_value(provider_data, "llm", LLMProviderName.QWEN.value)
@@ -2673,9 +2790,27 @@ def _shared_default_prompt() -> str:
     return load_prompt_for_provider(LLMProviderName.GEMINI.value)
 
 
+# sha256 of earlier STOCK default prompts (whitespace-normalized). A saved
+# prompt that is exactly one of these was never customized, so it follows the
+# current default; any edited prompt is left alone.
+_PREVIOUS_DEFAULT_PROMPT_SHA256 = frozenset({
+    "9badb2a6aa2dca63f57eef67bdd46d8ecbe171b0eff951d1fced92377df8ba6e",
+})
+
+
+def _prompt_sha256(text: str) -> str:
+    import hashlib
+
+    lines = (text or "").replace("\r", "").strip().split("\n")
+    normalized = "\n".join(line.rstrip() for line in lines)
+    return hashlib.sha256(normalized.encode("utf-8")).hexdigest()
+
+
 def ensure_prompt_defaults(settings: AppSettings) -> AppSettings:
     system_prompt_empty = not settings.system_prompt.strip()
-    if system_prompt_empty:
+    if system_prompt_empty or (
+        _prompt_sha256(settings.system_prompt) in _PREVIOUS_DEFAULT_PROMPT_SHA256
+    ):
         prompt = _shared_default_prompt()
         settings.system_prompt = prompt
     settings.system_prompts = {}
@@ -2708,6 +2843,8 @@ def resolve_first_run_ui_locale(system_locale: str | None) -> str:
         return "ja"
     if normalized == "zh" or normalized.startswith("zh-") or normalized.startswith("chinese"):
         return "zh-CN"
+    if normalized == "ru" or normalized.startswith("ru-") or normalized.startswith("russian"):
+        return "ru"
     return "en"
 
 
@@ -3287,7 +3424,7 @@ def _migrate_settings_dict(raw: dict[str, Any]) -> tuple[dict[str, Any], bool]:
         version = 27
 
     if version < 28:
-        # The upstream managed OpenRouter trial is dead in this fork, but configs created
+        # The managed OpenRouter trial is retired, but configs created
         # before r192 defaulted to provider.llm=openrouter with the managed source — which
         # made fresh installs surface "managed credits expired" prompts. Move anyone still
         # on the managed source to the free web translator (Bing in China, else Google).
@@ -3536,6 +3673,18 @@ def _migrate_settings_dict(raw: dict[str, Any]) -> tuple[dict[str, Any], bool]:
         deepseek_data["llm_model"] = normalized_deepseek_model
         changed = True
 
+    openai_data = data.get("openai")
+    if not isinstance(openai_data, dict):
+        openai_data = {}
+        data["openai"] = openai_data
+        changed = True
+
+    raw_openai_model = openai_data.get("llm_model")
+    normalized_openai_model = _parse_openai_llm_model(raw_openai_model).value
+    if raw_openai_model != normalized_openai_model:
+        openai_data["llm_model"] = normalized_openai_model
+        changed = True
+
     translation_data = data.get("translation") if isinstance(data.get("translation"), dict) else {}
     translation_history = _parse_translation_connection_history(
         translation_data.get("connection_history") if isinstance(translation_data, dict) else None
@@ -3562,6 +3711,7 @@ def _migrate_settings_dict(raw: dict[str, Any]) -> tuple[dict[str, Any], bool]:
             gemini_model=_parse_gemini_llm_model(gemini_data.get("llm_model")),
             qwen_model=_parse_qwen_llm_model(qwen_data.get("llm_model")),
             deepseek_model=_parse_deepseek_llm_model(deepseek_data.get("llm_model")),
+            openai_model=_parse_openai_llm_model(openai_data.get("llm_model")),
             history=translation_history,
         )
     normalized_translation_data = _translation_settings_to_dict(normalized_translation_settings)
@@ -3578,6 +3728,9 @@ def _migrate_settings_dict(raw: dict[str, Any]) -> tuple[dict[str, Any], bool]:
         changed = True
     if "deepseek" not in api_key_verified_data:
         api_key_verified_data["deepseek"] = False
+        changed = True
+    if "openai" not in api_key_verified_data:
+        api_key_verified_data["openai"] = False
         changed = True
 
     overlay_data = data.get("overlay")
@@ -3649,72 +3802,16 @@ def _migrate_settings_dict(raw: dict[str, Any]) -> tuple[dict[str, Any], bool]:
     # overlay_enabled / peer_translation_enabled are now persisted (see to_dict) and
     # restored on launch, so they are intentionally NOT stripped here anymore.
 
-    raw_github_star_prompt_clicked = ui_data.get("github_star_prompt_clicked")
-    normalized_github_star_prompt_clicked = _parse_bool(raw_github_star_prompt_clicked)
-    if (
-        "github_star_prompt_clicked" not in ui_data
-        or raw_github_star_prompt_clicked != normalized_github_star_prompt_clicked
+    for stale_key in (
+        "github_star_prompt_clicked",
+        "github_star_prompt_last_shown_at",
+        "github_star_prompt_show_count",
+        "github_star_prompt_translation_success_observed",
+        "github_star_prompt_eligible_launch_count",
     ):
-        ui_data["github_star_prompt_clicked"] = normalized_github_star_prompt_clicked
-        changed = True
-
-    raw_github_star_prompt_last_shown_at = ui_data.get("github_star_prompt_last_shown_at")
-    normalized_github_star_prompt_last_shown_at = _parse_utc_iso8601_timestamp(
-        raw_github_star_prompt_last_shown_at
-    )
-    if (
-        "github_star_prompt_last_shown_at" not in ui_data
-        or raw_github_star_prompt_last_shown_at != normalized_github_star_prompt_last_shown_at
-    ):
-        ui_data["github_star_prompt_last_shown_at"] = normalized_github_star_prompt_last_shown_at
-        changed = True
-
-    raw_github_star_prompt_show_count = ui_data.get("github_star_prompt_show_count")
-    normalized_github_star_prompt_show_count = _parse_non_negative_int(
-        raw_github_star_prompt_show_count
-    )
-    if (
-        "github_star_prompt_show_count" not in ui_data
-        or raw_github_star_prompt_show_count != normalized_github_star_prompt_show_count
-        or type(raw_github_star_prompt_show_count)
-        is not type(normalized_github_star_prompt_show_count)
-    ):
-        ui_data["github_star_prompt_show_count"] = normalized_github_star_prompt_show_count
-        changed = True
-
-    raw_github_star_prompt_translation_success_observed = ui_data.get(
-        "github_star_prompt_translation_success_observed"
-    )
-    normalized_github_star_prompt_translation_success_observed = _parse_bool(
-        raw_github_star_prompt_translation_success_observed
-    )
-    if (
-        "github_star_prompt_translation_success_observed" not in ui_data
-        or raw_github_star_prompt_translation_success_observed
-        != normalized_github_star_prompt_translation_success_observed
-    ):
-        ui_data["github_star_prompt_translation_success_observed"] = (
-            normalized_github_star_prompt_translation_success_observed
-        )
-        changed = True
-
-    raw_github_star_prompt_eligible_launch_count = ui_data.get(
-        "github_star_prompt_eligible_launch_count"
-    )
-    normalized_github_star_prompt_eligible_launch_count = _parse_non_negative_int(
-        raw_github_star_prompt_eligible_launch_count
-    )
-    if (
-        "github_star_prompt_eligible_launch_count" not in ui_data
-        or raw_github_star_prompt_eligible_launch_count
-        != normalized_github_star_prompt_eligible_launch_count
-        or type(raw_github_star_prompt_eligible_launch_count)
-        is not type(normalized_github_star_prompt_eligible_launch_count)
-    ):
-        ui_data["github_star_prompt_eligible_launch_count"] = (
-            normalized_github_star_prompt_eligible_launch_count
-        )
-        changed = True
+        if stale_key in ui_data:
+            del ui_data[stale_key]
+            changed = True
 
     if "overlay_calibration" in data:
         del data["overlay_calibration"]
@@ -3879,6 +3976,7 @@ def from_dict(data: dict[str, Any]) -> AppSettings:
 
     qwen_raw = data.get("qwen") if isinstance(data.get("qwen"), dict) else {}
     deepseek_raw = data.get("deepseek") if isinstance(data.get("deepseek"), dict) else {}
+    openai_raw = data.get("openai") if isinstance(data.get("openai"), dict) else {}
     local_llm_raw = data.get("local_llm") if isinstance(data.get("local_llm"), dict) else {}
     qwen_asr_raw = data.get("qwen_asr_stt") if isinstance(data.get("qwen_asr_stt"), dict) else {}
     openrouter_raw = data.get("openrouter") if isinstance(data.get("openrouter"), dict) else {}
@@ -3906,7 +4004,7 @@ def from_dict(data: dict[str, Any]) -> AppSettings:
             target_language=data.get("languages", {}).get("target_language", "en"),
             peer_source_language=str(data.get("languages", {}).get("peer_source_language", "")),
             # MIGRATION (r252): always clear the peer-target override. The
-            # upstream app's legacy default pinned it to "ko", the current UI
+            # legacy default pinned it to "ko", the current UI
             # renders NO control for it, and a non-empty value silently forces
             # incoming voice into that language forever (a Chinese user's
             # incoming English translated to Korean and "nothing" could fix
@@ -4131,6 +4229,18 @@ def from_dict(data: dict[str, Any]) -> AppSettings:
                 deepseek_raw.get("llm_model", DeepSeekLLMModel.DEEPSEEK_V4_FLASH.value)
             ),
         ),
+        openai=OpenAISettings(
+            llm_model=_parse_openai_llm_model(
+                openai_raw.get("llm_model", OpenAILLMModel.GPT_6_LUNA.value)
+            ),
+            weekly_budget_usd=_parse_weekly_budget(openai_raw.get("weekly_budget_usd", 0.0)),
+        ),
+        custom_stt=CustomSTTSettings(
+            base_url=str(
+                (data.get("custom_stt") or {}).get("base_url") or "http://127.0.0.1:8000/v1"
+            ).strip(),
+            model=str((data.get("custom_stt") or {}).get("model") or "whisper-1").strip(),
+        ),
         local_llm=LocalLLMSettings(
             backend=_parse_local_llm_backend(local_llm_raw.get("backend")),
             base_url=_parse_local_llm_base_url(local_llm_raw.get("base_url")),
@@ -4147,6 +4257,8 @@ def from_dict(data: dict[str, Any]) -> AppSettings:
             chatbox_max_chars=int(data.get("osc", {}).get("chatbox_max_chars", 144)),
             vrc_mic_intercept=bool(data.get("osc", {}).get("vrc_mic_intercept", True)),
             chatbox_include_source=bool(data.get("osc", {}).get("chatbox_include_source", False)),
+            chatbox_live_preview=bool(data.get("osc", {}).get("chatbox_live_preview", True)),
+            avatar_controls=bool(data.get("osc", {}).get("avatar_controls", True)),
         ),
         secrets=SecretsSettings(
             backend=SecretsBackend(
@@ -4209,19 +4321,6 @@ def from_dict(data: dict[str, Any]) -> AppSettings:
             loopback_selected_languages_only=bool(ui_data.get("loopback_selected_languages_only", False)),
             window_width=int(ui_data.get("window_width") or 0),
             window_height=int(ui_data.get("window_height") or 0),
-            github_star_prompt_clicked=_parse_bool(ui_data.get("github_star_prompt_clicked")),
-            github_star_prompt_last_shown_at=_parse_utc_iso8601_timestamp(
-                ui_data.get("github_star_prompt_last_shown_at")
-            ),
-            github_star_prompt_show_count=_parse_non_negative_int(
-                ui_data.get("github_star_prompt_show_count")
-            ),
-            github_star_prompt_translation_success_observed=_parse_bool(
-                ui_data.get("github_star_prompt_translation_success_observed")
-            ),
-            github_star_prompt_eligible_launch_count=_parse_non_negative_int(
-                ui_data.get("github_star_prompt_eligible_launch_count")
-            ),
         ),
         api_key_verified=ApiKeyVerificationSettings(
             deepgram=bool(data.get("api_key_verified", {}).get("deepgram", False)),
@@ -4229,6 +4328,8 @@ def from_dict(data: dict[str, Any]) -> AppSettings:
             google=bool(data.get("api_key_verified", {}).get("google", False)),
             openrouter=bool(data.get("api_key_verified", {}).get("openrouter", False)),
             deepseek=bool(data.get("api_key_verified", {}).get("deepseek", False)),
+            openai=bool(data.get("api_key_verified", {}).get("openai", False)),
+            elevenlabs=bool(data.get("api_key_verified", {}).get("elevenlabs", False)),
             alibaba_beijing=bool(data.get("api_key_verified", {}).get("alibaba_beijing", False)),
             alibaba_singapore=bool(
                 data.get("api_key_verified", {}).get("alibaba_singapore", False)

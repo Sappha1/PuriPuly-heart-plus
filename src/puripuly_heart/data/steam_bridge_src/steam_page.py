@@ -671,8 +671,19 @@ class SteamPage:
                     if (!t) continue;
                     let ts = Number(m.rtTimestamp) || 0;
                     if (ts > 1e11) ts = ts / 1000;   // ms -> s, whatever the source
+                    // reactions others (and you) put on the message:
+                    // {t: 1 emoticon / 2 sticker, r: name, n: count, me: you reacted}
+                    const rx = [];
+                    for (const x of (m.m_rgReactions || m.reactions || [])) {
+                      const n = Number(x.cReactors != null ? x.cReactors : x.num_reactors) || 0;
+                      if (n > 0) rx.push({
+                        t: Number(x.eReactionType != null ? x.eReactionType : x.reaction_type) || 0,
+                        r: String(x.strReaction != null ? x.strReaction : (x.reaction || '')),
+                        n: n,
+                        me: !!(x.bUserReacted != null ? x.bUserReacted : x.has_user_reacted)});
+                    }
                     out.push({from: m.unAccountID || 0, text: t,
-                              ordinal: m.unOrdinal || 0, ts: Math.floor(ts)});
+                              ordinal: m.unOrdinal || 0, ts: Math.floor(ts), rx: rx});
                   }
                   return out;
                 }""",
@@ -718,8 +729,19 @@ class SteamPage:
                     if (!t) continue;
                     let ts = Number(m.rtTimestamp) || 0;
                     if (ts > 1e11) ts = ts / 1000;   // ms -> s, whatever the source
+                    // reactions others (and you) put on the message:
+                    // {t: 1 emoticon / 2 sticker, r: name, n: count, me: you reacted}
+                    const rx = [];
+                    for (const x of (m.m_rgReactions || m.reactions || [])) {
+                      const n = Number(x.cReactors != null ? x.cReactors : x.num_reactors) || 0;
+                      if (n > 0) rx.push({
+                        t: Number(x.eReactionType != null ? x.eReactionType : x.reaction_type) || 0,
+                        r: String(x.strReaction != null ? x.strReaction : (x.reaction || '')),
+                        n: n,
+                        me: !!(x.bUserReacted != null ? x.bUserReacted : x.has_user_reacted)});
+                    }
                     out.push({from: m.unAccountID || 0, text: t,
-                              ordinal: m.unOrdinal || 0, ts: Math.floor(ts)});
+                              ordinal: m.unOrdinal || 0, ts: Math.floor(ts), rx: rx});
                   }
                   return out;
                 }""",
@@ -762,8 +784,19 @@ class SteamPage:
                     if (!t) continue;
                     let ts = Number(m.rtTimestamp) || 0;
                     if (ts > 1e11) ts = ts / 1000;   // ms -> s, whatever the source
+                    // reactions others (and you) put on the message:
+                    // {t: 1 emoticon / 2 sticker, r: name, n: count, me: you reacted}
+                    const rx = [];
+                    for (const x of (m.m_rgReactions || m.reactions || [])) {
+                      const n = Number(x.cReactors != null ? x.cReactors : x.num_reactors) || 0;
+                      if (n > 0) rx.push({
+                        t: Number(x.eReactionType != null ? x.eReactionType : x.reaction_type) || 0,
+                        r: String(x.strReaction != null ? x.strReaction : (x.reaction || '')),
+                        n: n,
+                        me: !!(x.bUserReacted != null ? x.bUserReacted : x.has_user_reacted)});
+                    }
                     out.push({from: m.unAccountID || 0, text: t,
-                              ordinal: m.unOrdinal || 0, ts: Math.floor(ts)});
+                              ordinal: m.unOrdinal || 0, ts: Math.floor(ts), rx: rx});
                   }
                   return out;
                 }""",

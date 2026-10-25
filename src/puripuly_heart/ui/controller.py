@@ -17,7 +17,6 @@ import time
 import traceback
 from collections.abc import Callable
 from dataclasses import dataclass, field
-from datetime import datetime, timedelta, timezone
 from pathlib import Path
 
 import flet as ft
@@ -87,6 +86,7 @@ from puripuly_heart.core.local_stt_runtime_installer import (
     LocalSTTRuntimeInstallError,
     RuntimeLocalSTTStatusUpdate,
     ensure_local_stt_installed,
+    repair_outdated_local_stt_install,
 )
 from puripuly_heart.core.managed_openrouter_broker_client import (
     HttpManagedOpenRouterBrokerClient,
@@ -105,7 +105,6 @@ from puripuly_heart.core.openrouter_credentials import (
 )
 from puripuly_heart.core.openrouter_handoff import (
     is_effectively_exhausted,
-    mark_founder_letter_shown,
     should_auto_show_founder_letter,
 )
 from puripuly_heart.core.openrouter_pkce import OpenRouterPKCEClient
@@ -143,6 +142,7 @@ from puripuly_heart.core.vad.gating import VadGating, create_peer_vad_gating
 from puripuly_heart.core.vad.silero import SileroVadOnnx
 from puripuly_heart.providers.llm.deepl import DeepLTranslationProvider
 from puripuly_heart.providers.llm.deepseek import DeepSeekLLMProvider
+from puripuly_heart.providers.llm.openai_chat import OpenAILLMProvider
 from puripuly_heart.providers.llm.gemini import GeminiLLMProvider
 from puripuly_heart.providers.llm.openrouter import OpenRouterKeyMetadata, OpenRouterLLMProvider
 from puripuly_heart.providers.llm.qwen import QwenLLMProvider
@@ -203,21 +203,6 @@ _OVERLAY_FAILURE_REASONS = frozenset(
         "runtime_crashed",
         "window_closed",
         "unknown",
-    }
-)
-GITHUB_STAR_PROMPT_MANAGED_REMAINING_PERCENT_THRESHOLD = 60
-GITHUB_STAR_PROMPT_ELIGIBLE_LAUNCH_THRESHOLD = 3
-GITHUB_STAR_PROMPT_RECENCY_WINDOW = timedelta(days=14)
-_GITHUB_STAR_PROMPT_MANAGED_CONNECTIONS = frozenset(
-    {
-        TranslationConnection.MANAGED,
-        TranslationConnection.MANAGED_CHINA,
-    }
-)
-_GITHUB_STAR_PROMPT_USER_OWNED_CLOUD_CONNECTIONS = frozenset(
-    {
-        TranslationConnection.OPENROUTER,
-        TranslationConnection.OFFICIAL_BYOK,
     }
 )
 DISCORD_AUTH_ERROR_KEY_BY_SUBCODE = {
@@ -328,55 +313,6 @@ def _callable_accepts_keyword(callable_obj: object, keyword: str) -> bool:
     )
 
 
-def _github_star_prompt_utc_now() -> datetime:
-    return datetime.now(timezone.utc)
-
-
-def _github_star_prompt_utc_timestamp(value: datetime | None = None) -> str:
-    resolved = value or _github_star_prompt_utc_now()
-    if resolved.tzinfo is None:
-        resolved = resolved.replace(tzinfo=timezone.utc)
-    return (
-        resolved.astimezone(timezone.utc).replace(microsecond=0).isoformat().replace("+00:00", "Z")
-    )
-
-
-def _parse_github_star_prompt_timestamp(value: object) -> datetime | None:
-    if not isinstance(value, str):
-        return None
-    normalized = value.strip()
-    if not normalized:
-        return None
-    parse_value = f"{normalized[:-1]}+00:00" if normalized.endswith("Z") else normalized
-    try:
-        parsed = datetime.fromisoformat(parse_value)
-    except ValueError:
-        return None
-    if parsed.tzinfo is None:
-        return None
-    if parsed.utcoffset() != timezone.utc.utcoffset(parsed):
-        return None
-    return parsed.astimezone(timezone.utc)
-
-
-def _github_star_prompt_non_negative_count(value: object) -> int:
-    if type(value) is int and value >= 0:
-        return value
-    return 0
-
-
-def _github_star_prompt_latest_timestamp(*values: str | None) -> str | None:
-    latest: tuple[datetime, str] | None = None
-    for value in values:
-        parsed = _parse_github_star_prompt_timestamp(value)
-        if parsed is None:
-            continue
-        normalized_value = _github_star_prompt_utc_timestamp(parsed)
-        if latest is None or parsed > latest[0]:
-            latest = (parsed, normalized_value)
-    return latest[1] if latest is not None else None
-
-
 @dataclass(slots=True)
 class _HubVadSink:
     hub: ClientHub
@@ -452,6 +388,9 @@ class GuiController:
         repr=False,
     )
     _microphone_test_meter_level: float = field(init=False, default=0.0)
+    # record-and-play-back clip of the running microphone test
+    _microphone_test_recorder: object | None = field(init=False, default=None, repr=False)
+    _microphone_test_record_done: object | None = field(init=False, default=None, repr=False)
     _microphone_test_task: asyncio.Task[None] | None = field(
         init=False,
         default=None,
@@ -564,16 +503,6 @@ class GuiController:
     )
     _translation_toggle_intent_enabled: bool = field(init=False, default=False)
     _translation_toggle_generation: int = field(init=False, default=0)
-    _github_star_prompt_translation_success_task: asyncio.Task[bool] | None = field(
-        init=False,
-        default=None,
-        repr=False,
-    )
-    _github_star_prompt_persistence_lock: asyncio.Lock | None = field(
-        init=False,
-        default=None,
-        repr=False,
-    )
     _runtime_logging: SessionRuntimeLoggingService | None = field(init=False, default=None)
     # Per-channel: peer-channel garbage means degraded CAPTURE audio (loopback
     # queue drops, call noise/music), not a broken model — it must never trigger
@@ -758,6 +687,10 @@ class GuiController:
 
         await self._init_pipeline()
         self._refresh_local_stt_runtime_state()
+        with contextlib.suppress(Exception):
+            self._local_stt_repair_task = asyncio.create_task(
+                self._repair_outdated_local_stt_models()
+            )
 
         assert self.hub is not None
 
@@ -856,6 +789,7 @@ class GuiController:
             "gemini": "google",
             "openrouter": "openrouter",
             "deepseek": "deepseek",
+            "openai": "openai",
             "qwen": self._get_alibaba_verified_key(),
         }
         return bool(
@@ -1117,6 +1051,9 @@ class GuiController:
             STTProviderName.DEEPGRAM,
             STTProviderName.LOCAL_QWEN,
             STTProviderName.SONIOX,
+            STTProviderName.GEMINI_TRANSCRIBE,
+            STTProviderName.ELEVENLABS_SCRIBE,
+            STTProviderName.CUSTOM_STT,
         )
 
     def _stt_provider_requires_secret(self, provider: STTProviderName) -> bool:
@@ -1124,6 +1061,8 @@ class GuiController:
             STTProviderName.DEEPGRAM,
             STTProviderName.QWEN_ASR,
             STTProviderName.SONIOX,
+            STTProviderName.GEMINI_TRANSCRIBE,
+            STTProviderName.ELEVENLABS_SCRIBE,
         )
 
     def _llm_provider_requires_secret(self, provider: LLMProviderName) -> bool:
@@ -1132,6 +1071,7 @@ class GuiController:
             LLMProviderName.OPENROUTER,
             LLMProviderName.QWEN,
             LLMProviderName.DEEPSEEK,
+            LLMProviderName.OPENAI,
             LLMProviderName.DEEPL,
         )
 
@@ -1230,6 +1170,11 @@ class GuiController:
                 else None
             ),
             local_qwen_identity,
+            (
+                (settings.custom_stt.base_url, settings.custom_stt.model)
+                if settings.provider.stt == STTProviderName.CUSTOM_STT
+                else None
+            ),
         )
 
     def _build_stt_runtime_signature(self, settings: AppSettings) -> tuple[object, ...]:
@@ -1511,379 +1456,6 @@ class GuiController:
         return max(
             0, min(100, round((usage_metadata.remaining_usd / usage_metadata.limit_usd) * 100))
         )
-
-    def _github_star_prompt_translation_connection_for(
-        self,
-        settings: AppSettings | None,
-    ) -> TranslationConnection | None:
-        if settings is None:
-            return None
-        connection = settings.translation.connection
-        if isinstance(connection, TranslationConnection):
-            return connection
-        with contextlib.suppress(ValueError, TypeError):
-            return TranslationConnection(connection)
-        return None
-
-    def _github_star_prompt_current_translation_connection(self) -> TranslationConnection | None:
-        return self._github_star_prompt_translation_connection_for(self.settings)
-
-    def _github_star_prompt_settings_has_user_owned_cloud_connection(
-        self,
-        settings: AppSettings | None,
-    ) -> bool:
-        return (
-            self._github_star_prompt_translation_connection_for(settings)
-            in _GITHUB_STAR_PROMPT_USER_OWNED_CLOUD_CONNECTIONS
-        )
-
-    def _github_star_prompt_has_managed_connection(self) -> bool:
-        return (
-            self._github_star_prompt_current_translation_connection()
-            in _GITHUB_STAR_PROMPT_MANAGED_CONNECTIONS
-        )
-
-    def _github_star_prompt_has_user_owned_cloud_connection(self) -> bool:
-        return (
-            self._github_star_prompt_current_translation_connection()
-            in _GITHUB_STAR_PROMPT_USER_OWNED_CLOUD_CONNECTIONS
-        )
-
-    def is_github_star_prompt_eligible(self) -> bool:
-        if self.settings is None:
-            return False
-        if self._github_star_prompt_has_managed_connection():
-            remaining_percent = self._managed_trial_remaining_percent(
-                self._managed_trial_usage_metadata
-            )
-            return (
-                remaining_percent is not None
-                and remaining_percent <= GITHUB_STAR_PROMPT_MANAGED_REMAINING_PERCENT_THRESHOLD
-            )
-        if self._github_star_prompt_has_user_owned_cloud_connection():
-            return bool(self.settings.ui.github_star_prompt_translation_success_observed)
-        return False
-
-    def _github_star_prompt_initial_launch_gate_satisfied(self, settings: AppSettings) -> bool:
-        if _github_star_prompt_non_negative_count(settings.ui.github_star_prompt_show_count) > 0:
-            return True
-        return (
-            _github_star_prompt_non_negative_count(
-                settings.ui.github_star_prompt_eligible_launch_count
-            )
-            >= GITHUB_STAR_PROMPT_ELIGIBLE_LAUNCH_THRESHOLD
-        )
-
-    def should_show_github_star_prompt(self, *, now: datetime | None = None) -> bool:
-        settings = self.settings
-        if settings is None:
-            return False
-        if settings.ui.github_star_prompt_clicked:
-            return False
-        if not self.is_github_star_prompt_eligible():
-            return False
-        if not self._github_star_prompt_initial_launch_gate_satisfied(settings):
-            return False
-
-        last_shown_at = _parse_github_star_prompt_timestamp(
-            settings.ui.github_star_prompt_last_shown_at
-        )
-        if last_shown_at is None:
-            return True
-
-        resolved_now = now or _github_star_prompt_utc_now()
-        if resolved_now.tzinfo is None:
-            resolved_now = resolved_now.replace(tzinfo=timezone.utc)
-        elapsed = resolved_now.astimezone(timezone.utc) - last_shown_at
-        return elapsed >= GITHUB_STAR_PROMPT_RECENCY_WINDOW
-
-    def _get_github_star_prompt_persistence_lock(self) -> asyncio.Lock:
-        if self._github_star_prompt_persistence_lock is None:
-            self._github_star_prompt_persistence_lock = asyncio.Lock()
-        return self._github_star_prompt_persistence_lock
-
-    def _github_star_prompt_state_snapshot(self, settings: AppSettings) -> tuple[object, ...]:
-        return (
-            settings.ui.github_star_prompt_clicked,
-            settings.ui.github_star_prompt_last_shown_at,
-            settings.ui.github_star_prompt_show_count,
-            settings.ui.github_star_prompt_translation_success_observed,
-            settings.ui.github_star_prompt_eligible_launch_count,
-        )
-
-    def _restore_github_star_prompt_state_snapshot(
-        self,
-        settings: AppSettings,
-        snapshot: tuple[object, ...],
-    ) -> None:
-        (
-            clicked,
-            last_shown_at,
-            show_count,
-            translation_success_observed,
-            eligible_launch_count,
-        ) = snapshot
-        settings.ui.github_star_prompt_clicked = bool(clicked)
-        settings.ui.github_star_prompt_last_shown_at = (
-            last_shown_at if isinstance(last_shown_at, str) else None
-        )
-        settings.ui.github_star_prompt_show_count = _github_star_prompt_non_negative_count(
-            show_count
-        )
-        settings.ui.github_star_prompt_translation_success_observed = bool(
-            translation_success_observed
-        )
-        settings.ui.github_star_prompt_eligible_launch_count = (
-            _github_star_prompt_non_negative_count(eligible_launch_count)
-        )
-
-    def _log_github_star_prompt_save_failure(
-        self,
-        failure_context: str,
-        exc: Exception,
-    ) -> None:
-        self.log_basic(
-            f"[GitHubStar] Failed to persist prompt {failure_context}: {exc}",
-            level=logging.WARNING,
-        )
-
-    async def _persist_github_star_prompt_mutation(
-        self,
-        *,
-        failure_context: str,
-        mutate,
-    ) -> bool:
-        attempted_mutation = False
-        while True:
-            async with self._get_github_star_prompt_persistence_lock():
-                settings = self.settings
-                if settings is None:
-                    return False
-                snapshot = self._github_star_prompt_state_snapshot(settings)
-                if not mutate(settings):
-                    return attempted_mutation
-                attempted_mutation = True
-                try:
-                    await asyncio.to_thread(save_settings, self.config_path, settings)
-                except asyncio.CancelledError:
-                    if self.settings is settings:
-                        self._restore_github_star_prompt_state_snapshot(settings, snapshot)
-                    raise
-                except Exception as exc:
-                    if self.settings is settings:
-                        self._restore_github_star_prompt_state_snapshot(settings, snapshot)
-                    self._log_github_star_prompt_save_failure(failure_context, exc)
-                    return False
-                if self.settings is settings:
-                    return True
-            await asyncio.sleep(0)
-
-    async def persist_github_star_prompt_opened(
-        self,
-        *,
-        opened_at: datetime | None = None,
-        should_open: Callable[[], bool] | None = None,
-    ) -> bool:
-        opened_timestamp = _github_star_prompt_utc_timestamp(opened_at)
-
-        while True:
-            async with self._get_github_star_prompt_persistence_lock():
-                settings = self.settings
-                if settings is None:
-                    return False
-                if should_open is not None and not should_open():
-                    return False
-                snapshot = self._github_star_prompt_state_snapshot(settings)
-                settings.ui.github_star_prompt_last_shown_at = opened_timestamp
-                settings.ui.github_star_prompt_show_count = (
-                    _github_star_prompt_non_negative_count(
-                        settings.ui.github_star_prompt_show_count
-                    )
-                    + 1
-                )
-                try:
-                    await asyncio.to_thread(save_settings, self.config_path, settings)
-                except asyncio.CancelledError:
-                    if self.settings is settings:
-                        self._restore_github_star_prompt_state_snapshot(settings, snapshot)
-                    raise
-                except Exception as exc:
-                    if self.settings is settings:
-                        self._restore_github_star_prompt_state_snapshot(settings, snapshot)
-                    self._log_github_star_prompt_save_failure("open state", exc)
-                    return False
-                if self.settings is settings:
-                    if should_open is not None and not should_open():
-                        self._restore_github_star_prompt_state_snapshot(settings, snapshot)
-                        try:
-                            await asyncio.to_thread(save_settings, self.config_path, settings)
-                        except asyncio.CancelledError:
-                            raise
-                        except Exception as exc:
-                            self._log_github_star_prompt_save_failure(
-                                "open state rollback",
-                                exc,
-                            )
-                        return False
-                    return True
-            await asyncio.sleep(0)
-
-    async def persist_github_star_prompt_eligible_launch(self) -> bool:
-        settings = self.settings
-        if settings is None:
-            return False
-        if settings.ui.github_star_prompt_clicked:
-            return False
-        if not self.is_github_star_prompt_eligible():
-            return False
-        if self._github_star_prompt_initial_launch_gate_satisfied(settings):
-            return True
-
-        def _mutate(settings: AppSettings) -> bool:
-            if settings.ui.github_star_prompt_clicked:
-                return False
-            if not self.is_github_star_prompt_eligible():
-                return False
-            if self._github_star_prompt_initial_launch_gate_satisfied(settings):
-                return False
-            current_count = _github_star_prompt_non_negative_count(
-                settings.ui.github_star_prompt_eligible_launch_count
-            )
-            settings.ui.github_star_prompt_eligible_launch_count = min(
-                current_count + 1,
-                GITHUB_STAR_PROMPT_ELIGIBLE_LAUNCH_THRESHOLD,
-            )
-            return True
-
-        await self._persist_github_star_prompt_mutation(
-            failure_context="eligible launch state",
-            mutate=_mutate,
-        )
-        settings = self.settings
-        return bool(
-            settings is not None
-            and not settings.ui.github_star_prompt_clicked
-            and self.is_github_star_prompt_eligible()
-            and self._github_star_prompt_initial_launch_gate_satisfied(settings)
-        )
-
-    def _run_github_star_prompt_persistence_sync(self, coro) -> bool:  # noqa: ANN001
-        try:
-            asyncio.get_running_loop()
-        except RuntimeError:
-            return bool(asyncio.run(coro))
-        close = getattr(coro, "close", None)
-        if callable(close):
-            close()
-        return False
-
-    def record_github_star_prompt_opened(self, *, opened_at: datetime | None = None) -> bool:
-        return self._run_github_star_prompt_persistence_sync(
-            self.persist_github_star_prompt_opened(opened_at=opened_at)
-        )
-
-    async def persist_github_star_prompt_clicked(self) -> bool:
-        def _mutate(settings: AppSettings) -> bool:
-            settings.ui.github_star_prompt_clicked = True
-            return True
-
-        return await self._persist_github_star_prompt_mutation(
-            failure_context="click state",
-            mutate=_mutate,
-        )
-
-    def record_github_star_prompt_clicked(self) -> bool:
-        return self._run_github_star_prompt_persistence_sync(
-            self.persist_github_star_prompt_clicked()
-        )
-
-    async def persist_github_star_prompt_translation_success_observed(self) -> bool:
-        def _mutate(settings: AppSettings) -> bool:
-            if not self._github_star_prompt_settings_has_user_owned_cloud_connection(settings):
-                return False
-            if settings.ui.github_star_prompt_translation_success_observed:
-                return False
-            settings.ui.github_star_prompt_translation_success_observed = True
-            return True
-
-        return await self._persist_github_star_prompt_mutation(
-            failure_context="translation success observation",
-            mutate=_mutate,
-        )
-
-    def record_github_star_prompt_translation_success_observed(self) -> bool:
-        return self._run_github_star_prompt_persistence_sync(
-            self.persist_github_star_prompt_translation_success_observed()
-        )
-
-    def schedule_github_star_prompt_translation_success_observed(self) -> bool:
-        if self.settings is None:
-            return False
-        if not self._github_star_prompt_has_user_owned_cloud_connection():
-            return False
-        if self.settings.ui.github_star_prompt_translation_success_observed:
-            return False
-        existing_task = self._github_star_prompt_translation_success_task
-        if existing_task is not None and not existing_task.done():
-            return False
-        try:
-            loop = asyncio.get_running_loop()
-        except RuntimeError:
-            return self.record_github_star_prompt_translation_success_observed()
-
-        task = loop.create_task(self.persist_github_star_prompt_translation_success_observed())
-        self._github_star_prompt_translation_success_task = task
-
-        def _clear_completed_task(completed_task: asyncio.Task[bool]) -> None:
-            if self._github_star_prompt_translation_success_task is completed_task:
-                self._github_star_prompt_translation_success_task = None
-
-        task.add_done_callback(_clear_completed_task)
-        return True
-
-    async def _drain_github_star_prompt_translation_success_task(self) -> None:
-        task = self._github_star_prompt_translation_success_task
-        if task is None:
-            return
-        await asyncio.gather(task, return_exceptions=True)
-        if self._github_star_prompt_translation_success_task is task:
-            self._github_star_prompt_translation_success_task = None
-
-    async def _preserve_github_star_prompt_observation_before_settings_replace(
-        self,
-        replacement_settings: AppSettings,
-    ) -> None:
-        await self._drain_github_star_prompt_translation_success_task()
-        async with self._get_github_star_prompt_persistence_lock():
-            if self.settings is None:
-                return
-            current_ui = self.settings.ui
-            replacement_ui = replacement_settings.ui
-            replacement_ui.github_star_prompt_clicked = bool(
-                replacement_ui.github_star_prompt_clicked or current_ui.github_star_prompt_clicked
-            )
-            replacement_ui.github_star_prompt_translation_success_observed = bool(
-                replacement_ui.github_star_prompt_translation_success_observed
-                or current_ui.github_star_prompt_translation_success_observed
-            )
-            replacement_ui.github_star_prompt_eligible_launch_count = max(
-                _github_star_prompt_non_negative_count(
-                    replacement_ui.github_star_prompt_eligible_launch_count
-                ),
-                _github_star_prompt_non_negative_count(
-                    current_ui.github_star_prompt_eligible_launch_count
-                ),
-            )
-            replacement_ui.github_star_prompt_show_count = max(
-                _github_star_prompt_non_negative_count(
-                    replacement_ui.github_star_prompt_show_count
-                ),
-                _github_star_prompt_non_negative_count(current_ui.github_star_prompt_show_count),
-            )
-            replacement_ui.github_star_prompt_last_shown_at = _github_star_prompt_latest_timestamp(
-                replacement_ui.github_star_prompt_last_shown_at,
-                current_ui.github_star_prompt_last_shown_at,
-            )
 
     def _current_owned_referral_id(self) -> str | None:
         if self.settings is None:
@@ -2222,17 +1794,6 @@ class GuiController:
             current_referral_id=current_referral_id,
         )
 
-    def _show_founder_letter_dialog(self) -> None:
-        if self.settings is None:
-            return
-        show_founder_letter_dialog = getattr(self.app, "show_founder_letter_dialog", None)
-        if not callable(show_founder_letter_dialog):
-            return
-        show_founder_letter_dialog()
-        mark_founder_letter_shown(self.settings)
-        with contextlib.suppress(Exception):
-            self._save_settings()
-
     def _disable_translation_for_managed_exhaustion(
         self,
         *,
@@ -2240,8 +1801,7 @@ class GuiController:
     ) -> None:
         self._record_translation_toggle_intent(False)
         self._set_managed_trial_pending_auth(False)
-        if reopen_founder_letter:
-            self._show_founder_letter_dialog()
+        _ = reopen_founder_letter
         if self.hub is not None:
             self.hub.translation_enabled = False
         dash = getattr(self.app, "view_dashboard", None)
@@ -2296,6 +1856,11 @@ class GuiController:
                 else None
             ),
             (
+                settings.openai.llm_model
+                if settings.provider.llm == LLMProviderName.OPENAI
+                else None
+            ),
+            (
                 (
                     settings.local_llm.backend,
                     settings.local_llm.base_url,
@@ -2338,7 +1903,9 @@ class GuiController:
         target.qwen.llm_model = source.qwen.llm_model
         target.qwen.region = source.qwen.region
         target.deepseek.llm_model = source.deepseek.llm_model
+        target.openai.llm_model = source.openai.llm_model
         target.local_llm = copy.deepcopy(source.local_llm)
+        target.custom_stt = copy.deepcopy(source.custom_stt)
         if source.openrouter.selected_source == OpenRouterCredentialSource.MANAGED:
             target.managed_identity.verified_hardware_hash = (
                 source.managed_identity.verified_hardware_hash
@@ -3250,11 +2817,10 @@ class GuiController:
         # gate-waiting deferred warmups) before the rest of teardown keeps
         # them from starting new work behind our back.
         await self._cancel_startup_order_tasks()
-        await self._drain_github_star_prompt_translation_success_task()
         await self._cancel_local_stt_download()
         await self.stop_microphone_test()
         await self.set_stt_enabled(False)
-        await self._configure_vrc_mic_receiver(enabled=False)
+        await self._configure_vrc_mic_receiver(enabled=False, allow_avatar=False)
         await self._shutdown_overlay_runtime(preserve_failure_reason=True)
         if self._peer_runtime is not None:
             with contextlib.suppress(Exception):
@@ -3956,7 +3522,10 @@ class GuiController:
             llm = self.hub.llm
             if isinstance(llm, SemaphoreLLMProvider):
                 llm = llm.inner
-            if isinstance(llm, (GeminiLLMProvider, QwenLLMProvider, AsyncQwenLLMProvider)):
+            if isinstance(
+                llm,
+                (GeminiLLMProvider, QwenLLMProvider, AsyncQwenLLMProvider, OpenAILLMProvider),
+            ):
                 with contextlib.suppress(Exception):
                     await llm.warmup()
         return bool(self.hub.translation_enabled)
@@ -4055,10 +3624,10 @@ class GuiController:
             self._show_short_message("settings.steamvr_autolaunch.failed")
 
     async def _handle_managed_translation_enable(self, request_generation: int) -> bool:
-        # Managed flow retired (fork policy): it was the upstream author's
-        # Discord-verified free-key system. Config normalization migrates
-        # managed connections to BYOK, but this guard makes sure no old config
-        # can ever reach the Discord auth / founder-letter dialogs again.
+        # Managed flow retired: it relied on a third-party Discord-verified
+        # free-key service. Config normalization migrates managed connections
+        # to BYOK, and this guard keeps old configs away from the Discord
+        # auth flow.
         return True
         if self.settings is None or self.hub is None:
             return True
@@ -4109,6 +3678,46 @@ class GuiController:
             dash.set_translation_enabled(False)
         self._show_short_message(result.message_key, **dict(result.message_kwargs))
         return False
+
+    async def _repair_outdated_local_stt_models(self, delay_s: float = 45.0) -> None:
+        """Update installed speech models from an older accepted revision in the
+        background (Qwen3-ASR 0.6B: the corrected decoder). Waits first so the
+        download never competes with startup model loading."""
+        await asyncio.sleep(delay_s)
+        from puripuly_heart.core.local_stt_assets import (
+            LOCAL_STT_ALL_MODEL_IDS,
+            default_local_stt_model_dir,
+            load_local_stt_asset_manifest,
+        )
+
+        for model_id in LOCAL_STT_ALL_MODEL_IDS:
+            def _announce(total_bytes: int, _model_id: str = model_id) -> None:
+                self.log_basic(
+                    f"[Models] {_model_id}: updating outdated files in the background "
+                    f"({total_bytes / 1_000_000:.0f} MB)"
+                )
+                self._show_short_message(
+                    "local_stt.repair.started", size=f"{total_bytes / 1_000_000:.0f}"
+                )
+
+            try:
+                result = await repair_outdated_local_stt_install(
+                    model_dir=default_local_stt_model_dir(model_id),
+                    manifest=load_local_stt_asset_manifest(model_id),
+                    on_start=_announce,
+                )
+            except asyncio.CancelledError:
+                raise
+            except Exception as exc:
+                self.log_basic(
+                    f"[Models] {model_id}: background update failed (the current "
+                    f"files keep working): {exc}",
+                    level=logging.WARNING,
+                )
+                continue
+            if result in ("updated", "pending"):
+                self.log_basic(f"[Models] {model_id}: update {result}")
+                self._show_short_message("local_stt.repair.done")
 
     def _refresh_local_stt_runtime_state(self) -> None:
         if self.settings is None:
@@ -4667,7 +4276,6 @@ class GuiController:
         def _effective_peer_language(language: str, peer_language: str) -> str:
             return peer_language or language
 
-        await self._preserve_github_star_prompt_observation_before_settings_replace(settings)
         prev_microphone_test_audio_signature = (
             self._last_microphone_test_audio_settings_signature
             or self._microphone_test_audio_settings_signature(self.settings)
@@ -4837,6 +4445,9 @@ class GuiController:
             )
             self.hub.peer_hangover_s = settings.desktop_audio.vad_hangover_ms / 1000.0
             self.hub.chatbox_include_source = settings.osc.chatbox_include_source
+            self.hub.chatbox_live_preview = bool(
+                getattr(settings.osc, "chatbox_live_preview", True)
+            )
             self.hub.chatbox_reading_only = bool(getattr(settings.ui, "chatbox_reading_only", False))
             self.hub.send_pinyin = bool(getattr(settings.ui, "send_pinyin", False))
             self.hub.send_romaji = bool(getattr(settings.ui, "send_romaji", False))
@@ -4914,7 +4525,15 @@ class GuiController:
                 self._apply_steamvr_autolaunch_setting(next_steamvr_autolaunch, notify=True)
             )
 
-        if self._last_vrc_mic_sync_enabled != settings.osc.vrc_mic_intercept:
+        if (
+            self._last_vrc_mic_sync_enabled != settings.osc.vrc_mic_intercept
+            or (
+                # None = the receiver was never configured; startup does that
+                self._last_avatar_controls_enabled is not None
+                and self._last_avatar_controls_enabled
+                != bool(getattr(settings.osc, "avatar_controls", False))
+            )
+        ):
             if self.vrc_mic_audio_gate is not None:
                 self.vrc_mic_audio_gate.set_enabled(settings.osc.vrc_mic_intercept)
             self.log_detailed(f"[Settings] VRC mic sync enabled: {settings.osc.vrc_mic_intercept}")
@@ -4988,6 +4607,8 @@ class GuiController:
                 success = await OpenRouterLLMProvider.verify_api_key(key)
             elif provider == "deepseek":
                 success = await DeepSeekLLMProvider.verify_api_key(key)
+            elif provider == "openai":
+                success = await OpenAILLMProvider.verify_api_key(key)
             elif provider == "deepl":
                 success = await DeepLTranslationProvider.verify_api_key(key)
             elif provider == "alibaba_beijing":
@@ -5008,6 +4629,20 @@ class GuiController:
                 success = await DeepgramRealtimeSTTBackend.verify_api_key(key)
             elif provider == "soniox":
                 success = await SonioxRealtimeSTTBackend.verify_api_key(key)
+            elif provider == "elevenlabs":
+                from puripuly_heart.providers.stt.elevenlabs_scribe import (
+                    ElevenLabsScribeSTTBackend,
+                )
+
+                success = await ElevenLabsScribeSTTBackend.verify_api_key(key)
+            elif provider == "custom_stt":
+                from puripuly_heart.providers.stt.custom_whisper import (
+                    CustomWhisperSTTBackend,
+                )
+
+                success = await CustomWhisperSTTBackend.verify_server(
+                    self.settings.custom_stt.base_url, key
+                )
             else:
                 return False, f"Unknown provider: {provider}"
 
@@ -5034,7 +4669,6 @@ class GuiController:
         if next_settings is None:
             return
 
-        await self._preserve_github_star_prompt_observation_before_settings_replace(next_settings)
 
         prev_settings = self.settings
         prev_self_provider_signature = self._last_self_stt_provider_signature
@@ -5098,6 +4732,9 @@ class GuiController:
             )
             self.hub.peer_hangover_s = next_settings.desktop_audio.vad_hangover_ms / 1000.0
             self.hub.chatbox_include_source = next_settings.osc.chatbox_include_source
+            self.hub.chatbox_live_preview = bool(
+                getattr(next_settings.osc, "chatbox_live_preview", True)
+            )
             self.hub.chatbox_reading_only = bool(getattr(next_settings.ui, "chatbox_reading_only", False))
             self.hub.send_pinyin = bool(getattr(next_settings.ui, "send_pinyin", False))
             self.hub.send_romaji = bool(getattr(next_settings.ui, "send_romaji", False))
@@ -5264,6 +4901,12 @@ class GuiController:
         if dash is not None:
             dash.set_translation_enabled(True)
 
+        # GPT keeps one HTTPS connection open even while translation is off,
+        # so turning it on (or the first sentence) does not wait for TLS
+        _inner = getattr(self.hub.llm, "inner", self.hub.llm)
+        if isinstance(_inner, OpenAILLMProvider):
+            with contextlib.suppress(Exception):
+                asyncio.create_task(_inner.warmup())
         suffix = " (free-web fallback)" if fallback_used else ""
         self.log_basic(
             f"[Settings] LLM provider rebuilt successfully: "
@@ -5285,6 +4928,7 @@ class GuiController:
                 diagnostics_enabled=self._detailed_audio_diag_enabled,
                 on_model_loading=self._on_local_stt_model_loading,
                 on_model_loaded=self._on_local_stt_model_loaded,
+                partial_results=self._chatbox_live_preview_wanted,
             )
             stt = ManagedSTTProvider(
                 backend=backend,
@@ -5487,6 +5131,19 @@ class GuiController:
     def _detailed_audio_diag_enabled(self) -> bool:
         return self.runtime_logging.mode is SessionLoggingMode.DETAILED
 
+    def _chatbox_live_preview_wanted(self) -> bool:
+        """Asked by the local speech model before each in-progress decode: only
+        worth the CPU while a preview can actually reach the chatbox."""
+        settings = self.settings
+        hub = self.hub
+        if settings is None or hub is None:
+            return False
+        if not bool(getattr(settings.osc, "chatbox_live_preview", False)):
+            return False
+        if hub.llm is None or not hub.translation_enabled or hub.low_latency_mode:
+            return False
+        return hub.active_chatbox_channel == "self"
+
     def _on_final_transcript_suppressed(
         self,
         notification: FinalTranscriptSuppressedNotification,
@@ -5615,6 +5272,10 @@ class GuiController:
         self.log_detailed("[AudioDiag][DebugFault] capture_profile=none stt_profile=none")
 
     _speaker_registry_instance: object | None = None
+    # slots class: declared so refresh_openai_balance can throttle itself
+    _openai_balance_checked_at: float = 0.0
+    _local_stt_repair_task: object | None = None
+    _last_avatar_controls_enabled: bool | None = None
     # r605: slots class — the roster attribute must be DECLARED here or the
     # r603/r604 wiring dies with "no __dict__ for setting new attributes"
     _vrc_roster: object | None = None
@@ -6130,6 +5791,7 @@ class GuiController:
                 diagnostics_enabled=self._detailed_audio_diag_enabled,
                 on_model_loading=self._on_local_stt_model_loading,
                 on_model_loaded=self._on_local_stt_model_loaded,
+                partial_results=self._chatbox_live_preview_wanted,
             )
             stt = ManagedSTTProvider(
                 backend=backend,
@@ -6175,6 +5837,7 @@ class GuiController:
             peer_target_language=self.settings.languages.peer_target_language,
             system_prompt=self.settings.system_prompt,
             chatbox_include_source=self.settings.osc.chatbox_include_source,
+            chatbox_live_preview=bool(getattr(self.settings.osc, "chatbox_live_preview", True)),
             chatbox_reading_only=bool(getattr(self.settings.ui, "chatbox_reading_only", False)),
             send_pinyin=bool(getattr(self.settings.ui, "send_pinyin", False)),
             send_romaji=bool(getattr(self.settings.ui, "send_romaji", False)),
@@ -6307,6 +5970,62 @@ class GuiController:
     def microphone_test_active(self) -> bool:
         task = self._microphone_test_task
         return task is not None and not task.done()
+
+    def start_microphone_test_recording(
+        self, seconds: float = 5.0, *, on_done: Callable[[float], object] | None = None
+    ) -> bool:
+        """Record the next few seconds of the running microphone test."""
+        if not self.microphone_test_active:
+            return False
+        from puripuly_heart.core.audio.mic_test_recorder import MicTestRecorder
+
+        if self._microphone_test_recorder is None:
+            self._microphone_test_recorder = MicTestRecorder()
+        self._microphone_test_record_done = on_done
+        self._microphone_test_recorder.start(seconds)
+        return True
+
+    def stop_microphone_test_recording(self) -> bool:
+        """Stop a running test recording early; the done callback still fires
+        with the captured length (0.0 when nothing was captured)."""
+        recorder = self._microphone_test_recorder
+        if recorder is None or not recorder.recording:
+            return False
+        has_clip = recorder.stop()
+        done = self._microphone_test_record_done
+        self._microphone_test_record_done = None
+        if callable(done):
+            with contextlib.suppress(Exception):
+                done(recorder.clip_seconds if has_clip else 0.0)
+        return has_clip
+
+    def stop_microphone_test_playback(self) -> None:
+        recorder = self._microphone_test_recorder
+        if recorder is None:
+            return
+        with contextlib.suppress(Exception):
+            recorder.stop_playback()
+
+    async def play_microphone_test_recording(self) -> bool:
+        recorder = self._microphone_test_recorder
+        if recorder is None or not recorder.has_clip:
+            return False
+        try:
+            return await recorder.play()
+        except Exception as exc:
+            self._log_error(f"Microphone test playback failed: {exc}")
+            return False
+
+    def _feed_microphone_test_recorder(self, frame: object) -> None:
+        recorder = self._microphone_test_recorder
+        if recorder is None or not recorder.recording:
+            return
+        if recorder.add_frame(frame):
+            done = self._microphone_test_record_done
+            self._microphone_test_record_done = None
+            if callable(done):
+                with contextlib.suppress(Exception):
+                    done(recorder.clip_seconds)
 
     def _get_microphone_test_lifecycle_lock(self) -> asyncio.Lock:
         if self._microphone_test_lifecycle_lock is None:
@@ -6704,6 +6423,7 @@ class GuiController:
 
                 interval_stats.add_frame(frame)
                 total_stats.add_frame(frame)
+                self._feed_microphone_test_recorder(frame)
                 await self._set_microphone_test_meter_level(
                     self._microphone_test_meter_level_from_frame(frame),
                     meter_callback,
@@ -7064,16 +6784,44 @@ class GuiController:
         except Exception as exc:
             self._log_error(f"Mic loop error: {exc}")
 
-    async def _configure_vrc_mic_receiver(self, *, enabled: bool) -> None:
+    def _avatar_controls_enabled(self) -> bool:
+        return bool(
+            self.settings is not None
+            and getattr(self.settings.osc, "avatar_controls", False)
+        )
+
+    def _on_avatar_parameter(self, name: str, value: object) -> None:
+        handler = getattr(self.app, "on_avatar_parameter", None)
+        if callable(handler) and self._avatar_controls_enabled():
+            handler(name, value)
+
+    def _on_avatar_change(self) -> None:
+        handler = getattr(self.app, "on_avatar_change", None)
+        if callable(handler) and self._avatar_controls_enabled():
+            handler()
+
+    def send_avatar_parameter(self, name: str, value: object) -> None:
+        sender = getattr(self.osc, "sender", None)
+        send = getattr(sender, "send_parameter", None)
+        if callable(send) and self._avatar_controls_enabled():
+            with contextlib.suppress(OSError):
+                send(name, value)
+
+    async def _configure_vrc_mic_receiver(
+        self, *, enabled: bool, allow_avatar: bool = True
+    ) -> None:
         if self._vrc_receiver_lock is None:
             self._vrc_receiver_lock = asyncio.Lock()
 
         async with self._vrc_receiver_lock:
             self._last_vrc_mic_sync_enabled = enabled
+            self._last_avatar_controls_enabled = self._avatar_controls_enabled()
             if self.vrc_mic_audio_gate is not None:
                 self.vrc_mic_audio_gate.set_enabled(enabled)
 
-            if not enabled:
+            # the one OSC listener also carries the avatar menu controls, so it
+            # stays up while either feature wants it
+            if not enabled and not (allow_avatar and self._avatar_controls_enabled()):
                 self._stop_vrc_mic_receiver()
                 return
 
@@ -7086,6 +6834,8 @@ class GuiController:
                 state=self.vrc_mic_state,
                 host=VRC_OSC_RECEIVER_HOST,
                 port=VRC_OSC_RECEIVER_PORT,
+                on_parameter=self._on_avatar_parameter,
+                on_avatar_change=self._on_avatar_change,
             )
             try:
                 await receiver.start()
@@ -7189,11 +6939,6 @@ class GuiController:
         except Exception as exc:
             self._show_short_message("openrouter.pkce.failed")
             self._log_error(f"OpenRouter PKCE failed: {exc}")
-            if launch_source == "letter":
-                show_founder_letter_dialog = getattr(self.app, "show_founder_letter_dialog", None)
-                if callable(show_founder_letter_dialog):
-                    with contextlib.suppress(Exception):
-                        show_founder_letter_dialog()
             return False
 
         try:
@@ -7229,11 +6974,6 @@ class GuiController:
         except Exception as exc:
             self._show_short_message("openrouter.pkce.failed")
             self._log_error(f"OpenRouter PKCE apply failed: {exc}")
-            if launch_source == "letter":
-                show_founder_letter_dialog = getattr(self.app, "show_founder_letter_dialog", None)
-                if callable(show_founder_letter_dialog):
-                    with contextlib.suppress(Exception):
-                        show_founder_letter_dialog()
             return False
         return True
 
@@ -7554,6 +7294,29 @@ class GuiController:
     def _log_error(self, message: str) -> None:
         self.log_basic(message, level=logging.ERROR)
 
+    async def refresh_openai_balance(self, *, force: bool = False) -> bool:
+        """Look up the OpenAI credit balance for the usage ring (max 1/min)."""
+        if self.settings is None:
+            return False
+        now = time.monotonic()
+        if not force and now - self._openai_balance_checked_at < 60.0:
+            return False
+        self._openai_balance_checked_at = now
+        try:
+            from puripuly_heart.providers.llm.openai_chat import USAGE
+
+            secrets = create_secret_store(self.settings.secrets, config_path=self.config_path)
+            key = (
+                (secrets.get("openai_api_key") if secrets else "")
+                or os.getenv("OPENAI_API_KEY")
+                or ""
+            )
+            if not key:
+                return False
+            return await USAGE.refresh_balance(key)
+        except Exception:
+            return False
+
     async def fetch_deepl_usage(self) -> tuple[int, int] | None:
         """Return (characters_used, characters_limit) for the saved DeepL key, or None."""
         if self.settings is None:
@@ -7756,6 +7519,13 @@ class GuiController:
                         or ""
                     )
                     llm_valid = bool(key) and await DeepSeekLLMProvider.verify_api_key(key)
+                elif provider_name == LLMProviderName.OPENAI:
+                    key = (
+                        (secrets.get("openai_api_key") if secrets is not None else None)
+                        or os.getenv("OPENAI_API_KEY")
+                        or ""
+                    )
+                    llm_valid = bool(key) and await OpenAILLMProvider.verify_api_key(key)
                 elif provider_name == "qwen":
                     llm_valid = await _verify_alibaba_selected()
                 elif provider_name == LLMProviderName.LOCAL_LLM:
@@ -7798,6 +7568,28 @@ class GuiController:
                 elif provider_name == STTProviderName.SONIOX:
                     key = secrets.get("soniox_api_key") or "" if secrets is not None else ""
                     stt_valid = await SonioxRealtimeSTTBackend.verify_api_key(key)
+                elif provider_name == STTProviderName.ELEVENLABS_SCRIBE:
+                    from puripuly_heart.providers.stt.elevenlabs_scribe import (
+                        ElevenLabsScribeSTTBackend,
+                    )
+
+                    key = (
+                        (secrets.get("elevenlabs_api_key") if secrets is not None else None)
+                        or os.getenv("ELEVENLABS_API_KEY")
+                        or ""
+                    )
+                    stt_valid = await ElevenLabsScribeSTTBackend.verify_api_key(key)
+                elif provider_name == STTProviderName.GEMINI_TRANSCRIBE:
+                    from puripuly_heart.providers.stt.gemini_transcribe import (
+                        GeminiTranscribeSTTBackend,
+                    )
+
+                    key = (
+                        (secrets.get("google_api_key") if secrets is not None else None)
+                        or os.getenv("GOOGLE_API_KEY")
+                        or ""
+                    )
+                    stt_valid = await GeminiTranscribeSTTBackend.verify_api_key(key)
                 else:
                     stt_valid = True
             except Exception:

@@ -13,6 +13,9 @@ logger = logging.getLogger(__name__)
 VRC_OSC_RECEIVER_HOST = "127.0.0.1"
 VRC_OSC_RECEIVER_PORT = 9001
 VRC_OSC_MUTE_ADDRESS = "/avatar/parameters/MuteSelf"
+VRC_OSC_PARAMETER_PREFIX = "/avatar/parameters/"
+VRC_OSC_AVATAR_CHANGE_ADDRESS = "/avatar/change"
+AVATAR_CONTROL_PREFIX = "PuriPuly_"
 
 
 @dataclass(slots=True)
@@ -54,11 +57,15 @@ class VrcOscReceiver:
         host: str = VRC_OSC_RECEIVER_HOST,
         port: int = VRC_OSC_RECEIVER_PORT,
         mute_delay_s: float = 0.4,
+        on_parameter: object = None,  # Callable[[str, object], None] for PuriPuly_* params
+        on_avatar_change: object = None,  # Callable[[], None]
     ) -> None:
         self.state = state
         self.host = host
         self.port = port
         self.mute_delay_s = mute_delay_s
+        self.on_parameter = on_parameter
+        self.on_avatar_change = on_avatar_change
         self.transport = None
         self._mute_task: asyncio.Task[None] | None = None
 
@@ -73,6 +80,23 @@ class VrcOscReceiver:
 
         loop = asyncio.get_running_loop()
         self._mute_task = loop.create_task(self._apply_mute_state(is_muted))
+
+    def other_handler(self, address: str, *args: Any) -> None:
+        """Everything that is not MuteSelf: avatar control parameters and
+        avatar changes. Callback failures are logged, never raised into the
+        OSC server."""
+        try:
+            if address == VRC_OSC_AVATAR_CHANGE_ADDRESS:
+                if callable(self.on_avatar_change):
+                    self.on_avatar_change()
+                return
+            if not address.startswith(VRC_OSC_PARAMETER_PREFIX) or not args:
+                return
+            name = address[len(VRC_OSC_PARAMETER_PREFIX):]
+            if name.startswith(AVATAR_CONTROL_PREFIX) and callable(self.on_parameter):
+                self.on_parameter(name, args[0])
+        except Exception:
+            logger.exception("[OSC Receiver] avatar control handler failed for %s", address)
 
     async def _apply_mute_state(self, is_muted: bool) -> None:
         try:
@@ -96,6 +120,7 @@ class VrcOscReceiver:
 
         dispatcher = Dispatcher()
         dispatcher.map(VRC_OSC_MUTE_ADDRESS, self.mute_handler)
+        dispatcher.set_default_handler(self.other_handler)
 
         loop = asyncio.get_running_loop()
         try:

@@ -405,6 +405,8 @@ def test_translation_model_public_member_names_and_values_match_plan() -> None:
         ("GEMMA4", "gemma4"),
         ("DEEPSEEK_V4_FLASH", "deepseek_v4_flash"),
         ("DEEPSEEK_V4_PRO", "deepseek_v4_pro"),
+        ("GPT_6_LUNA", "gpt6_luna"),
+        ("GPT_61_SOL", "gpt61_sol"),
         ("GEMINI_3_FLASH", "gemini3_flash"),
         ("GEMINI_31_FLASH_LITE", "gemini31_flash_lite"),
         ("QWEN_35_PLUS", "qwen35_plus"),
@@ -413,6 +415,7 @@ def test_translation_model_public_member_names_and_values_match_plan() -> None:
         ("GOOGLE_TRANSLATE", "google_translate"),
         ("BING", "bing"),
         ("PAPAGO", "papago"),
+        ("INDEX_TRANSLATE", "index_translate"),
     )
 
 
@@ -1533,7 +1536,7 @@ def test_gemini_llm_model_roundtrip(tmp_path):
     assert loaded.gemini.llm_model == GeminiLLMModel.GEMINI_31_FLASH_LITE
 
     persisted = json.loads(path.read_text(encoding="utf-8"))
-    assert persisted["gemini"]["llm_model"] == "gemini-3.1-flash-lite"
+    assert persisted["gemini"]["llm_model"] == "gemini-3.5-flash-lite"
 
 
 def test_load_settings_migrates_legacy_qwen_mt_flash_model(tmp_path):
@@ -1559,7 +1562,7 @@ def test_load_settings_migrates_legacy_invalid_gemini_model(tmp_path):
     assert loaded.gemini.llm_model == GeminiLLMModel.GEMINI_31_FLASH_LITE
 
     persisted = json.loads(path.read_text(encoding="utf-8"))
-    assert persisted["gemini"]["llm_model"] == "gemini-3.1-flash-lite"
+    assert persisted["gemini"]["llm_model"] == "gemini-3.5-flash-lite"
 
 
 def test_load_settings_migrates_preview_gemini_flash_lite_to_ga(tmp_path):
@@ -1572,7 +1575,7 @@ def test_load_settings_migrates_preview_gemini_flash_lite_to_ga(tmp_path):
     assert loaded.gemini.llm_model == GeminiLLMModel.GEMINI_31_FLASH_LITE
 
     persisted = json.loads(path.read_text(encoding="utf-8"))
-    assert persisted["gemini"]["llm_model"] == "gemini-3.1-flash-lite"
+    assert persisted["gemini"]["llm_model"] == "gemini-3.5-flash-lite"
 
 
 def test_from_dict_defaults_missing_gemini_model_to_flash_lite():
@@ -3068,3 +3071,84 @@ def test_encrypted_file_secret_store_rejects_wrong_passphrase(tmp_path):
     wrong = EncryptedFileSecretStore(path, passphrase="wrong")
     with pytest.raises(ValueError):
         wrong.get("k")
+
+
+@pytest.mark.parametrize(
+    ("model_value", "openai_model"),
+    [("gpt6_luna", "gpt-6-luna"), ("gpt61_sol", "gpt-6.1-sol")],
+)
+def test_openai_translation_models_roundtrip_official_byok(model_value, openai_model) -> None:
+    model = TranslationModel(model_value)
+    assert supported_translation_connections(model) == (TranslationConnection.OFFICIAL_BYOK,)
+
+    data = to_dict(AppSettings())
+    data["translation"] = {
+        "model": model.value,
+        "connection": TranslationConnection.OFFICIAL_BYOK.value,
+        "connection_history": {model.value: TranslationConnection.OFFICIAL_BYOK.value},
+    }
+
+    loaded = from_dict(data)
+    persisted = to_dict(loaded)
+
+    assert loaded.translation.model == model
+    assert loaded.provider.llm == LLMProviderName.OPENAI
+    assert loaded.openai.llm_model.value == openai_model
+    assert persisted["provider"]["llm"] == "openai"
+    assert persisted["openai"]["llm_model"] == openai_model
+    assert persisted["api_key_verified"]["openai"] is False
+
+
+def test_openai_provider_without_translation_block_derives_the_model() -> None:
+    data = to_dict(AppSettings())
+    data.pop("translation", None)
+    data["provider"]["llm"] = "openai"
+    data["openai"] = {"llm_model": "gpt-6.1-sol"}
+
+    loaded = from_dict(data)
+
+    assert loaded.translation.model == TranslationModel.GPT_61_SOL
+    assert loaded.provider.llm == LLMProviderName.OPENAI
+
+
+def test_unknown_openai_model_falls_back_to_luna() -> None:
+    data = to_dict(AppSettings())
+    data["translation"] = {
+        "model": "gpt6_luna",
+        "connection": TranslationConnection.OFFICIAL_BYOK.value,
+    }
+    data["openai"] = {"llm_model": "not-a-model"}
+
+    loaded = from_dict(data)
+
+    assert loaded.openai.llm_model.value == "gpt-6-luna"
+
+
+@pytest.mark.parametrize(
+    ("saved", "expected"),
+    [
+        ("gemini-3-flash-preview", "gemini-3.8-flash"),
+        ("gemini-3.7-flash", "gemini-3.8-flash"),
+        ("gemini-3.1-flash-lite", "gemini-3.5-flash-lite"),
+    ],
+)
+def test_load_settings_moves_retiring_gemini_models_to_current_ones(tmp_path, saved, expected):
+    path = tmp_path / "settings.json"
+    legacy = to_dict(AppSettings())
+    legacy["gemini"]["llm_model"] = saved
+    path.write_text(json.dumps(legacy, ensure_ascii=False, indent=2), encoding="utf-8")
+
+    load_settings(path)
+
+    assert json.loads(path.read_text(encoding="utf-8"))["gemini"]["llm_model"] == expected
+
+
+def test_load_settings_moves_deepseek_v4_flash_to_the_documented_name(tmp_path):
+    path = tmp_path / "settings.json"
+    legacy = to_dict(AppSettings())
+    legacy["deepseek"]["llm_model"] = "deepseek-v4-flash"
+    path.write_text(json.dumps(legacy, ensure_ascii=False, indent=2), encoding="utf-8")
+
+    load_settings(path)
+
+    assert json.loads(path.read_text(encoding="utf-8"))["deepseek"]["llm_model"] == "deepseek-flash"

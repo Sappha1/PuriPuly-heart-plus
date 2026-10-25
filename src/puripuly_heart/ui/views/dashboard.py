@@ -19,8 +19,10 @@ from puripuly_heart.ui.components.settings import OptionItem, SettingsModal
 from puripuly_heart.ui.fonts import font_for_language
 from puripuly_heart.ui.i18n import get_locale, language_name, t
 from puripuly_heart.ui.overlay_peer_contract import OverlayPeerConsumerContract
+from puripuly_heart.ui.sent_text_undo import SentTextUndo, restore_after_native_undo
+from puripuly_heart.ui.translation_errors import friendly_translation_error
 
-_BUILD_TAG = "r656"  #increment each build so user can confirm version
+_BUILD_TAG = "r663"  #increment each build so user can confirm version
 
 # ── VRCT-style dark palette ──────────────────────────────────────────────────
 _BG_MAIN = "#292b2e"
@@ -136,6 +138,12 @@ class _ToggleRow(ft.Container):
             width=12,
             height=12,
         )
+        # Usage ring (paid translators): how much of the account's credit or
+        # per-minute limit is left. Hidden unless a provider reports usage.
+        self._meter = ft.ProgressRing(
+            width=14, height=14, stroke_width=2.5, value=1.0,
+            color=_TOGGLE_ON, bgcolor=_TOGGLE_OFF, visible=False,
+        )
 
         self._icon = ft.Icon(icon, size=18, color=_TEXT_MUTED)
         self._icon.animate_opacity = 600
@@ -144,6 +152,7 @@ class _ToggleRow(ft.Container):
                 [
                     self._icon,
                     label_col,
+                    self._meter,
                     self._indicator,
                 ],
                 spacing=12,
@@ -235,6 +244,19 @@ class _ToggleRow(ft.Container):
         self._sublabel_text.visible = bool(text)
         try:
             self._sublabel_text.update()
+        except Exception:
+            pass
+
+    def set_meter(self, fraction: float | None, color: str | None = None) -> None:
+        """fraction 0..1 of what is left; None hides the ring."""
+        if fraction is None:
+            self._meter.visible = False
+        else:
+            self._meter.value = max(0.0, min(1.0, float(fraction)))
+            self._meter.color = color or _TOGGLE_ON
+            self._meter.visible = True
+        try:
+            self._meter.update()
         except Exception:
             pass
 
@@ -538,6 +560,10 @@ class DashboardView(ft.Row):
         self._single_turn_mode_backing: bool = True
 
         self._pending_sent_col: ft.Column | None = None
+        self._translator_meter_caption = ""
+        self._translator_account_notice: str | None = None
+        # the notice text the user closed; it stays hidden until it changes
+        self._translator_account_notice_dismissed: str | None = None
         self._pending_version: int = 0
         self._show_pending_echo: bool = True  # on by default; toggled in Settings
         self._chatbox_send_peer: bool = False  # toggled in Settings and dashboard header
@@ -574,6 +600,7 @@ class DashboardView(ft.Row):
             {"source": "en", "targets": ["ko"]},
         ]
         self._message_input_focused = False
+        self._sent_undo = SentTextUndo()
         self._last_chat_content_col: ft.Column | None = None
         self._filter_peer_lang_active: bool = True  # default ON: only show peer messages in configured language
 
@@ -1195,6 +1222,11 @@ class DashboardView(ft.Row):
         self._whisper_available: bool = True
         self._whisper_unavailable_reason: str = ""
         self.on_request_deepl_usage_refresh: object = None  # callback() → refresh translator usage
+        # floating chat window: every new chat line is mirrored here, and the
+        # gear menu toggles the window (callbacks set by the app)
+        self.on_chat_entry_mirror: object = None
+        self.on_toggle_floating_chat: object = None
+        self.floating_chat_open: object = None  # callable -> bool
         self._current_translator_label: str = ""
         self._translator_usage_text: str | None = None  # API-usage line for TRANS tooltip
         self.on_stt_provider_change: object = None  # callback(provider_value: str)
@@ -1236,12 +1268,29 @@ class DashboardView(ft.Row):
         self._overlay_active: bool = False  # overlay currently on
         self._overlay_mode_value: str | None = None  # resolved target (steamvr/desktop)
 
+        # Translator usage ring (paid translators). It sits in the slot that
+        # balances the update button; clicking it lists the details.
+        self._usage_ring = ft.ProgressRing(
+            width=22, height=22, stroke_width=3, value=1.0,
+            color=_TOGGLE_ON, bgcolor=_TOGGLE_OFF,
+        )
+        self._usage_menu = ft.PopupMenuButton(
+            content=ft.Container(
+                content=self._usage_ring, width=44, height=40,
+                alignment=ft.alignment.center,
+            ),
+            tooltip=t("dashboard.usage.ring.tooltip"),
+            items=[],
+            visible=False,
+        )
+        self._usage_slot = ft.Container(width=44, height=40, content=self._usage_menu)
+
         self._sidebar_nav_row = ft.Container(
             content=ft.Row(
-                # Invisible counterweight mirrors the update button's reserved
-                # slot so the gear sits dead-center whether or not an update is
-                # showing; the update button fades in to the gear's right.
-                [ft.Container(width=44, height=40), self._update_btn],
+                # The usage slot doubles as the counterweight for the update
+                # button's reserved slot, so the row stays centered whether or
+                # not either one is showing.
+                [self._usage_slot, self._update_btn],
                 spacing=6,
                 alignment=ft.MainAxisAlignment.CENTER,
                 vertical_alignment=ft.CrossAxisAlignment.CENTER,
@@ -1543,12 +1592,24 @@ class DashboardView(ft.Row):
             visible=False,
             tooltip=t("dashboard.tooltip.download_qwen"),
         )
+        self._notice_close_btn = ft.IconButton(
+            ft.Icons.CLOSE,
+            icon_size=14,
+            icon_color=_TEXT_FAINT,
+            tooltip=t("dashboard.notice.dismiss"),
+            on_click=self._on_notice_dismiss_click,
+            width=24,
+            height=24,
+            style=ft.ButtonStyle(padding=ft.padding.all(0)),
+            visible=False,
+        )
         self._notice_strip = ft.Container(
             content=ft.Row(
                 [
                     ft.Icon(ft.Icons.INFO_OUTLINE, size=14, color=_TOGGLE_WARNING),
                     self._notice_text_ctrl,
                     self._notice_download_btn,
+                    self._notice_close_btn,
                 ],
                 spacing=6,
                 vertical_alignment=ft.CrossAxisAlignment.CENTER,
@@ -2784,15 +2845,19 @@ class DashboardView(ft.Row):
             _TM.GEMMA4.value: "Gemma 4 26B",
             _TM.DEEPSEEK_V4_FLASH.value: "DeepSeek V4 Flash",
             _TM.DEEPSEEK_V4_PRO.value: "DeepSeek V4 Pro",
-            _TM.GEMINI_3_FLASH.value: "Gemini 3 Flash",
-            _TM.GEMINI_31_FLASH_LITE.value: "Gemini 3.1 Flash-Lite",
+            _TM.GPT_6_LUNA.value: "GPT-6 Luna",
+            _TM.GPT_61_SOL.value: "GPT-6.1 Sol",
+            _TM.GEMINI_3_FLASH.value: "Gemini 3.8 Flash",
+            _TM.GEMINI_31_FLASH_LITE.value: "Gemini 3.5 Flash-Lite",
             _TM.QWEN_35_PLUS.value: "Qwen 3.5 Plus",
             _TM.DEEPL.value: "DeepL",
+            _TM.INDEX_TRANSLATE.value: "Index-Translate 35B A3B",
             _TM.GOOGLE_TRANSLATE.value: "Google Translate",
             _TM.LOCAL_LLM.value: "Local LLMs",
         }
         _svc_needs_key = {
-            _TM.DEEPSEEK_V4_PRO.value, _TM.GEMINI_3_FLASH.value,
+            _TM.DEEPSEEK_V4_PRO.value, _TM.GPT_6_LUNA.value,
+            _TM.GPT_61_SOL.value, _TM.GEMINI_3_FLASH.value,
             _TM.GEMINI_31_FLASH_LITE.value, _TM.QWEN_35_PLUS.value,
             _TM.DEEPL.value,
         }
@@ -5737,6 +5802,16 @@ class DashboardView(ft.Row):
         timestamp = timestamp_override or _dt.datetime.now().strftime("%H:%M")
         is_peer = channel == "peer"
         is_ocr = channel == "ocr"
+        mirror = self.on_chat_entry_mirror
+        if callable(mirror) and insert_at is None and not image_path and not is_ocr:
+            with contextlib.suppress(Exception):
+                mirror(
+                    channel=channel,
+                    source_text=source_text,
+                    translated_text=translated_text,
+                    time=timestamp,
+                    speaker=speaker_name,
+                )
         if is_ocr:
             label_color = "#6ab7e8"  # light blue — OCR capture entries
             direction = t("dashboard.chat.received_ocr")
@@ -6318,6 +6393,7 @@ class DashboardView(ft.Row):
                 pass
             self.refresh_find_for_chat_change()
             self._pending_sent_col = pending_col
+            self._pending_sent_text = pending_text
             self._pending_version += 1
             version = self._pending_version
 
@@ -6354,6 +6430,7 @@ class DashboardView(ft.Row):
             return
         text = (e.control.value or "").strip()
         if text:
+            self._sent_undo.remember(text)
             e.control.value = ""
             try:
                 e.control.update()
@@ -6368,6 +6445,7 @@ class DashboardView(ft.Row):
             return
         text = (self._msg_input.value or "").strip()
         if text:
+            self._sent_undo.remember(text)
             self._msg_input.value = ""
             try:
                 self._msg_input.update()
@@ -6377,6 +6455,20 @@ class DashboardView(ft.Row):
 
     def _set_message_input_focused(self, focused: bool) -> None:
         self._message_input_focused = bool(focused)
+
+    def undo_last_send(self) -> None:
+        """Ctrl+Z: put the message just sent back in the input box of the
+        active chat tab (see sent_text_undo)."""
+        if getattr(self, "_chat_tab", "") == "steam":
+            undo = getattr(self._steam_view, "undo_last_send", None)
+            if callable(undo):
+                undo()
+            return
+        if not self._message_input_focused or not hasattr(self, "_msg_input"):
+            return
+        if self.page is None or not self._sent_undo.armed:
+            return
+        self.page.run_task(restore_after_native_undo, self._msg_input, self._sent_undo)
 
     # ── Find in chat (r371) ──────────────────────────────────────────────────
     def open_find_bar(self) -> None:
@@ -6907,12 +6999,121 @@ class DashboardView(ft.Row):
         self._current_translator_label = label
         self._refresh_trans_tooltip()
         # Show the active translation model under the TRANS row, like MIC/PEER do.
-        self._row_trans.set_sublabel(label)
+        self._row_trans.set_sublabel(self._trans_sublabel())
         try:
             if self._translator_value_text.page:
                 self._translator_value_text.update()
         except Exception:
             pass
+
+    def _trans_sublabel(self) -> str:
+        label = getattr(self, "_current_translator_label", "") or ""
+        caption = getattr(self, "_translator_meter_caption", "") or ""
+        return f"{label} \u00b7 {caption}" if label and caption else label
+
+    def set_translator_meter(
+        self,
+        fraction: float | None,
+        caption: str = "",
+        tone: str = "ok",
+        headline: str = "",
+        lines: list[str] | None = None,
+    ) -> None:
+        """Usage ring in the bottom nav row + short caption on the TRANS row.
+
+        fraction: share left (0..1). With no fraction, headline or lines the
+        ring hides. tone: ok / warning / error colours the ring. Clicking the
+        ring lists the headline (e.g. the percent left) and the detail lines.
+        """
+        color = {"warning": _TOGGLE_WARNING, "error": _TOGGLE_ERROR}.get(tone, _TOGGLE_ON)
+        self._translator_meter_caption = caption or ""
+        self._row_trans.set_meter(None)
+        self._row_trans.set_sublabel(self._trans_sublabel())
+        details = [line for line in (lines or []) if line]
+        active = fraction is not None or bool(headline) or bool(details)
+        menu = getattr(self, "_usage_menu", None)
+        if menu is None:
+            return
+        if active:
+            if fraction is None:
+                self._usage_ring.value = 1.0
+                self._usage_ring.color = _TEXT_FAINT
+            else:
+                self._usage_ring.value = max(0.0, min(1.0, float(fraction)))
+                self._usage_ring.color = color
+            items = []
+            if headline:
+                items.append(ft.PopupMenuItem(
+                    height=34,
+                    content=ft.Text(headline, size=13, weight=ft.FontWeight.BOLD,
+                                    color=color if fraction is not None else _TEXT_PRIMARY),
+                ))
+            for line in details:
+                items.append(ft.PopupMenuItem(
+                    height=28,
+                    content=ft.Text(line, size=12, color=_TEXT_PRIMARY),
+                ))
+            menu.items = items
+        menu.visible = active
+        try:
+            if menu.page:
+                menu.update()
+        except Exception:
+            pass
+
+    def set_translator_account_notice(self, text: str | None) -> None:
+        """A translator account problem (no credits, rejected key) shown in the
+        notice strip until a translation succeeds again or the user closes it."""
+        text = text or None
+        if text is None:
+            self._translator_account_notice_dismissed = None
+        if text == self._translator_account_notice:
+            return
+        self._translator_account_notice = text
+        with contextlib.suppress(Exception):
+            self._sync_notice()
+
+    def _visible_account_notice(self) -> str | None:
+        notice = getattr(self, "_translator_account_notice", None)
+        if notice and notice != getattr(self, "_translator_account_notice_dismissed", None):
+            return notice
+        return None
+
+    def _on_notice_dismiss_click(self, _event=None) -> None:  # noqa: ANN001
+        async def _dismiss() -> None:
+            self._translator_account_notice_dismissed = self._translator_account_notice
+            self._sync_notice()
+
+        try:
+            self.page.run_task(_dismiss)
+        except Exception:
+            self._translator_account_notice_dismissed = self._translator_account_notice
+            with contextlib.suppress(Exception):
+                self._sync_notice()
+
+    def show_translation_error(self, error_text: str, *, channel: str | None = None) -> bool:
+        """Put the provider's reason under the message that failed to translate.
+
+        Returns True when a pending typed message took the line.
+        """
+        friendly = friendly_translation_error(error_text)
+        col = self._pending_sent_col
+        if channel == "peer" or col is None:
+            return False
+        self._pending_version += 1  # cancel the generic timeout line
+        self._pending_sent_col = None
+        col.controls.append(
+            ft.Text(friendly, color="#e05050", size=11, italic=True, selectable=True)
+        )
+        pending_text = getattr(self, "_pending_sent_text", None)
+        if pending_text is not None:
+            pending_text.color = "#888888"
+        try:
+            if col.page:
+                col.update()
+        except Exception:
+            pass
+        return True
 
     def set_translator_usage(self, usage_text: str | None) -> None:
         """Set the API-usage line shown in the TRANS tooltip (e.g. DeepL characters).
@@ -6949,10 +7150,13 @@ class DashboardView(ft.Row):
             TranslationModel.GEMMA4,
             TranslationModel.DEEPSEEK_V4_FLASH,
             TranslationModel.DEEPSEEK_V4_PRO,
+            TranslationModel.GPT_6_LUNA,
+            TranslationModel.GPT_61_SOL,
             TranslationModel.GEMINI_3_FLASH,
             TranslationModel.GEMINI_31_FLASH_LITE,
             TranslationModel.QWEN_35_PLUS,
             TranslationModel.DEEPL,
+            TranslationModel.INDEX_TRANSLATE,
             TranslationModel.GOOGLE_TRANSLATE,
             TranslationModel.BING,
             TranslationModel.PAPAGO,
@@ -6962,10 +7166,13 @@ class DashboardView(ft.Row):
             TranslationModel.GEMMA4: "Gemma 4 26B",
             TranslationModel.DEEPSEEK_V4_FLASH: "DeepSeek V4 Flash",
             TranslationModel.DEEPSEEK_V4_PRO: "DeepSeek V4 Pro",
-            TranslationModel.GEMINI_3_FLASH: "Gemini 3 Flash",
-            TranslationModel.GEMINI_31_FLASH_LITE: "Gemini 3.1 Flash-Lite",
+            TranslationModel.GPT_6_LUNA: "GPT-6 Luna",
+            TranslationModel.GPT_61_SOL: "GPT-6.1 Sol",
+            TranslationModel.GEMINI_3_FLASH: "Gemini 3.8 Flash",
+            TranslationModel.GEMINI_31_FLASH_LITE: "Gemini 3.5 Flash-Lite",
             TranslationModel.QWEN_35_PLUS: "Qwen 3.5 Plus",
             TranslationModel.DEEPL: "DeepL",
+            TranslationModel.INDEX_TRANSLATE: "Index-Translate 35B A3B",
             TranslationModel.GOOGLE_TRANSLATE: "Google Translate",
             TranslationModel.BING: "Bing",
             TranslationModel.PAPAGO: "Papago",
@@ -6974,6 +7181,8 @@ class DashboardView(ft.Row):
         # Models that require an API key (no managed/free fallback)
         _NEEDS_KEY = {
             TranslationModel.DEEPSEEK_V4_PRO,
+            TranslationModel.GPT_6_LUNA,
+            TranslationModel.GPT_61_SOL,
             TranslationModel.GEMINI_3_FLASH,
             TranslationModel.GEMINI_31_FLASH_LITE,
             TranslationModel.QWEN_35_PLUS,
@@ -7027,6 +7236,7 @@ class DashboardView(ft.Row):
         from puripuly_heart.ui.i18n import provider_label
         # Local models — always free, no API key needed
         _FREE_PROVIDERS = {
+            STTProviderName.CUSTOM_STT.value,  # own server: nothing to verify
             STTProviderName.LOCAL_QWEN.value,
             STTProviderName.LOCAL_PARAKEET_V3.value,
             STTProviderName.LOCAL_PARAKEET_JAPANESE.value,
@@ -7833,6 +8043,17 @@ class DashboardView(ft.Row):
                     border_radius=4, ink=True, on_click=_click,
                 )
             children.append(_div())
+            if callable(self.on_toggle_floating_chat):
+                _open = False
+                with contextlib.suppress(Exception):
+                    _open = bool(self.floating_chat_open()) if callable(
+                        self.floating_chat_open) else False
+                children.append(_action_row(
+                    ft.Icons.PICTURE_IN_PICTURE_ALT,
+                    t("dashboard.menu.floating_chat_close" if _open
+                      else "dashboard.menu.floating_chat"),
+                    lambda: self.on_toggle_floating_chat(),
+                ))
             children.append(_action_row(
                 ft.Icons.DELETE_SWEEP_OUTLINED,
                 t("dashboard.menu.clear_chat", default="Clear chat"),
@@ -9211,6 +9432,8 @@ class DashboardView(ft.Row):
                 notice_text, tone = self._current_local_stt_notice()
                 if notice_text is None:
                     notice_text, tone = self._current_overlay_failure_notice()
+                if notice_text is None and self._visible_account_notice():
+                    notice_text, tone = self._visible_account_notice(), "error"
                 self.display_card.set_notice(notice_text, tone)
 
         # Show notice in visible strip
@@ -9224,11 +9447,20 @@ class DashboardView(ft.Row):
             self._show_notice(notice_text, tone)
             return
         notice_text, tone = self._current_overlay_failure_notice()
-        self._show_notice(notice_text, tone)
+        dismissable = False
+        if notice_text is None and self._visible_account_notice():
+            notice_text, tone = self._visible_account_notice(), "error"
+            dismissable = True
+        self._show_notice(notice_text, tone, dismissable=dismissable)
 
-    def _show_notice(self, text: str | None, tone: str | None) -> None:
+    def _show_notice(
+        self, text: str | None, tone: str | None, *, dismissable: bool = False
+    ) -> None:
         if not hasattr(self, "_notice_strip"):
             return
+        close_btn = getattr(self, "_notice_close_btn", None)
+        if close_btn is not None:
+            close_btn.visible = bool(text) and dismissable
         if not text:
             self._notice_strip.visible = False
             self._notice_download_btn.visible = False

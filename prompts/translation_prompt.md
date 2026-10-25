@@ -28,6 +28,14 @@ Ignore context when it would cause:
 * Weak Signal: Context looks related or tempting, but resolves nothing specific in `<input>`.
 * Already Clear: `<input>` is complete and unambiguous; context only adds background.
 
+### Two-Person Conversations
+Most chats are the local user (`[self]`) talking with one partner (`[peer]`).
+* Read alternating `[self]`/`[peer]` lines as one dialogue: a short `<input>` such as "yes", "same", "me too", or "really?" usually answers the line just before it.
+* Second-person words in `<input>` ("you", "your") address the other person in the dialogue, not a third party.
+* Keep how the two people address each other consistent across turns: the same pronouns, names, nicknames, and politeness level unless `<input>` clearly changes them.
+* Never merge both sides into one sentence, and never answer, continue, or comment on the conversation yourself.
+* Do not output speaker labels, timestamps, or brackets from `<context>`.
+
 ## Preprocessing
 * Treat `<input>` as a speech transcript that may contain missing spacing, stutters, filler words, typos, or unusual punctuation.
 * Read through surface issues to understand the utterance.

@@ -52,6 +52,7 @@ from puripuly_heart.core.stt.controller import ManagedSTTProvider
 from puripuly_heart.providers.llm.deepseek import DeepSeekLLMProvider
 from puripuly_heart.providers.llm.gemini import GeminiLLMProvider
 from puripuly_heart.providers.llm.local_openai import LocalOpenAICompatibleLLMProvider
+from puripuly_heart.providers.llm.openai_chat import OpenAILLMProvider
 from puripuly_heart.providers.llm.openrouter import OpenRouterLLMProvider
 from puripuly_heart.providers.llm.qwen import QwenLLMProvider
 from puripuly_heart.providers.llm.qwen_async import AsyncQwenLLMProvider
@@ -73,7 +74,7 @@ def test_create_llm_provider_gemini_uses_secret_and_concurrency_limit() -> None:
     assert isinstance(provider, SemaphoreLLMProvider)
     assert isinstance(provider.inner, GeminiLLMProvider)
     assert provider.inner.api_key == "k"
-    assert provider.inner.model == "gemini-3.1-flash-lite"
+    assert provider.inner.model == "gemini-3.5-flash-lite"
     assert provider.semaphore._value == 3  # type: ignore[attr-defined]
 
 
@@ -88,7 +89,7 @@ def test_create_llm_provider_gemini_uses_selected_model() -> None:
     provider = create_llm_provider(settings, secrets=secrets)
     assert isinstance(provider, SemaphoreLLMProvider)
     assert isinstance(provider.inner, GeminiLLMProvider)
-    assert provider.inner.model == "gemini-3.1-flash-lite"
+    assert provider.inner.model == "gemini-3.5-flash-lite"
 
 
 def test_create_llm_provider_gemini_passes_runtime_logging() -> None:
@@ -224,7 +225,7 @@ def test_create_llm_provider_deepseek_uses_secret_and_model() -> None:
     assert isinstance(provider, SemaphoreLLMProvider)
     assert isinstance(provider.inner, DeepSeekLLMProvider)
     assert provider.inner.api_key == "ds-key"
-    assert provider.inner.model == "deepseek-v4-flash"
+    assert provider.inner.model == "deepseek-flash"
     assert provider.inner.base_url == "https://api.deepseek.com"
     assert provider.inner.max_tokens == 100
     assert provider.semaphore._value == 4  # type: ignore[attr-defined]
@@ -1429,3 +1430,37 @@ def test_peer_script_retry_hint_is_none_when_active_preset_has_extra_peer_langua
         presets=[LanguagePreset(extra_peer_sources=["ja"])],
     )
     assert resolve_peer_stt_config(settings).script_retry_language_hint is None
+
+
+@pytest.mark.parametrize("model_value", ["gpt-6-luna", "gpt-6.1-sol"])
+def test_create_llm_provider_openai_uses_selected_model(model_value) -> None:
+    from puripuly_heart.config.settings import OpenAILLMModel
+
+    settings = AppSettings(provider=ProviderSettings(llm=LLMProviderName.OPENAI))
+    settings.openai.llm_model = OpenAILLMModel(model_value)
+    secrets = InMemorySecretStore()
+    secrets.set("openai_api_key", "test-key-placeholder")
+
+    provider = create_llm_provider(settings, secrets=secrets)
+
+    assert isinstance(provider, SemaphoreLLMProvider)
+    assert isinstance(provider.inner, OpenAILLMProvider)
+    assert provider.inner.api_key == "test-key-placeholder"
+    assert provider.inner.model == model_value
+
+
+def test_create_stt_backend_gemini_transcribe_uses_the_google_key_and_language() -> None:
+    from puripuly_heart.config.settings import STTProviderName
+    from puripuly_heart.app.wiring import create_stt_backend
+    from puripuly_heart.providers.stt.gemini_transcribe import GeminiTranscribeSTTBackend
+
+    settings = AppSettings(provider=ProviderSettings(stt=STTProviderName.GEMINI_TRANSCRIBE))
+    settings.languages.source_language = "ja"
+    secrets = InMemorySecretStore()
+    secrets.set("google_api_key", "test-key-placeholder")
+
+    backend = create_stt_backend(settings, secrets=secrets)
+
+    assert isinstance(backend, GeminiTranscribeSTTBackend)
+    assert backend.api_key == "test-key-placeholder"
+    assert list(backend.language_codes) == ["ja-JP"]

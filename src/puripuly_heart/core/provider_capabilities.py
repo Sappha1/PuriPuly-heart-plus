@@ -33,6 +33,9 @@ CUSTOM_VOCABULARY_ENGINES: frozenset[STTProviderName] = frozenset(
         STTProviderName.DEEPGRAM,
         STTProviderName.LOCAL_QWEN,
         STTProviderName.SONIOX,
+        STTProviderName.GEMINI_TRANSCRIBE,
+        STTProviderName.ELEVENLABS_SCRIBE,
+        STTProviderName.CUSTOM_STT,
     }
 )
 

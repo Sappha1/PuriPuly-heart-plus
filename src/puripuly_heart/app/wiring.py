@@ -49,6 +49,7 @@ from puripuly_heart.providers.llm.free_web import FreeWebTranslationProvider
 from puripuly_heart.providers.llm.deepseek import DeepSeekLLMProvider
 from puripuly_heart.providers.llm.gemini import GeminiLLMProvider
 from puripuly_heart.providers.llm.local_openai import LocalOpenAICompatibleLLMProvider
+from puripuly_heart.providers.llm.openai_chat import OpenAILLMProvider
 from puripuly_heart.providers.llm.openrouter import OpenRouterLLMProvider
 from puripuly_heart.providers.llm.qwen import QwenLLMProvider
 from puripuly_heart.providers.llm.qwen_async import AsyncQwenLLMProvider
@@ -350,6 +351,8 @@ class ResolvedPeerSTTConfig:
     # result that came back in a different CJK script. None = no retry. Set
     # only when exactly ONE peer language is pinned and it is ko/ja/zh.
     script_retry_language_hint: str | None = None
+    custom_base_url: str | None = None
+    custom_model: str | None = None
 
 
 def create_secret_store(
@@ -535,6 +538,17 @@ def create_llm_provider(
             model=settings.deepseek.llm_model.value,
             runtime_logging=runtime_logging,
         )
+    elif settings.provider.llm == LLMProviderName.OPENAI:
+        api_key = require_secret(
+            secrets,
+            key="openai_api_key",
+            env_var="OPENAI_API_KEY",
+        )
+        base = OpenAILLMProvider(
+            api_key=api_key,
+            model=settings.openai.llm_model.value,
+            runtime_logging=runtime_logging,
+        )
     elif settings.provider.llm == LLMProviderName.LOCAL_LLM:
         api_key = (secrets.get("local_llm_api_key") or "").strip()
         base = LocalOpenAICompatibleLLMProvider(
@@ -553,6 +567,10 @@ def create_llm_provider(
         base = FreeWebTranslationProvider("bing")
     elif settings.provider.llm == LLMProviderName.PAPAGO:
         base = FreeWebTranslationProvider("papago")
+    elif settings.provider.llm == LLMProviderName.INDEX_TRANSLATE:
+        from puripuly_heart.providers.llm.index_translate import IndexTranslateLLMProvider
+
+        base = IndexTranslateLLMProvider(runtime_logging=runtime_logging)
     else:
         raise ValueError(f"Unsupported LLM provider: {settings.provider.llm}")
 
@@ -569,6 +587,7 @@ def create_stt_backend(
     diagnostics_enabled: Callable[[], bool] | None = None,
     on_model_loading: object = None,
     on_model_loaded: object = None,
+    partial_results: Callable[[], bool] | None = None,
 ) -> STTBackend:
     effective_terms = get_effective_custom_terms(settings, settings.languages.source_language)
 
@@ -594,6 +613,7 @@ def create_stt_backend(
             diagnostics_enabled=diagnostics_enabled,
             on_model_loading=on_model_loading,
             on_model_loaded=on_model_loaded,
+            partial_results=partial_results,
         )
 
     if settings.provider.stt in (
@@ -615,6 +635,7 @@ def create_stt_backend(
             diagnostics_enabled=diagnostics_enabled,
             on_model_loading=on_model_loading,
             on_model_loaded=on_model_loaded,
+            partial_results=partial_results,
         )
 
     if settings.provider.stt == STTProviderName.DEEPGRAM:
@@ -667,6 +688,45 @@ def create_stt_backend(
             keepalive_interval_s=settings.soniox_stt.keepalive_interval_s,
             trailing_silence_ms=settings.soniox_stt.trailing_silence_ms,
             context_terms=effective_terms,
+        )
+
+    if settings.provider.stt == STTProviderName.ELEVENLABS_SCRIBE:
+        from puripuly_heart.providers.stt.elevenlabs_scribe import ElevenLabsScribeSTTBackend
+
+        api_key = require_secret(secrets, key="elevenlabs_api_key", env_var="ELEVENLABS_API_KEY")
+        return ElevenLabsScribeSTTBackend(
+            api_key=api_key,
+            language=settings.languages.source_language,
+            keyterms=tuple(effective_terms),
+            sample_rate_hz=STT_INTERNAL_SAMPLE_RATE_HZ,
+        )
+
+    if settings.provider.stt == STTProviderName.CUSTOM_STT:
+        from puripuly_heart.providers.stt.custom_whisper import CustomWhisperSTTBackend
+
+        return CustomWhisperSTTBackend(
+            base_url=settings.custom_stt.base_url,
+            model=settings.custom_stt.model,
+            api_key=(secrets.get("custom_stt_api_key") or "").strip(),
+            language=settings.languages.source_language,
+            prompt_terms=tuple(effective_terms),
+            sample_rate_hz=STT_INTERNAL_SAMPLE_RATE_HZ,
+        )
+
+    if settings.provider.stt == STTProviderName.GEMINI_TRANSCRIBE:
+        from puripuly_heart.providers.stt.gemini_transcribe import (
+            GeminiTranscribeSTTBackend,
+            gemini_transcribe_language_codes,
+        )
+
+        api_key = require_secret(secrets, key="google_api_key", env_var="GOOGLE_API_KEY")
+        return GeminiTranscribeSTTBackend(
+            api_key=api_key,
+            language_codes=gemini_transcribe_language_codes(
+                settings.languages.source_language
+            ),
+            custom_vocabulary=tuple(effective_terms),
+            sample_rate_hz=STT_INTERNAL_SAMPLE_RATE_HZ,
         )
 
     if settings.provider.stt == STTProviderName.GOOGLE_STT:
@@ -733,6 +793,19 @@ def _peer_script_retry_hint(settings: AppSettings) -> str | None:
         return None
     hint = get_local_qwen_language_hint(pinned)
     return hint if hint in ("Korean", "Japanese", "Chinese") else None
+
+
+def _peer_extra_source_languages(settings: AppSettings) -> list[str]:
+    """The extra \"their language\" slots of the active preset."""
+    languages = settings.languages
+    presets = list(getattr(languages, "presets", None) or [])
+    if not presets:
+        return []
+    idx = max(0, min(int(getattr(languages, "active_preset", 0) or 0), len(presets) - 1))
+    return [
+        str(e) for e in (getattr(presets[idx], "extra_peer_sources", None) or [])
+        if str(e).strip()
+    ]
 
 
 def resolve_peer_stt_config(settings: AppSettings) -> ResolvedPeerSTTConfig:
@@ -824,6 +897,32 @@ def resolve_peer_stt_config(settings: AppSettings) -> ResolvedPeerSTTConfig:
             language_hint=None,
         )
 
+    if provider == STTProviderName.ELEVENLABS_SCRIBE:
+        return ResolvedPeerSTTConfig(
+            provider=provider,
+            source_language=peer_source_language,
+            sample_rate_hz=STT_INTERNAL_SAMPLE_RATE_HZ,
+            keyterms=(),
+        )
+
+    if provider == STTProviderName.CUSTOM_STT:
+        return ResolvedPeerSTTConfig(
+            provider=provider,
+            source_language=peer_source_language,
+            sample_rate_hz=STT_INTERNAL_SAMPLE_RATE_HZ,
+            keyterms=(),
+            custom_base_url=settings.custom_stt.base_url,
+            custom_model=settings.custom_stt.model,
+        )
+
+    if provider == STTProviderName.GEMINI_TRANSCRIBE:
+        return ResolvedPeerSTTConfig(
+            provider=provider,
+            source_language=peer_source_language,
+            sample_rate_hz=STT_INTERNAL_SAMPLE_RATE_HZ,
+            keyterms=(),
+        )
+
     if provider in (STTProviderName.GOOGLE_STT, STTProviderName.WHISPER):
         return ResolvedPeerSTTConfig(
             provider=provider,
@@ -862,6 +961,8 @@ def build_peer_stt_provider_signature(settings: AppSettings) -> tuple[object, ..
         resolved.soniox_keepalive_interval_s,
         resolved.soniox_trailing_silence_ms,
         resolved.keyterms,
+        resolved.custom_base_url,
+        resolved.custom_model,
     )
 
 
@@ -976,6 +1077,43 @@ def create_peer_stt_backend(
             on_model_loading=on_model_loading,
             on_model_loaded=on_model_loaded,
             speaker_embedder=_shared_speaker_embedder(settings),
+        )
+
+    if resolved.provider == STTProviderName.ELEVENLABS_SCRIBE:
+        from puripuly_heart.providers.stt.elevenlabs_scribe import ElevenLabsScribeSTTBackend
+
+        api_key = require_secret(secrets, key="elevenlabs_api_key", env_var="ELEVENLABS_API_KEY")
+        return ElevenLabsScribeSTTBackend(
+            api_key=api_key,
+            language=resolved.source_language,
+            sample_rate_hz=resolved.sample_rate_hz,
+        )
+
+    if resolved.provider == STTProviderName.CUSTOM_STT:
+        from puripuly_heart.providers.stt.custom_whisper import CustomWhisperSTTBackend
+
+        return CustomWhisperSTTBackend(
+            base_url=resolved.custom_base_url or settings.custom_stt.base_url,
+            model=resolved.custom_model or settings.custom_stt.model,
+            api_key=(secrets.get("custom_stt_api_key") or "").strip(),
+            language=resolved.source_language,
+            sample_rate_hz=resolved.sample_rate_hz,
+        )
+
+    if resolved.provider == STTProviderName.GEMINI_TRANSCRIBE:
+        from puripuly_heart.providers.stt.gemini_transcribe import (
+            GeminiTranscribeSTTBackend,
+            gemini_transcribe_language_codes,
+        )
+
+        api_key = require_secret(secrets, key="google_api_key", env_var="GOOGLE_API_KEY")
+        return GeminiTranscribeSTTBackend(
+            api_key=api_key,
+            # every language the peer may speak; none pinned = auto-detect
+            language_codes=gemini_transcribe_language_codes(
+                resolved.source_language, *_peer_extra_source_languages(settings)
+            ),
+            sample_rate_hz=resolved.sample_rate_hz,
         )
 
     if resolved.provider == STTProviderName.GOOGLE_STT:

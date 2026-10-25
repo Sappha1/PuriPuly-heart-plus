@@ -8,6 +8,11 @@ from collections import OrderedDict
 
 import flet as ft
 
+from puripuly_heart.ui.translation_errors import (
+    friendly_translation_error,
+    is_account_problem,
+)
+
 from puripuly_heart.core.managed_openrouter_release import ManagedOpenRouterUserFacingError
 from puripuly_heart.core.runtime_logging import SessionLoggingMode, SessionRuntimeLoggingService
 from puripuly_heart.domain.events import STTSessionState, UIEvent, UIEventType
@@ -180,20 +185,6 @@ class UIEventBridge:
         with contextlib.suppress(Exception):
             self.runtime_logging.emit_detailed(message)
 
-    def _schedule_github_star_prompt_translation_success(self, translation: Translation) -> None:
-        if not translation.text.strip():
-            return
-        controller = getattr(self.app, "controller", None)
-        scheduler = getattr(
-            controller,
-            "schedule_github_star_prompt_translation_success_observed",
-            None,
-        )
-        if not callable(scheduler):
-            return
-        with contextlib.suppress(Exception):
-            scheduler()
-
     def report_overlay_state(
         self,
         state: str,
@@ -310,6 +301,8 @@ class UIEventBridge:
             translation = event.payload
             if not isinstance(translation, Translation):
                 return
+            with contextlib.suppress(Exception):
+                self.app.view_dashboard.set_translator_account_notice(None)
             source = event.source or "Mic"
             _, target_lang = self._get_language_codes()
             dash = getattr(self.app, "view_dashboard", None)
@@ -340,7 +333,6 @@ class UIEventBridge:
             add_history = getattr(self.app, "add_history_entry", None)
             if add_history is not None:
                 add_history(source, translation.text, translated=True, language_code=target_lang)
-            self._schedule_github_star_prompt_translation_success(translation)
             return
 
         if event.type == UIEventType.EXTRA_TRANSLATIONS_DONE:
@@ -405,5 +397,17 @@ class UIEventBridge:
                     and stt_state in (STTSessionState.DRAINING, STTSessionState.DISCONNECTED)
                 ):
                     return
+                # Translation failures carry the utterance id: show the
+                # provider's reason (no credits, rejected key...) under the
+                # message instead of a generic timeout line, and keep account
+                # problems in the notice strip until a translation succeeds.
+                if event.utterance_id is not None:
+                    with contextlib.suppress(Exception):
+                        dash.show_translation_error(text, channel=event.channel)
+                    with contextlib.suppress(Exception):
+                        if is_account_problem(text):
+                            dash.set_translator_account_notice(
+                                friendly_translation_error(text)
+                            )
                 dash.set_display_text(text, is_error=True)
             return

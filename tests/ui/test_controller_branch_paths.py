@@ -789,7 +789,7 @@ async def test_init_pipeline_wires_self_stt_fault_provider_with_debug_gate(
     monkeypatch.setattr(
         GuiController,
         "_configure_vrc_mic_receiver",
-        lambda self, *, enabled: asyncio.sleep(0),
+        lambda self, *, enabled, allow_avatar=True: asyncio.sleep(0),
     )
 
     assert controller.cycle_debug_stt_fault_profile() == "stt_input_low_snr_vad_pass"
@@ -1187,7 +1187,7 @@ async def test_verify_api_key_google_checks_selected_gemini_model(
     outcome = await controller.verify_api_key("google", "secret")
 
     assert outcome == (True, "Verification successful")
-    assert calls == [("secret", "gemini-3.1-flash-lite")]
+    assert calls == [("secret", "gemini-3.5-flash-lite")]
 
 
 def test_log_error_falls_back_to_standard_logger_without_direct_logs_view_append(
@@ -3438,7 +3438,7 @@ async def test_rebuild_pipeline_closes_previous_peer_runtime_before_replacement(
     monkeypatch.setattr(
         GuiController,
         "_configure_vrc_mic_receiver",
-        lambda self, enabled: asyncio.sleep(0),
+        lambda self, enabled, allow_avatar=True: asyncio.sleep(0),
     )
     monkeypatch.setattr(controller_module, "UIEventBridge", FakeUIEventBridge)
     monkeypatch.setattr(GuiController, "_verify_and_update_status", lambda self: asyncio.sleep(0))
@@ -3475,7 +3475,7 @@ async def test_rebuild_pipeline_local_llm_without_runtime_does_not_show_api_key_
     monkeypatch.setattr(
         GuiController,
         "_configure_vrc_mic_receiver",
-        lambda self, *, enabled: asyncio.sleep(0),
+        lambda self, *, enabled, allow_avatar=True: asyncio.sleep(0),
     )
     monkeypatch.setattr(controller_module, "UIEventBridge", FakeUIEventBridge)
     monkeypatch.setattr(GuiController, "_verify_and_update_status", lambda self: asyncio.sleep(0))
@@ -3523,7 +3523,7 @@ async def test_rebuild_pipeline_rebinds_overlay_presenter_to_new_hub(
     monkeypatch.setattr(
         GuiController,
         "_configure_vrc_mic_receiver",
-        lambda self, *, enabled: asyncio.sleep(0),
+        lambda self, *, enabled, allow_avatar=True: asyncio.sleep(0),
     )
     monkeypatch.setattr(
         GuiController,
@@ -3582,7 +3582,7 @@ async def test_rebuild_pipeline_refreshes_overlay_dependencies_without_overlay_r
     monkeypatch.setattr(
         GuiController,
         "_configure_vrc_mic_receiver",
-        lambda self, *, enabled: asyncio.sleep(0),
+        lambda self, *, enabled, allow_avatar=True: asyncio.sleep(0),
     )
     monkeypatch.setattr(GuiController, "_init_pipeline", fake_init_pipeline)
     monkeypatch.setattr(GuiController, "set_overlay_enabled", fail_set_overlay_enabled)
@@ -3606,7 +3606,7 @@ async def test_init_pipeline_keeps_peer_original_runtime_available_without_peer_
 ) -> None:
     created = _patch_init_pipeline_dependencies(monkeypatch)
     monkeypatch.setattr(
-        GuiController, "_configure_vrc_mic_receiver", lambda self, enabled: asyncio.sleep(0)
+        GuiController, "_configure_vrc_mic_receiver", lambda self, enabled, allow_avatar=True: asyncio.sleep(0)
     )
 
     controller = _make_controller(app=SimpleNamespace())
@@ -3651,7 +3651,7 @@ async def test_init_pipeline_passes_chatbox_and_peer_language_settings_to_hub(
 
     monkeypatch.setattr(controller_module, "ClientHub", fake_hub)
     monkeypatch.setattr(
-        GuiController, "_configure_vrc_mic_receiver", lambda self, enabled: asyncio.sleep(0)
+        GuiController, "_configure_vrc_mic_receiver", lambda self, enabled, allow_avatar=True: asyncio.sleep(0)
     )
 
     controller = _make_controller(app=SimpleNamespace())
@@ -4590,7 +4590,7 @@ async def test_desktop_size_preset_change_preserves_current_center_without_clamp
     monkeypatch.setattr(
         GuiController,
         "_configure_vrc_mic_receiver",
-        lambda self, *, enabled: asyncio.sleep(0),
+        lambda self, *, enabled, allow_avatar=True: asyncio.sleep(0),
     )
     monkeypatch.setattr(
         GuiController,
@@ -4668,7 +4668,7 @@ async def test_desktop_size_preset_change_drains_queued_pre_resize_user_bounds(
     monkeypatch.setattr(
         GuiController,
         "_configure_vrc_mic_receiver",
-        lambda self, *, enabled: asyncio.sleep(0),
+        lambda self, *, enabled, allow_avatar=True: asyncio.sleep(0),
     )
 
     controller = _make_controller(app=SimpleNamespace())
@@ -4732,7 +4732,7 @@ async def test_desktop_size_preset_change_supersedes_pending_user_position_debou
     monkeypatch.setattr(
         GuiController,
         "_configure_vrc_mic_receiver",
-        lambda self, *, enabled: asyncio.sleep(0),
+        lambda self, *, enabled, allow_avatar=True: asyncio.sleep(0),
     )
 
     controller = _make_controller(app=SimpleNamespace())
@@ -5512,7 +5512,7 @@ async def test_overlay_target_routing_apply_settings_stops_before_switching_runn
     monkeypatch.setattr(
         GuiController,
         "_configure_vrc_mic_receiver",
-        lambda self, *, enabled: asyncio.sleep(0),
+        lambda self, *, enabled, allow_avatar=True: asyncio.sleep(0),
     )
     # SteamVR is genuinely "running" for this test, so the active target really
     # is steamvr and switching to desktop is a real change (not just the
@@ -5555,7 +5555,7 @@ async def test_overlay_target_routing_apply_settings_stops_after_in_place_target
     monkeypatch.setattr(
         GuiController,
         "_configure_vrc_mic_receiver",
-        lambda self, *, enabled: asyncio.sleep(0),
+        lambda self, *, enabled, allow_avatar=True: asyncio.sleep(0),
     )
     # SteamVR is genuinely "running" for this test, so the active target really
     # is steamvr and switching to desktop is a real change.
@@ -6441,7 +6441,7 @@ async def test_stop_disables_vrc_receiver_before_teardown(
         _ = self
         events.append(("stt", enabled))
 
-    async def fake_configure_vrc_mic_receiver(self, *, enabled: bool) -> None:
+    async def fake_configure_vrc_mic_receiver(self, *, enabled: bool, allow_avatar: bool = True) -> None:
         _ = self
         events.append(("receiver", enabled))
 
@@ -6484,7 +6484,7 @@ async def test_stop_closes_peer_runtime_without_replacing_self_stt(
     monkeypatch.setattr(
         GuiController,
         "_configure_vrc_mic_receiver",
-        lambda self, enabled: asyncio.sleep(0),
+        lambda self, enabled, allow_avatar=True: asyncio.sleep(0),
     )
     monkeypatch.setattr(
         GuiController,
@@ -6511,7 +6511,7 @@ async def test_stop_closes_runtime_logging_service(monkeypatch: pytest.MonkeyPat
     monkeypatch.setattr(
         GuiController,
         "_configure_vrc_mic_receiver",
-        lambda self, enabled: asyncio.sleep(0),
+        lambda self, enabled, allow_avatar=True: asyncio.sleep(0),
     )
     monkeypatch.setattr(
         GuiController,
@@ -6586,7 +6586,7 @@ async def test_apply_settings_updates_vrc_gate_and_reconfigures_receiver(
     configure_calls: list[bool] = []
     monkeypatch.setattr(controller_module, "save_settings", lambda *_args, **_kwargs: None)
 
-    async def fake_configure_vrc_mic_receiver(self, *, enabled: bool) -> None:
+    async def fake_configure_vrc_mic_receiver(self, *, enabled: bool, allow_avatar: bool = True) -> None:
         _ = self
         configure_calls.append(enabled)
 
@@ -6618,7 +6618,7 @@ async def test_init_pipeline_initializes_vrc_state_and_gate(
 
     _patch_init_pipeline_dependencies(monkeypatch)
 
-    async def fake_configure_vrc_mic_receiver(self, *, enabled: bool) -> None:
+    async def fake_configure_vrc_mic_receiver(self, *, enabled: bool, allow_avatar: bool = True) -> None:
         _ = self
         configure_calls.append(enabled)
 
@@ -6652,7 +6652,7 @@ async def test_init_pipeline_reuses_existing_gate_and_updates_state(
 
     _patch_init_pipeline_dependencies(monkeypatch)
 
-    async def fake_configure_vrc_mic_receiver(self, *, enabled: bool) -> None:
+    async def fake_configure_vrc_mic_receiver(self, *, enabled: bool, allow_avatar: bool = True) -> None:
         _ = self
         _ = enabled
 
@@ -6684,7 +6684,7 @@ async def test_init_pipeline_configures_receiver_after_pipeline_init(
     created = _patch_init_pipeline_dependencies(monkeypatch)
     snapshots: list[tuple[bool, bool, bool, bool]] = []
 
-    async def fake_configure_vrc_mic_receiver(self, *, enabled: bool) -> None:
+    async def fake_configure_vrc_mic_receiver(self, *, enabled: bool, allow_avatar: bool = True) -> None:
         _ = self
         snapshots.append(
             (
@@ -10780,7 +10780,7 @@ async def test_apply_settings_restarts_stt_and_reports_locale_failure(
         _ = self
         switch_calls.append("stop_mic")
 
-    async def fake_configure_vrc_mic_receiver(self, *, enabled: bool) -> None:
+    async def fake_configure_vrc_mic_receiver(self, *, enabled: bool, allow_avatar: bool = True) -> None:
         receiver_calls.append(enabled)
 
     async def fake_rebuild_stt_provider(self) -> None:
@@ -10851,7 +10851,7 @@ async def test_apply_settings_rebuilds_stt_provider_when_runtime_changes_while_s
     settings.stt.custom_vocabulary_enabled = True
     settings.stt.custom_terms = {"ko": ["Puripuly"]}
 
-    async def fake_configure_vrc_mic_receiver(self, *, enabled: bool) -> None:
+    async def fake_configure_vrc_mic_receiver(self, *, enabled: bool, allow_avatar: bool = True) -> None:
         _ = (self, enabled)
 
     async def fake_ensure_stt_switch(self) -> None:
@@ -10924,7 +10924,7 @@ async def test_apply_settings_replaces_running_stt_provider_for_custom_vocabular
         _ = self
         calls.append("switch")
 
-    async def fake_configure_vrc_mic_receiver(self, *, enabled: bool) -> None:
+    async def fake_configure_vrc_mic_receiver(self, *, enabled: bool, allow_avatar: bool = True) -> None:
         _ = (self, enabled)
 
     monkeypatch.setattr(GuiController, "_save_settings", lambda self: None)
@@ -10969,7 +10969,7 @@ async def test_apply_settings_does_not_restart_stt_for_qwen_custom_vocabulary_ch
     settings.stt.custom_vocabulary_enabled = True
     settings.stt.custom_terms = {"ko": ["Puripuly", "VRChat"]}
 
-    async def fake_configure_vrc_mic_receiver(self, *, enabled: bool) -> None:
+    async def fake_configure_vrc_mic_receiver(self, *, enabled: bool, allow_avatar: bool = True) -> None:
         _ = (self, enabled)
 
     async def fake_replace_runtime_stt_provider(self) -> None:
@@ -11018,7 +11018,7 @@ async def test_apply_settings_restarts_stt_for_local_qwen_custom_vocabulary_chan
     settings.stt.custom_vocabulary_enabled = True
     settings.stt.custom_terms = {"ko": ["Puripuly", "VRChat"]}
 
-    async def fake_configure_vrc_mic_receiver(self, *, enabled: bool) -> None:
+    async def fake_configure_vrc_mic_receiver(self, *, enabled: bool, allow_avatar: bool = True) -> None:
         _ = (self, enabled)
 
     async def fake_replace_runtime_stt_provider(self) -> None:
@@ -11069,7 +11069,7 @@ async def test_apply_settings_skips_vrc_sync_when_setting_is_unchanged(
     settings.stt.custom_vocabulary_enabled = True
     settings.stt.custom_terms = {"ko": ["Puripuly"]}
 
-    async def fake_configure_vrc_mic_receiver(self, *, enabled: bool) -> None:
+    async def fake_configure_vrc_mic_receiver(self, *, enabled: bool, allow_avatar: bool = True) -> None:
         _ = self
         receiver_calls.append(enabled)
 
@@ -11411,43 +11411,6 @@ async def test_connect_openrouter_via_pkce_leaves_settings_unchanged_on_failure(
     assert ok is False
     assert controller.settings.openrouter.selection_alias == OpenRouterSelectionAlias.GEMMA4_MANAGED
     assert store.set_calls == []
-
-
-@pytest.mark.asyncio
-async def test_connect_openrouter_via_pkce_reopens_letter_context_on_letter_failure(
-    monkeypatch: pytest.MonkeyPatch,
-) -> None:
-    shown: list[str] = []
-    controller = _make_controller(
-        app=SimpleNamespace(
-            view_dashboard=DummyDashboard(),
-            view_settings=DummySettingsView(),
-            show_founder_letter_dialog=lambda: shown.append("shown"),
-        )
-    )
-    controller.settings = AppSettings()
-    target_settings = copy.deepcopy(controller.settings)
-    target_settings.openrouter.selection_alias = OpenRouterSelectionAlias.GEMMA4_BYOK
-    target_settings.openrouter.selected_source = OpenRouterCredentialSource.BYOK
-    target_settings.openrouter.llm_model = OpenRouterLLMModel.GEMMA_4_26B_A4B_IT
-
-    class DummyPKCEClient:
-        async def run_desktop_flow(self) -> OpenRouterPKCEExchangeResult:
-            raise RuntimeError("browser failed")
-
-    monkeypatch.setattr(
-        GuiController,
-        "_create_openrouter_pkce_client",
-        lambda self: DummyPKCEClient(),
-    )
-
-    ok = await controller.connect_openrouter_via_pkce(
-        target_settings=target_settings,
-        launch_source="letter",
-    )
-
-    assert ok is False
-    assert shown == ["shown"]
 
 
 @pytest.mark.asyncio
@@ -12539,7 +12502,7 @@ async def test_rebuild_pipeline_restarts_runtime_and_schedules_verify(
         _ = self
         events.append(("set_stt", enabled))
 
-    async def fake_configure_vrc_mic_receiver(self, *, enabled: bool) -> None:
+    async def fake_configure_vrc_mic_receiver(self, *, enabled: bool, allow_avatar: bool = True) -> None:
         events.append(("configure_receiver", enabled))
 
     async def fake_init_pipeline(self) -> None:
@@ -12600,7 +12563,7 @@ async def test_rebuild_pipeline_restores_stt_when_it_was_previously_enabled(
         self._stt_desired = enabled
         calls.append(enabled)
 
-    async def fake_configure_vrc_mic_receiver(self, *, enabled: bool) -> None:
+    async def fake_configure_vrc_mic_receiver(self, *, enabled: bool, allow_avatar: bool = True) -> None:
         _ = (self, enabled)
 
     async def fake_init_pipeline(self) -> None:

@@ -433,8 +433,6 @@ def test_translator_app_mounts_debug_preview_when_enabled(
     assert set(seen["callbacks"]) == {
         "on_brake_notice",
         "on_revoked_notice",
-        "on_github_star_snackbar",
-        "on_founder_letter",
         "on_pkce_failure",
         "on_discord_auth",
         "on_discord_callback_page",
@@ -451,9 +449,6 @@ def test_translator_app_mounts_debug_preview_when_enabled(
     callback_page = seen["callbacks"]["on_discord_callback_page"]
     assert getattr(callback_page, "__self__", None) is app
     assert getattr(callback_page, "__func__", None) is TranslatorApp._preview_discord_callback_page
-    github_star = seen["callbacks"]["on_github_star_snackbar"]
-    assert getattr(github_star, "__self__", None) is app
-    assert getattr(github_star, "__func__", None) is TranslatorApp._preview_github_star_snackbar
     local_qwen_modal = seen["callbacks"]["on_local_qwen_hallucination_modal"]
     assert getattr(local_qwen_modal, "__self__", None) is app
     assert (
@@ -1069,88 +1064,6 @@ def test_managed_release_ko_snackbar_copy_matches_requested_wording() -> None:
         )
     finally:
         i18n_module.set_locale(previous_locale)
-
-
-def test_debug_preview_founder_letter_opens_dialog_with_readme_action(
-    monkeypatch: pytest.MonkeyPatch,
-) -> None:
-    app = TranslatorApp.__new__(TranslatorApp)
-    app.page = DummyPage()
-    captured: dict[str, object] = {}
-    opened_urls: list[str] = []
-    previous_locale = i18n_module.get_locale()
-
-    def fail_save(*_args, **_kwargs):
-        pytest.fail("debug founder-letter preview must not save settings")
-
-    app.controller = SimpleNamespace(settings=AppSettings(), _save_settings=fail_save)
-    monkeypatch.setattr(
-        app,
-        "_on_request_openrouter_pkce",
-        lambda *_args, **_kwargs: pytest.fail("debug founder-letter preview must not launch PKCE"),
-        raising=False,
-    )
-    monkeypatch.setattr(
-        app_module.webbrowser,
-        "open",
-        lambda url: opened_urls.append(url),
-    )
-
-    class FakeFounderLetterDialog:
-        def __init__(self, page, *, on_readme=None, on_connect=None, on_contact=None):
-            captured["page"] = page
-            captured["on_readme"] = on_readme
-            captured["on_connect"] = on_connect
-            captured["on_contact"] = on_contact
-
-        def open(self) -> None:
-            captured["opened"] = True
-
-    monkeypatch.setattr(app_module, "FounderLetterDialog", FakeFounderLetterDialog)
-
-    try:
-        i18n_module.set_locale("ko")
-
-        app._preview_founder_letter()
-
-        assert captured["page"] is app.page
-        assert captured["opened"] is True
-        assert callable(captured["on_readme"])
-        assert captured["on_connect"] is None
-        assert captured["on_contact"] is None
-        assert opened_urls == []
-        captured["on_readme"]()
-    finally:
-        i18n_module.set_locale(previous_locale)
-
-    assert app._founder_letter_dialog is not None
-    assert opened_urls == [
-        "https://github.com/kapitalismho/PuriPuly-heart/blob/main/README.ko.md#자신의-api-키-사용하기"
-    ]
-
-
-def test_founder_readme_url_for_locale_uses_origin_readme_pages() -> None:
-    resolver = getattr(app_module, "founder_readme_url_for_locale", None)
-
-    assert callable(resolver)
-    assert resolver("ko") == (
-        "https://github.com/kapitalismho/PuriPuly-heart/blob/main/README.ko.md#자신의-api-키-사용하기"
-    )
-    assert resolver("zh-CN") == (
-        "https://github.com/kapitalismho/PuriPuly-heart/blob/main/README.zh-CN.md#使用您自己的-api-密钥"
-    )
-    assert resolver("ja") == (
-        "https://github.com/kapitalismho/PuriPuly-heart/blob/main/README.ja.md#自分のapiキーを使う"
-    )
-    assert resolver("en") == (
-        "https://github.com/kapitalismho/PuriPuly-heart/blob/main/README.md#using-your-own-api-keys"
-    )
-    assert resolver("fr") == (
-        "https://github.com/kapitalismho/PuriPuly-heart/blob/main/README.md#using-your-own-api-keys"
-    )
-    assert resolver(None) == (
-        "https://github.com/kapitalismho/PuriPuly-heart/blob/main/README.md#using-your-own-api-keys"
-    )
 
 
 def test_debug_preview_pkce_failure_only_shows_failure_snackbar(
@@ -3091,107 +3004,6 @@ def test_show_snackbar_opens_page_snackbar() -> None:
     assert len(app.page.opened) == 1
     snackbar = app.page.opened[0]
     assert snackbar.duration == 1234
-
-
-def test_show_founder_letter_dialog_opens_with_locale_readme_action(
-    monkeypatch: pytest.MonkeyPatch,
-) -> None:
-    app = TranslatorApp.__new__(TranslatorApp)
-    app.page = DummyPage()
-    settings = AppSettings()
-    settings.provider.llm = LLMProviderName.OPENROUTER
-    settings.openrouter.selected_source = OpenRouterCredentialSource.MANAGED
-    settings.openrouter.selection_alias = OpenRouterSelectionAlias.QWEN35_FLASH_MANAGED
-    settings.openrouter.llm_model = OpenRouterLLMModel.QWEN_35_FLASH_02_23
-    app.controller = SimpleNamespace(settings=settings)
-
-    captured: dict[str, object] = {}
-    pkce_calls: list[tuple[AppSettings, str]] = []
-    opened_urls: list[str] = []
-    previous_locale = i18n_module.get_locale()
-
-    class FakeFounderLetterDialog:
-        def __init__(self, page, *, on_readme=None, on_connect=None, on_contact=None):
-            captured["page"] = page
-            captured["on_readme"] = on_readme
-            captured["on_connect"] = on_connect
-            captured["on_contact"] = on_contact
-
-        def open(self) -> None:
-            captured["opened"] = True
-
-    monkeypatch.setattr(app_module, "FounderLetterDialog", FakeFounderLetterDialog)
-    monkeypatch.setattr(app_module.webbrowser, "open", lambda url: opened_urls.append(url))
-    monkeypatch.setattr(
-        app,
-        "_on_request_openrouter_pkce",
-        lambda target_settings, *, launch_source="settings": pkce_calls.append(
-            (target_settings, launch_source)
-        ),
-    )
-
-    try:
-        i18n_module.set_locale("ko")
-
-        app.show_founder_letter_dialog()
-
-        assert captured["page"] is app.page
-        assert captured["opened"] is True
-        assert callable(captured["on_readme"])
-        assert captured["on_connect"] is None
-        assert captured["on_contact"] is None
-        captured["on_readme"]()
-    finally:
-        i18n_module.set_locale(previous_locale)
-
-    assert pkce_calls == []
-    assert opened_urls == [
-        "https://github.com/kapitalismho/PuriPuly-heart/blob/main/README.ko.md#자신의-api-키-사용하기"
-    ]
-
-
-def test_show_founder_letter_dialog_does_not_prepare_byok_alias_when_opened(
-    monkeypatch: pytest.MonkeyPatch,
-) -> None:
-    app = TranslatorApp.__new__(TranslatorApp)
-    app.page = DummyPage()
-    settings = AppSettings()
-    settings.provider.llm = LLMProviderName.OPENROUTER
-    settings.openrouter.selected_source = OpenRouterCredentialSource.MANAGED
-    settings.openrouter.selection_alias = None
-    settings.openrouter.llm_model = OpenRouterLLMModel.GEMMA_4_26B_A4B_IT
-    app.controller = SimpleNamespace(settings=settings)
-
-    captured: dict[str, object] = {}
-    pkce_calls: list[tuple[AppSettings, str]] = []
-
-    class FakeFounderLetterDialog:
-        def __init__(self, _page, *, on_readme=None, on_connect=None, on_contact=None):
-            captured["page"] = _page
-            captured["on_readme"] = on_readme
-            captured["on_connect"] = on_connect
-            captured["on_contact"] = on_contact
-
-        def open(self) -> None:
-            captured["opened"] = True
-
-    monkeypatch.setattr(app_module, "FounderLetterDialog", FakeFounderLetterDialog)
-    monkeypatch.setattr(
-        app,
-        "_on_request_openrouter_pkce",
-        lambda target_settings, *, launch_source="settings": pkce_calls.append(
-            (target_settings, launch_source)
-        ),
-    )
-
-    app.show_founder_letter_dialog()
-
-    assert captured["opened"] is True
-    assert captured["page"] is app.page
-    assert callable(captured["on_readme"])
-    assert captured["on_connect"] is None
-    assert captured["on_contact"] is None
-    assert pkce_calls == []
 
 
 @pytest.mark.asyncio

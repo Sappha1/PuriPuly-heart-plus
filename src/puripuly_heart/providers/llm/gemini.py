@@ -11,7 +11,17 @@ from puripuly_heart.providers.llm.messages import build_translation_user_message
 
 logger = logging.getLogger(__name__)
 
-GEMINI_31_FLASH_LITE_GA_MODEL = "gemini-3.1-flash-lite"
+GEMINI_FLASH_LITE_MODEL = "gemini-3.5-flash-lite"
+# older name kept for callers; 3.1 Flash-Lite shuts down 2027-05-07
+GEMINI_31_FLASH_LITE_GA_MODEL = GEMINI_FLASH_LITE_MODEL
+
+# Gemini 3.8 Flash accepts low/medium/high thinking only; the Flash-Lite
+# models go down to minimal, the fastest for live translation.
+_THINKING_LEVEL_BY_MODEL = {"gemini-3.8-flash": "LOW"}
+
+
+def thinking_level_for(model: str) -> str:
+    return _THINKING_LEVEL_BY_MODEL.get(_normalized_model_id(model), "MINIMAL")
 
 
 def _normalized_model_id(value: object) -> str:
@@ -230,7 +240,9 @@ class GoogleGenaiGeminiClient:
             contents=user_message,
             config=types.GenerateContentConfig(
                 system_instruction=formatted_system_prompt,
-                thinking_config=types.ThinkingConfig(thinking_level=types.ThinkingLevel.MINIMAL),
+                thinking_config=types.ThinkingConfig(
+                    thinking_level=getattr(types.ThinkingLevel, thinking_level_for(self.model))
+                ),
                 automatic_function_calling=types.AutomaticFunctionCallingConfig(disable=True),
             ),
         )

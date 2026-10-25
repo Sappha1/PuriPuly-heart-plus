@@ -5,6 +5,7 @@ import logging
 import time
 from collections import OrderedDict
 from collections.abc import Awaitable, Callable
+import dataclasses
 from dataclasses import dataclass, field
 from typing import Protocol
 from uuid import UUID
@@ -98,6 +99,8 @@ class OverlayPresenter(OverlaySink):
     )
     _revision: int = field(init=False, default=0)
     _appearance_seq: int = field(init=False, default=0)
+    # utterance -> peer voice color slot (from PeerTranscriptFinal)
+    _peer_speakers: dict = field(init=False, default_factory=dict)
     _presentation_state: OverlayPresentationState = field(init=False)
     _last_visible_window_signature: tuple[object, ...] | None = field(init=False, default=None)
     _peer_presentation_refresh_burst_task: asyncio.Task[None] | None = field(
@@ -382,6 +385,14 @@ class OverlayPresenter(OverlaySink):
     def detach_bridge(self) -> None:
         self.bridge = None
 
+    def _with_speaker(self, key, block: OverlayPresentationBlock) -> OverlayPresentationBlock:
+        if block.channel != "peer" or block.speaker_index is not None:
+            return block
+        index = self._peer_speakers.get(key[1]) if isinstance(key, tuple) else None
+        if index is None:
+            return block
+        return dataclasses.replace(block, speaker_index=index)
+
     def snapshot(self) -> OverlayPresentationSnapshot:
         return self._presentation_state.snapshot()
 
@@ -396,6 +407,7 @@ class OverlayPresenter(OverlaySink):
         self._retired_preview_self_seqs.clear()
         self._live_self_turn_key = None
         self._live_peer_turn_key = None
+        self._peer_speakers.clear()
         self._revision = 0
         self._appearance_seq = 0
         self._last_visible_window_signature = None
@@ -559,6 +571,10 @@ class OverlayPresenter(OverlaySink):
             # source-only active speech.
             return self._apply_peer_active_update(event, now=now)
         if isinstance(event, PeerTranscriptFinal):
+            if event.speaker_index is not None and event.utterance_id is not None:
+                self._peer_speakers[event.utterance_id] = int(event.speaker_index)
+                while len(self._peer_speakers) > 64:
+                    self._peer_speakers.pop(next(iter(self._peer_speakers)))
             return self._apply_peer_finalized_update(event, now=now)
         if isinstance(event, (TranslationStreamUpdate, TranslationFinal)):
             return self._apply_peer_translation_update(event, now=now)
@@ -783,6 +799,10 @@ class OverlayPresenter(OverlaySink):
             retained_hidden=selection.retained_hidden,
         )
         rendered_entries = selection.rendered_entries
+        if self._peer_speakers:
+            rendered_entries = [
+                (key, self._with_speaker(key, block)) for key, block in rendered_entries
+            ]
         next_blocks = [block for _, block in rendered_entries]
         next_calibration = _calibration_from_overlay(self.calibration)
         previous_rendered_signature = self._presentation_state.rendered_blocks_signature(

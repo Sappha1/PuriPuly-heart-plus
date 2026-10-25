@@ -222,7 +222,7 @@ async def test_deepseek_verify_api_key_uses_chat_completion_probe(monkeypatch) -
     assert fake_client.last_request["headers"]["Authorization"] == "Bearer secret"
     body = fake_client.last_request["json"]
     assert body == {
-        "model": "deepseek-v4-flash",
+        "model": "deepseek-flash",
         "messages": [{"role": "user", "content": "ping"}],
         "thinking": {"type": "disabled"},
         "max_tokens": 1,

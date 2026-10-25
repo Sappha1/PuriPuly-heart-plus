@@ -261,6 +261,7 @@ class Daemon:
         self._recv_baselined = False          # first sweep only records, never emits
         self._seen_keys: set = set()          # (acct, ts, from, text) already emitted, for dedup
         self._emitted: dict = {}              # acct -> (ts, ordinal) high-water mark: never re-emit at/below
+        self._rx_sig: dict = {}               # acct -> {(ts, ord): reactions} last sent to the app
         self._dead_hits = 0                   # r635: consecutive "browser closed" fetch errors
         self._seen_stalls = 0                 # r656: SteamPage.stall_count already handled
         self._last_stall_fix = -1e9           # r656: monotonic time of the last stall reload
@@ -482,6 +483,67 @@ class Daemon:
     def _avatar(self, acct: int) -> str:
         return self.convos.get(acct, {}).get("avatar", "")
 
+    @staticmethod
+    def _shape_rx(raw) -> list[dict]:
+        """Page reaction list -> [{type, name, count, mine}], stable order."""
+        out: list[dict] = []
+        for r in raw or []:
+            if not isinstance(r, dict):
+                continue
+            try:
+                count = int(r.get("n") or 0)
+            except (TypeError, ValueError):
+                continue
+            name = str(r.get("r") or "").strip()
+            if count <= 0 or not name:
+                continue
+            out.append({"type": int(r.get("t") or 1), "name": name,
+                        "count": count, "mine": bool(r.get("me"))})
+        out.sort(key=lambda x: (x["type"], x["name"]))
+        return out
+
+    async def _sync_reactions(self, acct: int) -> None:
+        """Reactions land on OLD messages, which the live poll never re-reads
+        (it only fetches past its watermark) and Steam does not push them to
+        this background session reliably. Re-read the open chat's recent
+        window from the server and send only what changed."""
+        now = int(time.time())
+        try:
+            msgs = await self.steam.fetch_messages_range(acct, now - 6 * 3600, now) or []
+        except Exception:
+            return
+        if self.active != acct:
+            return
+        sig: dict = {}
+        about: dict = {}                  # (ts, ord) -> (from_me, text) for matching
+        for m in msgs:
+            rx = self._shape_rx(m.get("rx"))
+            key = (_norm_ts(m.get("ts")), int(m.get("ordinal") or 0))
+            with contextlib.suppress(Exception):
+                about[key] = (m.get("from") == self.own,
+                              parse_bbcode(m.get("text") or "")[0][:300])
+            if rx:
+                sig[key] = rx
+        prev = self._rx_sig.get(acct)
+        self._rx_sig[acct] = sig
+        if prev is None:
+            changed = dict(sig)
+            removed: list = []
+        else:
+            changed = {k: v for k, v in sig.items() if prev.get(k) != v}
+            removed = [k for k in prev if k not in sig]
+        def _item(k, reactions) -> dict:
+            item = {"ts": k[0], "ord": k[1], "reactions": reactions}
+            if k in about:
+                item["from_me"], item["text"] = about[k]
+            return item
+
+        items = [_item(k, v) for k, v in changed.items()]
+        items += [_item(k, []) for k in removed]
+        if items:
+            _diag(f"REACTIONS acct={acct} changed={len(items)}")
+            await self.emit({"ev": "reactions", "acct": acct, "items": items})
+
     def _shape(self, m: dict, acct: int | None = None) -> dict:
         """Raw store message -> the app-facing MSG shape (parsed + avatars)."""
         from_me = (m["from"] == self.own)
@@ -499,10 +561,12 @@ class Daemon:
             "ord": int(m.get("ordinal") or 0),
             "name": (self.own_name or "You") if from_me else self._name(acct),
             "avatar": self.own_avatar if from_me else self._avatar(acct),
+            "reactions": self._shape_rx(m.get("rx")),
         }
 
     async def do_open(self, acct: int) -> None:
         self._typing = False
+        self._rx_sig.pop(acct, None)      # the next reaction sync re-sends the full set
         self._hot_at = time.monotonic()   # r636: an open snaps to the fast cadence
         ok = await self.steam.open_conversation(acct)
         # One-shot recon for image-send: dump the chat's file-upload internals to
@@ -949,6 +1013,9 @@ class Daemon:
             # (2.6 s) while the friend is typing or within 120 s of the last
             # inbound / own send / open, else every 4 ticks (5.2 s); typing,
             # inbound, send and open all snap it back to fast.
+            if ticks % 8 == 5:
+                with contextlib.suppress(Exception):
+                    await self._sync_reactions(self.active)
             _fast = self._typing or (time.monotonic() - self._hot_at) < 120.0
             if ticks % (2 if _fast else 4) != 0:
                 continue

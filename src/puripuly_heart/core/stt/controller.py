@@ -25,6 +25,9 @@ _LOCAL_SHERPA_PROVIDERS = frozenset(
         STTProviderName.LOCAL_PARAKEET_JAPANESE,
     }
 )
+# providers that answer EVERY speech end with exactly one final (empty when
+# nothing was said), so an empty one only releases its pending id
+_EMPTY_FINAL_PROVIDERS = _LOCAL_SHERPA_PROVIDERS | {STTProviderName.CUSTOM_STT}
 
 from puripuly_heart.core.audio.diagnostics import AudioFaultProfile, normalize_audio_fault_profile
 from puripuly_heart.core.audio.format import float32_to_pcm16le_bytes
@@ -775,7 +778,7 @@ class ManagedSTTProvider:
                 if (
                     ev.is_final
                     and not (ev.text or "").strip()
-                    and self.stt_provider_name in _LOCAL_SHERPA_PROVIDERS
+                    and self.stt_provider_name in _EMPTY_FINAL_PROVIDERS
                 ):
                     # r635: the local sherpa session (Qwen and both Parakeets)
                     # reports an empty decode as an empty final so the
@@ -788,6 +791,10 @@ class ManagedSTTProvider:
                         fallback_level=logging.DEBUG,
                     )
                     continue
+                if not ev.is_final and self._should_suppress_final_transcript(
+                    ev.text, audio_ms=getattr(ev, "audio_ms", None)
+                ):
+                    continue  # a garbage preview is just skipped
                 if ev.is_final and self._should_suppress_final_transcript(
                     ev.text, audio_ms=getattr(ev, "audio_ms", None)
                 ):

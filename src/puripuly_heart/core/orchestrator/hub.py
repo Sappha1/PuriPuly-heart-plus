@@ -99,6 +99,17 @@ _LATENCY_SUMMARY_OUTPUT_STAGES = {"self_chatbox_enqueue", "peer_overlay_first_em
 
 
 @dataclass(slots=True)
+class _ChatboxPreview:
+    """Live chatbox preview state for one SELF utterance still being spoken."""
+
+    latest_text: str = ""
+    translated_source: str = ""
+    last_sent_text: str = ""
+    task: asyncio.Task[None] | None = None
+    closed: bool = False
+
+
+@dataclass(slots=True)
 class _LatencyTimeline:
     channel: ChannelId
     stage_times: dict[str, float] = field(default_factory=dict)
@@ -126,6 +137,10 @@ class ClientHub:
     chatbox_include_source: bool = True
     # "Reading only" chatbox format: send just the romanization (no original, no translation).
     chatbox_reading_only: bool = False
+    # Live chatbox preview: translate SELF partial transcripts and show them in
+    # the chatbox while the user is still talking (marked with a trailing
+    # " ..."); the final translation replaces it as usual.
+    chatbox_live_preview: bool = True
     send_pinyin: bool = False
     send_romaji: bool = False
     send_latin: bool = False
@@ -181,8 +196,8 @@ class ClientHub:
     # Context memory settings
     context_time_window_s: float = 30.0  # Only include entries within this time window
     context_max_entries: int = 3  # Maximum number of context entries to include
-    integrated_context_time_window_s: float = 40.0
-    integrated_context_max_entries: int = 4
+    integrated_context_time_window_s: float = 60.0
+    integrated_context_max_entries: int = 5
     low_latency_mode: bool = False
     low_latency_merge_gap_ms: int = 600
     low_latency_spec_retry_max: int = 1
@@ -206,6 +221,8 @@ class ClientHub:
     _last_promo_time: float | None = None
     _promo_eligible: bool = False
     _merge_buffer: _MergeBuffer | None = None
+    _chatbox_previews: dict[UUID, _ChatboxPreview] = field(default_factory=dict)
+    _last_preview_send_at: float | None = None
     self_runtime: ChannelRuntime = field(init=False)
     peer_runtime: ChannelRuntime = field(init=False)
     _peer_turn_parent_ids: dict[UUID, UUID] = field(default_factory=dict)
@@ -793,6 +810,8 @@ class ClientHub:
             await asyncio.gather(self._osc_flush_task, return_exceptions=True)
             self._osc_flush_task = None
 
+        for utterance_id in list(self._chatbox_previews):
+            self._close_chatbox_preview(utterance_id)
         await self._stop_stt_event_loop()
         await self.reset_overlay_preview()
         await self._reset_stt_runtime_state()
@@ -1131,6 +1150,7 @@ class ClientHub:
                 fallback_level=logging.DEBUG,
             )
             await self._handle_transcript(event.transcript, is_final=False, source="Mic")
+            self._maybe_preview_self_partial(event.transcript)
             return
 
         if isinstance(event, STTFinalEvent):
@@ -1211,6 +1231,8 @@ class ClientHub:
         self, transcript: Transcript, *, is_final: bool, source: str | None
     ) -> None:
         runtime = self._runtime_for_channel(transcript.channel)
+        if is_final and runtime.channel == "self":
+            self._close_chatbox_preview(transcript.utterance_id)
         bundle = self.get_or_create_bundle(transcript.utterance_id, channel=transcript.channel)
         bundle.with_transcript(transcript)
         self._remember_source(transcript.utterance_id, source, channel=transcript.channel)
@@ -4074,6 +4096,23 @@ class ClientHub:
         translation_text: str | None,
         precomputed_translit: str | None = None,
     ) -> None:
+        merged = self._format_chatbox_text(
+            utterance_id,
+            transcript_text=transcript_text,
+            translation_text=translation_text,
+            precomputed_translit=precomputed_translit,
+        )
+        msg = self._publish_chatbox_text(utterance_id, merged)
+        await self._emit_osc_sent(msg)
+
+    def _format_chatbox_text(
+        self,
+        utterance_id: UUID,
+        *,
+        transcript_text: str,
+        translation_text: str | None,
+        precomputed_translit: str | None = None,
+    ) -> str:
         # Compute pinyin/romaji for primary language only (first segment before any \n from extras)
         translit = ""
         if translation_text is not None and (self.send_pinyin or self.send_romaji or self.send_latin):
@@ -4120,7 +4159,9 @@ class ClientHub:
                 merged = f"{translit}{_translit_sep}{translation_text}"
             else:
                 merged = translation_text
+        return merged
 
+    def _publish_chatbox_text(self, utterance_id: UUID, merged: str) -> OSCMessage:
         msg = OSCMessage(utterance_id=utterance_id, text=merged, created_at=self.clock.now())
         runtime = self._runtime_for_utterance(utterance_id)
 
@@ -4144,7 +4185,11 @@ class ClientHub:
 
         # Stop typing indicator after message is sent
         self.osc.send_typing(False)
+        return msg
 
+    async def _emit_osc_sent(self, msg: OSCMessage) -> None:
+        utterance_id = msg.utterance_id
+        runtime = self._runtime_for_utterance(utterance_id)
         await self.ui_events.put(
             UIEvent(
                 type=UIEventType.OSC_SENT,
@@ -4155,6 +4200,100 @@ class ClientHub:
             )
         )
         self._clear_latency_timeline(channel=runtime.channel, utterance_id=utterance_id)
+
+    # ── live chatbox preview ─────────────────────────────────────────────
+    _PREVIEW_MIN_CHARS = 4
+    # VRChat drops chatbox updates that come faster than about this
+    _PREVIEW_MIN_INTERVAL_S = 1.8
+    _PREVIEW_MARKER = " ..."
+    _PREVIEW_KEEP = 4
+
+    def _maybe_preview_self_partial(self, transcript: Transcript) -> None:
+        if not self.chatbox_live_preview or self.llm is None or self.low_latency_mode:
+            return
+        runtime = self.self_runtime
+        if not self._translation_enabled_for_runtime(runtime):
+            return
+        if not self._should_publish_to_chatbox(runtime):
+            return
+        text = (transcript.text or "").strip()
+        if len(text) < self._PREVIEW_MIN_CHARS or self._drop_as_filler(text):
+            return
+        utterance_id = transcript.utterance_id
+        state = self._chatbox_previews.get(utterance_id)
+        if state is None:
+            state = _ChatboxPreview()
+            self._chatbox_previews[utterance_id] = state
+            while len(self._chatbox_previews) > self._PREVIEW_KEEP:
+                oldest = next(iter(self._chatbox_previews))
+                self._close_chatbox_preview(oldest)
+        if state.closed:
+            return
+        state.latest_text = text
+        if state.task is None or state.task.done():
+            state.task = asyncio.create_task(self._run_chatbox_preview(utterance_id, state))
+
+    def _close_chatbox_preview(self, utterance_id: UUID) -> None:
+        state = self._chatbox_previews.pop(utterance_id, None)
+        if state is None:
+            return
+        state.closed = True
+        task = state.task
+        if task is not None and not task.done():
+            task.cancel()
+
+    async def _run_chatbox_preview(self, utterance_id: UUID, state: _ChatboxPreview) -> None:
+        """Translate the newest partial and show it, at most once per
+        _PREVIEW_MIN_INTERVAL_S, until the utterance's final arrives."""
+        try:
+            while not state.closed and state.latest_text != state.translated_source:
+                if self._last_preview_send_at is not None:
+                    wait_s = (
+                        self._last_preview_send_at
+                        + self._PREVIEW_MIN_INTERVAL_S
+                        - self.clock.now()
+                    )
+                    if wait_s > 0:
+                        await asyncio.sleep(wait_s)
+                        continue  # newer speech may have arrived meanwhile
+                source_text = state.latest_text
+                translation = await self._translate_text(
+                    utterance_id,
+                    source_text,
+                    runtime=self.self_runtime,
+                    record_latency=False,
+                )
+                if state.closed:
+                    return
+                state.translated_source = source_text
+                translated = (translation.text or "").strip()
+                if not translated:
+                    continue
+                merged = self._format_chatbox_text(
+                    utterance_id,
+                    transcript_text=source_text,
+                    translation_text=translated,
+                )
+                if merged == state.last_sent_text:
+                    continue
+                if self.osc.send_preview(merged + self._PREVIEW_MARKER):
+                    state.last_sent_text = merged
+                    self._last_preview_send_at = self.clock.now()
+                    self._emit_detailed(
+                        "[Hub] Chatbox preview sent: id=%s chars=%s",
+                        str(utterance_id)[:8],
+                        len(merged),
+                        fallback_level=logging.DEBUG,
+                    )
+        except asyncio.CancelledError:
+            pass  # the final arrived; it replaces the preview
+        except Exception as exc:
+            # previews are best effort - the final translation reports errors
+            self._emit_detailed(
+                "[Hub] Chatbox preview skipped: %s",
+                exc,
+                fallback_level=logging.DEBUG,
+            )
 
     def enqueue_peer_translation_disclosure(self, text: str) -> None:
         msg = OSCMessage(utterance_id=uuid4(), text=text, created_at=self.clock.now())

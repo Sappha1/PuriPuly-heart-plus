@@ -47,7 +47,6 @@ class DebugPreviewPanel(ft.Container):
         *,
         on_brake_notice: Callable[[], None],
         on_revoked_notice: Callable[[], None],
-        on_founder_letter: Callable[[], None],
         on_pkce_failure: Callable[[], None],
         on_discord_auth: Callable[[], None],
         on_discord_callback_page: Callable[[], None],
@@ -57,17 +56,10 @@ class DebugPreviewPanel(ft.Container):
         on_capture_fault_cycle: Callable[[], None],
         on_stt_fault_cycle: Callable[[], None],
         on_audio_fault_clear: Callable[[], None],
-        on_github_star_snackbar: Callable[[], None],
     ) -> None:
         self._actions = (
             _PreviewAction("brake_notice", "debug_preview.brake_notice", on_brake_notice),
             _PreviewAction("revoked_notice", "debug_preview.revoked_notice", on_revoked_notice),
-            _PreviewAction(
-                "github_star_snackbar",
-                "debug_preview.github_star_snackbar",
-                on_github_star_snackbar,
-            ),
-            _PreviewAction("founder_letter", "debug_preview.founder_letter", on_founder_letter),
             _PreviewAction("pkce_failure", "debug_preview.pkce_failure", on_pkce_failure),
             _PreviewAction("discord_auth", "debug_preview.discord_auth", on_discord_auth),
             _PreviewAction(

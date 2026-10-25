@@ -154,7 +154,7 @@ class DeepSeekClient(Protocol):
 class DeepSeekLLMProvider:
     api_key: str
     base_url: str = "https://api.deepseek.com"
-    model: str = "deepseek-v4-flash"
+    model: str = "deepseek-flash"
     max_tokens: int = 100
     timeout: float = 30.0
     runtime_logging: SessionRuntimeLoggingService | None = None
@@ -203,7 +203,7 @@ class DeepSeekLLMProvider:
     async def verify_api_key(
         api_key: str,
         base_url: str = "https://api.deepseek.com",
-        model: str = "deepseek-v4-flash",
+        model: str = "deepseek-flash",
     ) -> bool:
         if not api_key:
             return False

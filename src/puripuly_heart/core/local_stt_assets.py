@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import hashlib
 import json
+import os
 from dataclasses import dataclass
 from importlib import resources
 from pathlib import Path
@@ -45,14 +46,20 @@ class LocalSTTAssetSource:
     revision: str
     repo_id: str = ""
     download_url_template: str = ""
+    # older revisions an existing install may still carry: accepted as
+    # ready (the model keeps working) and repaired in place in the background
+    accepted_revisions: tuple[str, ...] = ()
 
     def to_dict(self) -> dict[str, object]:
-        return {
+        payload: dict[str, object] = {
             "name": self.name,
             "revision": self.revision,
             "repo_id": self.repo_id,
             "download_url_template": self.download_url_template,
         }
+        if self.accepted_revisions:
+            payload["accepted_revisions"] = list(self.accepted_revisions)
+        return payload
 
     @classmethod
     def from_dict(cls, name: str, data: dict[str, object]) -> "LocalSTTAssetSource":
@@ -61,6 +68,9 @@ class LocalSTTAssetSource:
             revision=str(data["revision"]),
             repo_id=str(data.get("repo_id", "")),
             download_url_template=str(data.get("download_url_template", "")),
+            accepted_revisions=tuple(
+                str(rev) for rev in data.get("accepted_revisions") or () if str(rev).strip()
+            ),
         )
 
 
@@ -75,6 +85,9 @@ class LocalSTTAssetFile:
     # source it came from, local validation accepts any known-good sha
     source_sha256_overrides: dict[str, str] | None = None
     source_size_overrides: dict[str, int] | None = None
+    # checksums of superseded versions still on disk in older installs;
+    # accepted by validation, never by a fresh download
+    legacy_sha256: tuple[str, ...] = ()
 
     def to_dict(self) -> dict[str, object]:
         payload: dict[str, object] = {
@@ -89,6 +102,8 @@ class LocalSTTAssetFile:
             payload["source_sha256_overrides"] = dict(self.source_sha256_overrides)
         if self.source_size_overrides:
             payload["source_size_overrides"] = dict(self.source_size_overrides)
+        if self.legacy_sha256:
+            payload["legacy_sha256"] = list(self.legacy_sha256)
         return payload
 
     @classmethod
@@ -122,6 +137,9 @@ class LocalSTTAssetFile:
                 {k: int(v) for k, v in data["source_size_overrides"].items()}
                 if isinstance(data.get("source_size_overrides"), dict)
                 else None),
+            legacy_sha256=tuple(
+                str(sha).lower() for sha in data.get("legacy_sha256") or () if str(sha).strip()
+            ),
         )
 
     def remote_path_for_source(self, source_name: str) -> str:
@@ -145,6 +163,7 @@ class LocalSTTAssetFile:
         shas = {self.sha256}
         if self.source_sha256_overrides:
             shas.update(self.source_sha256_overrides.values())
+        shas.update(self.legacy_sha256)
         return frozenset(shas)
 
 
@@ -332,9 +351,77 @@ def _load_installed_local_stt_manifest(
     expected_source = manifest.sources.get(installed.selected_source)
     if expected_source is None:
         raise LocalSTTManifestInvalidError("installed manifest selected_source is unsupported")
-    if installed.selected_revision != expected_source.revision:
+    if (
+        installed.selected_revision != expected_source.revision
+        and installed.selected_revision not in expected_source.accepted_revisions
+    ):
         raise LocalSTTManifestInvalidError("stale installed manifest revision")
     return installed
+
+
+def local_stt_install_is_outdated(
+    installed: InstalledLocalSTTManifest, manifest: LocalSTTAssetManifest
+) -> bool:
+    """True for an accepted older revision that should be repaired."""
+    source = manifest.sources.get(installed.selected_source)
+    return source is not None and installed.selected_revision != source.revision
+
+
+def repair_file_path(path: Path) -> Path:
+    """A verified replacement downloaded while the model was in use."""
+    return path.with_name(path.name + ".repair")
+
+
+def apply_pending_local_stt_repairs(
+    model_dir: Path, *, manifest: LocalSTTAssetManifest
+) -> bool:
+    """Swap in verified replacement files and, once every file matches the
+    current revision, record that revision. Returns True when the install
+    was brought up to date. A file still held open by a loaded model stays
+    pending and is swapped on a later call (next start at the latest)."""
+    try:
+        installed = _load_installed_local_stt_manifest(model_dir, manifest=manifest)
+    except LocalSTTAssetError:
+        return False
+    if not local_stt_install_is_outdated(installed, manifest):
+        return False
+    source = manifest.sources[installed.selected_source]
+    still_pending = False
+    for asset in manifest.files:
+        path = model_dir / asset.relative_path
+        repair = repair_file_path(path)
+        if not repair.exists():
+            continue
+        expected_size = asset.size_for_source(source.name)
+        if expected_size is not None and repair.stat().st_size != expected_size:
+            repair.unlink(missing_ok=True)
+            continue
+        try:
+            os.replace(repair, path)
+        except OSError:
+            still_pending = True
+    if still_pending:
+        return False
+    for asset in manifest.files:
+        expected_size = asset.size_for_source(source.name)
+        path = model_dir / asset.relative_path
+        if expected_size is not None and (
+            not path.exists() or path.stat().st_size != expected_size
+        ):
+            return False
+    updated = InstalledLocalSTTManifest(
+        manifest_version=installed.manifest_version,
+        model_id=installed.model_id,
+        engine=installed.engine,
+        install_dirname=installed.install_dirname,
+        selected_source=installed.selected_source,
+        selected_revision=source.revision,
+    )
+    manifest_path = default_local_stt_installed_manifest_path(model_dir)
+    tmp = manifest_path.with_name(manifest_path.name + ".tmp")
+    tmp.write_text(json.dumps(updated.to_dict(), indent=2), encoding="utf-8")
+    os.replace(tmp, manifest_path)
+    return True
 
 
 def _sha256_file(path: Path) -> str:
@@ -424,6 +511,10 @@ def inspect_local_stt_install_state(
 ) -> LocalSTTInstallState:
     resolved_model_dir = model_dir or default_local_stt_model_dir()
     resolved_manifest = manifest or load_local_stt_asset_manifest()
+    try:
+        apply_pending_local_stt_repairs(resolved_model_dir, manifest=resolved_manifest)
+    except Exception:
+        pass  # a failed swap leaves the working (older) files in place
     try:
         installed = validate_local_stt_runtime_ready(
             resolved_model_dir,

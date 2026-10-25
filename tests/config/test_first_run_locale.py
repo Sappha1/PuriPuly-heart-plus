@@ -62,6 +62,14 @@ def test_first_run_locale_maps_korean_locales_to_korean(system_locale: str) -> N
 
 @pytest.mark.parametrize(
     "system_locale",
+    ["ru", "ru-RU", "ru_RU", "RU_ru", "Russian_Russia.1251"],
+)
+def test_first_run_locale_maps_russian_locales_to_russian(system_locale: str) -> None:
+    assert _resolve_first_run_locale(system_locale) == "ru"
+
+
+@pytest.mark.parametrize(
+    "system_locale",
     [
         "zh",
         "zh-CN",

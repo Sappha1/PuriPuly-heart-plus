@@ -1,4 +1,4 @@
-; Inno Setup Script for PuriPulyHeart+ (fork of PuriPuly <3 by salee)
+; Inno Setup Script for PuriPulyHeart+
 ; Compile with:
 ;   ISCC installer.iss /DMyPackagedAppDir=<built PuriPulyHeart folder> /DMyAppBuild=rNNN
 ; (defaults to dist\PuriPulyHeart and build tag "dev" when omitted)
@@ -7,7 +7,7 @@
 #define MyAppDirName "PuriPulyHeartPlus"
 #define MyAppGroupName "PuriPulyHeart+"
 #define MyAppVersion "2.2.0"
-#define MyAppPublisher "Sappha1 (original by salee)"
+#define MyAppPublisher "Sappha1"
 #define MyAppURL "https://github.com/Sappha1/PuriPuly-heart-plus"
 #define MyAppExeName "PuriPulyHeart.exe"
 #define MyOverlayExeName "PuriPulyHeartOverlay.exe"
@@ -22,8 +22,8 @@
 #define LocalSttManifestRelativePath "puripuly_heart\data\models\qwen3-asr-0.6b-int8-sherpa.manifest.json"
 
 #ifndef MyAppId
-  ; Fork-specific AppId — deliberately different from the upstream installer so
-  ; the fork never upgrades-over/uninstalls an original PuriPuly install.
+  ; Own AppId so this installer never upgrades over or uninstalls a
+  ; different PuriPuly install on the same machine.
   #define MyAppId "{{B7F2C4D9-1E5A-4A63-9C8F-3D2E71A0B5C4}"
 #endif
 
@@ -387,7 +387,7 @@ end;
 
 function HuggingFaceLocalSttUrl(RelativePath: String): String;
 begin
-  Result := 'https://huggingface.co/csukuangfj2/sherpa-onnx-qwen3-asr-0.6B-int8-2026-03-25/resolve/2cc50d1abfe4d4f2df8d71f536d108bb40f943d2/' + RelativePath;
+  Result := 'https://huggingface.co/csukuangfj2/sherpa-onnx-qwen3-asr-0.6B-int8-2026-03-25/resolve/68818b2313fe77bd06f6a7c5068ff3ef59d02b8a/' + RelativePath;
 end;
 
 function ModelScopeLocalSttRemotePath(RelativePath: String): String;
@@ -404,7 +404,7 @@ end;
 
 function ModelScopeLocalSttUrl(RelativePath: String): String;
 begin
-  Result := 'https://www.modelscope.cn/api/v1/models/zengshuishui/Qwen3-ASR-onnx/repo?Revision=c69fb1666ccb59a82c09840c511a6c894e6a2482&FilePath=' + ModelScopeLocalSttRemotePath(RelativePath);
+  Result := 'https://www.modelscope.cn/api/v1/models/zengshuishui/Qwen3-ASR-onnx/repo?Revision=de9e449eb376dcb472c1ce8141fbae8d524fabbd&FilePath=' + ModelScopeLocalSttRemotePath(RelativePath);
 end;
 
 function LocalSttDownloadUrl(SourceName: String; RelativePath: String): String;
@@ -419,9 +419,9 @@ end;
 function LocalSttSourceRevision(SourceName: String): String;
 begin
   if SourceName = 'modelscope' then begin
-    Result := 'c69fb1666ccb59a82c09840c511a6c894e6a2482';
+    Result := 'de9e449eb376dcb472c1ce8141fbae8d524fabbd';
   end else begin
-    Result := '2cc50d1abfe4d4f2df8d71f536d108bb40f943d2';
+    Result := '68818b2313fe77bd06f6a7c5068ff3ef59d02b8a';
   end;
 end;
 
@@ -491,7 +491,7 @@ function ValidateLocalSttInstall(BaseDir: String): Boolean;
 begin
   Result :=
     ValidateLocalSttAsset(BaseDir, 'conv_frontend.onnx', 'd22dc4423e0940e49884e903d2ea2f7e5567c14fc1aed97e4e26d6b8f208ef9e', 44148281) and
-    ValidateLocalSttAsset(BaseDir, 'decoder.int8.onnx', '61e5f8249f9e7c82d5e01e1938c79fb3f5b3135f91664928033029e42451bd18', 756563239) and
+    ValidateLocalSttAsset(BaseDir, 'decoder.int8.onnx', '4f6885be5959ae26af3089d38ee7972c5fafbeeb1cf8d5e76eab6d8b61ca5771', 755914231) and
     ValidateLocalSttAsset(BaseDir, 'encoder.int8.onnx', '60748d3e6744a57c9c91e1b17424a6c2990567e8adceb0783940c03ed98fa9d9', 182491662) and
     ValidateLocalSttAsset(BaseDir, 'tokenizer\merges.txt', '8831e4f1a044471340f7c0a83d7bd71306a5b867e95fd870f74d0c5308a904d5', 1671853) and
     ValidateLocalSttAsset(BaseDir, 'tokenizer\tokenizer_config.json', '4942d005604266809309cabc9f4e9cb89ce855d59b14681fdc0e1cc62ea26c4c', 12487) and
@@ -502,7 +502,7 @@ end;
 procedure AddLocalSttDownloads(SourceName: String);
 begin
   DownloadPage.Add(LocalSttDownloadUrl(SourceName, 'conv_frontend.onnx'), 'conv_frontend.onnx', 'd22dc4423e0940e49884e903d2ea2f7e5567c14fc1aed97e4e26d6b8f208ef9e');
-  DownloadPage.Add(LocalSttDownloadUrl(SourceName, 'decoder.int8.onnx'), 'decoder.int8.onnx', '61e5f8249f9e7c82d5e01e1938c79fb3f5b3135f91664928033029e42451bd18');
+  DownloadPage.Add(LocalSttDownloadUrl(SourceName, 'decoder.int8.onnx'), 'decoder.int8.onnx', '4f6885be5959ae26af3089d38ee7972c5fafbeeb1cf8d5e76eab6d8b61ca5771');
   DownloadPage.Add(LocalSttDownloadUrl(SourceName, 'encoder.int8.onnx'), 'encoder.int8.onnx', '60748d3e6744a57c9c91e1b17424a6c2990567e8adceb0783940c03ed98fa9d9');
   DownloadPage.Add(LocalSttDownloadUrl(SourceName, 'tokenizer/merges.txt'), 'merges.txt', '8831e4f1a044471340f7c0a83d7bd71306a5b867e95fd870f74d0c5308a904d5');
   DownloadPage.Add(LocalSttDownloadUrl(SourceName, 'tokenizer/tokenizer_config.json'), 'tokenizer_config.json', '4942d005604266809309cabc9f4e9cb89ce855d59b14681fdc0e1cc62ea26c4c');

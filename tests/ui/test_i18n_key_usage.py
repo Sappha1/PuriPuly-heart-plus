@@ -28,17 +28,7 @@ DYNAMIC_I18N_PREFIXES = (
     "logs.mode.",
     "settings.translation_model.",
 )
-
-GITHUB_STAR_SNACKBAR_KEYS = (
-    "github_star.snackbar.message",
-    "github_star.snackbar.action",
-)
 OVERLAY_STEAMVR_NOT_RUNNING_KEY = "settings.overlay.failure.steamvr_not_running"
-
-EXPECTED_GITHUB_STAR_SNACKBAR_KO_COPY = {
-    "github_star.snackbar.message": "PuriPuly가 도움이 됐다면 GitHub에서 Star를 눌러주세요! 큰 힘이 되어요!",
-    "github_star.snackbar.action": "이동",
-}
 EXPECTED_OVERLAY_STEAMVR_NOT_RUNNING_COPY = {
     "en": "SteamVR is off. If you want to use the desktop overlay, change it in Settings.",
     "ko": "SteamVR이 꺼져 있어요. 혹시 데스크톱 오버레이를 쓰고싶다면 설정을 바꿔주세요.",
@@ -101,7 +91,7 @@ def test_i18n_bundles_share_the_same_keys() -> None:
 
 
 def test_available_locales_use_product_display_order() -> None:
-    assert available_locales() == ("en", "ko", "zh-CN", "ja")
+    assert available_locales() == ("en", "ko", "zh-CN", "ja", "ru")
 
 
 def test_logs_conversation_keys_are_localized() -> None:
@@ -120,27 +110,6 @@ def test_logs_conversation_keys_are_localized() -> None:
             assert bundle[key] != key
 
     assert bundles["ko"]["logs.conversation.show"] == "대화록 보기"
-
-
-def test_github_star_snackbar_keys_are_localized_for_all_supported_locales() -> None:
-    bundles = _load_bundles()
-    supported_locales = set(available_locales())
-
-    assert set(bundles) == supported_locales
-    for locale, bundle in bundles.items():
-        missing = sorted(set(GITHUB_STAR_SNACKBAR_KEYS) - set(bundle))
-        assert missing == [], locale
-        for key in GITHUB_STAR_SNACKBAR_KEYS:
-            assert bundle[key].strip()
-            assert bundle[key] != key
-
-
-def test_github_star_snackbar_korean_copy_matches_source_spec() -> None:
-    ko = _load_bundles()["ko"]
-
-    assert {
-        key: ko[key] for key in GITHUB_STAR_SNACKBAR_KEYS
-    } == EXPECTED_GITHUB_STAR_SNACKBAR_KO_COPY
 
 
 def test_overlay_steamvr_not_running_copy_points_to_desktop_overlay_setting() -> None:

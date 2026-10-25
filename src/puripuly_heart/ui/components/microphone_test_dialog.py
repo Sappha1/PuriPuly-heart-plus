@@ -42,9 +42,22 @@ class MicrophoneTestDialog:
         page: ft.Page,
         *,
         on_close: Callable[[], None],
+        on_record: Callable[[], None] | None = None,
+        on_play: Callable[[], None] | None = None,
+        on_stop: Callable[[], None] | None = None,
     ) -> None:
         self._page = page
         self._on_close = on_close
+        self._on_record = on_record
+        self._on_play = on_play
+        self._on_stop = on_stop
+        self._record_btn: ft.TextButton | None = None
+        self._play_btn: ft.TextButton | None = None
+        self._stop_btn: ft.TextButton | None = None
+        self._clip_text: ft.Text | None = None
+        self._clip_status = ""
+        self._has_clip = False
+        self._busy = False
         self._dialog: ft.AlertDialog | None = None
         self._level_text: ft.Text | None = None
         self._hint_text: ft.Text | None = None
@@ -88,7 +101,55 @@ class MicrophoneTestDialog:
     def reset(self) -> None:
         self._level = 0.0
         self._failed = False
+        self._clip_status = ""
+        self._has_clip = False
+        self._busy = False
         self._sync_text()
+        self._sync_clip_controls()
+
+    # ── record / play back ──────────────────────────────────────────────
+    def set_recording(self) -> None:
+        self._busy = True
+        self._clip_status = t("settings.microphone_test.recording")
+        self._sync_clip_controls()
+
+    def set_recorded(self, seconds: float) -> None:
+        self._busy = False
+        if seconds <= 0:
+            # stopped before anything was captured
+            self._clip_status = ""
+            self._sync_clip_controls()
+            return
+        self._has_clip = True
+        self._clip_status = t("settings.microphone_test.recorded", seconds=f"{seconds:.1f}")
+        self._sync_clip_controls()
+
+    def set_playing(self, playing: bool) -> None:
+        self._busy = playing
+        self._clip_status = t("settings.microphone_test.playing") if playing else (
+            t("settings.microphone_test.played") if self._has_clip else ""
+        )
+        self._sync_clip_controls()
+
+    def _sync_clip_controls(self) -> None:
+        # while recording or playing, Stop takes the place of Record
+        if self._record_btn is not None:
+            self._record_btn.disabled = self._busy or self._failed
+            self._record_btn.visible = not (self._busy and self._stop_btn is not None)
+        if self._stop_btn is not None:
+            self._stop_btn.visible = self._busy
+        if self._play_btn is not None:
+            self._play_btn.disabled = self._busy or not self._has_clip
+        if self._clip_text is not None:
+            self._clip_text.value = self._clip_status
+        for ctrl in (self._record_btn, self._stop_btn, self._play_btn, self._clip_text):
+            if ctrl is None or getattr(ctrl, "page", None) is None:
+                continue
+            try:
+                ctrl.update()
+            except AssertionError as exc:
+                if "Control must be added" not in str(exc):
+                    raise
 
     def set_level(self, value: float) -> None:
         self._level = _clamp_level(value)
@@ -118,6 +179,50 @@ class MicrophoneTestDialog:
             font_family=font_for_language(get_locale()),
         )
 
+        font = font_for_language(get_locale())
+        self._record_btn = ft.TextButton(
+            text=t("settings.microphone_test.record"),
+            icon=ft.Icons.FIBER_MANUAL_RECORD,
+            icon_color="#d65a5a",
+            on_click=lambda _e: self._on_record() if callable(self._on_record) else None,
+            disabled=self._busy or self._failed,
+        )
+        self._stop_btn = ft.TextButton(
+            text=t("settings.microphone_test.stop"),
+            icon=ft.Icons.STOP_ROUNDED,
+            icon_color="#d65a5a",
+            on_click=lambda _e: self._on_stop() if callable(self._on_stop) else None,
+            visible=self._busy and callable(self._on_stop),
+        )
+        if not callable(self._on_stop):
+            self._stop_btn = None
+        self._play_btn = ft.TextButton(
+            text=t("settings.microphone_test.play"),
+            icon=ft.Icons.PLAY_ARROW_ROUNDED,
+            on_click=lambda _e: self._on_play() if callable(self._on_play) else None,
+            disabled=self._busy or not self._has_clip,
+        )
+        self._clip_text = ft.Text(
+            self._clip_status,
+            size=13,
+            color=COLOR_NEUTRAL_DARK,
+            text_align=ft.TextAlign.CENTER,
+            font_family=font,
+        )
+        clip_controls = ft.Column(
+            [
+                ft.Row(
+                    [c for c in (self._record_btn, self._stop_btn, self._play_btn) if c is not None],
+                    alignment=ft.MainAxisAlignment.CENTER,
+                    spacing=8,
+                ),
+                self._clip_text,
+            ],
+            spacing=2,
+            horizontal_alignment=ft.CrossAxisAlignment.CENTER,
+            visible=callable(self._on_record),
+        )
+
         modal_content = ft.Container(
             width=_DIALOG_WIDTH,
             height=_DIALOG_HEIGHT,
@@ -136,6 +241,7 @@ class MicrophoneTestDialog:
                         bgcolor=ft.Colors.TRANSPARENT,
                         expand=True,
                     ),
+                    clip_controls,
                     self._hint_text,
                 ],
                 spacing=12,

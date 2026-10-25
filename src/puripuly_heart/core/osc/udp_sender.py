@@ -41,6 +41,12 @@ class VrchatOscUdpSender(OscSender):
         packet = builder.build().dgram
         self._sock.sendto(packet, (self.host, self.port))
 
+    def send_parameter(self, name: str, value: bool | int | float) -> None:
+        """Write an avatar parameter (/avatar/parameters/<name>)."""
+        builder = self._OscMessageBuilder(address=f"/avatar/parameters/{name}")
+        builder.add_arg(value)
+        self._sock.sendto(builder.build().dgram, (self.host, self.port))
+
     def send_typing(self, is_typing: bool) -> None:
         """Send typing indicator to VRChat chatbox."""
         builder = self._OscMessageBuilder(address=self.typing_address)

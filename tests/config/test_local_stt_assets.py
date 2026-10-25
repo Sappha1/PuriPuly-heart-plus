@@ -383,8 +383,8 @@ def test_packaged_local_stt_manifest_matches_huggingface_mirror_contract() -> No
 
     huggingface = manifest.sources["huggingface"]
     assert huggingface.repo_id == "csukuangfj2/sherpa-onnx-qwen3-asr-0.6B-int8-2026-03-25"
-    assert huggingface.revision == "2cc50d1abfe4d4f2df8d71f536d108bb40f943d2"
+    assert huggingface.revision == "68818b2313fe77bd06f6a7c5068ff3ef59d02b8a"
     assert (
         huggingface.download_url_template
-        == "https://huggingface.co/csukuangfj2/sherpa-onnx-qwen3-asr-0.6B-int8-2026-03-25/resolve/2cc50d1abfe4d4f2df8d71f536d108bb40f943d2/{path}"
+        == "https://huggingface.co/csukuangfj2/sherpa-onnx-qwen3-asr-0.6B-int8-2026-03-25/resolve/68818b2313fe77bd06f6a7c5068ff3ef59d02b8a/{path}"
     )

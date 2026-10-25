@@ -88,9 +88,13 @@ class SonioxRealtimeSTTBackend(STTBackend):
 
         async def _check() -> bool:
             try:
-                async with websockets.connect(endpoint, ping_interval=None, open_timeout=5) as ws:
+                async with websockets.connect(
+                    endpoint,
+                    ping_interval=None,
+                    open_timeout=5,
+                    additional_headers=soniox_auth_headers(api_key),
+                ) as ws:
                     config = {
-                        "api_key": api_key,
                         "model": "stt-rt-v4",
                         "audio_format": "pcm_s16le",
                         "sample_rate": 16000,
@@ -112,6 +116,13 @@ class SonioxRealtimeSTTBackend(STTBackend):
                 raise Exception(f"Connection failed: {exc}") from exc
 
         return await _check()
+
+
+def soniox_auth_headers(api_key: str) -> dict[str, str]:
+    """Soniox takes the key on the WebSocket upgrade request. A key sent in
+    the first (config) message is deprecated and refused from 15 January
+    2027."""
+    return {"Authorization": f"Bearer {api_key}"}
 
 
 @dataclass(slots=True)
@@ -151,7 +162,6 @@ class _SonioxSession(STTBackendSession):
         import websockets
 
         config: dict[str, Any] = {
-            "api_key": self.api_key,
             "model": self.model,
             "audio_format": "pcm_s16le",
             "sample_rate": self.sample_rate_hz,
@@ -166,7 +176,10 @@ class _SonioxSession(STTBackendSession):
         logger.info("[STT] Soniox connecting (timeout=%.1fs)", self.connect_timeout_s)
         start_at = time.monotonic()
         self._ws = await websockets.connect(
-            self.endpoint, ping_interval=None, open_timeout=self.connect_timeout_s
+            self.endpoint,
+            ping_interval=None,
+            open_timeout=self.connect_timeout_s,
+            additional_headers=soniox_auth_headers(self.api_key),
         )
         elapsed = time.monotonic() - start_at
         logger.info("[STT] Soniox connected in %.2fs", elapsed)

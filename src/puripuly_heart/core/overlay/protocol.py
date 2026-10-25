@@ -66,6 +66,8 @@ class OverlayPresentationBlock:
     source_text_hash: str | None = None
     source_text_len: int | None = None
     logical_turn_key: str | None = None
+    # peer voice color slot (0-3), None = default peer colors
+    speaker_index: int | None = None
 
     def to_dict(self) -> dict[str, object]:
         payload: dict[str, object] = {
@@ -94,6 +96,8 @@ class OverlayPresentationBlock:
             payload["source_text_len"] = self.source_text_len
         if self.logical_turn_key is not None:
             payload["logical_turn_key"] = self.logical_turn_key
+        if self.speaker_index is not None:
+            payload["speaker_index"] = self.speaker_index
         return payload
 
     @classmethod
@@ -131,6 +135,7 @@ class OverlayPresentationBlock:
             source_text_hash=_optional_string_field(data, "source_text_hash"),
             source_text_len=_optional_int_field(data, "source_text_len"),
             logical_turn_key=_optional_string_field(data, "logical_turn_key"),
+            speaker_index=_optional_int_field(data, "speaker_index"),
         )
 
 

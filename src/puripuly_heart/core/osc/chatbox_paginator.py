@@ -22,6 +22,10 @@ class ChatboxPaginator:
     _pending_pages: list[str] | None = None
     _pending_messages: list[OSCMessage] | None = None
     _next_page_at: float = 0.0
+    # VRChat drops chatbox updates that arrive too close together. A queued
+    # message right after a live preview waits this long so it is not lost.
+    preview_gap_s: float = 1.5
+    _last_preview_at: float | None = None
 
     def __post_init__(self) -> None:
         if self.max_chars <= 0:
@@ -32,14 +36,41 @@ class ChatboxPaginator:
         self._pending_messages = []
 
     def enqueue(self, message: OSCMessage) -> None:
-        if self._is_paginating():
+        if self._is_paginating() or self._preview_hold_active():
             self._pending_messages.append(message)
             return
         self._start_message(message)
 
+    def _preview_hold_active(self) -> bool:
+        if self._last_preview_at is None:
+            return False
+        return self.clock.now() - self._last_preview_at < self.preview_gap_s
+
+    def is_busy(self) -> bool:
+        """Pages or messages still waiting - a preview must not jump them."""
+        return self._is_paginating() or bool(self._pending_messages)
+
+    def send_preview(self, text: str) -> bool:
+        """Show an in-progress translation now (one page, never queued).
+
+        Skipped while a real message is paginating or waiting, so a preview
+        never interrupts or delays finished text.
+        """
+        text = text.strip()
+        if not text or self.is_busy():
+            return False
+        if len(text) > self.max_chars:
+            # keep the newest words: the tail is what is being said right now
+            text = "..." + text[-(self.max_chars - 3):].lstrip()
+        sent = self._send_page(mode="preview", text=text, remaining_parts=0)
+        if sent:
+            self._last_preview_at = self.clock.now()
+        return sent
+
     def process_due(self) -> None:
         if not self._is_paginating():
-            self._drain_pending_messages()
+            if not self._preview_hold_active():
+                self._drain_pending_messages()
             return
 
         now = self.clock.now()

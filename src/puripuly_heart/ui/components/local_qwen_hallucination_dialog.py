@@ -14,9 +14,7 @@ from puripuly_heart.ui.i18n import t
 
 
 class LocalQwenHallucinationDialog:
-    # r311: self-contained device guidance only — the old body recommended
-    # Deepgram and linked the upstream founder's GitHub guide, neither of
-    # which belongs to this fork.
+    # r311: self-contained device guidance only, no external links.
     action_labels = [
         "local_qwen_hallucination.close",
     ]

@@ -2,6 +2,30 @@
 
 User-facing changes per build. The latest build's highlights also appear in-app when an update is ready.
 
+## r663 - 2026-10-24
+
+- Added: ChatGPT (GPT-6 Luna and GPT-6.1 Sol) as a translator, using your own OpenAI API key
+- Added: a usage ring in the bottom-left corner while ChatGPT translates - click it to see what is left and this week's spend; an optional weekly budget can be set in Settings
+- Added: a clear message when an OpenAI account runs out of credits or its key is rejected; the warning bar can be closed
+- Added: Index-Translate, a free translator that needs no key
+- Added: Gemini 3.5 Transcribe and ElevenLabs Scribe v2 speech recognition, and support for your own Whisper-compatible speech server
+- Added: live chatbox preview - your translation shows in the VRChat chatbox while you are still talking (Settings > VRChat)
+- Added: control the app from your VRChat avatar menu with PuriPuly_* parameters
+- Added: Steam emoji reactions show under messages in the Steam tab
+- Added: a floating chat window that stays on top of other windows (chat gear menu)
+- Added: the microphone test can record a short clip and play it back
+- Added: each speaker gets their own caption color in the desktop overlay
+- Added: Russian interface language
+- Improved: a better default translation prompt for two-person conversations (applies only if you never edited the prompt)
+- Improved: the translator uses more of the recent conversation as context
+- Improved: ChatGPT translations start faster after a pause
+- Changed: Gemini models updated to Gemini 3.8 Flash and Gemini 3.5 Flash-Lite, and DeepSeek uses its current Flash model
+- Changed: a simpler About page
+- Fixed: pressing Ctrl+Z right after sending brings back the text you just sent
+- Fixed: the built-in Qwen speech model could produce garbled or repeated text; existing installs repair themselves in the background
+- Fixed: Soniox keeps working after Soniox's January 2027 change to how API keys are sent
+- Fixed: the DeepL key field no longer shows in Settings when another translator is selected
+
 ## r656 - 2026-10-14
 
 - Fixed: the Steam tab could stop updating partway through a session - new messages stopped arriving and friends showed as offline until the app was restarted. It now recovers on its own

@@ -338,6 +338,10 @@ def main(argv: list[str] | None = None) -> int:
         from puripuly_heart.ui.steam_window import run_steam_window
 
         return run_steam_window()
+    if "--floating-chat" in raw_argv:
+        from puripuly_heart.ui.floating_chat_window import run_floating_chat_window
+
+        return run_floating_chat_window(raw_argv)
     argv = raw_argv
 
     # r636: the overlay renderer subprocess gets its own log file. Sharing

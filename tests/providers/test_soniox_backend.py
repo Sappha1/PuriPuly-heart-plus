@@ -382,3 +382,90 @@ async def test_soniox_session_start_omits_context_when_no_terms(monkeypatch) -> 
 
     config = json.loads(ws.sent[0])
     assert "context" not in config
+
+
+@pytest.mark.asyncio
+async def test_soniox_key_goes_in_the_upgrade_header_not_the_config(monkeypatch) -> None:
+    """Soniox refuses keys sent in the config message from 15 January 2027."""
+    calls: list[dict] = []
+
+    class FakeWebSocket:
+        def __init__(self):
+            self.sent: list[object] = []
+
+        async def send(self, payload):
+            self.sent.append(payload)
+
+        async def recv(self):
+            await asyncio.sleep(3600)
+
+        async def close(self):
+            return None
+
+    ws = FakeWebSocket()
+
+    async def connect(*args, **kwargs):
+        calls.append(kwargs)
+        return ws
+
+    monkeypatch.setitem(
+        sys.modules,
+        "websockets",
+        SimpleNamespace(
+            connect=connect,
+            exceptions=SimpleNamespace(
+                ConnectionClosedOK=type("ConnectionClosedOK", (Exception,), {})
+            ),
+        ),
+    )
+    session = _SonioxSession(
+        api_key="placeholder-key",
+        model="m",
+        endpoint="wss://example",
+        sample_rate_hz=16000,
+        language_hints=[],
+        context_terms=[],
+        keepalive_interval_s=10.0,
+        trailing_silence_ms=50,
+        connect_timeout_s=5.0,
+    )
+
+    await session.start()
+    try:
+        assert calls[0]["additional_headers"] == {"Authorization": "Bearer placeholder-key"}
+        assert "api_key" not in json.loads(ws.sent[0])
+    finally:
+        await session.close()
+
+
+@pytest.mark.asyncio
+async def test_soniox_verify_sends_the_key_as_a_header(monkeypatch) -> None:
+    calls: list[dict] = []
+
+    class FakeWebSocket:
+        def __init__(self):
+            self.sent = []
+
+        async def send(self, payload):
+            self.sent.append(payload)
+
+        async def recv(self):
+            raise asyncio.TimeoutError
+
+        async def __aenter__(self):
+            return self
+
+        async def __aexit__(self, exc_type, exc, tb):
+            return False
+
+    ws = FakeWebSocket()
+
+    def connect(*_args, **kwargs):
+        calls.append(kwargs)
+        return ws
+
+    monkeypatch.setitem(sys.modules, "websockets", SimpleNamespace(connect=connect))
+
+    assert await SonioxRealtimeSTTBackend.verify_api_key("placeholder-key") is True
+    assert calls[0]["additional_headers"] == {"Authorization": "Bearer placeholder-key"}
+    assert "api_key" not in json.loads(ws.sent[0])

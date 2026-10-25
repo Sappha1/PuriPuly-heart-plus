@@ -807,7 +807,7 @@ async def test_stop_cancels_active_local_stt_download_task(
     async def fake_set_stt_enabled(self, enabled: bool) -> None:
         _ = self, enabled
 
-    async def fake_configure_vrc_mic_receiver(self, *, enabled: bool) -> None:
+    async def fake_configure_vrc_mic_receiver(self, *, enabled: bool, allow_avatar: bool = True) -> None:
         _ = self, enabled
 
     async def fake_shutdown_overlay_runtime(self, *, preserve_failure_reason: bool) -> None:

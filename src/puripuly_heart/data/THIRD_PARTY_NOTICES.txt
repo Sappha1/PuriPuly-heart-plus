@@ -1,9 +1,8 @@
 PuriPulyHeart+ — Third-Party Notices
 ==============================================
 
-PuriPulyHeart+ is a modified fork of PuriPuly Heart by salee (kapitalismho).
-Original project: https://github.com/kapitalismho/PuriPuly-heart
-PuriPuly Heart's source code is licensed under AGPL-3.0-or-later.
+PuriPulyHeart+ is a modified version of PuriPuly Heart, copyright (C) salee.
+Its source code is licensed under AGPL-3.0-or-later.
 The full project license text is in the root LICENSE file.
 
 UI design and color palette are heavily inspired by VRCT (https://github.com/misyaguziya/VRCT)

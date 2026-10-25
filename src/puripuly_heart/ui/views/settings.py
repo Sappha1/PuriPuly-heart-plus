@@ -105,11 +105,14 @@ _TRANSLATION_MODEL_LABEL_KEYS = {
     TranslationModel.GEMMA4: "provider.gemma4_26b_a4b_it",
     TranslationModel.DEEPSEEK_V4_FLASH: "provider.deepseek_v4_flash",
     TranslationModel.DEEPSEEK_V4_PRO: "provider.deepseek_v4_pro",
+    TranslationModel.GPT_6_LUNA: "provider.gpt6_luna",
+    TranslationModel.GPT_61_SOL: "provider.gpt61_sol",
     TranslationModel.GEMINI_3_FLASH: "provider.gemini3_flash",
     TranslationModel.GEMINI_31_FLASH_LITE: "provider.gemini31_flash_lite",
     TranslationModel.QWEN_35_PLUS: "provider.qwen35_plus",
     TranslationModel.LOCAL_LLM: "provider.local_llms",
     TranslationModel.DEEPL: "provider.deepl",
+    TranslationModel.INDEX_TRANSLATE: "provider.index_translate",
     TranslationModel.GOOGLE_TRANSLATE: "provider.google_translate",
     TranslationModel.BING: "provider.bing",
     TranslationModel.PAPAGO: "provider.papago",
@@ -218,6 +221,13 @@ def _derive_openrouter_selection_alias(
     if selected_source == OpenRouterCredentialSource.MANAGED:
         return OpenRouterSelectionAlias.GEMMA4_MANAGED
     return OpenRouterSelectionAlias.GEMMA4_BYOK
+
+
+def _budget_text(amount: float) -> str:
+    """Budget field text: empty for none, no trailing zeros."""
+    if not amount:
+        return ""
+    return f"{amount:.2f}".rstrip("0").rstrip(".")
 
 
 class SettingsView(ft.Column):
@@ -507,6 +517,8 @@ class SettingsView(ft.Column):
             self._llm_text,
             self._ui_text,
             self._chatbox_source_text,
+            self._chatbox_live_text,
+            self._avatar_controls_text,
             self._microphone_test_text,
             self._vrc_mic_text,
             self._mic_audio_text,
@@ -1012,6 +1024,60 @@ class SettingsView(ft.Column):
                 self.show_snackbar(msg, bg) if self.show_snackbar else None
             ),
         )
+        self._elevenlabs_key = ApiKeyField(
+            "settings.elevenlabs_api_key",
+            "elevenlabs_api_key",
+            "elevenlabs",
+            on_verify=self._verify_key,
+            on_save=self._on_secret_change,
+            show_snackbar=lambda msg, bg: (
+                self.show_snackbar(msg, bg) if self.show_snackbar else None
+            ),
+        )
+        self._custom_stt_key = ApiKeyField(
+            "settings.custom_stt.api_key",
+            "custom_stt_api_key",
+            "custom_stt",
+            on_verify=self._verify_key,
+            on_save=self._on_secret_change,
+            show_snackbar=lambda msg, bg: (
+                self.show_snackbar(msg, bg) if self.show_snackbar else None
+            ),
+        )
+        _server_field_style = dict(
+            border_radius=12,
+            border_color=COLOR_DIVIDER,
+            focused_border_color=COLOR_PRIMARY,
+            text_size=13,
+            color=COLOR_NEUTRAL_DARK,
+            label_style=ft.TextStyle(size=14, weight=ft.FontWeight.BOLD,
+                                     color=COLOR_NEUTRAL_DARK),
+        )
+        self._custom_stt_base_url = ft.TextField(
+            label=t("settings.custom_stt.base_url"),
+            value="http://127.0.0.1:8000/v1",
+            on_blur=self._on_custom_stt_field_change,
+            on_submit=self._on_custom_stt_field_change,
+            **_server_field_style,
+        )
+        self._custom_stt_model = ft.TextField(
+            label=t("settings.custom_stt.model"),
+            value="whisper-1",
+            on_blur=self._on_custom_stt_field_change,
+            on_submit=self._on_custom_stt_field_change,
+            **_server_field_style,
+        )
+        self._openai_weekly_budget = ft.TextField(
+            label=t("settings.openai.weekly_budget"),
+            tooltip=t("settings.openai.weekly_budget.tooltip"),
+            value="",
+            prefix_text="$ ",
+            keyboard_type=ft.KeyboardType.NUMBER,
+            on_blur=self._on_openai_budget_change,
+            on_submit=self._on_openai_budget_change,
+            visible=False,
+            **_server_field_style,
+        )
         self._google_key = ApiKeyField(
             "settings.google_api_key",
             "google_api_key",
@@ -1036,6 +1102,16 @@ class SettingsView(ft.Column):
             "settings.deepseek_api_key",
             "deepseek_api_key",
             "deepseek",
+            on_verify=self._verify_key,
+            on_save=self._on_secret_change,
+            show_snackbar=lambda msg, bg: (
+                self.show_snackbar(msg, bg) if self.show_snackbar else None
+            ),
+        )
+        self._openai_key = ApiKeyField(
+            "settings.openai_api_key",
+            "openai_api_key",
+            "openai",
             on_verify=self._verify_key,
             on_save=self._on_secret_change,
             show_snackbar=lambda msg, bg: (
@@ -1208,10 +1284,16 @@ class SettingsView(ft.Column):
                 # self._qwen_region_row removed
                 self._deepgram_key,
                 self._soniox_key,
+                self._elevenlabs_key,
+                self._custom_stt_base_url,
+                self._custom_stt_model,
+                self._custom_stt_key,
                 self._google_key,
                 self._openrouter_key,
                 self._openrouter_pkce_button_row,
                 self._deepseek_key,
+                self._openai_key,
+                self._openai_weekly_budget,
                 self._deepl_key,
                 self._deepl_usage_row,
                 self._alibaba_key_beijing,
@@ -1324,6 +1406,27 @@ class SettingsView(ft.Column):
                 "When ON, also sends your original (untranslated) speech to the VRChat chatbox "
                 "alongside the translation."),
             value=self._chatbox_source_text,
+        )
+
+        self._chatbox_live_text = self._build_clickable_text(
+            t("settings.option.on"),
+            self._on_chatbox_live_click,
+        )
+        self._avatar_controls_text = self._build_clickable_text(
+            t("settings.option.on"),
+            self._on_avatar_controls_click,
+        )
+        avatar_controls_card = self._wrap_unit_card(
+            title=self._info_title_keyed(
+                "settings.avatar_controls", "settings.avatar_controls.tip"
+            ),
+            value=self._avatar_controls_text,
+        )
+        chatbox_live_card = self._wrap_unit_card(
+            title=self._info_title_keyed(
+                "settings.chatbox_live_preview", "settings.chatbox_live_preview.tip"
+            ),
+            value=self._chatbox_live_text,
         )
 
         self._vrc_mic_text = self._build_clickable_text(
@@ -1831,6 +1934,8 @@ class SettingsView(ft.Column):
                 # r337: settings.osc.* — it decides what text enters the
                 # VRChat chatbox, so it belongs here rather than in General.
                 chatbox_source_card,
+                chatbox_live_card,
+                avatar_controls_card,
                 steamvr_autolaunch_card,
                 separate_text_card,
             ],
@@ -2876,10 +2981,14 @@ class SettingsView(ft.Column):
             return "openrouter"
         if settings.provider.llm == LLMProviderName.DEEPSEEK:
             return "deepseek"
+        if settings.provider.llm == LLMProviderName.OPENAI:
+            return "openai"
         if settings.provider.llm == LLMProviderName.DEEPL:
             return "deepl"
         if settings.provider.llm == LLMProviderName.LOCAL_LLM:
             return "local_llm"
+        if settings.provider.llm == LLMProviderName.INDEX_TRANSLATE:
+            return "index_translate"
         return "qwen"
 
     def _active_prompt_key(self) -> str:
@@ -3146,8 +3255,11 @@ class SettingsView(ft.Column):
         target.qwen.llm_model = source.qwen.llm_model
         target.qwen.region = source.qwen.region
         target.deepseek.llm_model = source.deepseek.llm_model
+        target.openai.llm_model = source.openai.llm_model
+        target.openai.weekly_budget_usd = source.openai.weekly_budget_usd
         target.local_llm = copy.deepcopy(source.local_llm)
         target.whisper_stt = copy.deepcopy(source.whisper_stt)
+        target.custom_stt = copy.deepcopy(source.custom_stt)
         if source.openrouter.selected_source == OpenRouterCredentialSource.MANAGED:
             target.managed_identity.verified_hardware_hash = (
                 source.managed_identity.verified_hardware_hash
@@ -3186,6 +3298,8 @@ class SettingsView(ft.Column):
         key_map = {
             STTProviderName.DEEPGRAM: self._deepgram_key.value,
             STTProviderName.SONIOX: self._soniox_key.value,
+            STTProviderName.ELEVENLABS_SCRIBE: self._elevenlabs_key.value,
+            STTProviderName.GEMINI_TRANSCRIBE: self._google_key.value,
             STTProviderName.GOOGLE_STT: self._google_key.value,
             STTProviderName.QWEN_ASR: (
                 self._alibaba_key_beijing.value or self._alibaba_key_singapore.value
@@ -3249,6 +3363,34 @@ class SettingsView(ft.Column):
         self._local_llm_extra_body.error_text = None
         _update_control_if_mounted(self._local_llm_extra_body)
         _update_control_if_mounted(self._local_llm_extra_body_error)
+
+    def _on_openai_budget_change(self, e) -> None:
+        _ = e
+        if not self._settings:
+            return
+        from puripuly_heart.config.settings import _parse_weekly_budget
+
+        budget = _parse_weekly_budget(self._openai_weekly_budget.value)
+        self._openai_weekly_budget.value = _budget_text(budget)
+        _update_control_if_mounted(self._openai_weekly_budget)
+        current = self._provider_settings_draft or self._settings
+        if current.openai.weekly_budget_usd != budget:
+            draft = self._ensure_provider_settings_draft()
+            draft.openai.weekly_budget_usd = budget
+            self.has_provider_changes = True
+
+    def _on_custom_stt_field_change(self, e) -> None:
+        _ = e
+        if not self._settings:
+            return
+        base_url = (self._custom_stt_base_url.value or "").strip() or "http://127.0.0.1:8000/v1"
+        model = (self._custom_stt_model.value or "").strip() or "whisper-1"
+        current = self._provider_settings_draft or self._settings
+        if (current.custom_stt.base_url, current.custom_stt.model) != (base_url, model):
+            draft = self._ensure_provider_settings_draft()
+            draft.custom_stt.base_url = base_url
+            draft.custom_stt.model = model
+            self.has_provider_changes = True
 
     def _on_local_llm_base_url_change_end(self, e) -> None:
         _ = e
@@ -3480,6 +3622,9 @@ class SettingsView(ft.Column):
             self._get_translation_connection_display_label(settings),
         )
         self._sync_openrouter_fallback_card(settings)
+        self._custom_stt_base_url.value = settings.custom_stt.base_url
+        self._custom_stt_model.value = settings.custom_stt.model
+        self._openai_weekly_budget.value = _budget_text(settings.openai.weekly_budget_usd)
         self._local_llm_base_url.value = settings.local_llm.base_url
         self._local_llm_base_url.error_text = None
         self._local_llm_model.value = settings.local_llm.model
@@ -3537,6 +3682,16 @@ class SettingsView(ft.Column):
             "settings.chatbox_source.on"
             if settings.osc.chatbox_include_source
             else "settings.chatbox_source.off"
+        )
+        self._chatbox_live_text.content.value = t(
+            "settings.option.on"
+            if getattr(settings.osc, "chatbox_live_preview", True)
+            else "settings.option.off"
+        )
+        self._avatar_controls_text.content.value = t(
+            "settings.option.on"
+            if getattr(settings.osc, "avatar_controls", True)
+            else "settings.option.off"
         )
         self._show_pinyin_text.content.value = t(
             "settings.show_pinyin.on" if settings.ui.show_pinyin else "settings.show_pinyin.off"
@@ -3663,6 +3818,7 @@ class SettingsView(ft.Column):
         else:
             self._openrouter_key.value = store.get("openrouter_api_key") or ""
             self._deepseek_key.value = store.get("deepseek_api_key") or ""
+            self._openai_key.value = store.get("openai_api_key") or ""
             self._restore_api_key_icons(settings)
 
         if self.page:
@@ -3679,8 +3835,11 @@ class SettingsView(ft.Column):
         self._google_key.value = store.get("google_api_key") or ""
         self._openrouter_key.value = store.get("openrouter_api_key") or ""
         self._deepseek_key.value = store.get("deepseek_api_key") or ""
+        self._openai_key.value = store.get("openai_api_key") or ""
         self._deepgram_key.value = store.get("deepgram_api_key") or ""
         self._soniox_key.value = store.get("soniox_api_key") or ""
+        self._elevenlabs_key.value = store.get("elevenlabs_api_key") or ""
+        self._custom_stt_key.value = store.get("custom_stt_api_key") or ""
         self._local_llm_api_key.value = store.get("local_llm_api_key") or ""
         self._deepl_key.value = store.get("deepl_api_key") or ""
 
@@ -3706,9 +3865,11 @@ class SettingsView(ft.Column):
         field_map = [
             (self._deepgram_key, self._deepgram_key.value, verified.deepgram),
             (self._soniox_key, self._soniox_key.value, verified.soniox),
+            (self._elevenlabs_key, self._elevenlabs_key.value, verified.elevenlabs),
             (self._google_key, self._google_key.value, verified.google),
             (self._openrouter_key, self._openrouter_key.value, verified.openrouter),
             (self._deepseek_key, self._deepseek_key.value, verified.deepseek),
+            (self._openai_key, self._openai_key.value, verified.openai),
             (self._alibaba_key_beijing, self._alibaba_key_beijing.value, verified.alibaba_beijing),
             (
                 self._alibaba_key_singapore,
@@ -3785,8 +3946,16 @@ class SettingsView(ft.Column):
         active_stt_providers = {stt, peer_stt}
         self._deepgram_key.visible = STTProviderName.DEEPGRAM in active_stt_providers
         self._soniox_key.visible = STTProviderName.SONIOX in active_stt_providers
+        self._elevenlabs_key.visible = STTProviderName.ELEVENLABS_SCRIBE in active_stt_providers
+        _custom_on = STTProviderName.CUSTOM_STT in active_stt_providers
+        self._custom_stt_base_url.visible = _custom_on
+        self._custom_stt_model.visible = _custom_on
+        self._custom_stt_key.visible = _custom_on
 
-        self._google_key.visible = llm == LLMProviderName.GEMINI
+        self._google_key.visible = (
+            llm == LLMProviderName.GEMINI
+            or STTProviderName.GEMINI_TRANSCRIBE in active_stt_providers
+        )
         self._sync_managed_key_card(settings)
         openrouter_byok_selected = bool(
             llm == LLMProviderName.OPENROUTER
@@ -3797,6 +3966,8 @@ class SettingsView(ft.Column):
         )
         self._openrouter_pkce_button_row.visible = openrouter_byok_selected
         self._deepseek_key.visible = llm == LLMProviderName.DEEPSEEK
+        self._openai_key.visible = llm == LLMProviderName.OPENAI
+        self._openai_weekly_budget.visible = llm == LLMProviderName.OPENAI
         # DeepL was missing here entirely, so its key field (and usage row)
         # showed permanently regardless of the selected translator.
         deepl_active = llm == LLMProviderName.DEEPL
@@ -3990,6 +4161,7 @@ class SettingsView(ft.Column):
         if not self.page:
             return
         _free_models = {
+            TranslationModel.INDEX_TRANSLATE,
             TranslationModel.GOOGLE_TRANSLATE,
             TranslationModel.BING,
             TranslationModel.PAPAGO,
@@ -3999,8 +4171,10 @@ class SettingsView(ft.Column):
             TranslationModel.GEMMA4: self._openrouter_key.value,
             TranslationModel.DEEPSEEK_V4_FLASH: self._openrouter_key.value or self._deepseek_key.value,
             TranslationModel.DEEPSEEK_V4_PRO: self._deepseek_key.value,
-            TranslationModel.GEMINI_3_FLASH: self._openrouter_key.value,
-            TranslationModel.GEMINI_31_FLASH_LITE: self._openrouter_key.value,
+            TranslationModel.GPT_6_LUNA: self._openai_key.value,
+            TranslationModel.GPT_61_SOL: self._openai_key.value,
+            TranslationModel.GEMINI_3_FLASH: self._google_key.value,
+            TranslationModel.GEMINI_31_FLASH_LITE: self._google_key.value,
             TranslationModel.QWEN_35_PLUS: self._alibaba_key_beijing.value or self._alibaba_key_singapore.value,
             TranslationModel.LOCAL_LLM: self._local_llm_api_key.value,
         }
@@ -4028,10 +4202,13 @@ class SettingsView(ft.Column):
                 TranslationModel.GEMMA4,
                 TranslationModel.DEEPSEEK_V4_FLASH,
                 TranslationModel.DEEPSEEK_V4_PRO,
+                TranslationModel.GPT_6_LUNA,
+                TranslationModel.GPT_61_SOL,
                 TranslationModel.GEMINI_3_FLASH,
                 TranslationModel.GEMINI_31_FLASH_LITE,
                 TranslationModel.QWEN_35_PLUS,
                 TranslationModel.DEEPL,
+                TranslationModel.INDEX_TRANSLATE,
                 TranslationModel.GOOGLE_TRANSLATE,
                 TranslationModel.BING,
                 TranslationModel.PAPAGO,
@@ -5432,6 +5609,32 @@ class SettingsView(ft.Column):
             self._chatbox_source_text.update()
         self._emit_settings_changed()
 
+    def _on_avatar_controls_click(self, e) -> None:
+        if not self._settings:
+            return
+        new_value = not bool(getattr(self._settings.osc, "avatar_controls", True))
+        self._emit_runtime_basic(f"[Settings] Avatar menu controls toggled: {new_value}")
+        self._settings.osc.avatar_controls = new_value
+        self._avatar_controls_text.content.value = t(
+            "settings.option.on" if new_value else "settings.option.off"
+        )
+        if self.page:
+            self._avatar_controls_text.update()
+        self._emit_settings_changed()
+
+    def _on_chatbox_live_click(self, e) -> None:
+        if not self._settings:
+            return
+        new_value = not bool(getattr(self._settings.osc, "chatbox_live_preview", True))
+        self._emit_runtime_basic(f"[Settings] Chatbox live preview toggled: {new_value}")
+        self._settings.osc.chatbox_live_preview = new_value
+        self._chatbox_live_text.content.value = t(
+            "settings.option.on" if new_value else "settings.option.off"
+        )
+        if self.page:
+            self._chatbox_live_text.update()
+        self._emit_settings_changed()
+
     def _on_show_pinyin_click(self, e) -> None:
         if not self._settings:
             return
@@ -6178,6 +6381,8 @@ class SettingsView(ft.Column):
                 (getattr(self, "_low_latency_text", None), "toggle.on" if _stt.low_latency_mode else "toggle.off"),
                 (getattr(self, "_vrc_mic_text", None), "settings.vrc_mic.on" if _osc.vrc_mic_intercept else "settings.vrc_mic.off"),
                 (getattr(self, "_chatbox_source_text", None), "settings.chatbox_source.on" if _osc.chatbox_include_source else "settings.chatbox_source.off"),
+                (getattr(self, "_chatbox_live_text", None), "settings.option.on" if getattr(_osc, "chatbox_live_preview", True) else "settings.option.off"),
+                (getattr(self, "_avatar_controls_text", None), "settings.option.on" if getattr(_osc, "avatar_controls", True) else "settings.option.off"),
                 (getattr(self, "_show_pinyin_text", None), "settings.show_pinyin.on" if _ui.show_pinyin else "settings.show_pinyin.off"),
                 (getattr(self, "_show_romaji_text", None), "settings.show_romaji.on" if _ui.show_romaji else "settings.show_romaji.off"),
                 (getattr(self, "_send_pinyin_text", None), "settings.send_pinyin.on" if _ui.send_pinyin else "settings.send_pinyin.off"),
@@ -6404,6 +6609,16 @@ class SettingsView(ft.Column):
                 if display_settings.osc.chatbox_include_source
                 else "settings.chatbox_source.off"
             )
+            self._chatbox_live_text.content.value = t(
+                "settings.option.on"
+                if getattr(display_settings.osc, "chatbox_live_preview", True)
+                else "settings.option.off"
+            )
+            self._avatar_controls_text.content.value = t(
+                "settings.option.on"
+                if getattr(display_settings.osc, "avatar_controls", True)
+                else "settings.option.off"
+            )
             self._set_unit_card_value_text(
                 self._microphone_test_text,
                 t("settings.microphone_test.action"),
@@ -6422,10 +6637,17 @@ class SettingsView(ft.Column):
         # Components
         self._deepgram_key.apply_locale()
         self._soniox_key.apply_locale()
+        self._elevenlabs_key.apply_locale()
+        self._custom_stt_key.apply_locale()
+        self._custom_stt_base_url.label = t("settings.custom_stt.base_url")
+        self._custom_stt_model.label = t("settings.custom_stt.model")
+        self._openai_weekly_budget.label = t("settings.openai.weekly_budget")
+        self._openai_weekly_budget.tooltip = t("settings.openai.weekly_budget.tooltip")
         self._google_key.apply_locale()
         self._managed_trial_usage_bar.apply_locale()
         self._openrouter_key.apply_locale()
         self._deepseek_key.apply_locale()
+        self._openai_key.apply_locale()
         self._alibaba_key_beijing.apply_locale()
         self._alibaba_key_singapore.apply_locale()
         self._audio_settings.apply_locale()

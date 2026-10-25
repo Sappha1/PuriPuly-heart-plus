@@ -14,8 +14,8 @@ class ContextResolver:
     clock: Clock = SystemClock()
     local_time_window_s: float = 30.0
     local_max_entries: int = 3
-    integrated_time_window_s: float = 40.0
-    integrated_max_entries: int = 4
+    integrated_time_window_s: float = 60.0
+    integrated_max_entries: int = 5
 
     def get_local_entries(
         self,

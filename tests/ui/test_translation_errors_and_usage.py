@@ -83,7 +83,7 @@ def test_meter_shows_no_credits_in_red() -> None:
 
     fraction, caption, tone, _ = openai_meter_view(snap)
 
-    assert (fraction, caption, tone) == (1.0, "No credits", "error")
+    assert (fraction, caption, tone) == (0.0, "No credits", "error")
 
 
 def test_meter_hidden_before_any_use() -> None:
@@ -129,7 +129,7 @@ def test_keyless_service_refusal_reads_as_unavailable_not_bad_key() -> None:
     assert is_account_problem(text) is False
 
 
-def test_weekly_budget_drives_the_ring_and_headline() -> None:
+def test_weekly_budget_drives_the_ring() -> None:
     from puripuly_heart.ui.usage_meter import openai_meter_details
 
     snap = OpenAIUsageSnapshot(requests=3, spent_usd=0.5, week_spent_usd=4.0, week_requests=40)
@@ -137,7 +137,6 @@ def test_weekly_budget_drives_the_ring_and_headline() -> None:
     view = openai_meter_details(snap, weekly_budget=5.0)
 
     assert view.fraction == pytest.approx(0.2)
-    assert view.headline == "20% of this week's budget left"
     assert view.caption == "$1.00 left this week"
     assert any("Last 7 days: 40 requests" in line for line in view.lines)
 
@@ -147,13 +146,13 @@ def test_weekly_budget_drives_the_ring_and_headline() -> None:
     assert spent_out.fraction == 0.0 and spent_out.tone == "error"
 
 
-def test_without_budget_the_headline_shows_this_weeks_spend() -> None:
+def test_without_budget_or_limits_there_is_no_percentage() -> None:
     from puripuly_heart.ui.usage_meter import openai_meter_details
 
     view = openai_meter_details(OpenAIUsageSnapshot(week_spent_usd=0.42, week_requests=9))
 
     assert view.fraction is None
-    assert view.headline == "This week: $0.420 spent"
+    assert any("Last 7 days: 9 requests" in line for line in view.lines)
 
 
 def test_spend_ledger_survives_a_restart_and_keeps_seven_days(tmp_path) -> None:
@@ -202,28 +201,30 @@ def test_account_notice_can_be_dismissed_until_it_changes() -> None:
     assert dash._translator_account_notice_dismissed is None
 
 
-def test_usage_ring_lives_in_the_nav_row_and_lists_details() -> None:
-    dash = DashboardView.__new__(DashboardView)
-    hidden = []
-    dash._row_trans = type(
-        "Row", (), {
-            "set_meter": lambda self, fraction, color=None: hidden.append(fraction),
-            "set_sublabel": lambda self, text: None,
-        },
-    )()
-    dash._usage_ring = ft.ProgressRing(value=1.0)
-    dash._usage_menu = ft.PopupMenuButton(items=[], visible=False)
+def test_trans_row_ring_shows_the_percent_in_its_centre() -> None:
+    from puripuly_heart.ui.views.dashboard import _ToggleRow
 
-    dash.set_translator_meter(0.4, "$2.00 left this week", "ok", "40% of this week's budget left",
-                              ["Weekly budget: $2.00 of $5.00 left"])
+    row = _ToggleRow(ft.Icons.TRANSLATE, "TRANS", on_click=lambda _e: None)
 
-    assert hidden == [None]  # the TRANS row no longer carries the ring
-    assert dash._usage_menu.visible is True
-    assert dash._usage_ring.value == pytest.approx(0.4)
-    assert [item.content.value for item in dash._usage_menu.items] == [
-        "40% of this week's budget left",
-        "Weekly budget: $2.00 of $5.00 left",
-    ]
+    row.set_meter(0.4, "#ff0000")
+    assert row._meter_box.visible is True
+    assert row._meter.value == pytest.approx(0.4)
+    assert row._meter.color == "#ff0000"
+    assert row._meter_text.value == "40%"
 
-    dash.set_translator_meter(None)
-    assert dash._usage_menu.visible is False
+    row.set_meter(None)
+    assert row._meter_box.visible is False
+
+
+def test_trans_row_ring_reads_dashes_until_a_number_exists() -> None:
+    from puripuly_heart.ui.views.dashboard import _ToggleRow
+
+    row = _ToggleRow(ft.Icons.TRANSLATE, "TRANS", on_click=lambda _e: None)
+
+    row.set_meter(None, unknown=True)
+    assert row._meter_box.visible is True
+    assert row._meter_text.value == "--"
+    assert row._meter.value == 0.0
+
+    row.set_meter(0.0, "#cf4040")  # out of credits
+    assert row._meter_text.value == "0%"

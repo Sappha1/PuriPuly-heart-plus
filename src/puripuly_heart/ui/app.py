@@ -2931,13 +2931,13 @@ class TranslatorApp:
         snap = USAGE.snapshot()
         view = openai_meter_details(snap, budget)
         details = list(view.lines)
-        if not budget and snap.credit_available is None:
+        if details and not budget and snap.credit_available is None:
             details.append(t("dashboard.usage.budget_hint"))
-        headline = view.headline or t("dashboard.usage.ring.tooltip")
         with contextlib.suppress(Exception):
-            dash.set_translator_meter(view.fraction, view.caption, view.tone, headline, details)
+            # always up while ChatGPT translates, "--" until a number exists
+            dash.set_translator_meter(view.fraction, view.caption, view.tone, show_unknown=True)
         with contextlib.suppress(Exception):
-            dash.set_translator_usage("\n".join(view.lines) if view.lines else None)
+            dash.set_translator_usage("\n".join(details) if details else None)
 
     def _current_translator_model_value(self) -> str:
         """Live translation model value from settings (so the picker highlight is accurate)."""

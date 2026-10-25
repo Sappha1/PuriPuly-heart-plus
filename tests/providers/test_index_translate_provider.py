@@ -8,7 +8,6 @@ from puripuly_heart.providers.llm.index_translate import (
     INDEX_TRANSLATE_ENDPOINT,
     INDEX_TRANSLATE_HEADERS,
     INDEX_TRANSLATE_MODEL,
-    INDEX_TRANSLATE_MODEL_ALIAS,
     IndexTranslateError,
     IndexTranslateLLMProvider,
     build_index_prompt,
@@ -82,13 +81,18 @@ def test_prompt_omits_unknown_source_and_maps_chinese_variants() -> None:
     assert "韩语" in build_index_prompt("hi", "en", "ko")
 
 
+def test_default_model_is_the_public_endpoint_name() -> None:
+    assert INDEX_TRANSLATE_MODEL == "Index-Translate-35B-A3B"
+
+
 @pytest.mark.asyncio
-async def test_unknown_model_retries_once_with_the_short_alias() -> None:
-    provider = IndexTranslateLLMProvider()
-    client = _Client(
-        _Response(404, {"error": {"message": "The model does not exist"}}),
-        _ok("hola"),
-    )
+async def test_unknown_model_retries_with_the_name_the_server_lists() -> None:
+    # the endpoint answers an unknown model in Chinese with the models it serves
+    rejected = _Response(400, {"detail": (
+        "未知模型 'Old-Name'，公开支持模型 本模型: Index-Translate-2B, "
+        "Index-Translate-9B, Index-Translate-35B-A3B-v2")})
+    provider = IndexTranslateLLMProvider(model="Old-Name")
+    client = _Client(rejected, _ok("hola"))
     provider._client = client  # type: ignore[assignment]
 
     result = await provider.translate(utterance_id=uuid4(), text="hi", system_prompt="",
@@ -96,8 +100,20 @@ async def test_unknown_model_retries_once_with_the_short_alias() -> None:
 
     assert result.text == "hola"
     assert [req[1]["json"]["model"] for req in client.requests] == [
-        INDEX_TRANSLATE_MODEL, INDEX_TRANSLATE_MODEL_ALIAS]
-    assert provider.model == INDEX_TRANSLATE_MODEL_ALIAS
+        "Old-Name", "Index-Translate-35B-A3B-v2"]
+    assert provider.model == "Index-Translate-35B-A3B-v2"
+
+
+@pytest.mark.asyncio
+async def test_detail_errors_are_read_as_plain_text() -> None:
+    provider = IndexTranslateLLMProvider()
+    provider._client = _Client(_Response(503, {"detail": "服务繁忙"}))  # type: ignore[assignment]
+
+    with pytest.raises(IndexTranslateError) as err:
+        await provider.translate(utterance_id=uuid4(), text="hi", system_prompt="",
+                                 source_language="en", target_language="es")
+
+    assert "message=服务繁忙" in str(err.value) and "{" not in str(err.value)
 
 
 @pytest.mark.asyncio

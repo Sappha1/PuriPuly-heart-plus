@@ -2,6 +2,11 @@
 
 User-facing changes per build. The latest build's highlights also appear in-app when an update is ready.
 
+## r665 - 2026-10-25
+
+- Fixed: Index-Translate translations failing with an unknown model error
+- Changed: the ChatGPT usage ring now sits in the TRANS box and shows the percentage left in its centre
+
 ## r663 - 2026-10-24
 
 - Added: ChatGPT (GPT-6 Luna and GPT-6.1 Sol) as a translator, using your own OpenAI API key

@@ -29,9 +29,10 @@ from puripuly_heart.domain.models import Translation
 logger = logging.getLogger(__name__)
 
 INDEX_TRANSLATE_ENDPOINT = "https://index-translate.bilibili.com/v1/chat/completions"
-INDEX_TRANSLATE_MODEL = "IndexTeam/Index-Translate-35B-A3B-preview"
-# the reference repo's call_api example uses this short alias instead
-INDEX_TRANSLATE_MODEL_ALIAS = "Index-Translate-35B-A3B-preview"
+# the public endpoint's own name for the model (the Hugging Face repo id is
+# rejected there as an unknown model)
+INDEX_TRANSLATE_MODEL = "Index-Translate-35B-A3B"
+_MODEL_NAME_RE = re.compile(r"Index-Translate-[A-Za-z0-9.]+(?:-[A-Za-z0-9.]+)*")
 INDEX_TRANSLATE_HEADERS = {
     "Authorization": "Bearer none",
     "User-Agent": "Index-Translate-Client/1.0",
@@ -166,6 +167,13 @@ def _error_detail(response: httpx.Response) -> str:
             detail = str(err)
         elif isinstance(data, dict) and data.get("message"):
             detail = str(data.get("message"))
+        elif isinstance(data, dict) and data.get("detail"):
+            raw = data.get("detail")
+            if isinstance(raw, list):
+                raw = "; ".join(
+                    str(item.get("msg") if isinstance(item, dict) else item) for item in raw
+                )
+            detail = str(raw)
     if not detail:
         with contextlib.suppress(Exception):
             body = response.text
@@ -180,10 +188,26 @@ def _error_detail(response: httpx.Response) -> str:
 
 def _is_unknown_model(status: int, detail: str) -> bool:
     lowered = detail.lower()
-    return status in (400, 404) and "model" in lowered and (
+    if status not in (400, 404, 422):
+        return False
+    if "未知模型" in detail or "不支持" in detail and "模型" in detail:
+        return True
+    return "model" in lowered and (
         "not found" in lowered or "does not exist" in lowered or "unknown" in lowered
-        or "invalid" in lowered or "not exist" in lowered
+        or "invalid" in lowered or "not exist" in lowered or "not supported" in lowered
     )
+
+
+def _supported_model_from(detail: str, rejected: str) -> str | None:
+    """Pick the 35B model from the list an unknown-model error names."""
+    names = [n for n in _MODEL_NAME_RE.findall(detail or "") if n != rejected]
+    for name in names:
+        if "35B" in name and not name.endswith("-preview"):
+            return name
+    for name in names:
+        if "35B" in name:
+            return name
+    return None
 
 
 @dataclass(slots=True)
@@ -240,18 +264,18 @@ class IndexTranslateLLMProvider:
         response = await client.post(self.endpoint, json=self._body(self.model, prompt))
         if response.status_code != 200:
             detail = _error_detail(response)
-            if self.model != INDEX_TRANSLATE_MODEL_ALIAS and _is_unknown_model(
-                response.status_code, detail
-            ):
-                # older deployments only know the short alias; keep whichever works
-                retry = await client.post(
-                    self.endpoint, json=self._body(INDEX_TRANSLATE_MODEL_ALIAS, prompt)
-                )
+            alternative = (
+                _supported_model_from(detail, self.model)
+                if _is_unknown_model(response.status_code, detail)
+                else None
+            )
+            if alternative:
+                # the server renamed the model: use the name it lists, and keep it
+                retry = await client.post(self.endpoint, json=self._body(alternative, prompt))
+                response = retry
                 if retry.status_code == 200:
-                    self.model = INDEX_TRANSLATE_MODEL_ALIAS
-                    response = retry
+                    self.model = alternative
                 else:
-                    response = retry
                     detail = _error_detail(retry)
             if response.status_code != 200:
                 self._log(

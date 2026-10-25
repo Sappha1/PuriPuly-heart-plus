@@ -22,7 +22,7 @@ from puripuly_heart.ui.overlay_peer_contract import OverlayPeerConsumerContract
 from puripuly_heart.ui.sent_text_undo import SentTextUndo, restore_after_native_undo
 from puripuly_heart.ui.translation_errors import friendly_translation_error
 
-_BUILD_TAG = "r663"  #increment each build so user can confirm version
+_BUILD_TAG = "r665"  #increment each build so user can confirm version
 
 # ── VRCT-style dark palette ──────────────────────────────────────────────────
 _BG_MAIN = "#292b2e"
@@ -138,11 +138,24 @@ class _ToggleRow(ft.Container):
             width=12,
             height=12,
         )
-        # Usage ring (paid translators): how much of the account's credit or
-        # per-minute limit is left. Hidden unless a provider reports usage.
+        # Usage ring (paid translators): how much of the weekly budget, credit
+        # or per-minute limit is left, with the percent in its centre. Hidden
+        # unless a provider reports usage.
         self._meter = ft.ProgressRing(
-            width=14, height=14, stroke_width=2.5, value=1.0,
-            color=_TOGGLE_ON, bgcolor=_TOGGLE_OFF, visible=False,
+            width=28, height=28, stroke_width=2.5, value=1.0,
+            color=_TOGGLE_ON, bgcolor=_TOGGLE_OFF,
+        )
+        self._meter_text = ft.Text(
+            "", size=8, weight=ft.FontWeight.BOLD, color=_TEXT_PRIMARY,
+            text_align=ft.TextAlign.CENTER, no_wrap=True,
+        )
+        self._meter_box = ft.Stack(
+            [
+                self._meter,
+                ft.Container(content=self._meter_text, width=28, height=28,
+                             alignment=ft.alignment.center),
+            ],
+            width=28, height=28, visible=False,
         )
 
         self._icon = ft.Icon(icon, size=18, color=_TEXT_MUTED)
@@ -152,7 +165,7 @@ class _ToggleRow(ft.Container):
                 [
                     self._icon,
                     label_col,
-                    self._meter,
+                    self._meter_box,
                     self._indicator,
                 ],
                 spacing=12,
@@ -247,16 +260,25 @@ class _ToggleRow(ft.Container):
         except Exception:
             pass
 
-    def set_meter(self, fraction: float | None, color: str | None = None) -> None:
-        """fraction 0..1 of what is left; None hides the ring."""
-        if fraction is None:
-            self._meter.visible = False
+    def set_meter(
+        self, fraction: float | None, color: str | None = None, *, unknown: bool = False
+    ) -> None:
+        """fraction 0..1 of what is left; None hides the ring, or with
+        unknown=True shows an empty ring reading "--" (no number yet)."""
+        if fraction is None and unknown:
+            self._meter.value = 0.0
+            self._meter_text.value = "--"
+            self._meter_box.visible = True
+        elif fraction is None:
+            self._meter_box.visible = False
         else:
-            self._meter.value = max(0.0, min(1.0, float(fraction)))
+            value = max(0.0, min(1.0, float(fraction)))
+            self._meter.value = value
             self._meter.color = color or _TOGGLE_ON
-            self._meter.visible = True
+            self._meter_text.value = f"{round(value * 100)}%"
+            self._meter_box.visible = True
         try:
-            self._meter.update()
+            self._meter_box.update()
         except Exception:
             pass
 
@@ -1268,29 +1290,12 @@ class DashboardView(ft.Row):
         self._overlay_active: bool = False  # overlay currently on
         self._overlay_mode_value: str | None = None  # resolved target (steamvr/desktop)
 
-        # Translator usage ring (paid translators). It sits in the slot that
-        # balances the update button; clicking it lists the details.
-        self._usage_ring = ft.ProgressRing(
-            width=22, height=22, stroke_width=3, value=1.0,
-            color=_TOGGLE_ON, bgcolor=_TOGGLE_OFF,
-        )
-        self._usage_menu = ft.PopupMenuButton(
-            content=ft.Container(
-                content=self._usage_ring, width=44, height=40,
-                alignment=ft.alignment.center,
-            ),
-            tooltip=t("dashboard.usage.ring.tooltip"),
-            items=[],
-            visible=False,
-        )
-        self._usage_slot = ft.Container(width=44, height=40, content=self._usage_menu)
-
         self._sidebar_nav_row = ft.Container(
             content=ft.Row(
-                # The usage slot doubles as the counterweight for the update
-                # button's reserved slot, so the row stays centered whether or
-                # not either one is showing.
-                [self._usage_slot, self._update_btn],
+                # Invisible counterweight mirrors the update button's reserved
+                # slot so the gear sits dead-center whether or not an update is
+                # showing; the update button fades in to the gear's right.
+                [ft.Container(width=44, height=40), self._update_btn],
                 spacing=6,
                 alignment=ft.MainAxisAlignment.CENTER,
                 vertical_alignment=ft.CrossAxisAlignment.CENTER,
@@ -7016,50 +7021,18 @@ class DashboardView(ft.Row):
         fraction: float | None,
         caption: str = "",
         tone: str = "ok",
-        headline: str = "",
-        lines: list[str] | None = None,
+        *,
+        show_unknown: bool = False,
     ) -> None:
-        """Usage ring in the bottom nav row + short caption on the TRANS row.
+        """Usage ring (percent in its centre) + short caption on the TRANS row.
 
-        fraction: share left (0..1). With no fraction, headline or lines the
-        ring hides. tone: ok / warning / error colours the ring. Clicking the
-        ring lists the headline (e.g. the percent left) and the detail lines.
+        fraction: share left (0..1); None hides the ring unless show_unknown,
+        which keeps it up reading "--". tone: ok / warning / error colours it.
         """
         color = {"warning": _TOGGLE_WARNING, "error": _TOGGLE_ERROR}.get(tone, _TOGGLE_ON)
         self._translator_meter_caption = caption or ""
-        self._row_trans.set_meter(None)
+        self._row_trans.set_meter(fraction, color, unknown=show_unknown)
         self._row_trans.set_sublabel(self._trans_sublabel())
-        details = [line for line in (lines or []) if line]
-        active = fraction is not None or bool(headline) or bool(details)
-        menu = getattr(self, "_usage_menu", None)
-        if menu is None:
-            return
-        if active:
-            if fraction is None:
-                self._usage_ring.value = 1.0
-                self._usage_ring.color = _TEXT_FAINT
-            else:
-                self._usage_ring.value = max(0.0, min(1.0, float(fraction)))
-                self._usage_ring.color = color
-            items = []
-            if headline:
-                items.append(ft.PopupMenuItem(
-                    height=34,
-                    content=ft.Text(headline, size=13, weight=ft.FontWeight.BOLD,
-                                    color=color if fraction is not None else _TEXT_PRIMARY),
-                ))
-            for line in details:
-                items.append(ft.PopupMenuItem(
-                    height=28,
-                    content=ft.Text(line, size=12, color=_TEXT_PRIMARY),
-                ))
-            menu.items = items
-        menu.visible = active
-        try:
-            if menu.page:
-                menu.update()
-        except Exception:
-            pass
 
     def set_translator_account_notice(self, text: str | None) -> None:
         """A translator account problem (no credits, rejected key) shown in the

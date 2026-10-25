@@ -3,8 +3,7 @@
 Best available signal first: "no credits" overrides everything; then the
 user's own weekly budget (this week's spend comes from a small on-disk
 ledger); then the prepaid credit balance (only some keys may read it);
-otherwise the per-minute token limit OpenAI reports on every reply. The
-headline is what the ring's click popup leads with.
+otherwise the per-minute token limit OpenAI reports on every reply.
 """
 
 from __future__ import annotations
@@ -31,7 +30,6 @@ class MeterView:
     fraction: float | None = None
     caption: str = ""
     tone: str = "ok"
-    headline: str = ""
     lines: list[str] = field(default_factory=list)
 
 
@@ -88,8 +86,7 @@ def openai_meter_details(snap, weekly_budget: float = 0.0) -> MeterView:
         lines.append(t("dashboard.usage.tooltip.no_balance"))
 
     if snap.out_of_credits:
-        return MeterView(1.0, t("dashboard.usage.no_credits"), "error",
-                         t("dashboard.usage.headline.no_credits"), lines)
+        return MeterView(0.0, t("dashboard.usage.no_credits"), "error", lines)
 
     if budget:
         left = max(0.0, budget - week_spent)
@@ -99,7 +96,6 @@ def openai_meter_details(snap, weekly_budget: float = 0.0) -> MeterView:
             fraction,
             t("dashboard.usage.week_left", amount=_money(left)),
             tone,
-            t("dashboard.usage.headline.week", percent=_percent(fraction)),
             lines,
         )
 
@@ -116,7 +112,6 @@ def openai_meter_details(snap, weekly_budget: float = 0.0) -> MeterView:
             fraction,
             t("dashboard.usage.left", amount=_money(available)),
             tone,
-            t("dashboard.usage.headline.credits", percent=_percent(fraction)),
             lines,
         )
 
@@ -124,22 +119,16 @@ def openai_meter_details(snap, weekly_budget: float = 0.0) -> MeterView:
         fraction = snap.remaining_tokens / snap.limit_tokens
         tone = "warning" if fraction < 0.15 else "ok"
         caption = t("dashboard.usage.used", amount=_money(snap.spent_usd)) if snap.requests else ""
-        headline = (
-            t("dashboard.usage.headline.week_spent", amount=_money(week_spent))
-            if week_requests
-            else t("dashboard.usage.headline.rate", percent=_percent(fraction))
-        )
-        return MeterView(fraction, caption, tone, headline, lines)
+        return MeterView(fraction, caption, tone, lines)
 
     if snap.requests or week_requests:
         return MeterView(
             None,
             t("dashboard.usage.used", amount=_money(snap.spent_usd)) if snap.requests else "",
             "ok",
-            t("dashboard.usage.headline.week_spent", amount=_money(week_spent)),
             lines,
         )
-    return MeterView(None, "", "ok", "", lines)
+    return MeterView(None, "", "ok", lines)
 
 
 def openai_meter_view(snap, weekly_budget: float = 0.0) -> tuple[float | None, str, str, list[str]]:

@@ -1,9 +1,13 @@
 {
-  "build": 656,
-  "tag": "r656",
-  "date": "2026-10-14",
+  "build": 663,
+  "tag": "r663",
+  "date": "2026-10-24",
   "notes": [
-    "Fixed the Steam tab sometimes freezing mid-session (no new messages, friends shown offline); it now recovers on its own"
+    "Added ChatGPT (GPT-6 Luna / GPT-6.1 Sol) as a translator with your own OpenAI key, with a usage ring in the bottom-left corner",
+    "Added Index-Translate (free, no key), Gemini 3.5 Transcribe, ElevenLabs Scribe v2 and support for your own Whisper-compatible speech server",
+    "Added live chatbox preview, avatar menu controls and a floating chat window",
+    "Steam emoji reactions now show in the Steam tab, and the app is available in Russian",
+    "Fixed garbled text from the built-in Qwen speech model and Ctrl+Z after sending"
   ],
-  "zip_sha256": "5e4f812a1c51a2de37d13d2a3107fcc87a30382e2b7e3808f21d8632cc1bfd79"
+  "zip_sha256": "a52c58b017bd70544c55ea96c7e92b0b4e258411ae6439ae793bcb7848bf4bd9"
 }

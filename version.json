@@ -1,10 +1,10 @@
 {
-  "build": 665,
-  "tag": "r665",
-  "date": "2026-10-25",
+  "build": 666,
+  "tag": "r666",
+  "date": "2026-10-30",
   "notes": [
-    "Fixed Index-Translate translations failing with an unknown model error",
-    "The ChatGPT usage ring now sits in the TRANS box and shows the percentage left in its centre"
+    "The built-in speech model now loads on PCs with little free memory (for example while VRChat runs in VR) instead of refusing",
+    "GPT-6 Luna and GPT-6.1 Sol need an OpenAI API key with prepaid credits from platform.openai.com - a ChatGPT subscription or login does not work. For free translation, pick Google, Bing or Index-Translate"
   ],
-  "zip_sha256": "b165db71393667ca6e65a681ab5dfbf82860a846aacbfa66f46d35765c8a9ebd"
+  "zip_sha256": "94a242cd4cb761eb31fda8e24745aa582c3ad1fc76c4548e6f71773ef85f0361"
 }

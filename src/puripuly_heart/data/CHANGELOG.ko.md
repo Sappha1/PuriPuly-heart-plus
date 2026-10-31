@@ -2,6 +2,11 @@
 
 CHANGELOG.md와 동일한 섹션 구조입니다. 번역되지 않은 이전 버전은 자동으로 영어로 표시됩니다.
 
+## r666 - 2026-10-30
+
+- 개선: 여유 메모리가 적은 PC(예: VR에서 VRChat 실행 중)에서도 내장 음성 모델을 거부하지 않고 불러옴. Windows가 공간을 확보하며, 불러오는 데 시간이 걸릴 수 있으면 앱이 알려줌
+- 안내: GPT-6 Luna와 GPT-6.1 Sol은 사용한 만큼 비용을 내는 OpenAI API를 사용합니다. platform.openai.com의 API 키와 그 키에 충전한 크레딧이 필요합니다. ChatGPT Plus/Pro 구독이나 ChatGPT 로그인으로는 사용할 수 없습니다. 무료로 번역하려면 Google, Bing 또는 Index-Translate를 선택하세요. 이제 GPT 모델 옆과 오류 메시지에서도 이 내용을 알려줍니다
+
 ## r665 - 2026-10-25
 
 - 수정: Index-Translate 번역이 알 수 없는 모델 오류로 실패하던 문제

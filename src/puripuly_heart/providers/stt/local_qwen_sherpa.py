@@ -3,9 +3,11 @@ from __future__ import annotations
 import asyncio
 import threading
 import contextlib
+import ctypes
 import importlib
 import logging
 import re
+import sys
 import time
 from dataclasses import dataclass, field
 from pathlib import Path
@@ -342,10 +344,16 @@ _SHARED_RECOGNIZERS_LOCK = threading.Lock()
 # freeze the load never returns from.
 _RECOGNIZER_BUILD_LOCK = threading.Lock()
 
-# Measured instance cost (1142 MB RSS growth) plus working headroom. Below the
-# floor the load refuses with numbers instead of thrashing the whole machine.
+# Measured instance cost (1142 MB RSS growth) plus working headroom.
 LOCAL_QWEN_MODEL_LOAD_ESTIMATE_MB = 1200
-LOCAL_QWEN_MODEL_LOAD_FLOOR_MB = 1400
+# The load is refused only when Windows cannot commit the model at all (RAM +
+# page file full), where it would fail anyway. Low free RAM - e.g. VRChat in
+# VR on 16 GB - loads with paging instead of being refused; one build at a
+# time (_RECOGNIZER_BUILD_LOCK) is what keeps that from turning into the old
+# two-loads-at-once freeze.
+LOCAL_QWEN_COMMIT_MARGIN_MB = 400
+# Below this much free RAM the load works but pages; worth a heads-up.
+LOCAL_QWEN_LOW_MEMORY_WARN_MB = LOCAL_QWEN_MODEL_LOAD_ESTIMATE_MB + 1000
 
 
 def _available_memory_mb() -> int | None:
@@ -355,6 +363,42 @@ def _available_memory_mb() -> int | None:
         return int(psutil.virtual_memory().available / (1024 * 1024))
     except Exception:
         return None  # diagnostics must never block the load themselves
+
+
+class _MemoryStatusEx(ctypes.Structure):
+    _fields_ = [
+        ("dwLength", ctypes.c_ulong),
+        ("dwMemoryLoad", ctypes.c_ulong),
+        ("ullTotalPhys", ctypes.c_ulonglong),
+        ("ullAvailPhys", ctypes.c_ulonglong),
+        ("ullTotalPageFile", ctypes.c_ulonglong),
+        ("ullAvailPageFile", ctypes.c_ulonglong),
+        ("ullTotalVirtual", ctypes.c_ulonglong),
+        ("ullAvailVirtual", ctypes.c_ulonglong),
+        ("ullAvailExtendedVirtual", ctypes.c_ulonglong),
+    ]
+
+
+def _available_commit_mb() -> int | None:
+    """Memory this process can still commit (free RAM + free page file)."""
+    try:
+        if sys.platform.startswith("win"):
+            kernel32 = ctypes.WinDLL("kernel32", use_last_error=True)
+            status_fn = kernel32.GlobalMemoryStatusEx
+            status_fn.argtypes = [ctypes.POINTER(_MemoryStatusEx)]
+            status_fn.restype = ctypes.c_int
+            status = _MemoryStatusEx()
+            status.dwLength = ctypes.sizeof(_MemoryStatusEx)
+            if not status_fn(ctypes.byref(status)):
+                return None
+            return int(status.ullAvailPageFile / (1024 * 1024))
+        import psutil
+
+        return int(
+            (psutil.virtual_memory().available + psutil.swap_memory().free) / (1024 * 1024)
+        )
+    except Exception:
+        return None
 
 
 # Set on a recognizer whose decode timed out. An attribute (not an id() set)
@@ -391,24 +435,38 @@ def _reset_shared_local_qwen_recognizers() -> None:
 
 
 def _require_memory_for_model_load() -> None:
+    commit = _available_commit_mb()
+    commit_needed = LOCAL_QWEN_MODEL_LOAD_ESTIMATE_MB + LOCAL_QWEN_COMMIT_MARGIN_MB
+    if commit is not None and commit < commit_needed:
+        logger.warning(
+            "[STT][local_qwen] refusing model load: %d MB committable "
+            "(RAM + page file), ~%d MB needed",
+            commit,
+            commit_needed,
+        )
+        raise LocalQwenLowMemoryError(available_mb=commit, needed_mb=commit_needed)
     available = _available_memory_mb()
     if available is None:
         return
-    if available < LOCAL_QWEN_MODEL_LOAD_FLOOR_MB:
+    if available < LOCAL_QWEN_LOW_MEMORY_WARN_MB:
         logger.warning(
-            "[STT][local_qwen] refusing model load: %d MB available, ~%d MB needed",
+            "[STT][local_qwen] low memory for model load: %d MB free RAM "
+            "(%s MB committable) - loading anyway; Windows will page other apps",
             available,
-            LOCAL_QWEN_MODEL_LOAD_ESTIMATE_MB,
+            commit if commit is not None else "?",
         )
-        raise LocalQwenLowMemoryError(
-            available_mb=available, needed_mb=LOCAL_QWEN_MODEL_LOAD_ESTIMATE_MB
-        )
-    if available < LOCAL_QWEN_MODEL_LOAD_ESTIMATE_MB + 1000:
-        logger.warning(
-            "[STT][local_qwen] low memory for model load: %d MB available — "
-            "the load will work but may be slow while the system pages",
-            available,
-        )
+
+
+def model_load_memory_warning_mb() -> int | None:
+    """Free RAM in MB when a model load is about to happen under low (but
+    workable) memory; None when no load is pending or memory is fine."""
+    with _SHARED_RECOGNIZERS_LOCK:
+        if _SHARED_RECOGNIZERS:
+            return None  # already loaded: enabling costs nothing
+    available = _available_memory_mb()
+    if available is None or available >= LOCAL_QWEN_LOW_MEMORY_WARN_MB:
+        return None
+    return available
 
 
 def _shared_recognizer(key: tuple, factory) -> object:

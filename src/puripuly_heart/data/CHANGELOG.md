@@ -2,6 +2,11 @@
 
 User-facing changes per build. The latest build's highlights also appear in-app when an update is ready.
 
+## r666 - 2026-10-30
+
+- Improved: the built-in speech model now loads on PCs with little free memory (for example while VRChat runs in VR) instead of refusing - Windows makes room, and the app tells you when loading may take a moment
+- Note: GPT-6 Luna and GPT-6.1 Sol use the OpenAI API, which is pay-as-you-go: you need an API key from platform.openai.com with credits added to it. A ChatGPT Plus/Pro subscription or a ChatGPT login does not work with it. For free translation, pick Google, Bing or Index-Translate. The app now says this next to the GPT models and in its error messages
+
 ## r665 - 2026-10-25
 
 - Fixed: Index-Translate translations failing with an unknown model error

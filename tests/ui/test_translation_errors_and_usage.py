@@ -35,7 +35,9 @@ def test_no_credits_is_reported_as_such() -> None:
     text = _no_credits_text()
 
     assert classify_translation_error(text)[:3] == ("no_credits", "OpenAI", 429)
-    assert friendly_translation_error(text).startswith("No credits remaining on your OpenAI account")
+    friendly = friendly_translation_error(text)
+    assert friendly.startswith("No API credits left on your OpenAI account")
+    assert "ChatGPT subscription does not include API credits" in friendly
     assert is_account_problem(text)
 
 
@@ -107,7 +109,7 @@ def test_failed_typed_message_shows_the_reason_right_away() -> None:
 
     assert dash._pending_sent_col is None  # the generic timeout line is cancelled
     assert dash._pending_version == 1
-    assert col.controls[-1].value.startswith("No credits remaining")
+    assert col.controls[-1].value.startswith("No API credits left")
     assert pending_text.color == "#888888"
 
 
@@ -228,3 +230,23 @@ def test_trans_row_ring_reads_dashes_until_a_number_exists() -> None:
 
     row.set_meter(0.0, "#cf4040")  # out of credits
     assert row._meter_text.value == "0%"
+
+def test_rejected_openai_key_explains_a_chatgpt_login_does_not_work() -> None:
+    text = "OpenAI request failed (status=401, message=Incorrect API key provided)"
+
+    friendly = friendly_translation_error(text)
+
+    assert friendly.startswith("OpenAI rejected the API key")
+    assert "ChatGPT login does not work" in friendly
+    # other providers keep the plain wording
+    assert friendly_translation_error(
+        "DeepL request failed (status=403, message=Authorization failure)"
+    ) == "DeepL rejected the API key \u2014 check it in Settings"
+
+
+def test_gpt_models_say_they_need_an_api_key_not_a_chatgpt_login() -> None:
+    from puripuly_heart.ui.i18n import t
+
+    for key in ("provider.gpt6_luna.description", "provider.gpt61_sol.description"):
+        text = t(key)
+        assert "OpenAI API key" in text and "ChatGPT login" in text

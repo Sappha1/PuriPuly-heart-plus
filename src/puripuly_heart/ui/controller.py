@@ -4008,6 +4008,16 @@ class GuiController:
             # held until the pipeline settles — it used to fire on every mic
             # enable, +241 MB and ~0.5 s of GIL against the model load.
             self._schedule_deferred_transliteration_warmup()
+            with contextlib.suppress(Exception):
+                from puripuly_heart.providers.stt.local_qwen_sherpa import (
+                    model_load_memory_warning_mb,
+                )
+
+                low_mb = model_load_memory_warning_mb()
+                if low_mb is not None:
+                    self._show_short_message(
+                        "stt.local.low_memory_slow", available=f"{low_mb / 1024:.1f}"
+                    )
             await self.hub.stt.warmup()
             self._local_stt_install_state = LocalSTTInstallState(status="ready")
             if self._local_stt_runtime_status != "downloading":

@@ -2,6 +2,11 @@
 
 与 CHANGELOG.md 相同的章节结构；未翻译的旧版本会自动回退显示英文。
 
+## r666 - 2026-10-30
+
+- 改进: 内置语音模型现在可以在可用内存较少的电脑上加载（例如在 VR 中运行 VRChat 时），不再直接拒绝——Windows 会腾出空间，加载可能需要一点时间时应用会提示
+- 说明: GPT-6 Luna 和 GPT-6.1 Sol 使用 OpenAI API，按用量付费：你需要在 platform.openai.com 获取 API 密钥并充值额度。ChatGPT Plus/Pro 订阅或 ChatGPT 账号登录都无法使用。想免费翻译请选择 Google、Bing 或 Index-Translate。应用现在会在 GPT 模型旁边和错误提示中说明这一点
+
 ## r665 - 2026-10-25
 
 - 修正: Index-Translate 翻译因「未知模型」错误而失败

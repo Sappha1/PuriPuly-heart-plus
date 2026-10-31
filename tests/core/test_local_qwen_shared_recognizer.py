@@ -98,21 +98,58 @@ def test_concurrent_builds_are_serialized_and_deduplicated() -> None:
     assert results[0] is results[1]
 
 
-def test_low_memory_refuses_with_numbers(monkeypatch: pytest.MonkeyPatch) -> None:
-    monkeypatch.setattr(mod, "_available_memory_mb", lambda: 900)
+def test_low_free_ram_with_page_file_headroom_loads_anyway(monkeypatch) -> None:
+    """VRChat in VR on 16 GB leaves ~1 GB free RAM all session; Windows can
+    page other apps out, so the model must load instead of being refused."""
+    monkeypatch.setattr(mod, "_available_memory_mb", lambda: 1005)
+    monkeypatch.setattr(mod, "_available_commit_mb", lambda: 9000)
+    mod._require_memory_for_model_load()  # must not raise
+
+
+def test_commit_exhaustion_refuses_with_numbers(monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.setattr(mod, "_available_memory_mb", lambda: 3000)
+    monkeypatch.setattr(mod, "_available_commit_mb", lambda: 900)
     with pytest.raises(LocalQwenLowMemoryError) as excinfo:
         mod._require_memory_for_model_load()
     err = excinfo.value
     assert err.available_mb == 900
-    assert err.needed_mb == mod.LOCAL_QWEN_MODEL_LOAD_ESTIMATE_MB
+    assert err.needed_mb == (
+        mod.LOCAL_QWEN_MODEL_LOAD_ESTIMATE_MB + mod.LOCAL_QWEN_COMMIT_MARGIN_MB
+    )
+    assert err.available_mb < err.needed_mb  # the numbers shown never contradict
     # It must still be catchable by the generic load-error handling…
     assert isinstance(err, LocalQwenSherpaLoadError)
+
+
+def test_no_free_ram_cap_while_windows_can_still_page(monkeypatch) -> None:
+    """Even ~98% RAM in use loads when the page file has room."""
+    monkeypatch.setattr(mod, "_available_memory_mb", lambda: 300)
+    monkeypatch.setattr(mod, "_available_commit_mb", lambda: 9000)
+    mod._require_memory_for_model_load()  # must not raise
 
 
 def test_memory_probe_failure_never_blocks_the_load(monkeypatch) -> None:
     """The check is a diagnostic. If it cannot measure, it must stand aside."""
     monkeypatch.setattr(mod, "_available_memory_mb", lambda: None)
+    monkeypatch.setattr(mod, "_available_commit_mb", lambda: None)
     mod._require_memory_for_model_load()  # must not raise
+
+
+def test_commit_probe_reads_a_real_number() -> None:
+    value = mod._available_commit_mb()
+    assert value is None or value > 0
+
+
+def test_low_memory_heads_up_only_before_a_real_load(monkeypatch) -> None:
+    monkeypatch.setattr(mod, "_available_memory_mb", lambda: 1005)
+    assert mod.model_load_memory_warning_mb() == 1005
+
+    monkeypatch.setattr(mod, "_available_memory_mb", lambda: 6000)
+    assert mod.model_load_memory_warning_mb() is None  # plenty of RAM
+
+    monkeypatch.setattr(mod, "_available_memory_mb", lambda: 1005)
+    _shared_recognizer(("model", 4, 128, "cpu"), lambda: object())
+    assert mod.model_load_memory_warning_mb() is None  # already loaded
 
 
 def test_cached_instance_skips_the_memory_gate(monkeypatch) -> None:

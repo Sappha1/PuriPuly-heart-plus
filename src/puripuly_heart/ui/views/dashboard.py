@@ -22,7 +22,7 @@ from puripuly_heart.ui.overlay_peer_contract import OverlayPeerConsumerContract
 from puripuly_heart.ui.sent_text_undo import SentTextUndo, restore_after_native_undo
 from puripuly_heart.ui.translation_errors import friendly_translation_error
 
-_BUILD_TAG = "r665"  #increment each build so user can confirm version
+_BUILD_TAG = "r666"  #increment each build so user can confirm version
 
 # ── VRCT-style dark palette ──────────────────────────────────────────────────
 _BG_MAIN = "#292b2e"

@@ -75,9 +75,15 @@ def classify_translation_error(text: str) -> tuple[str, str, int | None, str]:
 def friendly_translation_error(text: str) -> str:
     kind, provider, _status, message = classify_translation_error(text)
     name = provider or t("dashboard.chat.error.provider_fallback", default="the translator")
+    openai = provider.lower() == "openai"
     if kind == "no_credits":
+        if openai:
+            # people expect their ChatGPT subscription to work here; say it doesn't
+            return t("dashboard.chat.error.no_credits_openai")
         return t("dashboard.chat.error.no_credits", provider=name)
     if kind == "bad_key":
+        if openai:
+            return t("dashboard.chat.error.bad_key_openai")
         return t("dashboard.chat.error.bad_key", provider=name)
     if kind == "rate_limited":
         return t("dashboard.chat.error.rate_limited", provider=name)

@@ -1,10 +1,10 @@
 {
-  "build": 666,
-  "tag": "r666",
-  "date": "2026-10-30",
+  "build": 668,
+  "tag": "r668",
+  "date": "2026-11-01",
   "notes": [
-    "The built-in speech model now loads on PCs with little free memory (for example while VRChat runs in VR) instead of refusing",
-    "GPT-6 Luna and GPT-6.1 Sol need an OpenAI API key with prepaid credits from platform.openai.com - a ChatGPT subscription or login does not work. For free translation, pick Google, Bing or Index-Translate"
+    "Steam tab: loading earlier messages is about three times faster and says \"No earlier messages\" once a chat has no older history",
+    "Steam tab: a chat with a friend you have not messaged yet opens straight to \"No messages here yet\", and switching chats and the connection to Steam are more reliable"
   ],
-  "zip_sha256": "94a242cd4cb761eb31fda8e24745aa582c3ad1fc76c4548e6f71773ef85f0361"
+  "zip_sha256": "4ff539fd4fbc52aae73f4b2ba45cc559f15566d73b54e710f34225086b7ae6ae"
 }

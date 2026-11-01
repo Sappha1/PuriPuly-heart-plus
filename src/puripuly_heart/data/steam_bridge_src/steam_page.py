@@ -784,6 +784,9 @@ class SteamPage:
                     if (!t) continue;
                     let ts = Number(m.rtTimestamp) || 0;
                     if (ts > 1e11) ts = ts / 1000;   // ms -> s, whatever the source
+                    // the client also hands back its cached recent messages;
+                    // paging back must only ever see the requested window
+                    if (ts < start || ts > end) continue;
                     // reactions others (and you) put on the message:
                     // {t: 1 emoticon / 2 sticker, r: name, n: count, me: you reacted}
                     const rx = [];

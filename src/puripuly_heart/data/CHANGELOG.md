@@ -2,6 +2,11 @@
 
 User-facing changes per build. The latest build's highlights also appear in-app when an update is ready.
 
+## r668 - 2026-11-01
+
+- Improved: in the Steam tab, loading earlier messages is about three times faster and says "No earlier messages" once a chat has no older history
+- Improved: a Steam chat with a friend you have not messaged yet opens straight to "No messages here yet", and switching between Steam chats and the connection to Steam are more reliable
+
 ## r666 - 2026-10-30
 
 - Improved: the built-in speech model now loads on PCs with little free memory (for example while VRChat runs in VR) instead of refusing - Windows makes room, and the app tells you when loading may take a moment

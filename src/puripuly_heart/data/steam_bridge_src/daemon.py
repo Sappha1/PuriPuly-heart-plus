@@ -279,6 +279,7 @@ class Daemon:
         self.convos: dict[int, dict] = {}   # acct -> friend dict (name/avatar/status)
         self._last_sig = None               # signature of last-pushed friends list
         self.clients: set[asyncio.StreamWriter] = set()
+        self._conn_tasks: set = set()       # strong refs to handle() tasks
         self._started = False
         self._start_lock: asyncio.Lock | None = None
 
@@ -1161,17 +1162,32 @@ class Daemon:
                     older: list = []
                     with contextlib.suppress(Exception):
                         # walk back in 14-day windows until something turns
-                        # up (Steam serves months of history server-side)
+                        # up (Steam serves months of history server-side),
+                        # three windows per round trip - one at a time, a
+                        # chat with no older history waited out nine
+                        # sequential server calls just to say so
                         end = (before - 1) if before else int(time.time())
-                        for _hop in range(9):
-                            got = await self.steam.fetch_messages_range(
-                                acct, end - 14 * 86400, end)
-                            if got:
-                                got.sort(key=lambda m: (m.get("ts") or 0,
-                                                        m.get("ordinal") or 0))
-                                older = got[-60:]
+                        span = 14 * 86400
+                        windows = [(end - (i + 1) * span, end - i * span)
+                                   for i in range(9)]
+                        for batch_at in range(0, len(windows), 3):
+                            batch = windows[batch_at:batch_at + 3]
+                            results = await asyncio.gather(
+                                *(self.steam.fetch_messages_range(acct, s, e)
+                                  for s, e in batch),
+                                return_exceptions=True)
+                            for got in results:   # newest window first
+                                if isinstance(got, BaseException) or not got:
+                                    continue
+                                got = [m for m in got
+                                       if 0 < (m.get("ts") or 0) <= end]
+                                if got:
+                                    got.sort(key=lambda m: (m.get("ts") or 0,
+                                                            m.get("ordinal") or 0))
+                                    older = got[-60:]
+                                    break
+                            if older:
                                 break
-                            end -= 14 * 86400
                     _diag(f"MORE-HISTORY acct={acct} before={before} "
                           f"-> {len(older)}")
                     await self.emit({"ev": "history_older", "acct": acct,
@@ -1375,16 +1391,57 @@ class Daemon:
         except OSError:
             _diag("SINGLETON exit: another daemon owns the port")
             return
-        # r635: asyncio's default 64 KiB line limit broke the connection for
-        # good once the "friends" event outgrew it (~160+ friends)
-        server = await asyncio.start_server(self.handle, sock=lsock,
-                                            limit=16 * 1024 * 1024)
         # Pre-warm: load Steam now so the first tab open is instant.
         asyncio.create_task(self._prewarm())
         asyncio.create_task(self._poll_supervisor())
         asyncio.create_task(self._own_supervisor())   # r636: network-bound work
-        async with server:
-            await server.serve_forever()
+        await self._serve(lsock)
+
+    async def _serve(self, lsock) -> None:
+        """r668: the accept loop. asyncio's Windows server CLOSES its
+        listening socket for good the first time an accept fails (a client
+        that drops mid-connect) - the daemon then ran on unreachable: the
+        app could not reconnect (no inbound, sends queued forever) and a
+        fresh daemon could not take the port. A failed accept is skipped
+        here; only a listening socket that is really gone ends the daemon,
+        so the app starts a fresh one."""
+        with contextlib.suppress(OSError):
+            lsock.setblocking(False)
+        loop = asyncio.get_running_loop()
+        fails = 0
+        while True:
+            try:
+                conn, _addr = await loop.sock_accept(lsock)
+            except OSError as exc:
+                if lsock.fileno() == -1:
+                    await self._listener_lost()
+                    return
+                fails += 1
+                if fails <= 3 or fails % 100 == 0:
+                    _diag(f"accept failed x{fails}: {exc!r} (still listening)")
+                await asyncio.sleep(0.05 if fails < 20 else 0.5)
+                continue
+            fails = 0
+            try:
+                # r635: asyncio's default 64 KiB line limit broke the
+                # connection for good once the "friends" event outgrew it
+                # (~160+ friends)
+                reader, writer = await asyncio.open_connection(
+                    sock=conn, limit=16 * 1024 * 1024)
+            except Exception:
+                with contextlib.suppress(Exception):
+                    conn.close()
+                continue
+            task = asyncio.create_task(self.handle(reader, writer))
+            self._conn_tasks.add(task)
+            task.add_done_callback(self._conn_tasks.discard)
+
+    async def _listener_lost(self) -> None:
+        _diag("listening socket closed - exiting so the app starts a fresh helper")
+        self._quitting = True   # the poll tick must not relaunch Edge
+        with contextlib.suppress(Exception):
+            await asyncio.wait_for(self.steam.close(), 15)
+        os._exit(0)
 
     async def _poll_supervisor(self) -> None:
         """poll_loop is the ONLY live-message path while the real Steam

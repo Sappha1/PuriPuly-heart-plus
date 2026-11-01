@@ -3871,6 +3871,7 @@ class SteamBridgeView(ft.Container):
                         for _b in _bl:      # r654: ms times from older sessions
                             if isinstance(_b, dict):
                                 _b["_ts"] = _sec(_b.get("_ts"))
+                        self._drop_foreign_sends(int(_k), _bl)   # r668
                         self._chat_cache.setdefault(int(_k), _bl)
         if self._got_friends or self._friends:
             return
@@ -5019,6 +5020,11 @@ class SteamBridgeView(ft.Container):
         blocks = self._coalesce(messages)
         if seq != self._open_seq:
             return
+        # r668: send bubbles another chat's send left in this chat's list
+        _strays = self._drop_foreign_sends(self._active,
+                                           self._chat_cache.get(self._active or 0))
+        if self._hist_blocks is not self._chat_cache.get(self._active or 0):
+            _strays += self._drop_foreign_sends(self._active, self._hist_blocks)
         if not blocks and self._hist_blocks:
             # r556: a just-started helper answers the open with an EMPTY
             # snapshot while it is still signing in — that must not wipe a
@@ -5096,7 +5102,7 @@ class SteamBridgeView(ft.Container):
             ]
         _acct_now = self._active or 0
         _fp = self._hist_fp(blocks)
-        _shown = bool(self._hist_blocks and self._messages.controls)
+        _shown = bool(self._hist_blocks and self._messages.controls) and not _strays
         if _fp == self._render_fp.get(_acct_now) and _shown:
             # identical to what's on screen — repainting would flicker; just
             # refresh the bookkeeping
@@ -5361,6 +5367,27 @@ class SteamBridgeView(ft.Container):
                  "stickers": list(b.get("stickers") or []),
                  "ts": int(b.get("_ts") or 0), "ord": int(b.get("_ord") or 0)}
             await self._render_live(m, block=b)
+
+    @staticmethod
+    def _drop_foreign_sends(acct, blocks) -> int:
+        """r668: remove (in place) send bubbles stamped for ANOTHER chat -
+        what the chat-switch bug fixed in _open wrote into the previous
+        chat's list (and the snapshot kept). Returns how many went."""
+        if not acct or not isinstance(blocks, list):
+            return 0
+
+        def _foreign(b) -> bool:
+            try:
+                sa = int(b.get("_send_acct") or 0)
+            except (AttributeError, TypeError, ValueError):
+                return False
+            return bool(sa) and sa != int(acct)
+
+        keep = [b for b in blocks if not _foreign(b)]
+        gone = len(blocks) - len(keep)
+        if gone:
+            blocks[:] = keep
+        return gone
 
     def _unrendered_tail(self, col, cached: list):
         """r636 (parked columns): the cached blocks a mounted column has not
@@ -5774,6 +5801,9 @@ class SteamBridgeView(ft.Container):
         lst = self._ensure_msg_list(acct)
         self._show_msg_list(acct)
         cached = self._chat_cache.get(acct)
+        # r668: a column still showing a dropped bubble no longer lines up
+        # with its cache -> the rebuild below repaints it without the bubble
+        self._drop_foreign_sends(acct, cached)
         # r636: a mounted column (an open background tab, or a closed tab
         # parked by _close_tab) may be BEHIND its cache - lines swept in
         # while it was not active. Append just those; None means the two no
@@ -5850,6 +5880,11 @@ class SteamBridgeView(ft.Container):
                 self.page.run_task(self._anchor_end, _keep_pos)
                 self.page.run_task(self._fill_translations, cached, self._open_seq)
         else:
+            # r668: this chat's OWN (empty) list - _hist_blocks still pointed
+            # at the previous chat's, the empty history reply for a chat with
+            # no messages is ignored while it is non-empty, and a send here
+            # then landed in the previous chat's log
+            self._hist_blocks = self._chat_cache.setdefault(acct, [])
             self._messages.controls.clear()
             self._messages.controls.append(ft.Container(
                 content=ft.Row([
@@ -6162,6 +6197,14 @@ class SteamBridgeView(ft.Container):
         elif kind == "history_older":
             h_acct = int(ev.get("acct", 0))
             msgs = ev.get("messages", []) or []
+            if h_acct == self._active:
+                # only messages strictly older than the oldest one shown -
+                # anything else is already in the log
+                shown = [_sec(b.get("_ts")) for b in self._hist_blocks if _sec(b.get("_ts"))]
+                if shown:
+                    oldest_shown = min(shown)
+                    msgs = [m for m in msgs
+                            if isinstance(m, dict) and 0 < _sec(m.get("ts")) < oldest_shown]
             # reset the busy flag and pill label for WHICHEVER chat answered —
             # the user may have switched tabs while the reply was in flight
             # (the singleton flag used to stick True and dead-lock every pill)

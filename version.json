@@ -1,10 +1,9 @@
 {
-  "build": 668,
-  "tag": "r668",
-  "date": "2026-11-01",
+  "build": 669,
+  "tag": "r669",
+  "date": "2026-11-12",
   "notes": [
-    "Steam tab: loading earlier messages is about three times faster and says \"No earlier messages\" once a chat has no older history",
-    "Steam tab: a chat with a friend you have not messaged yet opens straight to \"No messages here yet\", and switching chats and the connection to Steam are more reliable"
+    "When the overlay is set to VR but no VR headset is connected (for example SteamVR left open while playing on desktop), the app now tells you to set Overlay mode to Desktop in Settings"
   ],
-  "zip_sha256": "4ff539fd4fbc52aae73f4b2ba45cc559f15566d73b54e710f34225086b7ae6ae"
+  "zip_sha256": "5384e9486df1849c96f980ca354c071c579e7b4089ab4ff9faf0e7f3757dd82d"
 }

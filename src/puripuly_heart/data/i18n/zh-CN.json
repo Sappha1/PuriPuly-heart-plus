@@ -185,7 +185,7 @@
   "settings.overlay.failure.startup_timeout": "叠加层启动超时",
   "settings.overlay.failure.steamvr_not_installed": "未安装 SteamVR/OpenVR 运行时",
   "settings.overlay.failure.steamvr_not_running": "SteamVR 尚未运行。如果您想使用桌面叠加层，请在设置中更改。",
-  "settings.overlay.failure.hmd_not_found": "未检测到 VR 头显",
+  "settings.overlay.failure.hmd_not_found": "未检测到 VR 头显。如果在桌面模式下游玩，请在设置中把悬浮字幕模式改为桌面。",
   "settings.overlay.failure.openvr_init_failed": "OpenVR 初始化失败",
   "settings.overlay.failure.renderer_init_failed": "叠加层渲染器初始化失败",
   "settings.overlay.failure.runtime_disconnected": "叠加层运行时已断开",

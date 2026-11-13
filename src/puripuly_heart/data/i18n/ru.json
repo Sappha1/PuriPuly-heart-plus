@@ -192,7 +192,7 @@
   "settings.overlay.failure.startup_timeout": "Время запуска оверлея истекло",
   "settings.overlay.failure.steamvr_not_installed": "SteamVR/OpenVR не установлен",
   "settings.overlay.failure.steamvr_not_running": "SteamVR выключен. Чтобы использовать оверлей на рабочем столе, смените режим в настройках.",
-  "settings.overlay.failure.hmd_not_found": "VR-шлем не найден",
+  "settings.overlay.failure.hmd_not_found": "VR-шлем не найден. Играете на рабочем столе? Выберите в настройках режим оверлея «Рабочий стол».",
   "settings.overlay.failure.openvr_init_failed": "Не удалось инициализировать OpenVR",
   "settings.overlay.failure.renderer_init_failed": "Не удалось запустить отрисовку оверлея",
   "settings.overlay.failure.runtime_disconnected": "Оверлей отключился",

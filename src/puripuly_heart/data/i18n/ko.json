@@ -185,7 +185,7 @@
   "settings.overlay.failure.startup_timeout": "오버레이 시작 시간이 초과됐어요",
   "settings.overlay.failure.steamvr_not_installed": "SteamVR/OpenVR 런타임이 설치되어 있지 않아요",
   "settings.overlay.failure.steamvr_not_running": "SteamVR이 꺼져 있어요. 혹시 데스크톱 오버레이를 쓰고싶다면 설정을 바꿔주세요.",
-  "settings.overlay.failure.hmd_not_found": "VR 헤드셋을 찾지 못했어요",
+  "settings.overlay.failure.hmd_not_found": "VR 헤드셋을 찾지 못했어요. 데스크톱으로 플레이 중이라면 설정에서 오버레이 모드를 데스크톱으로 바꿔주세요.",
   "settings.overlay.failure.openvr_init_failed": "OpenVR 초기화에 실패했어요",
   "settings.overlay.failure.renderer_init_failed": "오버레이 렌더러 초기화에 실패했어요",
   "settings.overlay.failure.runtime_disconnected": "오버레이 런타임 연결이 끊어졌어요",

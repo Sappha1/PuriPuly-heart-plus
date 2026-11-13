@@ -80,6 +80,7 @@ class _AsyncioOverlayProcess:
     _reader_tasks: list[asyncio.Task[None]] = field(default_factory=list)
     _diagnostics: OverlayDiagnosticsRecorder | None = None
     _logging_mode: str = field(init=False, default="basic")
+    _hmd_not_found_seen: bool = field(init=False, default=False)
 
     def __post_init__(self) -> None:
         self._start_reader(self.process.stdout, "stdout")
@@ -125,8 +126,10 @@ class _AsyncioOverlayProcess:
                 line = raw_line.decode("utf-8", errors="replace").strip()
                 event = self._parse_event_line(line)
                 if event is not None:
-                    await self._events.put(event)
+                    await self._events.put(self._refine_failure_reason(event))
                     continue
+                if "HmdNotFound" in line:
+                    self._hmd_not_found_seen = True
                 if (
                     line
                     and self._diagnostics is not None
@@ -136,6 +139,19 @@ class _AsyncioOverlayProcess:
                 self._log_passthrough_line(line, stream_name)
         except asyncio.CancelledError:
             raise
+
+    def _refine_failure_reason(self, event: dict[str, object]) -> dict[str, object]:
+        # The overlay's own pre-check reports a missing headset as hmd_not_found,
+        # but when OpenVR's init is what finds no headset (desktop VRChat with
+        # SteamVR installed) it arrives as the generic openvr_init_failed, right
+        # after the error line naming VRInitError_Init_HmdNotFound.
+        if (
+            self._hmd_not_found_seen
+            and event.get("type") in {"startup_error", "runtime_error"}
+            and event.get("failure_reason") == "openvr_init_failed"
+        ):
+            return {**event, "failure_reason": "hmd_not_found"}
+        return event
 
     def _parse_event_line(self, line: str) -> dict[str, object] | None:
         if not line:

@@ -192,7 +192,7 @@
   "settings.overlay.failure.startup_timeout": "Overlay startup timed out",
   "settings.overlay.failure.steamvr_not_installed": "SteamVR/OpenVR runtime is not installed",
   "settings.overlay.failure.steamvr_not_running": "SteamVR is off. If you want to use the desktop overlay, change it in Settings.",
-  "settings.overlay.failure.hmd_not_found": "VR headset was not found",
+  "settings.overlay.failure.hmd_not_found": "No VR headset found. Playing on desktop? Set Overlay mode to Desktop in Settings.",
   "settings.overlay.failure.openvr_init_failed": "OpenVR initialization failed",
   "settings.overlay.failure.renderer_init_failed": "Overlay renderer initialization failed",
   "settings.overlay.failure.runtime_disconnected": "Overlay runtime disconnected",

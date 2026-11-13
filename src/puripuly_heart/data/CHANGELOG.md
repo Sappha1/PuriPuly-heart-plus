@@ -2,6 +2,10 @@
 
 User-facing changes per build. The latest build's highlights also appear in-app when an update is ready.
 
+## r669 - 2026-11-12
+
+- Improved: when the overlay is set to VR but no VR headset is connected (for example SteamVR left open while playing on desktop), the app now tells you to set Overlay mode to Desktop in Settings
+
 ## r668 - 2026-11-01
 
 - Improved: in the Steam tab, loading earlier messages is about three times faster and says "No earlier messages" once a chat has no older history

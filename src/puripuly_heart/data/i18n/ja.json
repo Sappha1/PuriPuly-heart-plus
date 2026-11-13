@@ -187,7 +187,7 @@
   "settings.overlay.failure.startup_timeout": "オーバーレイの起動がタイムアウトしました",
   "settings.overlay.failure.steamvr_not_installed": "SteamVR/OpenVRランタイムがインストールされていません",
   "settings.overlay.failure.steamvr_not_running": "SteamVRがオフです。デスクトップオーバーレイを使いたい場合は、設定を変更してください。",
-  "settings.overlay.failure.hmd_not_found": "VRヘッドセットが見つかりませんでした",
+  "settings.overlay.failure.hmd_not_found": "VRヘッドセットが見つかりませんでした。デスクトップでプレイしている場合は、設定でオーバーレイモードをデスクトップにしてください。",
   "settings.overlay.failure.openvr_init_failed": "OpenVRの初期化に失敗しました",
   "settings.overlay.failure.renderer_init_failed": "オーバーレイレンダラーの初期化に失敗しました",
   "settings.overlay.failure.runtime_disconnected": "オーバーレイランタイムの接続が切れました",
